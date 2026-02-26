@@ -1,0 +1,227 @@
+# State Synchronization Standards
+
+This document defines standards for multiplayer network synchronization: authoritative server model, client prediction, rollback, and bandwidth optimization.
+
+---
+
+## Authoritative Server Model
+
+### Principle
+
+The server is the single source of truth for game state. Clients send inputs; the server validates, applies, and broadcasts state updates.
+
+```
+Client A: Input -> Server
+Client B: Input -> Server
+Server: Validate -> Apply -> Broadcast State
+Clients: Receive State -> Render
+```
+
+### Server Responsibilities
+
+| Responsibility | Description |
+|----------------|-------------|
+| Input validation | Reject invalid or impossible inputs |
+| State simulation | Run game logic, physics, collision |
+| Anti-cheat | Detect impossible states, speed hacks |
+| Tick authority | Define simulation tick rate |
+| State broadcast | Send state to clients at defined rate |
+
+### Client Responsibilities
+
+| Responsibility | Description |
+|----------------|-------------|
+| Input capture | Send user input to server |
+| Prediction | Simulate locally for responsiveness |
+| Interpolation | Smooth display of received state |
+| Reconciliation | Correct prediction when server state arrives |
+
+---
+
+## Client Prediction
+
+### Purpose
+
+Predict local player movement immediately without waiting for server round-trip. Reduces perceived latency.
+
+### Implementation
+
+1. Client applies input locally and renders predicted state
+2. Client sends input to server
+3. Server processes input, broadcasts state
+4. Client receives server state; if different, reconcile
+
+### Prediction Rules
+
+- [ ] Only predict local player (or entities player controls)
+- [ ] Prediction uses same logic as server (deterministic)
+- [ ] Store input history for reconciliation
+- [ ] Server state overrides prediction when received
+- [ ] Non-predictable entities use interpolation only
+
+### Prediction Buffer
+
+Keep last N inputs for rollback. N >= round-trip time in ticks.
+
+```cpp
+struct InputFrame {
+    uint32_t tick;
+    InputState input;
+};
+std::deque<InputFrame> input_history;
+```
+
+---
+
+## Rollback and Reconciliation
+
+### When Server State Arrives
+
+1. Compare server state to predicted state at same tick
+2. If match: prediction was correct; discard older inputs
+3. If mismatch: rollback to server state, re-apply inputs from that tick forward
+
+### Rollback Process
+
+```
+Server state at tick T arrives
+  -> If predicted state at T matches: OK
+  -> If not: Set state = server state at T
+           -> Re-apply inputs for T+1, T+2, ... to current tick
+           -> Re-simulate physics, collision, etc.
+```
+
+### Determinism Requirement
+
+Rollback only works if client and server produce identical results for same inputs. Any non-determinism causes divergence and visible correction (rubber-banding).
+
+- [ ] Fixed-point or deterministic float for physics
+- [ ] Same random seed per tick
+- [ ] No platform-specific behavior in simulation
+- [ ] Lockstep or server-authoritative with deterministic client
+
+---
+
+## Delta Compression
+
+### Full State vs Delta
+
+| Approach | Bandwidth | Use When |
+|----------|-----------|----------|
+| Full state | High | Initial sync, resync |
+| Delta | Low | Steady state updates |
+| Keyframe + delta | Medium | Periodic full, delta between |
+
+### Delta Encoding
+
+Send only changed fields since last acknowledged state.
+
+```cpp
+struct StateDelta {
+    uint32_t from_tick;
+    uint32_t to_tick;
+    std::vector<EntityDelta> changes;
+};
+
+struct EntityDelta {
+    EntityId id;
+    std::vector<FieldChange> fields;  // Only changed
+};
+```
+
+### Delta Rules
+
+- [ ] Delta from last confirmed state
+- [ ] Include tick numbers for ordering
+- [ ] Full state sent periodically (keyframe) to recover from loss
+- [ ] Delta size bounded; fall back to full if delta larger
+
+---
+
+## Lag Compensation
+
+### Techniques
+
+| Technique | Description | Use Case |
+|-----------|-------------|----------|
+| Client-side prediction | Predict local player | Local player movement |
+| Server-side rewind | Server rewinds time for hit detection | Shooter hit registration |
+| Interpolation | Smooth display of other entities | Other players, NPCs |
+| Extrapolation | Guess movement until next update | High latency mitigation |
+
+### Server-Side Rewind
+
+For hit-scan or projectile hit detection: server stores past states. When processing shot, rewind to shooter's view at their latency, test against that historical state.
+
+```
+Player A shoots at tick 100 (client time)
+Server receives at tick 105 (network delay)
+Server rewinds to tick 100 state
+Server tests hit against tick 100 positions
+Server applies hit at tick 105
+```
+
+### Interpolation
+
+Display other entities at time T - interpolation_delay. Smooth movement between received states. Delay adds latency to display but removes jitter.
+
+- [ ] Interpolation delay: 100-200ms typical
+- [ ] Extrapolate when no recent update (entity stopped?)
+- [ ] Snap on teleport or large correction
+
+---
+
+## Bandwidth Optimization
+
+### Priorities
+
+| Priority | Data | Rate | Compression |
+|----------|------|------|-------------|
+| Critical | Input, essential state | Every tick | Minimal |
+| High | Position, rotation | 10-20 Hz | Quantize |
+| Medium | Animation state, health | 5-10 Hz | Delta |
+| Low | Cosmetic, effects | 1-5 Hz | Aggressive |
+
+### Quantization
+
+Reduce bits per value. Trade precision for bandwidth.
+
+```cpp
+// Position: 3 floats (12 bytes) -> 3 x 16-bit (6 bytes)
+// Quantize to 0.01 unit precision over 655.35 unit range
+uint16_t quantize(float v) {
+    return (uint16_t)(v * 100.0f);
+}
+float dequantize(uint16_t v) {
+    return (float)v / 100.0f;
+}
+```
+
+### Bandwidth Budget
+
+| Platform | Target | Per-Player |
+|----------|--------|------------|
+| PC | 128-256 kbps | |
+| Console | 64-128 kbps | |
+| Mobile | 32-64 kbps | |
+
+### Checklist
+
+- [ ] Delta compression for state updates
+- [ ] Quantization for positions, rotations
+- [ ] Rate limiting per data type
+- [ ] Keyframes for full state recovery
+- [ ] Bandwidth budget per platform
+
+---
+
+## Checklist
+
+- [ ] Server is authoritative for game state
+- [ ] Client prediction for local player
+- [ ] Input history stored for reconciliation
+- [ ] Rollback logic handles server correction
+- [ ] Determinism verified (client matches server for same input)
+- [ ] Delta compression for state updates
+- [ ] Lag compensation strategy defined (rewind, interpolation)
+- [ ] Bandwidth budget and quantization applied

@@ -1,0 +1,12 @@
+name: research
+display_name: "Research & Science"
+description: "Reproducibility reviews, statistical rigor analysis, experiment protocols, citation tracking, and data archival standards."
+reviews:
+  - reproducibility
+  - statistical_rigor
+standards:
+  - experiment_protocol
+  - citation_tracking
+  - data_archival
+  - random_seed
+approval_gates: {}

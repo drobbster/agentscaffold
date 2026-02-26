@@ -1,0 +1,123 @@
+# Data Quality Standards
+
+This document defines data quality validation rules, anomaly detection patterns, and data contract requirements.
+
+---
+
+## Validation Rules
+
+### Field-Level Validations
+
+| Rule Type | Description | Example |
+|-----------|-------------|---------|
+| Not null | Required fields must have values | `user_id IS NOT NULL` |
+| Type check | Values match expected type | `price IS NUMERIC` |
+| Range check | Values within expected bounds | `age BETWEEN 0 AND 150` |
+| Format check | Values match expected pattern | `email LIKE '%@%.%'` |
+| Enum check | Values in allowed set | `status IN ('active', 'inactive')` |
+| Uniqueness | No duplicate values | `UNIQUE(transaction_id)` |
+| Referential | Foreign key exists | `user_id IN users.id` |
+
+### Dataset-Level Validations
+
+| Rule Type | Description | Example |
+|-----------|-------------|---------|
+| Row count | Expected number of records | `count > 0 AND count < 2x_expected` |
+| Freshness | Data is recent enough | `max(timestamp) > now() - interval '1 hour'` |
+| Completeness | All partitions present | `count(DISTINCT date) = expected_dates` |
+| Distribution | Values follow expected distribution | `stddev(price) < 3 * historical_stddev` |
+
+---
+
+## Implementation Pattern
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class ValidationResult:
+    rule_name: str
+    passed: bool
+    actual_value: float | str | None
+    expected: str
+    severity: str  # "critical", "warning", "info"
+
+def validate_dataset(df, rules: list) -> list[ValidationResult]:
+    results = []
+    for rule in rules:
+        result = rule.check(df)
+        results.append(result)
+        if not result.passed and result.severity == "critical":
+            logger.error("Validation failed", rule=rule.name, actual=result.actual_value)
+    return results
+```
+
+---
+
+## Anomaly Detection
+
+### Statistical Methods
+
+| Method | Use Case | Threshold |
+|--------|----------|-----------|
+| Z-score | Numeric fields, normal distribution | abs(z) > 3 |
+| IQR | Numeric fields, skewed distribution | < Q1 - 1.5*IQR or > Q3 + 1.5*IQR |
+| Percentage change | Time series | > 50% change from previous period |
+| Cardinality change | Categorical fields | > 20% change in unique values |
+
+---
+
+## Data Contracts
+
+### Contract Structure
+
+```yaml
+contract:
+  name: user_events
+  version: "1.2"
+  owner: team-data
+  sla:
+    freshness: "1 hour"
+    completeness: "99.5%"
+  schema:
+    - name: user_id
+      type: string
+      required: true
+      unique: false
+    - name: event_type
+      type: string
+      required: true
+      allowed_values: ["click", "view", "purchase"]
+    - name: timestamp
+      type: timestamp
+      required: true
+  quality_rules:
+    - rule: row_count
+      min: 1000
+      max: 1000000
+    - rule: null_rate
+      field: user_id
+      max: 0.0
+```
+
+---
+
+## Lineage
+
+### Requirements
+
+- [ ] Every dataset has documented upstream sources
+- [ ] Transformations are documented (column-level lineage preferred)
+- [ ] Downstream consumers are tracked
+- [ ] Impact analysis is possible for schema changes
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|--------------|--------------|------------------|
+| No validation before write | Corrupt data propagates | Validate first |
+| Validation only on happy path | Misses edge cases | Test with bad data |
+| Alerts without context | Can't diagnose issues | Include sample data in alerts |
+| Global quality thresholds | Different datasets have different needs | Per-dataset thresholds |

@@ -1,0 +1,144 @@
+# Strategy Review: Comprehensive Assessment
+
+Use this prompt template to systematically review trading strategies, identify weaknesses, and categorize remediation actions.
+
+---
+
+## Usage
+
+Copy this prompt into a conversation, replacing `[STRATEGY_GROUP]` with the target (e.g., "Phase 3 strategies", "momentum strategies", "all strategies").
+
+---
+
+## Pre-Review: Infrastructure Context
+
+**Before starting the strategy review**, review all infrastructure architecture that feeds strategies data and consumes strategy output so you understand all recent architectural changes.
+
+### Areas to Review:
+
+1. **Data Infrastructure** -- How data flows to strategies (data routers, handlers, caching, recent changes to serialization)
+2. **Feature Infrastructure** -- Calendar utilities, cross-asset features, technical indicators, regime detection
+3. **Strategy Consumption** -- How backtester invokes strategies, portfolio vs single-asset execution, RL integration points
+4. **Recent Architectural Changes** -- System architecture docs, workflow state, new integration patterns
+
+---
+
+## Strategy Review for [STRATEGY_GROUP]
+
+### For Each Strategy, Analyze:
+
+1. **Purpose**: What market inefficiency or pattern does this strategy exploit?
+2. **Mechanism**: How does the strategy generate signals? Walk through the core logic.
+3. **Supporting Research**: What academic literature, market microstructure theory, or empirical evidence supports this approach?
+4. **Regime Behavior**: In which market regimes does this strategy perform best/worst?
+5. **Weaknesses**: Identify any implementation flaws, missing validations, or logical gaps.
+
+---
+
+## Weakness Categorization
+
+After reviewing all strategies, categorize each identified weakness:
+
+### Category 1: Fix Now
+
+Weaknesses that can be addressed immediately with straightforward code changes.
+
+**Criteria:**
+- Clear solution path
+- No external data dependencies
+- Low risk of unintended consequences
+- Can be validated with existing tests
+
+| Strategy | Weakness | Proposed Fix | Risk Level |
+|----------|----------|--------------|------------|
+| | | | Low/Medium |
+
+### Category 2: Needs Plan
+
+Weaknesses requiring research, design decisions, or multi-file changes.
+
+**Criteria:**
+- Solution approach is uncertain
+- Requires architectural consideration
+- May affect multiple strategies
+- Needs backtesting to validate
+
+| Strategy | Weakness | Why Plan Needed | Suggested Plan Scope |
+|----------|----------|-----------------|---------------------|
+| | | | |
+
+### Category 3: Backlog (Data Dependency)
+
+Weaknesses that cannot be addressed without new data sources.
+
+**Criteria:**
+- Requires data not currently available
+- Would need new integrations or pipelines
+- Could be addressed later when data is available
+
+| Strategy | Weakness | Data Required | Integration Points |
+|----------|----------|---------------|-------------------|
+| | | | |
+
+### Category 4: Leave As-Is (Core Design)
+
+Weaknesses that are inherent to the strategy's design and should not be changed.
+
+**Criteria:**
+- Changing would fundamentally alter the strategy
+- The weakness is a known trade-off
+- Documented in academic literature as acceptable
+
+| Strategy | Weakness | Why Leave As-Is |
+|----------|----------|-----------------|
+| | | |
+
+---
+
+## Output Deliverables
+
+### 1. Fix Now Items
+Create a numbered list of immediate fixes with strategy name, specific code change, and expected outcome.
+
+### 2. Plan Proposals
+For each "Needs Plan" item, draft a plan outline including scope, affected files, success criteria, and estimated complexity.
+
+### 3. Backlog Entries
+For each "Backlog" item, document data source needed, priority, blocked-by dependencies, and affected strategies.
+
+### 4. Recommendations Summary
+1. Which fixes provide the most impact for least effort?
+2. Which plans should be scheduled first?
+3. Which backlog items should be prioritized if data becomes available?
+
+---
+
+## Review Checklist
+
+Before finalizing the review:
+
+- [ ] Each strategy has been analyzed for all five aspects
+- [ ] All weaknesses have been categorized into exactly one category
+- [ ] Fix Now items have clear, actionable descriptions
+- [ ] Plan proposals include scope and success criteria
+- [ ] Backlog items specify exact data requirements
+- [ ] Leave As-Is items document the rationale
+
+---
+
+## Follow-Up Actions
+
+After completing this review:
+
+1. **For Fix Now items**: Implement fixes, run tests, verify improvements
+2. **For Needs Plan items**: Create formal plan files using plan template
+3. **For Backlog items**: Add to backlog with full details
+4. **For Leave As-Is items**: Document in strategy docstrings or README
+
+---
+
+## Notes
+
+- This review should be conducted periodically (quarterly recommended) or before major releases
+- Strategy improvements identified here feed into the broader architecture roadmap
+- Consider running backtests before and after "Fix Now" changes to measure impact

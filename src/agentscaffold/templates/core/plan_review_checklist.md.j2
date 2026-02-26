@@ -1,0 +1,220 @@
+# Plan Review Checklist
+
+This checklist MUST be completed before executing any plan. It ensures cohesion with the overall architecture and validates integration points with dependent plans.
+
+## Usage
+
+1. Copy this checklist into the plan file as a pre-execution section
+2. Complete ALL items before starting execution
+3. If any item fails, document resolution or escalate as blocker
+
+---
+
+## I. Pre-Implementation Verification
+
+| Check | Status | Notes |
+|-------|--------|-------|
+| [ ] Searched codebase for existing implementations of similar functionality | | |
+| [ ] **Verified code does NOT already exist** for files in File Impact Map | | |
+| [ ] **Checked {{ config.paths.workflow_state | default('workflow_state.md') }}** for COMPLETE markers on this or related plans | | |
+| [ ] **Verified plan is not SUPERSEDED** by checking metadata and related plans | | |
+{% if config.plan.require_data_source_analysis %}| [ ] Verified data source availability (API access, data completeness) | | |
+| [ ] Traced data flow through caching/routing layers | | |
+{% endif %}| [ ] Reviewed existing exception handling in affected code paths | | |
+| [ ] External API documentation reviewed for quirks/limitations | | |
+| [ ] Test dependencies identified and added to dev requirements | | |
+{% if config.plan.require_consumer_audit %}| [ ] **Consumer Audit**: For config/interface changes, searched for ALL instantiation points (see Section J) | | |
+{% endif %}| [ ] **Learnings Review**: Checked learnings tracker for pending items relevant to this plan's domain | | |
+| [ ] **Enums/types**: If adding new enums/types, verify names against actual code | | |
+| [ ] **Config files**: If adding/modifying config, verify param names match schema field names exactly | | |
+| [ ] **Config safety**: If adding config-driven safety features, verify validation prevents dangerous misconfigurations | | |
+{% for check in config.review_checklist.custom_pre_checks | default([]) %}| [ ] {{ check.description }} | | |
+{% endfor %}
+
+---
+
+{% if architecture_layers %}
+## A. Architectural Alignment
+{% if config.architecture.framework_name %}
+### A1. Layer Declaration and Boundaries
+
+Reference: `{{ config.paths.architecture_doc | default('docs/ai/system_architecture.md') }}` (baseline). **Read this document before completing this section.**
+
+| Check | Status | Notes |
+|-------|--------|-------|
+| Plan declares Architecture Layer(s) in metadata? | [ ] | Layer(s): |
+| Plan consumes output from the upstream layer (does NOT bypass)? | [ ] | |
+| Plan output format matches expected layer output? | [ ] | |
+| Plan is consistent with current architecture document version? | [ ] | Version checked: |
+| If plan proposes architectural changes: amendment added to changelog? | [ ] | N/A if no changes |
+| Plan creates files in locations matching architecture document? | [ ] | |
+| Module boundaries respected (no cross-layer imports)? | [ ] | |
+| Naming conventions match existing codebase? | [ ] | |
+| No duplicate functionality with existing/planned modules? | [ ] | |
+
+### A2. Data Flow Traceability
+
+For each data input the plan consumes, trace it back to its origin layer.
+Flag any input that skips an intermediate layer.
+
+| Data Input | Source Layer | Expected Path | Bypasses Layer? | Notes |
+|------------|-------------|---------------|-----------------|-------|
+| | | | [ ] Yes / No | |
+
+**If any "Yes" in Bypasses Layer:** document why the bypass exists and whether
+it can be corrected. If the bypass cannot be justified, update the plan before proceeding.
+
+### A3. Service Connection Audit
+
+For each new import, API call, or message flow the plan introduces, verify it
+connects to the correct architectural layer.
+
+| Connection | From (Layer) | To (Layer) | Follows layer boundaries? | Notes |
+|------------|-------------|------------|---------------------------|-------|
+| | | | [ ] Yes / No | |
+
+{% if config.architecture.anti_patterns %}**Layer-bypass anti-patterns to check for:**
+{% for pattern in config.architecture.anti_patterns %}- [ ] {{ pattern }}
+{% endfor %}{% endif %}
+
+### A4. Alignment Decision
+
+| Decision | Status |
+|----------|--------|
+| All data flows respect layer boundaries | [ ] Pass / [ ] Fail |
+| All service connections follow architecture | [ ] Pass / [ ] Fail |
+| **Overall: proceed with implementation?** | [ ] Yes / [ ] No -- fix plan first |
+
+If "No": document required corrections and update plan before proceeding.
+{% endif %}
+{% endif %}
+
+## B. Dependency Readiness
+
+| Dependency | Interface Contract Verified | Status | Notes |
+|------------|---------------------------|--------|-------|
+| Plan XXX | [ ] Types/schemas match | [ ] Ready | |
+| Plan YYY | [ ] APIs compatible | [ ] Ready | |
+
+**Dependency Verification Steps:**
+1. For each dependency, read its plan's appendix (code examples)
+2. Verify interface signatures match what this plan expects to consume
+3. If dependency plan has TBD interfaces, create interface contract in `{{ config.paths.contracts_dir | default('docs/ai/contracts/') }}`
+4. Document any gaps in Notes column
+
+## C. Interface Contracts (What This Plan Exports)
+
+| Export | Type | Consumers | Contract Location |
+|--------|------|-----------|-------------------|
+| `ClassName` | Class | Plans X, Y | `{{ config.paths.contracts_dir | default('docs/ai/contracts/') }}xxx.md` |
+| `function_name` | Function | Plans Z | `{{ config.paths.contracts_dir | default('docs/ai/contracts/') }}yyy.md` |
+
+## D. Data Contract Compliance
+
+| Schema | Location | Version | Used By This Plan |
+|--------|----------|---------|-------------------|
+| TBD | TBD | v1 | [ ] Import only, no modifications |
+
+**Rules:**
+- NEVER modify existing data contracts without a breaking change plan
+- New contracts require ADR if they affect multiple plans
+- Reference specific schema versions in plan
+
+## E. Cross-Cutting Concerns
+
+| Concern | Standard Doc Reference | Implementation Approach |
+|---------|----------------------|------------------------|
+{% for standard in config.standards | default([]) %}| {{ standard.name }} | `{{ standard.doc }}` | |
+{% endfor %}{% if not config.standards %}| Error Handling | `{{ config.paths.standards_dir | default('docs/ai/standards/') }}errors.md` | |
+| Logging | `{{ config.paths.standards_dir | default('docs/ai/standards/') }}logging.md` | |
+| Configuration | `{{ config.paths.standards_dir | default('docs/ai/standards/') }}config.md` | |
+{% endif %}
+
+## F. Integration Points
+
+| Integration Point | Protocol | Test Strategy | Mock Available |
+|-------------------|----------|---------------|----------------|
+| Module A -> This | Direct import | Unit test with fixture | [ ] Yes |
+| This -> Module B | API call | Integration test | [ ] Yes |
+| External Service | REST/gRPC | Mock in tests | [ ] Create mock |
+
+## G. Best Practices Verification
+
+| Practice | Status | Notes |
+|----------|--------|-------|
+| [ ] No hardcoded secrets/credentials | | |
+| [ ] Configuration loaded from env/config files | | |
+| [ ] All public functions have docstrings | | |
+| [ ] Type hints on all function signatures | | |
+| [ ] Exceptions are specific (not bare except) | | |
+| [ ] Resources properly closed (context managers) | | |
+| [ ] No circular imports in module design | | |
+| [ ] Test coverage target specified and achievable | | |
+
+{% if config.plan.require_consumer_audit %}
+## J. Consumer Audit (Mandatory for Interface/Config Changes)
+
+When a plan modifies or adds parameters to any config class, data contract,
+or public interface, complete this audit BEFORE implementation.
+
+**Step 1: Identify modified interfaces**
+
+| Modified Class/Interface | New/Changed Parameters |
+|--------------------------|----------------------|
+| | |
+
+**Step 2: Search for ALL instantiation points**
+
+For each modified class, run: `{{ config.search_command | default('rg "ClassName(" --type py') }}` and list every file.
+
+| Class | File | Line | Already in File Impact Map? |
+|-------|------|------|-----------------------------|
+| | | | Yes / No (add if No) |
+
+**Step 3: Search for ALL callers of modified functions**
+
+| Function | Caller File | Line | Updated in Plan? |
+|----------|-------------|------|--------------------|
+| | | | Yes / No |
+
+**Step 4: Verify parameter flows end-to-end**
+
+For each new parameter, trace from entry point (CLI/config/API) to every consumer:
+
+| Parameter | Entry Point | Intermediate Hops | Final Consumer(s) | Verified? |
+|-----------|-------------|--------------------|--------------------|-----------|
+| | | | | |
+
+**Step 5: Plan integration test coverage**
+
+| Flow Path | Test Exists? | Test Verifies New Param? |
+|-----------|--------------|--------------------------|
+| | | |
+
+{% endif %}
+---
+
+## H. Gap Analysis
+
+### Identified Gaps
+<!-- List any gaps found during review -->
+1. 
+
+### Enhancement Opportunities
+<!-- Best practices or improvements beyond minimum requirements -->
+1. 
+
+### Blockers Requiring Resolution
+<!-- Issues that must be resolved before execution -->
+1. 
+
+---
+
+## Review Sign-Off
+
+| Reviewer | Date | Decision |
+|----------|------|----------|
+| Self-review | | [ ] Proceed / [ ] Block |
+| Peer review (if required) | | [ ] Proceed / [ ] Block |
+
+**Proceed only if all blocking items are resolved.**

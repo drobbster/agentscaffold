@@ -1,0 +1,210 @@
+# Interrupt Handling Standards (Embedded)
+
+This document defines standards for ISR design, deferred work patterns, priority assignment, and shared state protection in embedded firmware.
+
+---
+
+## Core Principle: ISRs Must Be Short, Safe, and Predictable
+
+An interrupt service routine must complete in bounded time, perform no blocking operations, and communicate with the main application through lock-free mechanisms only.
+
+---
+
+## ISR Duration Budget
+
+| Category | Max Duration | Rationale |
+|----------|-------------|-----------|
+| Fast ISR (DMA complete, GPIO) | < 1 us | Minimize blocking of lower-priority IRQs |
+| Medium ISR (UART byte, SPI) | < 5 us | Acceptable for most systems |
+| Complex ISR (protocol decode) | < 10 us | Only if no higher-priority ISR exists |
+| **Hard limit** | < 50 us | Any ISR exceeding this must be redesigned |
+
+If processing requires more time, defer to a task (see Deferred Work Patterns below).
+
+---
+
+## ISR Rules
+
+### Mandatory
+
+- [ ] No heap allocation (`malloc`, `free`, `new`) in ISR
+- [ ] No blocking calls (`sleep`, `mutex_lock`, `semaphore_wait`) in ISR
+- [ ] No `printf` or formatted string output in ISR
+- [ ] No floating-point arithmetic in ISR (unless FPU lazy stacking is enabled and understood)
+- [ ] All ISR code paths have bounded execution time
+- [ ] ISR clears the interrupt source before returning
+- [ ] Shared variables accessed in ISR are declared `volatile`
+
+### Recommended
+
+- [ ] ISR sets a flag or enqueues data, then returns
+- [ ] Heavy processing done in task context via deferred work
+- [ ] ISR entry/exit timing instrumented (GPIO toggle or DWT cycle counter)
+- [ ] ISR count/rate monitored for anomaly detection
+
+---
+
+## Deferred Work Patterns
+
+### Pattern 1: Flag and Poll
+
+Simplest pattern for low-frequency events.
+
+```c
+static volatile bool data_ready = false;
+
+void UART_IRQHandler(void) {
+    uart_read_byte_into_buffer();
+    data_ready = true;
+    clear_irq_pending();
+}
+
+void main_loop(void) {
+    while (1) {
+        if (data_ready) {
+            data_ready = false;
+            process_uart_data();
+        }
+        enter_sleep();
+    }
+}
+```
+
+### Pattern 2: Queue (ISR to Task)
+
+For high-frequency events or RTOS-based systems.
+
+```c
+static ring_buf_t sensor_queue;
+
+void ADC_IRQHandler(void) {
+    uint16_t sample = ADC->DR;
+    ring_put(&sensor_queue, sample);
+    clear_irq_pending();
+}
+
+void sensor_task(void *arg) {
+    uint16_t sample;
+    while (1) {
+        if (ring_get(&sensor_queue, &sample)) {
+            process_sample(sample);
+        } else {
+            os_task_yield();
+        }
+    }
+}
+```
+
+### Pattern 3: Semaphore Signal (RTOS)
+
+For waking a blocked task from ISR.
+
+```c
+void DMA_Complete_IRQHandler(void) {
+    clear_dma_irq();
+    os_semaphore_give_from_isr(&dma_sem);
+}
+
+void transfer_task(void *arg) {
+    while (1) {
+        os_semaphore_take(&dma_sem, OS_WAIT_FOREVER);
+        process_dma_buffer();
+    }
+}
+```
+
+### Pattern Selection Guide
+
+| Event Rate | Latency Requirement | Pattern | RTOS Required? |
+|-----------|---------------------|---------|----------------|
+| < 10 Hz | Soft (ms) | Flag and poll | No |
+| 10-1000 Hz | Medium (100 us) | Queue | No |
+| > 1 kHz | Hard (< 100 us) | Direct ISR processing | No |
+| Any | Wake blocked task | Semaphore signal | Yes |
+
+---
+
+## Priority Assignment
+
+### Priority Scheme (ARM NVIC Example)
+
+| Priority Level | Assignment | Preempts |
+|----------------|-----------|----------|
+| 0 (highest) | Safety-critical (watchdog, fault) | All |
+| 1 | Hard real-time (motor control, ADC) | 2-15 |
+| 2 | Communication (SPI, I2C, UART) | 3-15 |
+| 3 | Timer ticks (RTOS systick) | 4-15 |
+| 4-15 | Application interrupts | Lower only |
+
+### Priority Assignment Rules
+
+- [ ] Higher priority = more time-critical, not more important
+- [ ] No two unrelated ISRs share the same priority (unless grouping is intentional)
+- [ ] RTOS syscall-safe API boundary is documented (e.g., `configMAX_SYSCALL_INTERRUPT_PRIORITY` in FreeRTOS)
+- [ ] ISRs above the RTOS threshold do NOT call any RTOS API
+- [ ] Priority scheme is documented in a project-level table
+
+---
+
+## Shared State Protection
+
+### Critical Section Patterns
+
+| Pattern | Scope | Duration Limit | Use Case |
+|---------|-------|---------------|----------|
+| Disable all IRQs | Global | < 5 us | Atomic multi-word update |
+| Disable specific IRQ | Single peripheral | < 10 us | Peripheral state update |
+| RTOS critical section | Tasks + ISRs below threshold | < 10 us | Shared data structure |
+| Atomic operations | Single word | 0 (hardware) | Counters, flags |
+
+### Protection Rules
+
+- [ ] Every variable shared between ISR and task has documented protection
+- [ ] `volatile` keyword used on all ISR-modified variables
+- [ ] Critical sections are as short as possible (no computation inside)
+- [ ] No nested critical sections (or nesting count is implemented)
+- [ ] Atomic operations preferred over critical sections for simple flags
+
+### Atomic Access Pattern
+
+```c
+/* Use compiler intrinsics for atomic operations */
+__atomic_store_n(&shared_flag, 1, __ATOMIC_RELEASE);
+uint32_t val = __atomic_load_n(&shared_counter, __ATOMIC_ACQUIRE);
+__atomic_add_fetch(&event_count, 1, __ATOMIC_RELAXED);
+```
+
+---
+
+## ISR Testing
+
+### Testing Approach
+
+| Test Type | Method | Coverage |
+|-----------|--------|----------|
+| ISR timing | GPIO + oscilloscope | WCET verification |
+| ISR stress | Trigger at max rate for 60s | Stability under load |
+| Queue overflow | Fill queue, verify graceful handling | Error path |
+| Priority inversion | Simulate contention scenario | Deadlock detection |
+| Spurious IRQ | Trigger IRQ without valid source | Robustness |
+
+### Testing Checklist
+
+- [ ] Each ISR has measured WCET on target hardware
+- [ ] ISR storm test passed (max rate for > 1 minute)
+- [ ] Deferred work queue tested at capacity
+- [ ] ISR disabled/enabled sequence tested (no missed interrupts)
+- [ ] Nested interrupt scenario tested (if nesting is used)
+
+---
+
+## Common Anti-Patterns
+
+| Anti-Pattern | Risk | Fix |
+|-------------|------|-----|
+| `printf` in ISR | Blocks for ms, corrupts output | Log to buffer, print in task |
+| `malloc` in ISR | Non-deterministic timing | Pre-allocate from pool |
+| Long computation in ISR | Blocks all lower-priority IRQs | Defer to task |
+| Disabling IRQs for > 100 us | Missed interrupts, jitter | Redesign shared data access |
+| Reading multi-byte value without protection | Torn read | Atomic or critical section |
+| Clearing IRQ flag after processing | Re-entry if slow | Clear flag first |

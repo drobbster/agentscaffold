@@ -1,0 +1,113 @@
+# Model Lifecycle Review
+
+Use this prompt template to review ML model development, validation, deployment, monitoring, and retirement decisions.
+
+---
+
+## Reviewer Persona
+
+You are a **Senior ML Engineer** with 10+ years experience managing ML systems in production at scale. You have deep expertise in training pipelines, model serving infrastructure, and the failure modes that emerge after deployment.
+
+---
+
+## Model Lifecycle Review for Plan [PLAN_NUMBER]
+
+### Phase 1: Problem Framing
+
+- [ ] Business objective is clearly defined and measurable
+- [ ] Success metrics are defined before training begins
+- [ ] Baseline model or heuristic is established for comparison
+- [ ] Offline metric (training) maps to online metric (production) -- document the mapping
+- [ ] Data requirements are documented (volume, features, labels, freshness)
+
+| Metric | Offline Proxy | Online Target | Acceptable Threshold |
+|--------|---------------|---------------|---------------------|
+| | | | |
+
+---
+
+### Phase 2: Training Pipeline
+
+**Q2.1: Data preparation**
+
+- [ ] Training/validation/test splits are reproducible
+- [ ] No data leakage between splits (temporal splits for time-series)
+- [ ] Feature engineering is applied identically in training and serving
+- [ ] Data versioning tracks which data was used for each model
+- [ ] Class imbalance is addressed if applicable
+
+**Q2.2: Training infrastructure**
+
+- [ ] Training is reproducible (fixed seeds, deterministic operations where possible)
+- [ ] Hyperparameter search space is documented
+- [ ] Resource requirements are estimated (GPU hours, memory)
+- [ ] Training can be resumed from checkpoints
+- [ ] All experiments are tracked (MLflow, W&B)
+
+**Q2.3: Validation**
+
+| Validation Type | Performed? | Results | Pass/Fail |
+|-----------------|------------|---------|-----------|
+| Hold-out test set | | | |
+| Cross-validation | | | |
+| Time-series walk-forward | | | |
+| Out-of-distribution | | | |
+| Adversarial examples | | | |
+
+---
+
+### Phase 3: Deployment Readiness
+
+- [ ] Model is packaged with all dependencies pinned
+- [ ] Inference latency meets SLA (measure P50, P95, P99)
+- [ ] Memory footprint is within serving budget
+- [ ] Model can be loaded and initialized in < 30 seconds
+- [ ] A/B testing infrastructure is ready (or canary deployment)
+- [ ] Rollback procedure is documented and tested
+
+| Metric | Requirement | Measured | Pass? |
+|--------|-------------|----------|-------|
+| P50 latency | | | |
+| P95 latency | | | |
+| P99 latency | | | |
+| Memory (RSS) | | | |
+| Throughput (req/s) | | | |
+
+---
+
+### Phase 4: Monitoring
+
+- [ ] Prediction distribution is monitored (detect drift in outputs)
+- [ ] Feature distribution is monitored (detect drift in inputs)
+- [ ] Model performance is tracked against ground truth (when available)
+- [ ] Alerting thresholds are defined for each monitoring signal
+- [ ] Dashboard exists for model health at a glance
+
+| Monitor | Signal | Alert Threshold | Escalation |
+|---------|--------|-----------------|------------|
+| Prediction drift | | | |
+| Feature drift | | | |
+| Latency degradation | | | |
+| Error rate | | | |
+| Ground truth accuracy | | | |
+
+---
+
+### Phase 5: Retirement and Replacement
+
+- [ ] Model retirement criteria are defined upfront
+- [ ] Shadow mode comparison available for replacement models
+- [ ] Transition plan minimizes disruption to downstream consumers
+- [ ] Historical predictions are archived for audit
+
+---
+
+## Decision Matrix
+
+| Phase | Pass | Modify | Block |
+|-------|------|--------|-------|
+| Problem framing | Metrics clear | Minor gaps | No baseline |
+| Training pipeline | Reproducible | Some gaps | Leakage found |
+| Deployment | SLA met | Minor optimization | Latency blocker |
+| Monitoring | Comprehensive | Gaps documented | No monitoring |
+| Retirement | Plan exists | Partial plan | No plan |

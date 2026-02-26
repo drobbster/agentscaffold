@@ -1,0 +1,182 @@
+# Performance Budgets
+
+This document defines performance targets and optimization patterns for web applications. All new features must meet these budgets.
+
+---
+
+## Core Web Vitals Targets
+
+| Metric | Target | Acceptable | Poor |
+|--------|--------|------------|------|
+| Largest Contentful Paint (LCP) | < 2.5s | 2.5-4.0s | > 4.0s |
+| Cumulative Layout Shift (CLS) | < 0.1 | 0.1-0.25 | > 0.25 |
+| First Input Delay (FID) | < 100ms | 100-300ms | > 300ms |
+| Interaction to Next Paint (INP) | < 200ms | 200-500ms | > 500ms |
+| Time to First Byte (TTFB) | < 800ms | 800-1800ms | > 1800ms |
+
+---
+
+## Bundle Size Budgets
+
+### Per-Route Budgets
+
+| Route Type | JS Budget (gzipped) | CSS Budget (gzipped) |
+|------------|---------------------|----------------------|
+| Landing page | < 100 KB | < 30 KB |
+| Dashboard | < 200 KB | < 50 KB |
+| Complex feature page | < 300 KB | < 60 KB |
+| Shared (vendor) | < 150 KB | < 20 KB |
+
+### Total Application Budget
+
+| Metric | Target |
+|--------|--------|
+| Total JS (gzipped) | < 500 KB |
+| Total CSS (gzipped) | < 100 KB |
+| Total initial load | < 1 MB |
+
+### Monitoring
+
+```bash
+# Analyze bundle size
+npx webpack-bundle-analyzer stats.json
+
+# Size limit in CI
+npx size-limit
+
+# Lighthouse budget
+npx lighthouse http://localhost:3000 --budget-path=budget.json
+```
+
+---
+
+## Loading Performance
+
+### Image Optimization
+
+| Image Type | Format | Max Size | Optimization |
+|------------|--------|----------|--------------|
+| Hero/banner | WebP with JPEG fallback | 200 KB | Responsive srcset |
+| Thumbnails | WebP | 30 KB | Fixed dimensions |
+| Icons | SVG (inline or sprite) | 5 KB | Minified |
+| Photographs | WebP/AVIF | 100 KB per breakpoint | Progressive loading |
+
+```html
+<!-- Responsive image with lazy loading -->
+<img
+  srcset="image-400.webp 400w, image-800.webp 800w, image-1200.webp 1200w"
+  sizes="(max-width: 600px) 400px, (max-width: 1000px) 800px, 1200px"
+  src="image-800.webp"
+  alt="Descriptive alt text"
+  loading="lazy"
+  decoding="async"
+  width="800"
+  height="600"
+/>
+```
+
+### Code Splitting
+
+- [ ] Route-based code splitting (dynamic imports for each route)
+- [ ] Component-level splitting for heavy components (charts, editors)
+- [ ] Vendor chunk separation (node_modules isolated)
+- [ ] No single chunk exceeds 150 KB gzipped
+
+```typescript
+// Route-level splitting
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+
+// Component-level splitting
+const ChartWidget = lazy(() => import('./components/ChartWidget'));
+```
+
+### Resource Loading Priority
+
+| Resource | Priority | Strategy |
+|----------|----------|----------|
+| Critical CSS | Highest | Inline in `<head>` |
+| Main JS bundle | High | `<script>` with preload |
+| Web fonts | High | `font-display: swap` + preload |
+| Below-fold images | Low | `loading="lazy"` |
+| Analytics | Low | `defer` or `async` |
+| Third-party widgets | Lowest | Lazy load on interaction |
+
+---
+
+## Runtime Performance
+
+### Rendering Budget
+
+| Operation | Budget | Approach |
+|-----------|--------|----------|
+| Initial render | < 100ms | Server-side rendering or static generation |
+| Re-render (data update) | < 16ms (60fps) | Virtual DOM diffing, memoization |
+| List rendering (100+ items) | < 50ms | Virtualization (react-window/tanstack-virtual) |
+| Animation frame | < 16ms | CSS transforms, requestAnimationFrame |
+
+### Memoization Patterns
+
+```typescript
+// Memoize expensive computations
+const processedData = useMemo(() => {
+  return heavyTransform(rawData);
+}, [rawData]);
+
+// Memoize callback to prevent child re-renders
+const handleClick = useCallback((id: string) => {
+  dispatch({ type: 'SELECT', id });
+}, [dispatch]);
+
+// Memoize component to prevent unnecessary re-renders
+const DataRow = memo(({ item }: { item: DataItem }) => {
+  return <tr>...</tr>;
+});
+```
+
+### Virtualization for Large Lists
+
+- [ ] Lists with > 50 items use virtualization
+- [ ] Tables with > 100 rows use virtualization
+- [ ] Grid layouts with > 30 items use virtualization
+
+---
+
+## Network Performance
+
+### API Request Budgets
+
+| Request Type | Target Latency | Max Payload |
+|--------------|----------------|-------------|
+| Page data fetch | < 200ms | 50 KB |
+| Search/filter | < 300ms | 100 KB |
+| Form submission | < 500ms | 10 KB |
+| File upload | Progress indicator | Chunked |
+
+### Caching Strategy
+
+| Resource | Cache Duration | Strategy |
+|----------|---------------|----------|
+| Static assets (JS, CSS) | 1 year | Fingerprinted filenames |
+| API responses | Varies | stale-while-revalidate |
+| Images | 1 month | CDN with versioning |
+| HTML | No cache | Server-rendered fresh |
+
+---
+
+## Performance Testing in CI
+
+```yaml
+# Lighthouse CI configuration
+- name: Performance Audit
+  run: |
+    npx lhci autorun --config=lighthouserc.json
+  env:
+    LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_TOKEN }}
+```
+
+### Performance Regression Detection
+
+- [ ] Lighthouse scores checked on every PR
+- [ ] Bundle size diff reported on every PR
+- [ ] Performance budget violations block merge
+- [ ] Core Web Vitals monitored in production (RUM)

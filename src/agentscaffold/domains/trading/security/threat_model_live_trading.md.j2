@@ -1,0 +1,162 @@
+# Threat Model: Live Trading System
+
+## Overview
+
+| Field | Value |
+|-------|-------|
+| Component | Live Trading Execution and Broker Integration |
+| Author | {{ project_name }} Team |
+| Date | {{ date }} |
+| Version | 1.0 |
+| Status | Draft |
+
+## 1. Description
+
+This threat model covers the live trading execution pipeline, including broker API integration, order management, position tracking, and real-time risk controls.
+
+## 2. Assets
+
+| Asset | Classification | Impact if Compromised |
+|-------|----------------|----------------------|
+| Broker API credentials | Restricted | Critical -- unauthorized trades |
+| Trading account balance | Restricted | Critical -- financial loss |
+| Position state | Confidential | High -- incorrect risk exposure |
+| Order history | Confidential | High -- regulatory violation |
+| Strategy parameters | Confidential | Medium -- alpha leakage |
+| Market data feeds | Internal | Medium -- trading on stale data |
+
+## 3. Data Flow
+
+```
+Market Data Feed -> Strategy Engine -> Risk Manager -> Order Router -> Broker API
+                                                                         |
+State Store <-- Position Tracker <-- Fill Handler <-- Execution Report --+
+```
+
+### Trust Boundaries
+
+| Boundary | Description | Controls |
+|----------|-------------|----------|
+| Broker API | External network boundary | TLS, API key auth, IP allowlist |
+| Strategy -> Risk | Internal logic boundary | Risk limits enforced before execution |
+| Risk -> Execution | Approval boundary | No order without risk approval |
+| Market Data | External feed boundary | Staleness detection, validation |
+
+## 4. Threat Actors
+
+| Actor | Capability | Motivation | Likelihood |
+|-------|------------|------------|------------|
+| External Attacker | Network access, public exploits | Financial gain, credential theft | Medium |
+| Compromised Dependency | Code execution via supply chain | Data exfiltration | Low |
+| Rogue Strategy | Excessive trading, loss generation | Misconfiguration | Medium |
+| Stale Data Feed | Delayed/incorrect market data | Infrastructure failure | Medium |
+
+## 5. Attack Vectors
+
+### Vector 1: Broker Credential Theft
+
+| Field | Value |
+|-------|-------|
+| Description | Attacker obtains broker API keys and executes unauthorized trades |
+| Prerequisites | Access to environment variables, config files, or memory |
+| STRIDE Category | Spoofing / Elevation of Privilege |
+| Likelihood | Medium |
+| Impact | Critical |
+| Risk Score | High |
+
+**Mitigation:**
+- [ ] Store credentials in secrets manager (Vault, AWS Secrets Manager)
+- [ ] Rotate API keys regularly (90-day maximum)
+- [ ] IP allowlisting on broker API
+- [ ] Separate read-only and trading API keys
+- [ ] Audit all credential access
+
+### Vector 2: Runaway Strategy (Excessive Orders)
+
+| Field | Value |
+|-------|-------|
+| Description | Misconfigured strategy generates excessive orders causing financial loss |
+| Prerequisites | Strategy deployment without proper risk limits |
+| STRIDE Category | Denial of Service (financial) |
+| Likelihood | Medium |
+| Impact | High |
+| Risk Score | High |
+
+**Mitigation:**
+- [ ] Per-strategy order rate limits
+- [ ] Daily loss limits with automatic kill switch
+- [ ] Maximum position size limits
+- [ ] Maximum number of open positions
+- [ ] Human approval for strategy parameter changes
+
+### Vector 3: Market Data Manipulation
+
+| Field | Value |
+|-------|-------|
+| Description | Corrupted or delayed market data leads to incorrect trading decisions |
+| Prerequisites | Feed latency, provider outage, or man-in-the-middle |
+| STRIDE Category | Tampering |
+| Likelihood | Medium |
+| Impact | High |
+| Risk Score | Medium |
+
+**Mitigation:**
+- [ ] Staleness detection (reject data older than threshold)
+- [ ] Cross-feed validation (compare multiple sources)
+- [ ] Automatic halt on data quality degradation
+- [ ] Default to conservative mode when data quality is low
+
+### Vector 4: State Corruption
+
+| Field | Value |
+|-------|-------|
+| Description | Position state becomes inconsistent between modules, leading to incorrect risk calculations |
+| Prerequisites | Race condition, partial write, or crash during state update |
+| STRIDE Category | Tampering / Repudiation |
+| Likelihood | Low |
+| Impact | Critical |
+| Risk Score | Medium |
+
+**Mitigation:**
+- [ ] Single source of truth for position state
+- [ ] Idempotent state updates
+- [ ] Periodic reconciliation with broker
+- [ ] Audit trail for all state changes
+- [ ] Crash recovery from journal log
+
+## 6. Security Controls
+
+### Existing Controls
+
+| Control | Type | Effectiveness |
+|---------|------|---------------|
+| TLS for broker API | Preventive | High |
+| Environment variable secrets | Preventive | Medium |
+| Risk limit checks | Preventive | High |
+| Decision audit logging | Detective | High |
+
+### Required Controls
+
+| Control | Priority | Status |
+|---------|----------|--------|
+| Secrets manager integration | P1 | Pending |
+| API key rotation automation | P2 | Pending |
+| Rate limiting per strategy | P1 | Pending |
+| Automated reconciliation | P2 | Pending |
+| Kill switch (manual + automatic) | P1 | Pending |
+
+## 7. Residual Risk
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| Zero-day in broker API | Very Low | Critical | Accept -- monitor vendor advisories |
+| Flash crash faster than kill switch | Low | High | Accept -- use hardware circuit breakers |
+| Insider with production access | Low | Critical | Further Mitigate -- least privilege, audit |
+
+## 8. Review Schedule
+
+| Review Type | Frequency | Next Review |
+|-------------|-----------|-------------|
+| Threat Model Update | Quarterly | TBD |
+| Control Verification | Monthly | TBD |
+| Penetration Testing | Annually | TBD |

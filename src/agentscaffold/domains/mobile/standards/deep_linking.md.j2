@@ -1,0 +1,204 @@
+# Deep Linking Standards
+
+This document defines patterns for implementing deep links, Universal Links (iOS), and App Links (Android) in mobile applications.
+
+---
+
+## Link Types
+
+| Type | Platform | Use Case |
+|------|----------|----------|
+| Custom URL scheme | Both | Legacy; app-to-app |
+| Universal Links | iOS | Web fallback, SEO |
+| App Links | Android | Web fallback, SEO |
+| Deferred deep links | Both | Install attribution |
+| Firebase Dynamic Links | Both | Cross-platform (deprecated 2025) |
+
+---
+
+## Universal Links (iOS)
+
+### Requirements
+
+- [ ] Apple App Site Association (AASA) file hosted at `https://<domain>/.well-known/apple-app-site-association`
+- [ ] AASA served with `application/json` content type
+- [ ] HTTPS with valid certificate
+- [ ] Associated domains entitlement in app (e.g., `applinks:example.com`)
+- [ ] Handles links when app installed; falls back to web when not
+
+### AASA Format
+
+```json
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "TEAMID.com.example.app",
+        "paths": [
+          "/products/*",
+          "/orders/*",
+          "/user/profile",
+          "NOT /admin/*"
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Implementation Checklist
+
+- [ ] AASA validated with Apple's validator
+- [ ] `application(_:continue:restorationHandler:)` or `scene(_:continue:)` handles incoming URL
+- [ ] Parse path and route to correct screen with context
+- [ ] Handle case when app is not installed (web fallback)
+
+---
+
+## App Links (Android)
+
+### Requirements
+
+- [ ] Digital Asset Links file at `https://<domain>/.well-known/assetlinks.json`
+- [ ] assetlinks.json includes app package and signing certificate fingerprint
+- [ ] `android:autoVerify="true"` on intent-filter
+- [ ] Handles links when app installed; falls back to web when not
+
+### assetlinks.json Format
+
+```json
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.example.app",
+      "sha256_cert_fingerprints": [
+        "AA:BB:CC:..."
+      ]
+    }
+  }
+]
+```
+
+### Implementation Checklist
+
+- [ ] assetlinks.json validated with Google's statement list generator
+- [ ] Intent filter in AndroidManifest for http/https
+- [ ] `Activity` with `android:launchMode` appropriate for flow (singleTask for main)
+- [ ] Handle `Intent` in `onNewIntent` for existing activity
+- [ ] Verify link with `AppLinks.getAppLinkFromIntent(intent)` before handling
+
+---
+
+## Routing Patterns
+
+### Path Structure
+
+```
+/<resource>/<id>[/<sub-resource>/<sub-id>]
+```
+
+Examples:
+- `/products/123`
+- `/orders/456/items`
+- `/user/profile`
+- `/search?q=shoes`
+
+### Router Implementation
+
+- [ ] Central router or navigation handler for all deep link paths
+- [ ] Path parameters extracted and validated
+- [ ] Query parameters supported for filters, search
+- [ ] Invalid paths redirect to home or 404 screen
+- [ ] Log deep link opens for analytics and debugging
+
+### Example Router (Pseudocode)
+
+```swift
+func handleDeepLink(url: URL) -> Bool {
+  guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+        let path = components.path else { return false }
+  let segments = path.split(separator: "/").map(String.init)
+  switch (segments.first, segments.dropFirst()) {
+  case ("products", [let id]): navigateToProduct(id: id); return true
+  case ("orders", [let id]): navigateToOrder(id: id); return true
+  default: return false
+  }
+}
+```
+
+---
+
+## Fallback to Web
+
+### When App Not Installed
+
+- [ ] Same URL works in browser (Universal Links / App Links)
+- [ ] Web page shows "Open in App" with store links
+- [ ] Store links use correct scheme (itms-apps, market)
+- [ ] After install, deferred deep link restores context if supported
+
+### When App Installed
+
+- [ ] Link opens app directly (no intermediate web page)
+- [ ] User is taken to correct in-app destination
+- [ ] Back navigation behaves correctly
+
+---
+
+## Deferred Deep Links
+
+### Use Case
+
+User clicks link on device without app installed. After installing and opening, user should land on the intended content.
+
+### Implementation Options
+
+| Provider | Notes |
+|----------|-------|
+| Branch.io | Full-featured; attribution |
+| Adjust | Attribution + deferred |
+| Firebase Dynamic Links | Deprecated Aug 2025 |
+| Custom | Store click ID in cookie; pass to app on first launch |
+
+### Requirements
+
+- [ ] Click ID or fingerprint stored (cookie, redirect)
+- [ ] On first app launch, check for pending deferred link
+- [ ] Fetch link data from server using click ID
+- [ ] Navigate to destination
+- [ ] Clear deferred state after handling
+- [ ] Timeout (e.g., 24 hours) for stale deferred links
+
+---
+
+## Attribution
+
+### Use Cases
+
+- Campaign tracking (which ad drove install)
+- Referral tracking (which user invited)
+- Content sharing (which post was shared)
+
+### Best Practices
+
+- [ ] Use dedicated link parameters (utm_source, utm_campaign, or custom)
+- [ ] Persist attribution on first launch
+- [ ] Do not overwrite attribution after install (first-touch)
+- [ ] Respect user privacy; do not share PII in links
+- [ ] Document attribution parameters in analytics
+
+---
+
+## Checklist Summary
+
+| Area | Required |
+|------|----------|
+| Universal Links (iOS) | AASA, entitlement, handler |
+| App Links (Android) | assetlinks.json, intent filter, verification |
+| Central router | Path parsing, validation |
+| Web fallback | Same URL works in browser |
+| Deferred links | If install attribution needed |
+| Attribution | Documented, privacy-safe |

@@ -1,0 +1,198 @@
+# Quant Expert Code Review
+
+Assume the persona of a senior quantitative researcher with 15+ years experience at a top-tier quant firm. You have deep expertise in statistical arbitrage, market microstructure, and systematic strategy development.
+
+**Core philosophy**: "If you torture the data long enough, it will confess to anything." Your job is to ensure the code represents genuine alpha, not statistical artifacts.
+
+---
+
+## What This Review Can and Cannot Do
+
+| Can Verify (Static Analysis) | Cannot Verify (Requires Execution) |
+|------------------------------|-----------------------------------|
+| Look-ahead bias patterns | Actual overfitting |
+| Rolling window min_periods | Out-of-sample performance |
+| NaN handling presence | Statistical significance |
+| Code correctness | Strategy profitability |
+| Data contract compliance | Market impact modeling accuracy |
+
+**Be honest about the limits of code review. Many quant issues only surface in backtesting or live trading.**
+
+---
+
+## Usage
+
+1. **Run any automated static analysis first** (if available)
+2. Copy this checklist into a conversation with the analysis output
+3. Replace `[MODULE]` and `[FILE]` as appropriate
+
+---
+
+## Quant Code Review for [MODULE]: [FILE]
+
+### 1. Pre-Review Context Gathering
+
+Before diving into the checklist, verify you understand the strategy's intent:
+
+- [ ] What alpha hypothesis is this code testing?
+- [ ] What is the expected Sharpe ratio and capacity?
+- [ ] What asset class and timeframe does this apply to?
+- [ ] What are the key assumptions about market structure?
+- [ ] Is this a trend-following (state-based) or mean reversion (event-based) strategy?
+
+---
+
+### 2. Look-Ahead Bias Detection (CRITICAL)
+
+Look-ahead bias is the #1 killer of backtested strategies. It occurs when the code uses information that wouldn't have been available at decision time.
+
+| Pattern | Symptom | How to Detect |
+|---------|---------|---------------|
+| Future data in calculations | Suspiciously high Sharpe | Check all `.shift()`, `.rolling()`, index alignment |
+| Point-in-time violations | Unrealistic fills | Verify data timestamps vs signal timestamps |
+| Survivorship bias | Strategy only works on "winners" | Check universe construction date-awareness |
+
+**Review checklist:**
+
+- [ ] No `shift(-N)` where N > 0 (accesses future data)
+- [ ] No `pct_change(-N)` or `diff(-N)` with negative periods
+- [ ] All rolling calculations use `min_periods` appropriately
+- [ ] No signals generated on data from future bars
+- [ ] Universe constituents are point-in-time (delisted stocks included)
+- [ ] Prices are adjusted consistently (splits, dividends)
+
+---
+
+### 3. Statistical Validity (CRITICAL -- REQUIRES EXECUTION)
+
+| Concern | What to Check | How to Verify |
+|---------|---------------|---------------|
+| Overfitting | Too many parameters for data | Walk-forward validation |
+| Data snooping | Multiple hypothesis testing | Deflated Sharpe Ratio |
+| Regime dependence | Works in all markets? | Split by market regime |
+| Sample size | Enough trades? | Statistical power analysis |
+
+---
+
+### 4. Market Microstructure Reality
+
+| Friction | Impact | How to Model |
+|----------|--------|--------------|
+| Bid-ask spread | Kills high-frequency edge | Use mid-to-mid returns with spread cost |
+| Market impact | Large orders move prices | Apply square-root impact model |
+| Slippage | Fill price != signal price | Add realistic slippage estimates |
+| Latency | Stale signals | Model decision-to-execution delay |
+| Partial fills | Can't get full size | Reduce expected capacity |
+
+**Review checklist:**
+
+- [ ] Transaction costs are parameterized (not hardcoded to zero)
+- [ ] Slippage/impact model exists or is documented as TODO
+- [ ] Execution assumptions documented in docstrings
+
+---
+
+### 5. Mathematical Correctness
+
+| Calculation | Common Error | Correct Approach |
+|-------------|--------------|------------------|
+| Returns | Arithmetic vs log | Use log for compounding, arithmetic for short horizons |
+| Volatility | Annualization | Multiply by sqrt(252) for daily, sqrt(12) for monthly |
+| Sharpe ratio | Denominator | Use excess returns over risk-free rate |
+| Correlation | Non-stationarity | Use rolling correlation, check stability |
+
+**Review checklist:**
+
+- [ ] Return calculations are consistent (log vs arithmetic)
+- [ ] Annualization factors match data frequency
+- [ ] Risk-free rate handled correctly in Sharpe calculations
+- [ ] Standard deviation calculated with ddof=1 (sample std)
+- [ ] Numerical stability for edge cases (division by zero, log of zero)
+- [ ] No off-by-one errors in rolling windows
+
+---
+
+### 6. Signal Construction
+
+- [ ] Signal construction is economically intuitive
+- [ ] Signal is normalized appropriately (z-score, percentile rank)
+- [ ] NaN handling is explicit and reasonable
+- [ ] Entry and exit signals are balanced (not asymmetric bias)
+- [ ] Signal strength/confidence captured if applicable
+
+---
+
+### 7. Risk Management Integration
+
+- [ ] Position sizing is parameterized (not hardcoded)
+- [ ] Stop-loss logic doesn't introduce path-dependency artifacts
+- [ ] Leverage constraints are configurable
+- [ ] Follows traceability standards (decision_id propagation)
+
+---
+
+### 8. Code Quality for Production
+
+- [ ] No mutable default arguments
+- [ ] All edge cases handled (empty data, single row, NaN-only)
+- [ ] Type hints present and accurate
+- [ ] Docstrings document assumptions and limitations
+- [ ] Logging follows structured logging standards
+- [ ] Error messages are actionable
+- [ ] No hardcoded magic numbers (use constants/config)
+- [ ] Deterministic behavior (same input = same output)
+
+---
+
+### 9. Data Contract Compliance
+
+- [ ] Input data matches expected schema
+- [ ] Output signals follow the defined signal contract
+- [ ] Column names match conventions (lowercase, snake_case)
+- [ ] Data types are explicit (float64, int64, not object)
+
+---
+
+### 10. Testing Adequacy
+
+- [ ] Unit tests cover all code paths
+- [ ] Edge case tests (empty data, single observation, all NaN)
+- [ ] Regression tests lock known outputs
+- [ ] No test data leakage into production logic
+
+**Testing anti-patterns to flag:**
+- Tests that always pass (no assertions)
+- Tests that use production data without isolation
+- Tests that depend on external services
+- Tests that verify implementation, not behavior
+
+---
+
+### 11. Red Flags Checklist
+
+Automatic rejection triggers:
+
+- [ ] **REJECT**: Look-ahead bias detected
+- [ ] **REJECT**: Uses future data in any calculation
+- [ ] **REJECT**: Backtest Sharpe > 3.0 claimed without skepticism
+- [ ] **REJECT**: No mention of transaction costs or execution assumptions
+
+---
+
+## Summary
+
+### Verdict
+
+- [ ] **APPROVE**: Code is production-ready (for backtesting -- live requires more validation)
+- [ ] **APPROVE WITH CHANGES**: Minor issues, fix before merge
+- [ ] **REQUEST CHANGES**: Significant issues require revision
+- [ ] **REJECT**: Fundamental flaws (look-ahead bias, etc.)
+
+**Blocking (must fix):**
+1.
+
+**Non-Blocking (should fix):**
+1.
+
+**Questions for Author:**
+1.

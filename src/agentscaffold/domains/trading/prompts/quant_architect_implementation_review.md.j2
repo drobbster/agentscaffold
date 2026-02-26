@@ -1,0 +1,267 @@
+# Quant System Architect Implementation Review (Post-Execution)
+
+Use this prompt template **after implementation is complete** (code + tests + validation), as a final quality and architecture audit from the perspective of an expert-level quantitative systems architect.
+
+This review verifies that the architectural decisions made during the pre-implementation review were correctly implemented.
+
+---
+
+## Reviewer Persona
+
+You are reviewing as a **Senior Quant System Architect** with 15+ years experience building:
+- High-frequency trading systems at tier-1 firms (sub-microsecond latency)
+- Multi-strategy hedge fund platforms (100+ concurrent strategies)
+- Retail trading platforms scaled to millions of users
+- Distributed workflow orchestration systems (Airflow, Prefect, Temporal)
+- Parameter optimization pipelines for ML/quant strategies
+
+Your implementation review mindset:
+- **Contract-focused**: Does the code match what was promised?
+- **Correctness-obsessed**: Are trading semantics and accounting invariants preserved?
+- **Test-skeptical**: Do tests actually catch the bugs that matter?
+- **Scale-aware**: Will this implementation survive 100K users?
+- **Orchestration-savvy**: Is the batch vs real-time split implemented correctly?
+- **Parameter-conscious**: Are parameters validated and optimization-ready?
+
+---
+
+## Usage
+
+Apply this review to any plan involving **trading decisions, orchestration, or strategy management**:
+
+1. Read the plan file and the interface contracts it touches
+2. Read the key implementation files and their unit/integration tests
+3. Run the plan's validation commands
+4. Complete this checklist
+
+---
+
+## Output Format Guidelines
+
+Reviews must be **readable in markdown**. Follow these rules:
+
+**Use prose paragraphs for:**
+- Findings and explanations
+- Risk assessments and recommendations
+- Architectural analysis and notes
+
+**Use tables ONLY for:**
+- Pass/fail checklists (single word or short phrase per cell)
+- Numeric metrics and scores
+- Quick reference summaries where each cell is self-contained
+
+---
+
+## Implementation Review for Plan [PLAN_NUMBER]
+
+### 1. Contract-to-Code Conformance
+
+**Verify the implementation matches the published contracts exactly.**
+
+| Contract | Expected Interface/Schema | Implementation Location | Matches? | Notes |
+|----------|----------------------------|--------------------------|----------|------|
+| | | | [ ] Yes / [ ] No | |
+
+**Critical checks:**
+- [ ] Public method signatures match contracts (args, return types, exceptions)
+- [ ] Data contract schemas match (required/optional fields, enums, defaults)
+- [ ] No undocumented side effects in public APIs
+- [ ] API versioning implemented as specified
+- [ ] WebSocket message schemas match contracts
+
+---
+
+### 2. State and Accounting Correctness (Trading-Specific)
+
+**Identify the system's single source of truth for each piece of state.**
+
+| State | Source of Truth | Replicas/Views | Reconciliation Strategy | Risk |
+|-------|------------------|----------------|--------------------------|------|
+| Position open/closed | | | | |
+| Entry price | | | | |
+| Quantity/side | | | | |
+| Cash balance | | | | |
+| Portfolio NAV | | | | |
+
+**Accounting invariants (must be true):**
+- [ ] Entry/exit prices are persisted and used for P&L calculation
+- [ ] Commission and slippage are applied consistently (entry vs exit)
+- [ ] P&L uses correct sign conventions for long/short
+- [ ] Position lifecycle is consistent across modules (no split-brain)
+
+---
+
+### 3. Traceability and Auditability (Non-Negotiable)
+
+**Verify end-to-end decision trace propagation.**
+
+| Decision Point | decision_id generated? | Propagated to logs? | Propagated to trades/events? | Notes |
+|----------------|------------------------|----------------------|------------------------------|------|
+| Signal generation | | | | |
+| Risk checks | | | | |
+| Order/Fill simulation | | | | |
+| Position open/close | | | | |
+
+- [ ] Every trade has a `decision_id` (or explicit rationale why not)
+- [ ] Logs contain enough fields to reconstruct the decision chain
+- [ ] No "silent" state transitions without an audit event
+
+---
+
+### 4. Failure Mode and Recovery Review
+
+**Validate that failures are safe, loud, and recoverable.**
+
+| Failure Mode | Expected Behavior | Implemented? | Test Exists? |
+|--------------|-------------------|--------------|--------------|
+| Missing/NaN data | Raise/skip with explicit log | | |
+| Strategy exception | Fail fast + decision_id | | |
+| Risk module exception | Fail closed (no trade) | | |
+| Partial state update | Prevent or reconcile | | |
+
+**Recovery questions:**
+- [ ] Can state be reconstructed from the journal/logs alone?
+- [ ] Is the system idempotent on replay (same inputs -> same outputs)?
+- [ ] Are there reconciliation hooks between state stores?
+
+---
+
+### 5. Performance and Scalability Reality Check
+
+| Hot Path | Current Implementation | Bottleneck | Optimization Path |
+|----------|------------------------|------------|-------------------|
+| Strategy evaluation | | | |
+| Risk checks | | | |
+| Event logging | | | |
+
+**Scale projection: 1 user -> 100K users**
+
+| Subsystem | Current Model | At 100K Users | Required Change |
+|----------|---------------|---------------|-----------------|
+| State storage | | | |
+| Compute isolation | | | |
+| Backtest workloads | | | |
+
+---
+
+### 6. Test Adequacy (Quant/Trading Standard)
+
+**Tests must fail when the trading/accounting semantics break.**
+
+| Risk | Test Coverage Present? | Missing Test |
+|------|-------------------------|--------------|
+| entry_price removed/unused | [ ] | |
+| TradeLog vs RiskManager desync | [ ] | |
+| Trailing stop extreme tracking | [ ] | |
+| End-of-backtest close logic | [ ] | |
+| Slippage/commission correctness | [ ] | |
+
+---
+
+### 7. Service Orchestration Implementation Review
+
+**Q7.1: Layer classification verification**
+
+| Operation | Planned Layer | Implemented Layer | Correct? |
+|-----------|---------------|-------------------|----------|
+| | Prefect/FastAPI | | [ ] Yes / [ ] No |
+
+**Q7.2: Job lifecycle implementation**
+
+| Requirement | Implemented? | Evidence | Test Exists? |
+|-------------|--------------|----------|--------------|
+| Job submission endpoint | | | |
+| Progress tracking | | | |
+| Cancellation support | | | |
+| Result persistence | | | |
+
+---
+
+### 8. Strategy Architecture Implementation Review
+
+**Q8.1: Contract compliance verification**
+
+| Strategy | Extends ABC? | generate_signals() correct? | Returns valid Signal? | Stateless? |
+|----------|--------------|-----------------------------|-----------------------|------------|
+| | | | | |
+
+**Q8.2: Parameter validation verification**
+
+| Strategy | Parameter | Type Annotation? | Bounds Validated? | Serializable? |
+|----------|-----------|------------------|-------------------|---------------|
+| | | | | |
+
+---
+
+### 9. Parameter Management Implementation Review
+
+**Q9.1: Optimization workflow verification**
+
+| Requirement | Implemented? | Evidence | Test Exists? |
+|-------------|--------------|----------|--------------|
+| Grid search compatible | | | |
+| Random search compatible | | | |
+| Bayesian optimization compatible | | | |
+| Objective function defined | | | |
+
+---
+
+### 10. Code Design Quality Verification
+
+**Q10.1: SOLID principles verification**
+
+| Principle | Concern | Compliance | Evidence |
+|-----------|---------|------------|----------|
+| Single Responsibility | Each class does one thing | [ ] Yes / [ ] No | |
+| Open/Closed | Extended without modification | [ ] Yes / [ ] No | |
+| Liskov Substitution | Subclasses replaceable | [ ] Yes / [ ] No | |
+| Interface Segregation | Minimal interfaces | [ ] Yes / [ ] No | |
+| Dependency Inversion | Depends on abstractions | [ ] Yes / [ ] No | |
+
+---
+
+## Implementation Review Decision Matrix
+
+| Category | Pass | Pass with Follow-ups | Modify | Escalate |
+|----------|------|----------------------|--------|----------|
+| Contract conformance | Exact match | Minor doc gaps | Breaking mismatch | |
+| State/accounting | All invariants hold | Edge cases noted | Accounting bug | |
+| Traceability | Full chain | Minor gaps | Missing decision_id | |
+| Failure modes | All handled | Some missing | Silent failures | |
+| Performance | No blockers | Optimization noted | Architectural issue | |
+| Test adequacy | All risks covered | Gaps documented | Critical gaps | |
+| Service orchestration | Correct layer | Minor coordination | Wrong abstraction | |
+| Strategy architecture | Contract compliant | Minor gaps | Breaking contract | |
+| Parameter management | Schema complete | Gaps documented | Optimization blocked | |
+| Code design quality | Standards followed | Minor refactoring | Major issues | |
+
+---
+
+## Implementation Review Verdict
+
+- [ ] **Pass**: Implementation matches contracts and is production-grade for current phase
+- [ ] **Pass with Follow-ups**: Non-blocking gaps; add backlog items
+- [ ] **Modify**: Blocking issues; patch before marking plan complete
+- [ ] **Escalate**: Architectural concern requires human decision
+
+**Blocking Issues:**
+1.
+2.
+3.
+
+**Follow-ups / Backlog Items:**
+1.
+2.
+3.
+
+**Implementation Quality Score:**
+
+| Dimension | Score (1-5) | Notes |
+|-----------|-------------|-------|
+| Correctness | | |
+| Testability | | |
+| Maintainability | | |
+| Performance | | |
+| Documentation | | |
+
+**Architect Notes:**

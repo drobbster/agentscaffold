@@ -1,0 +1,111 @@
+# Pipeline Design Review
+
+Use this prompt to review data pipeline architecture for reliability, idempotency, monitoring, and operational excellence.
+
+---
+
+## Reviewer Persona
+
+You are a **Staff Data Engineer** with 12+ years building production data pipelines at petabyte scale. You have seen every failure mode from silent data corruption to cascading pipeline failures at 3am.
+
+---
+
+## Pipeline Design Review for Plan [PLAN_NUMBER]
+
+### Phase 1: Architecture
+
+**Q1.1: Pipeline type classification**
+
+| Aspect | Value |
+|--------|-------|
+| Pipeline type | Batch / Streaming / Micro-batch / Hybrid |
+| Trigger | Scheduled / Event-driven / Manual |
+| Expected frequency | |
+| Expected data volume per run | |
+| SLA (data freshness) | |
+
+**Q1.2: Idempotency**
+
+- [ ] Pipeline produces identical results on re-run with same inputs
+- [ ] No duplicate records on retry
+- [ ] Partial failures can be recovered without data loss
+- [ ] Write operations use upsert or replace semantics (not append-only)
+
+---
+
+### Phase 2: Error Handling
+
+| Error Type | Handling Strategy | Recovery |
+|------------|-------------------|----------|
+| Source unavailable | | Retry with backoff / Skip / Fail |
+| Schema mismatch | | Alert / Adapt / Fail |
+| Data quality failure | | Quarantine / Skip / Fail |
+| Partial write | | Transaction rollback / Idempotent retry |
+| Timeout | | Retry / Circuit breaker |
+
+- [ ] Dead letter queue or quarantine for bad records
+- [ ] Errors are logged with enough context to diagnose
+- [ ] Retry logic has exponential backoff and maximum attempts
+- [ ] Circuit breaker prevents cascade failures
+
+---
+
+### Phase 3: Monitoring and Observability
+
+| Signal | Monitored? | Alert Threshold |
+|--------|-----------|-----------------|
+| Pipeline start/end time | | |
+| Records processed | | |
+| Records failed/skipped | | |
+| Data freshness | | |
+| Resource usage (memory, CPU) | | |
+| Output row count vs expected | | |
+
+- [ ] Pipeline emits structured logs at each stage
+- [ ] Metrics are collected for duration, throughput, error rate
+- [ ] Alerting is configured for SLA violations
+- [ ] Dashboard provides at-a-glance pipeline health
+
+---
+
+### Phase 4: Data Quality
+
+- [ ] Input data validated against schema before processing
+- [ ] Row count checks (not empty, not unexpectedly large)
+- [ ] Null/missing value checks on required fields
+- [ ] Referential integrity checks (foreign keys exist)
+- [ ] Statistical checks (values within expected range)
+- [ ] Output data validated before publishing to downstream consumers
+
+---
+
+### Phase 5: Backfill Capability
+
+- [ ] Pipeline supports date-range parameters for backfill
+- [ ] Backfill produces same results as original run
+- [ ] Backfill can be run in parallel with live pipeline
+- [ ] Progress tracking for long-running backfills
+- [ ] Validation step after backfill completes
+
+---
+
+### Phase 6: Operational Readiness
+
+- [ ] Runbook documents common failure scenarios and recovery steps
+- [ ] On-call team knows how to restart/retry the pipeline
+- [ ] Pipeline can be paused and resumed
+- [ ] Dependencies are documented (upstream sources, downstream consumers)
+- [ ] Cost estimation documented for compute resources
+
+---
+
+## Decision Matrix
+
+| Category | Pass | Modify | Block |
+|----------|------|--------|-------|
+| Idempotency | Fully idempotent | Mostly idempotent | Not idempotent |
+| Error handling | Comprehensive | Partial coverage | No error handling |
+| Monitoring | All signals covered | Some gaps | No monitoring |
+| Data quality | Full validation | Partial checks | No validation |
+| Backfill | Supported | Partial | Not supported |
+| Operations | Runbook complete | Partial | No documentation |

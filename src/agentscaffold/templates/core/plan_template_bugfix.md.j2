@@ -1,0 +1,80 @@
+# Bugfix: {{ bug_title | default('<BUG_TITLE>') }}
+
+## 0. Metadata
+- Plan: {{ plan_number | default('TBD') }}
+- Issue: #TBD (issue tracker reference)
+- Branch: bugfix/TBD
+- Severity: Low | Medium | High | Critical
+- Approval Required: No (unless Critical)
+
+## 1. Bug Description
+What is the bug? Include reproduction steps if known.
+
+## 2. Root Cause
+What is causing the bug? (May be TBD until investigation)
+
+{% if config.plan.bugfix_pre_audit %}<!-- PRE-AUDIT FINDINGS (Optional -- include when a study or deep code audit has
+already validated the issues before this bugfix plan was created):
+
+If a study, spike, or code audit has pre-identified the exact issues with line
+numbers, root causes, and fix approaches, document them here.
+
+For each pre-validated issue:
+| # | Summary | File:Line | Root Cause | Fix Approach | Severity |
+|---|---------|-----------|------------|--------------|----------|
+| 1 | ... | ... | ... | ... | Critical/High/Medium/Low |
+
+Include:
+- Source reference (study ID, audit session, etc.)
+- Exact code locations (file + line numbers)
+- Why the current behavior is wrong
+- Specific fix instructions (not just "fix it")
+- Verification steps to confirm the fix works
+- Any issues explicitly deferred (with rationale)
+-->
+{% endif %}
+
+## 3. Constraints / Invariants
+- Must not break:
+- Regression risk:
+
+## 4. File Impact Map
+| File | Change Type | Notes |
+|-----|------------|-------|
+| TBD | TBD | TBD |
+
+## 5. Tests
+| Test File | Coverage Target | Notes |
+|-----------|-----------------|-------|
+| {{ config.paths.test_dir | default('tests') }}/test_TBD.py | Regression test for bug | TBD |
+
+Test approach:
+- [ ] Regression test that fails before fix, passes after
+- [ ] Edge cases related to bug
+
+## 6. Execution Steps
+- [ ] Step 1: Write failing regression test
+- [ ] Step 2: Identify and implement fix
+- [ ] Step 3: Verify regression test passes
+- [ ] Step 4: Run full test suite
+
+## 7. Validation
+```bash
+{{ config.validation.format_command | default('ruff format .') }}
+{{ config.validation.lint_command | default('ruff check .') }}
+{{ config.validation.test_command | default('pytest -q') }}
+```
+
+Expected results:
+- Lint: no errors
+- Tests: all tests pass (including new regression test)
+
+## 8. Rollback Plan
+How to safely revert if fix causes new issues.
+
+## 9. Completion Checklist
+- [ ] All execution steps checked off
+- [ ] Regression test written and passing
+- [ ] No linter errors
+- [ ] {{ config.paths.workflow_state | default('workflow_state.md') }} updated
+- [ ] Issue linked and ready to close

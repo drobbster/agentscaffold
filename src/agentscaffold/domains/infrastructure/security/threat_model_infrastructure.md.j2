@@ -1,0 +1,184 @@
+# Threat Model: Infrastructure
+
+## Overview
+
+| Field | Value |
+|-------|-------|
+| Component | Infrastructure, IaC, Deployment Pipelines, and Platform Services |
+| Author | {{ project_name }} Team |
+| Date | {{ date }} |
+| Version | 1.0 |
+| Status | Draft |
+
+## 1. Description
+
+This threat model covers infrastructure as code (Terraform, Pulumi), CI/CD pipelines, deployment automation, cloud resources, and platform services. It addresses risks from misconfiguration, credential exposure, and unauthorized access to production systems.
+
+## 2. Assets
+
+| Asset | Classification | Impact if Compromised |
+|-------|----------------|----------------------|
+| Cloud provider credentials | Restricted | Critical -- full account takeover |
+| Terraform/IaC state | Confidential | High -- resource manipulation, secret exposure |
+| CI/CD pipeline secrets | Restricted | Critical -- arbitrary code deployment |
+| Production database credentials | Restricted | Critical -- data breach |
+| SSH keys, API keys | Restricted | High -- lateral movement |
+| Deployment runbooks | Internal | Medium -- operational disruption |
+
+## 3. Data Flow
+
+```
+Developer -> Git -> CI Pipeline -> Artifact Registry
+                                    |
+                                    v
+Terraform State <-- Terraform Apply <-- IaC Code
+       |
+       v
+Cloud APIs -> VPC, Compute, Database, Storage
+```
+
+### Trust Boundaries
+
+| Boundary | Description | Controls |
+|----------|-------------|----------|
+| Git to CI | Code and config enter pipeline | Branch protection, signed commits |
+| CI to Cloud | Pipeline deploys infrastructure | OIDC, short-lived credentials |
+| State backend | Terraform state storage | Encryption, access control, locking |
+| Cloud API | Provider API calls | IAM, network restrictions |
+
+## 4. Threat Actors
+
+| Actor | Capability | Motivation | Likelihood |
+|-------|------------|------------|------------|
+| External Attacker | Exploit public services, phishing | Data theft, ransomware | Medium |
+| Compromised Dependency | Supply chain, malicious package | Backdoor, credential theft | Low |
+| Insider (malicious) | Legitimate access | Sabotage, data exfiltration | Low |
+| Insider (negligent) | Legitimate access | Accidental exposure, misconfig | Medium |
+| Automated Scanner | Probe for misconfigurations | Opportunistic compromise | High |
+
+## 5. STRIDE Analysis
+
+### Spoofing
+
+| Threat | Description | Mitigation |
+|-------|-------------|------------|
+| Impersonate CI pipeline | Attacker deploys malicious code via forged pipeline | OIDC for cloud auth, no long-lived keys |
+| Impersonate developer | Push malicious IaC or code | Branch protection, required reviews, signed commits |
+| Impersonate service | Attacker presents as internal service | mTLS, service mesh, network policy |
+
+### Tampering
+
+| Threat | Description | Mitigation |
+|-------|-------------|------------|
+| Modify IaC in transit | Alter Terraform or config before apply | Signed commits, artifact integrity |
+| Modify state file | Corrupt or inject resources in state | State encryption, versioning, access control |
+| Modify pipeline | Inject malicious step in CI | Pipeline as code, restricted edits |
+| Modify deployed config | Change running infrastructure | Immutable infrastructure, config in version control |
+
+### Repudiation
+
+| Threat | Description | Mitigation |
+|-------|-------------|------------|
+| Deny deployment action | "I did not run that apply" | Audit logs, pipeline history, state versioning |
+| Deny config change | "State was changed by someone else" | State locking, audit trail, RBAC |
+
+### Information Disclosure
+
+| Threat | Description | Mitigation |
+|-------|-------------|------------|
+| State file contains secrets | State output or variable exposes secret | Sensitive outputs, no secrets in state |
+| Pipeline logs leak secrets | Credentials in build logs | Mask secrets, use secret references |
+| Overly permissive IAM | Role has more access than needed | Least privilege, periodic review |
+| Unencrypted state | State at rest is readable | S3 SSE, GCS KMS |
+
+### Denial of Service
+
+| Threat | Description | Mitigation |
+|-------|-------------|------------|
+| State lock exhaustion | Malicious or stuck lock blocks applies | Lock timeout, manual override process |
+| Resource exhaustion | Runaway pipeline or Terraform creates excess resources | Quotas, budget alerts, approval gates |
+| Pipeline abuse | Excessive builds consume capacity | Rate limits, concurrency limits |
+| Delete critical resources | Accidental or malicious destroy | prevent_destroy, backup, approval |
+
+### Elevation of Privilege
+
+| Threat | Description | Mitigation |
+|-------|-------------|------------|
+| CI role escalates in cloud | Pipeline gains excessive permissions | Minimal IAM for CI, scoped to deployment |
+| Developer gains prod access | Dev credentials work in prod | Environment separation, no shared creds |
+| Container escape | Compromised container accesses host | Read-only root, no privileged, seccomp |
+
+## 6. Network Segmentation
+
+| Segment | Purpose | Access |
+|--------|---------|--------|
+| Management | CI runners, admin tools | Restricted, VPN or bastion |
+| Application | Production workloads | East-west restricted |
+| Data | Databases, storage | Application segment only |
+| Public | Load balancers, ingress | Internet, WAF |
+
+### Segmentation Checklist
+
+- [ ] CI runners in isolated network
+- [ ] No direct internet from production workloads
+- [ ] Database not publicly routable
+- [ ] VPC peering or transit limited to required paths
+
+## 7. Access Control
+
+### Principle of Least Privilege
+
+| Role | Access |
+|------|--------|
+| Developer | Dev environment, read-only prod metadata |
+| CI pipeline | Deploy to target environment, no state read in prod |
+| Platform admin | Full access, MFA required |
+| On-call | Read prod, limited write (restart, rollback) |
+
+### Access Control Checklist
+
+- [ ] RBAC for all cloud resources
+- [ ] MFA for production access
+- [ ] No shared accounts
+- [ ] Access reviewed quarterly
+- [ ] Break-glass procedure documented
+
+## 8. Security Controls
+
+### Existing Controls
+
+| Control | Type | Effectiveness |
+|---------|------|--------------|
+| State encryption | Preventive | High |
+| Branch protection | Preventive | Medium |
+| Pipeline approval gates | Preventive | Medium |
+| Audit logging | Detective | High |
+
+### Required Controls
+
+| Control | Priority | Status |
+|---------|----------|--------|
+| OIDC for CI (no static keys) | P1 | Pending |
+| State access restricted to CI only | P1 | Pending |
+| Secrets in external store (Vault, etc.) | P1 | Pending |
+| prevent_destroy on critical resources | P2 | Pending |
+| Automated drift and policy checks | P2 | Pending |
+| Quarterly access review | P2 | Pending |
+
+## 9. Residual Risk
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| Zero-day in cloud provider | Very Low | Critical | Accept -- monitor advisories |
+| Compromised container image | Low | High | Image scanning, signed images |
+| Insider with prod access | Low | Critical | Further mitigate -- least privilege, audit |
+| Accidental mass delete | Low | Critical | prevent_destroy, backup, approval |
+
+## 10. Review Schedule
+
+| Review Type | Frequency | Next Review |
+|-------------|-----------|-------------|
+| Threat Model Update | Quarterly | TBD |
+| Access Review | Quarterly | TBD |
+| Control Verification | Monthly | TBD |
+| Penetration Test (infra) | Annually | TBD |

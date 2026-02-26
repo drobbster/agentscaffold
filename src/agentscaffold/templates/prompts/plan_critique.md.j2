@@ -1,0 +1,115 @@
+# Plan Critique: Devil's Advocate Review
+
+Use this prompt template before executing any plan to challenge assumptions and identify risks.
+
+---
+
+## Usage
+
+Copy this checklist into a conversation and replace `[PLAN_NUMBER]` with the target plan.
+
+---
+
+## Devil's Advocate Review for Plan [PLAN_NUMBER]
+
+### 0. Plan Status Verification (MANDATORY - Do This First)
+
+Before any other analysis, verify the plan actually needs implementation:
+
+| Check | Result | Notes |
+|-------|--------|-------|
+| [ ] Execution steps in plan file: All unchecked? | Yes/No | If checked, plan may be complete |
+| [ ] workflow_state.md: Plan listed as COMPLETE? | Yes/No | Trust workflow_state if conflict |
+| [ ] Code existence: Files in File Impact Map exist? | Yes/No | If yes, work may be done |
+| [ ] Supersession: Any related plan marked SUPERSEDED? | Yes/No | Check for overlapping plans |
+
+**If any verification fails, STOP and clarify status before proceeding with review.**
+
+---
+
+Before executing this plan, answer the following questions:
+
+### 1. Assumption Analysis
+
+**What are the 3 riskiest assumptions in this plan?**
+
+| # | Assumption | Risk if Wrong | Mitigation |
+|---|------------|---------------|------------|
+| 1 | | | |
+| 2 | | | |
+| 3 | | | |
+
+### 2. Alternative Approaches
+
+**What alternative approaches exist and why were they not chosen?**
+
+| Alternative | Pros | Cons | Why Not Chosen |
+|-------------|------|------|----------------|
+| | | | |
+| | | | |
+
+### 3. Silent Failure Modes
+
+**What could cause this plan to fail silently (bugs not caught by tests)?**
+
+- [ ] Data edge cases not covered by test fixtures
+- [ ] Race conditions in async code
+- [ ] External service behavior changes
+- [ ] Configuration drift between environments
+- [ ] Caching layer bypass (code fetches data directly, skipping cache)
+- [ ] External API quirks not documented (rate limits, unusual null values, format changes)
+- [ ] Test config interfering with feature tests (isolated concerns not isolated)
+- [ ] Mock return types not matching real implementations
+- [ ] Unreachable code (return statements above initialization)
+- [ ] **Incomplete wiring**: Config/interface parameter added but not passed through at ALL instantiation points
+- [ ] **Flow path divergence**: New feature wired into one code path but not others (e.g., CLI vs API vs background job)
+{% if domain_silent_failures %}
+{{ domain_silent_failures }}
+{% endif %}
+- [ ] Other: 
+
+### 4. Future Regret Analysis
+
+**If we were to rewrite this in 6 months, what would we change?**
+
+1. 
+2. 
+3. 
+
+### 5. Integration Point Analysis
+
+**What integration points with other plans are underspecified?**
+
+| Integration Point | Source Plan | Target Plan | Gap Identified |
+|-------------------|-------------|-------------|----------------|
+| | | | |
+
+### 6. Security & Risk Review
+
+**What security considerations apply to this plan?**
+
+- [ ] Handles secrets/credentials
+- [ ] Processes external input
+- [ ] Performs privileged operations
+- [ ] Connects to external services
+{% if domain_security_checks %}
+{{ domain_security_checks }}
+{% endif %}
+- [ ] None of the above
+
+**If any checked, verify applicable security requirements are met.**
+
+---
+
+## Decision
+
+After completing this review:
+
+- [ ] **Proceed**: No blocking issues identified
+- [ ] **Modify**: Update plan with findings before proceeding
+- [ ] **Spike**: High uncertainty requires prototype first
+- [ ] **Escalate**: Critical risk requires human decision
+
+**Notes:**
+
+

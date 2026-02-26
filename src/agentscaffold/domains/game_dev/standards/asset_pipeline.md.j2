@@ -1,0 +1,174 @@
+# Asset Pipeline Standards
+
+This document defines standards for game asset formats, compression, streaming, and management.
+
+---
+
+## Asset Formats
+
+### Texture Formats
+
+| Use Case | Format | Compression | Notes |
+|----------|--------|-------------|-------|
+| Albedo/diffuse | BC1/DXT1 | Yes | 4bpp, no alpha |
+| Albedo + alpha | BC2/DXT3, BC3/DXT5 | Yes | 8bpp |
+| Normal maps | BC5/3Dc | Yes | Two-channel |
+| HDR | BC6H | Yes | Float |
+| UI | RGBA8, ASTC | Platform-dependent | Uncompressed for crisp text |
+
+### Mesh Formats
+
+| Format | Use Case | Vertex Attributes |
+|--------|----------|-------------------|
+| GLTF/GLB | Runtime, interchange | Position, normal, UV, tangent |
+| FBX | Authoring, animation | Full pipeline |
+| Custom binary | Optimized load | Stripped, quantized |
+
+### Audio Formats
+
+| Use Case | Format | Compression | Sample Rate |
+|----------|--------|-------------|-------------|
+| Music | Vorbis, Opus | Lossy | 44.1kHz |
+| SFX (short) | WAV, ADPCM | Lossless/low | 22-44kHz |
+| Voice | Opus | Lossy | 24kHz |
+| Ambient | Vorbis | Lossy | 44.1kHz |
+
+---
+
+## Compression
+
+### Texture Compression
+
+- [ ] Use platform-appropriate formats (BC on PC/console, ASTC/ETC2 on mobile)
+- [ ] Mipmaps generated at build time
+- [ ] Normal maps use appropriate format (BC5 for XY, derive Z)
+- [ ] Avoid over-compression for UI (artifacts visible)
+
+### Mesh Compression
+
+- [ ] Quantize vertex positions (16-bit or float)
+- [ ] Index buffer optimization (vertex cache friendly order)
+- [ ] LOD meshes generated in pipeline, not at runtime
+- [ ] Skinned meshes: bone indices and weights quantized
+
+### Audio Compression
+
+- [ ] Short SFX (< 1s): uncompressed or ADPCM for low latency
+- [ ] Long audio: Vorbis/Opus for size
+- [ ] Streaming audio: use streaming decode, not load-all
+
+---
+
+## Streaming
+
+### Streaming Strategy
+
+| Asset Type | Strategy | Trigger |
+|------------|----------|---------|
+| Level geometry | Stream by zone | Player proximity |
+| Textures | Stream by mip/region | Visibility, distance |
+| Audio | Stream from disk | Playback start |
+| Scripts/code | Load at level init | Level load |
+
+### Streaming Checklist
+
+- [ ] Streaming zones defined with overlap to prevent pop-in
+- [ ] Priority system: visible > nearby > distant
+- [ ] Memory budget per asset type enforced
+- [ ] Unload assets when zone is far enough
+- [ ] Async loading never blocks main thread during gameplay
+
+---
+
+## Level of Detail (LOD)
+
+### Mesh LOD
+
+| LOD | Distance | Reduction | Switch Hysteresis |
+|-----|----------|-----------|-------------------|
+| 0 | 0-20m | 100% | |
+| 1 | 20-50m | 50% | 5m |
+| 2 | 50-100m | 25% | 10m |
+| 3 | 100m+ | 10% | 20m |
+
+- [ ] LOD transitions use hysteresis to avoid flickering
+- [ ] Billboards or impostors for very far objects
+- [ ] LOD generated in pipeline, not at runtime
+
+### Texture LOD (Mipmaps)
+
+- [ ] All textures have mipmaps
+- [ ] Anisotropic filtering for angled surfaces
+- [ ] Virtual texture / streaming atlas for large worlds
+
+---
+
+## Texture Atlasing
+
+### Atlas Rules
+
+- [ ] Static UI elements in atlases (reduce draw calls)
+- [ ] Sprites for 2D games in atlases
+- [ ] Padding between sprites to avoid bleeding (2-4px)
+- [ ] Power-of-two atlas dimensions when required by API
+- [ ] Atlas layout documented for artists
+
+### Atlas Build
+
+```
+Sources: sprite_1.png, sprite_2.png, ...
+Output: ui_atlas.png + ui_atlas.json (uv coordinates)
+```
+
+---
+
+## Audio Management
+
+### Audio Categories
+
+| Category | Max Simultaneous | Priority | Behavior |
+|----------|------------------|----------|----------|
+| Music | 1 | Low | Crossfade |
+| Voice | 2-4 | High | Duck music |
+| SFX | 16-32 | Medium | Pool, limit |
+| Ambient | 4-8 | Low | Spatial blend |
+
+### Audio Pipeline
+
+- [ ] Audio sources use pooling (no per-sound allocation)
+- [ ] Distance-based attenuation and culling
+- [ ] Occlusion/obstruction for spatial audio
+- [ ] Master volume and per-category mixing
+
+---
+
+## Asset Bundles
+
+### Bundle Strategy
+
+| Bundle | Contents | Load Trigger |
+|--------|----------|--------------|
+| Boot | Splash, loading UI | Game start |
+| Common | Shared fonts, UI | First menu |
+| Per-level | Level geometry, textures | Level load |
+| DLC | Optional content | User selection |
+
+### Bundle Checklist
+
+- [ ] Dependencies between bundles documented
+- [ ] No circular bundle dependencies
+- [ ] Bundle size within platform limits
+- [ ] Incremental builds for fast iteration
+- [ ] Version hashing for cache invalidation
+
+---
+
+## Checklist
+
+- [ ] Asset formats chosen per platform
+- [ ] Compression applied appropriately
+- [ ] Streaming implemented for large worlds
+- [ ] LOD system for meshes and textures
+- [ ] Atlases for UI and sprites
+- [ ] Audio categories and pooling defined
+- [ ] Asset bundles structured for load order

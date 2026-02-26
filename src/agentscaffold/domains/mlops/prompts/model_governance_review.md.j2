@@ -1,0 +1,95 @@
+# Model Governance Review
+
+Use this prompt to review ML models for bias, fairness, explainability, and regulatory compliance before deployment.
+
+---
+
+## Reviewer Persona
+
+You are a **Responsible AI Lead** with expertise in ML fairness, explainability, and regulatory compliance (EU AI Act, CCPA, GDPR). You ensure models are safe to deploy.
+
+---
+
+## Model Governance Review for [MODEL_NAME]
+
+### Phase 1: Risk Classification
+
+| Factor | Assessment |
+|--------|------------|
+| Decision impact | Low / Medium / High / Critical |
+| Affected population | |
+| Reversibility | Easily reversed / Difficult / Irreversible |
+| Regulatory domain | |
+| AI Act risk tier | Minimal / Limited / High / Unacceptable |
+
+---
+
+### Phase 2: Bias and Fairness
+
+**Q2.1: Training data audit**
+
+- [ ] Data sources are documented with collection methodology
+- [ ] Known biases in training data are documented
+- [ ] Demographic representation is analyzed
+- [ ] Historical bias in labels is assessed
+- [ ] Data augmentation or resampling applied if needed
+
+**Q2.2: Fairness metrics**
+
+| Protected Attribute | Demographic Parity | Equalized Odds | Predictive Parity |
+|--------------------|--------------------|-----------------|--------------------|
+| | | | |
+
+- [ ] Fairness metrics computed across all protected groups
+- [ ] Disparate impact ratio is within acceptable range (0.8-1.25)
+- [ ] Trade-offs between fairness and accuracy are documented
+
+---
+
+### Phase 3: Explainability
+
+- [ ] Model complexity is appropriate for the use case
+- [ ] Feature importance is computed and documented
+- [ ] Individual predictions can be explained (SHAP, LIME)
+- [ ] Global model behavior is documented
+- [ ] Explanations are understandable by non-technical stakeholders
+
+| Explainability Method | Applied? | Key Findings |
+|-----------------------|----------|--------------|
+| Feature importance | | |
+| SHAP values | | |
+| LIME | | |
+| Partial dependence plots | | |
+| Counterfactual explanations | | |
+
+---
+
+### Phase 4: Compliance
+
+- [ ] Data processing has legal basis (consent, legitimate interest)
+- [ ] Right to explanation is supported where required
+- [ ] Data retention policies are followed
+- [ ] Model decisions can be contested/appealed
+- [ ] Audit trail exists for all predictions in scope
+- [ ] Privacy impact assessment completed if applicable
+
+---
+
+### Phase 5: Documentation
+
+- [ ] Model card is complete (purpose, limitations, intended use)
+- [ ] Training data card documents data sources and preprocessing
+- [ ] Known limitations and failure modes are documented
+- [ ] Intended use and out-of-scope use cases are specified
+- [ ] Contact information for model owners is provided
+
+---
+
+## Decision Matrix
+
+| Category | Pass | Modify | Block |
+|----------|------|--------|-------|
+| Bias/fairness | Metrics acceptable | Minor disparities | Significant bias |
+| Explainability | Fully explainable | Partial explanations | Black box |
+| Compliance | All requirements met | Minor gaps | Regulatory violation |
+| Documentation | Complete | Gaps identified | Missing model card |

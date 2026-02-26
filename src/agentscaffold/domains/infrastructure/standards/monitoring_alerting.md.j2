@@ -1,0 +1,227 @@
+# Monitoring and Alerting Standards
+
+This document defines standards for golden signals, SLI/SLO definitions, alert fatigue prevention, and runbook linking.
+
+---
+
+## Golden Signals
+
+### The Four Golden Signals
+
+| Signal | Description | Examples |
+|--------|-------------|----------|
+| Latency | Time to serve a request | P50, P95, P99 response time |
+| Traffic | Demand on the system | RPS, concurrent connections |
+| Errors | Rate of failed requests | 5xx rate, error percentage |
+| Saturation | How full the system is | CPU, memory, disk, queue depth |
+
+### Per-Service Mapping
+
+| Service Type | Latency | Traffic | Errors | Saturation |
+|--------------|---------|---------|--------|------------|
+| API | Response time P99 | RPS | 5xx rate | CPU, memory |
+| Worker | Job duration | Jobs/sec | Failure rate | Queue depth |
+| Database | Query latency | Connections | Error rate | Connection pool |
+| Cache | Hit latency | Ops/sec | Miss rate | Memory usage |
+
+### Implementation
+
+```yaml
+# Prometheus recording rules for golden signals
+- record: api:latency_p99
+  expr: histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))
+
+- record: api:traffic_rps
+  expr: sum(rate(http_requests_total[5m]))
+
+- record: api:error_rate
+  expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))
+
+- record: api:saturation_cpu
+  expr: avg(rate(process_cpu_seconds_total[5m])) * 100
+```
+
+---
+
+## SLI and SLO Definitions
+
+### SLI (Service Level Indicator)
+
+A quantitative measure of service level.
+
+| SLI | Query | Target |
+|-----|-------|--------|
+| Availability | Successful requests / Total requests | 99.9% |
+| Latency | Requests under 200ms / Total | 99% |
+| Error rate | Failed requests / Total | < 0.1% |
+
+### SLO (Service Level Objective)
+
+Target value for an SLI over a time window.
+
+| SLO | Definition | Window |
+|-----|-------------|--------|
+| Availability | 99.9% of requests succeed | 30 days |
+| Latency | 99% of requests < 200ms P99 | 30 days |
+| Error budget | 0.1% failure budget | 30 days |
+
+### Error Budget
+
+```
+Error budget = 1 - SLO
+Example: 99.9% availability -> 0.1% error budget = 43 minutes downtime/month
+```
+
+### SLO Documentation Template
+
+```markdown
+## SLO: [Service Name] Availability
+
+**SLI**: (Successful requests) / (Total requests)
+**Query**: sum(rate(http_requests_total{status!~"5.."}[5m])) / sum(rate(http_requests_total[5m]))
+
+**SLO**: 99.9%
+**Window**: 30 days
+**Error budget**: 0.1% (43 minutes)
+
+**Alert**: Burn rate > 14.4 (exhausts budget in 2 hours)
+```
+
+---
+
+## Alert Fatigue Prevention
+
+### Alert Design Principles
+
+| Principle | Application |
+|-----------|-------------|
+| Alert on symptoms, not causes | "Error rate high" not "Database connection failed" |
+| One alert, one owner | No orphan alerts |
+| Actionable | Every alert has a runbook action |
+| Thresholds tuned | Not too sensitive, not too slow |
+| Consolidate | Avoid 10 alerts for same incident |
+
+### Severity Levels
+
+| Severity | Response Time | Example |
+|----------|---------------|---------|
+| Critical | Immediate (page) | Service down, data loss risk |
+| High | 15 minutes | Degraded performance, partial outage |
+| Medium | 1 hour | Non-critical failure |
+| Low | Next business day | Capacity warning, cleanup |
+
+### Alert Routing
+
+```yaml
+# Route by severity and service
+routes:
+  - match:
+      severity: critical
+    receiver: pagerduty-primary
+  - match:
+      severity: high
+    receiver: slack-incidents
+  - match:
+      service: api
+    receiver: api-team
+```
+
+### Alert Tuning Checklist
+
+- [ ] No alert fires during normal operation
+- [ ] Thresholds based on baseline (not arbitrary)
+- [ ] Suppress during planned maintenance
+- [ ] Review and retire stale alerts quarterly
+- [ ] Consolidate similar alerts
+
+---
+
+## Runbook Linking
+
+### Alert to Runbook
+
+Every alert must link to a runbook.
+
+```yaml
+# Prometheus alert with runbook
+annotations:
+  runbook_url: "https://runbooks.example.com/api-high-error-rate"
+  summary: "API error rate above 5%"
+```
+
+### Runbook Structure
+
+```markdown
+# Runbook: [Alert Name]
+
+## Summary
+One-line description of the alert.
+
+## Severity
+Critical / High / Medium / Low
+
+## Impact
+What users or systems are affected.
+
+## Prerequisites
+- Access to [dashboard], [logs]
+- Permissions: [list]
+
+## Investigation
+1. Check [dashboard link]
+2. Look for [pattern] in logs
+3. Verify [dependency] is healthy
+
+## Resolution
+1. [Step 1 - copy-paste ready]
+2. [Step 2]
+3. Verify: [success criteria]
+
+## Rollback
+If resolution fails: [link to rollback runbook]
+
+## Escalation
+Contact: [on-call], [slack channel]
+```
+
+### Runbook Quality Checklist
+
+- [ ] Every alert has a runbook
+- [ ] Runbook is linked from alert
+- [ ] Steps are copy-paste ready
+- [ ] Success criteria defined
+- [ ] Escalation path documented
+- [ ] Runbook tested (drill or incident)
+
+---
+
+## Dashboard Standards
+
+### Dashboard Layout
+
+| Section | Content |
+|---------|---------|
+| Overview | Golden signals, SLO status |
+| Traffic | RPS, top endpoints |
+| Latency | Histogram, percentiles |
+| Errors | Error rate, top error types |
+| Saturation | CPU, memory, queue depth |
+| Dependencies | Downstream health |
+
+### Dashboard Checklist
+
+- [ ] Golden signals visible at top
+- [ ] Time range matches alert window
+- [ ] Links to runbooks for each panel
+- [ ] No more than 10-15 panels per dashboard
+- [ ] Dashboard loads in < 5 seconds
+
+---
+
+## On-Call Readiness
+
+- [ ] Runbooks exist for all paging alerts
+- [ ] On-call has access to dashboards and logs
+- [ ] Escalation path is documented
+- [ ] Post-incident review process exists
+- [ ] Alert volume is sustainable (< 2 pages per week per person)

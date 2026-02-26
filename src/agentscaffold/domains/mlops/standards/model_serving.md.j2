@@ -1,0 +1,164 @@
+# Model Serving Standards
+
+This document defines standards for serving ML models in production, including latency requirements, batching, and deployment strategies.
+
+---
+
+## Inference Latency Tiers
+
+| Tier | P50 Target | P99 Target | Use Case |
+|------|------------|------------|----------|
+| Real-time | < 10ms | < 50ms | Search ranking, fraud detection |
+| Near real-time | < 100ms | < 500ms | Recommendations, personalization |
+| Batch | N/A | < 1 hour per batch | Nightly scoring, report generation |
+
+---
+
+## Serving Patterns
+
+### Single Model Serving
+
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI()
+
+class PredictRequest(BaseModel):
+    features: dict[str, float]
+
+class PredictResponse(BaseModel):
+    prediction: float
+    model_version: str
+    latency_ms: float
+
+@app.post("/predict", response_model=PredictResponse)
+async def predict(request: PredictRequest):
+    start = time.perf_counter()
+    prediction = model.predict(request.features)
+    latency_ms = (time.perf_counter() - start) * 1000
+
+    return PredictResponse(
+        prediction=prediction,
+        model_version=MODEL_VERSION,
+        latency_ms=latency_ms,
+    )
+```
+
+### Batch Inference
+
+```python
+def batch_predict(input_path: str, output_path: str, batch_size: int = 1000):
+    """Run batch inference with progress tracking."""
+    reader = pd.read_parquet(input_path, chunksize=batch_size)
+    results = []
+
+    for chunk in reader:
+        features = preprocess(chunk)
+        predictions = model.predict(features)
+        results.append(predictions)
+
+    output = pd.concat(results)
+    output.to_parquet(output_path)
+```
+
+---
+
+## A/B Testing and Canary Deployment
+
+### Traffic Splitting
+
+| Deployment Phase | Control Traffic | Treatment Traffic | Duration |
+|-----------------|-----------------|-------------------|----------|
+| Shadow mode | 100% | 0% (shadow) | 1-2 weeks |
+| Canary | 95% | 5% | 1 week |
+| Ramp | 50% | 50% | 1 week |
+| Full rollout | 0% | 100% | Permanent |
+
+### Shadow Mode
+
+Shadow mode runs the new model alongside the old model without affecting users:
+
+```python
+async def predict_with_shadow(features: dict) -> float:
+    primary_result = primary_model.predict(features)
+
+    # Shadow prediction -- fire and forget
+    asyncio.create_task(shadow_predict(features, primary_result))
+
+    return primary_result
+
+async def shadow_predict(features: dict, primary_result: float):
+    shadow_result = shadow_model.predict(features)
+    metrics.log_shadow_comparison(primary_result, shadow_result)
+```
+
+---
+
+## Health Checks
+
+### Liveness Check
+
+```python
+@app.get("/health/live")
+async def liveness():
+    return {"status": "ok"}
+```
+
+### Readiness Check
+
+```python
+@app.get("/health/ready")
+async def readiness():
+    if model is None:
+        raise HTTPException(503, "Model not loaded")
+    if not feature_store.is_healthy():
+        raise HTTPException(503, "Feature store unavailable")
+    return {"status": "ready", "model_version": MODEL_VERSION}
+```
+
+---
+
+## Resource Management
+
+### Memory Budget
+
+| Component | Typical Budget | Monitoring |
+|-----------|---------------|------------|
+| Model weights | 50-500 MB | RSS memory |
+| Feature cache | 100-500 MB | Cache size metrics |
+| Request buffers | 50-100 MB | Queue depth |
+| Overhead | 200 MB | Total - components |
+
+### Scaling Patterns
+
+- [ ] Horizontal scaling via load balancer for stateless inference
+- [ ] GPU sharing for multiple small models
+- [ ] Request queuing with backpressure for burst traffic
+- [ ] Auto-scaling based on latency P99 or queue depth
+
+---
+
+## Monitoring in Production
+
+### Required Metrics
+
+| Metric | Alert Threshold | Dashboard |
+|--------|-----------------|-----------|
+| Prediction latency P50/P95/P99 | P99 > 2x baseline | Yes |
+| Request throughput (req/s) | Sudden drop > 50% | Yes |
+| Error rate | > 1% | Yes |
+| Model load time | > 60s | Yes |
+| Prediction distribution | KS divergence > 0.1 | Yes |
+| Feature availability | Missing > 5% | Yes |
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|--------------|--------------|------------------|
+| Loading model on every request | Extreme latency | Load once at startup |
+| No health checks | Silent failures | Liveness + readiness probes |
+| Unbounded request queue | OOM under load | Backpressure with max queue size |
+| No shadow/canary testing | Risky deployment | Always shadow first |

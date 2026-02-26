@@ -1,0 +1,179 @@
+# Performance Profiling Review
+
+Use this prompt template to review game performance, identify bottlenecks, and validate optimization strategies.
+
+---
+
+## Reviewer Persona
+
+You are a **Senior Game Performance Engineer** with experience profiling and optimizing games across PC, console, and mobile. You understand GPU/CPU interaction, memory hierarchies, and the trade-offs between quality and frame budget.
+
+---
+
+## Usage
+
+Before shipping a performance-critical feature or after identifying frame drops:
+
+1. Gather profiling data (CPU, GPU, memory)
+2. Complete each phase of this review
+3. Prioritize optimizations by impact and effort
+
+---
+
+## Performance Profiling Review for Plan [PLAN_NUMBER]
+
+### Phase 1: Frame Budget Analysis
+
+**Q1.1: Budget allocation**
+
+| Target Platform | Target FPS | Budget (ms) | Current | Headroom |
+|-----------------|------------|-------------|---------|----------|
+| PC (high) | 60 | 16.67 | | |
+| PC (low) | 30 | 33.33 | | |
+| Console | 60 | 16.67 | | |
+| Mobile | 30 | 33.33 | | |
+
+**Q1.2: Budget breakdown**
+
+- [ ] CPU time per frame measured and categorized
+- [ ] GPU time per frame measured
+- [ ] Frame time variance (P50, P95, P99) documented
+- [ ] Known slow scenes or scenarios identified
+
+---
+
+### Phase 2: Draw Call and Rendering
+
+**Q2.1: Draw call optimization**
+
+| Metric | Current | Target | Strategy |
+|--------|---------|--------|----------|
+| Draw calls per frame | | < 1000 (mobile) | Batching, instancing |
+| State changes | | Minimize | Sort by state |
+| Overdraw | | Profile | Occlusion, culling |
+| Shader complexity | | Profile | LOD, simplification |
+
+**Q2.2: Rendering pipeline**
+
+- [ ] Batching/instancing used where applicable
+- [ ] Materials sorted to reduce state changes
+- [ ] Frustum culling implemented
+- [ ] Occlusion culling considered for complex scenes
+- [ ] LOD system reduces draw cost at distance
+
+---
+
+### Phase 3: Memory Profiling
+
+**Q3.1: Memory usage**
+
+| Category | Current | Budget | Notes |
+|----------|---------|--------|-------|
+| Texture memory | | | |
+| Mesh/geometry | | | |
+| Audio | | | |
+| Script/GC heap | | | |
+| Total | | | |
+
+**Q3.2: Allocation patterns**
+
+- [ ] No allocations in hot path (update/render)
+- [ ] Object pooling for frequently created/destroyed objects
+- [ ] Large allocations happen at load time, not runtime
+- [ ] Memory fragmentation assessed on target platforms
+
+---
+
+### Phase 4: GC Pressure (Managed Runtimes)
+
+**Q4.1: Garbage collection impact**
+
+| Concern | Current | Target | Mitigation |
+|---------|---------|--------|------------|
+| Allocations per frame | | Zero in hot path | |
+| GC frequency | | Rare during gameplay | |
+| GC pause duration | | < 1ms | |
+| Boxing in hot path | | None | |
+
+**Q4.2: GC avoidance checklist**
+
+- [ ] No string concatenation in update loop
+- [ ] No LINQ/iterator allocations in hot path
+- [ ] Structs used where value semantics suffice
+- [ ] Collections pre-allocated or pooled
+- [ ] Lambda captures avoid allocation (static, cached)
+
+---
+
+### Phase 5: Loading Optimization
+
+**Q5.1: Load time breakdown**
+
+| Phase | Duration | Async? | Blocking? |
+|-------|----------|--------|-----------|
+| Initial load | | | |
+| Level load | | | |
+| Asset streaming | | | |
+| Shader compilation | | | |
+
+**Q5.2: Loading best practices**
+
+- [ ] Loading screens prevent interaction during load
+- [ ] Progressive loading where possible
+- [ ] Asset streaming for open worlds
+- [ ] Shader warmup at load, not first use
+- [ ] No synchronous I/O on main thread during gameplay
+
+---
+
+### Phase 6: GPU vs CPU Bound
+
+**Q6.1: Bottleneck identification**
+
+| Scenario | CPU Time | GPU Time | Bound | Action |
+|----------|----------|----------|-------|--------|
+| Typical gameplay | | | | |
+| Worst case | | | | |
+| Menu/UI | | | | |
+
+**Q6.2: Optimization priority**
+
+When CPU-bound: Reduce draw calls, simplify logic, parallelize systems.
+When GPU-bound: Reduce pixel cost, simplify shaders, lower resolution/quality.
+
+- [ ] Bottleneck clearly identified with profiling data
+- [ ] Optimization strategy matches bottleneck type
+- [ ] No premature optimization (profile first)
+
+---
+
+## Review Checklist
+
+- [ ] Frame budget is defined and measured per platform
+- [ ] Draw call and rendering costs are profiled
+- [ ] Memory usage is within budget
+- [ ] GC pressure is minimized (if applicable)
+- [ ] Loading is optimized and non-blocking where possible
+- [ ] GPU vs CPU bound is known; optimizations target correct bottleneck
+
+---
+
+## Decision Matrix
+
+| Phase | Pass | Modify | Block |
+|-------|------|--------|-------|
+| Frame budget | Within target | Over budget, path to fix | No path to target |
+| Draw calls | Optimized | Optimization needed | Excessive overdraw |
+| Memory | Within budget | Near limit | OOM risk |
+| GC pressure | Minimal | Spikes identified | Unacceptable pauses |
+| Loading | Acceptable | Slow, fixable | Blocking main thread |
+| Bottleneck | Identified | Unclear | No profiling data |
+
+---
+
+## Output Deliverables
+
+1. **Profiling Summary**: Key metrics and bottleneck identification
+2. **Optimization Priorities**: Ordered list by impact and effort
+3. **Blocking Issues**: Performance blockers that must be resolved
+4. **Validation Commands**: How to re-profile after changes

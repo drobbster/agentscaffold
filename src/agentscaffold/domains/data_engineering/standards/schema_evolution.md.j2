@@ -1,0 +1,107 @@
+# Schema Evolution Standards
+
+This document defines standards for evolving data schemas while maintaining backward and forward compatibility.
+
+---
+
+## Compatibility Types
+
+| Type | Definition | When Required |
+|------|-----------|---------------|
+| Backward compatible | New schema can read old data | Always for storage schemas |
+| Forward compatible | Old schema can read new data | When consumers can't update simultaneously |
+| Full compatible | Both backward and forward | Critical shared schemas |
+
+---
+
+## Safe Changes (Backward Compatible)
+
+| Change | Safe? | Notes |
+|--------|-------|-------|
+| Add optional field with default | Yes | Old data will use default |
+| Add new enum value | Yes | Old readers ignore unknown values |
+| Widen numeric type (int32 -> int64) | Yes | No data loss |
+| Add new table/topic | Yes | No impact on existing |
+
+## Unsafe Changes (Breaking)
+
+| Change | Safe? | Migration Required |
+|--------|-------|--------------------|
+| Remove field | No | Deprecation period first |
+| Rename field | No | Add new + deprecate old |
+| Change field type | No | New field + migration |
+| Make optional field required | No | Backfill defaults first |
+| Remove enum value | No | Verify no data uses it |
+
+---
+
+## Migration Strategy
+
+### For Breaking Changes
+
+1. **Add new field** alongside the old field
+2. **Dual-write** both old and new fields during transition
+3. **Migrate consumers** to read from new field
+4. **Verify** no consumers read old field
+5. **Remove** old field after deprecation period
+
+```python
+# Phase 1: Add new field, dual-write
+class UserEvent:
+    name: str           # Deprecated: use display_name
+    display_name: str   # New field
+
+    def __init__(self, name: str):
+        self.name = name
+        self.display_name = name  # Dual-write
+
+# Phase 2: After all consumers migrated
+class UserEvent:
+    display_name: str   # Only new field
+```
+
+### Version Numbering
+
+```
+v{major}.{minor}
+
+major: Breaking changes
+minor: Backward-compatible additions
+```
+
+---
+
+## Schema Registry
+
+### Required for Each Schema
+
+| Field | Description |
+|-------|-------------|
+| name | Unique schema identifier |
+| version | Current version number |
+| compatibility | backward / forward / full |
+| fields | Complete field definitions |
+| owner | Team responsible |
+| consumers | Known downstream consumers |
+| last_updated | Date of last change |
+
+---
+
+## Deprecation Process
+
+| Phase | Duration | Actions |
+|-------|----------|---------|
+| Announcement | Week 0 | Notify consumers, log deprecation warnings |
+| Dual support | Weeks 1-4 | Both old and new schemas work |
+| Soft removal | Weeks 5-8 | Old schema returns warnings |
+| Hard removal | Week 9+ | Old schema returns errors |
+
+---
+
+## Testing
+
+- [ ] Schema compatibility checked in CI (e.g., Avro compatibility checker)
+- [ ] Old data can be read by new code
+- [ ] New data can be read by previous version of code (if forward compatible)
+- [ ] Migration scripts are tested with production-like data volumes
+- [ ] Rollback procedure is tested

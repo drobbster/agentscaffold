@@ -1,0 +1,12 @@
+name: embedded
+display_name: "Embedded Systems"
+description: "Memory constraint reviews, real-time deadline analysis, interrupt handling, power management, and OTA update standards."
+reviews:
+  - memory_constraint
+  - realtime_deadline
+standards:
+  - memory_management
+  - power_consumption
+  - interrupt_handling
+  - ota_update
+approval_gates: {}

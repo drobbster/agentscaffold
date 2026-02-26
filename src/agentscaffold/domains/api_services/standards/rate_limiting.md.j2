@@ -1,0 +1,180 @@
+# Rate Limiting Standards
+
+This document defines standards for implementing and consuming rate-limited APIs. Rate limiting protects services from abuse and ensures fair usage across consumers.
+
+---
+
+## Algorithm Selection
+
+### Token Bucket
+
+- **Use when**: Bursty traffic is acceptable; you want to allow short bursts
+- **Behavior**: Tokens refill at a fixed rate; each request consumes one token
+- **Parameters**: Capacity (max tokens), refill rate (tokens per second)
+
+```python
+# Conceptual token bucket
+capacity = 100
+refill_rate = 10  # tokens per second
+tokens = capacity
+
+def allow_request():
+    global tokens
+    now = current_time()
+    tokens = min(capacity, tokens + (now - last_refill) * refill_rate)
+    last_refill = now
+    if tokens >= 1:
+        tokens -= 1
+        return True
+    return False
+```
+
+### Sliding Window
+
+- **Use when**: You need smooth rate limiting; bursts should be spread
+- **Behavior**: Count requests in a rolling time window (e.g., last 60 seconds)
+- **Parameters**: Window size (seconds), max requests per window
+
+### Fixed Window
+
+- **Use when**: Simplicity is paramount; boundary effects acceptable
+- **Behavior**: Reset counter at fixed intervals (e.g., per minute)
+- **Caveat**: Burst at window boundary can exceed limit (e.g., 100 at :59 and 100 at :01)
+
+| Algorithm | Burst Handling | Boundary Behavior | Complexity |
+|-----------|----------------|-------------------|------------|
+| Token bucket | Allows bursts up to capacity | Smooth | Medium |
+| Sliding window | Smooth, no burst | Accurate | Higher |
+| Fixed window | Burst at boundary | Simple | Low |
+
+---
+
+## Rate Limit Headers
+
+All rate-limited responses MUST include these headers (when applicable):
+
+| Header | Description | Example |
+|--------|-------------|---------|
+| X-RateLimit-Limit | Max requests per window | 100 |
+| X-RateLimit-Remaining | Requests left in current window | 42 |
+| X-RateLimit-Reset | Unix timestamp when window resets | 1709424000 |
+| Retry-After | Seconds to wait (on 429 only) | 60 |
+
+### Example Response (Success)
+
+```http
+HTTP/1.1 200 OK
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+X-RateLimit-Reset: 1709424060
+```
+
+### Example Response (Rate Limited)
+
+```http
+HTTP/1.1 429 Too Many Requests
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 0
+X-RateLimit-Reset: 1709424060
+Retry-After: 60
+Content-Type: application/problem+json
+
+{
+  "type": "https://api.example.com/errors/rate-limited",
+  "title": "Rate Limit Exceeded",
+  "status": 429,
+  "detail": "You have exceeded 100 requests per minute.",
+  "retry_after": 60
+}
+```
+
+---
+
+## Retry-After
+
+- **Format**: Integer seconds (preferred) or HTTP-date
+- **When**: Always on 429 responses
+- **Guidance**: Client should wait at least this long before retrying
+
+```http
+Retry-After: 60
+```
+
+or
+
+```http
+Retry-After: Wed, 21 Oct 2026 07:28:00 GMT
+```
+
+---
+
+## Client SDK Patterns
+
+### Exponential Backoff
+
+When receiving 429, back off before retrying:
+
+```python
+def request_with_retry(url, max_retries=3):
+    for attempt in range(max_retries):
+        response = requests.get(url)
+        if response.status_code != 429:
+            return response
+        retry_after = int(response.headers.get("Retry-After", 2 ** attempt))
+        time.sleep(retry_after)
+    raise RateLimitExceeded("Max retries exceeded")
+```
+
+### Honor Retry-After
+
+- Prefer `Retry-After` over custom backoff when provided
+- Fall back to exponential backoff if header missing
+- Do not retry immediately on 429
+
+### Rate Limit Awareness
+
+- Track `X-RateLimit-Remaining` to throttle before hitting limit
+- Avoid bursts when remaining is low
+- Log when approaching limit (e.g., remaining < 10)
+
+---
+
+## Tiered Limits
+
+Document different limits per tier:
+
+| Tier | Requests/minute | Requests/day | Burst |
+|------|------------------|--------------|-------|
+| Free | 60 | 1,000 | 10 |
+| Pro | 300 | 50,000 | 50 |
+| Enterprise | 1,000 | 500,000 | 200 |
+
+- Apply limits per API key or per user
+- Return 429 with clear message when limit exceeded
+- Consider `X-RateLimit-Limit` to vary by tier
+
+---
+
+## Implementation Checklist
+
+When implementing rate limiting:
+
+- [ ] Choose algorithm (token bucket or sliding window recommended)
+- [ ] Define limits per endpoint or per resource
+- [ ] Include X-RateLimit-* headers in all responses
+- [ ] Include Retry-After on 429 responses
+- [ ] Document limits in API docs
+- [ ] Log rate limit events for monitoring
+- [ ] Consider per-user vs per-IP limits (authenticated vs anonymous)
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|--------------|--------------|-------------------|
+| No Retry-After on 429 | Client cannot know when to retry | Always include Retry-After |
+| Inconsistent header names | Client cannot parse | Use standard X-RateLimit-* |
+| Silent rejection | Client does not know why request failed | Return 429 with clear body |
+| No headers on success | Client cannot throttle proactively | Include headers on 2xx |
+| Global limit only | One consumer can starve others | Per-key or per-user limits |

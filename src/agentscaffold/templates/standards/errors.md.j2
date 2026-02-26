@@ -1,0 +1,290 @@
+# Error Handling Standards
+
+## Principles
+
+1. **Be Specific**: Use specific exception types, never bare `except:`
+2. **Fail Fast**: Validate inputs early, fail with clear messages
+3. **Preserve Context**: Chain exceptions to preserve stack traces
+4. **Log Appropriately**: Log errors with context but avoid log spam
+
+---
+
+## Exception Hierarchy
+
+All custom exceptions should inherit from a project base:
+
+```python
+# {{ project_name }}/exceptions.py
+
+class {{ project_name | title | replace(' ', '') | replace('-', '') | replace('_', '') }}Error(Exception):
+    """Base exception for all project errors."""
+    pass
+
+
+class ConfigurationError({{ project_name | title | replace(' ', '') | replace('-', '') | replace('_', '') }}Error):
+    """Invalid configuration or missing required settings."""
+    pass
+
+
+class DataError({{ project_name | title | replace(' ', '') | replace('-', '') | replace('_', '') }}Error):
+    """Data validation or processing error."""
+    pass
+
+
+class ServiceError({{ project_name | title | replace(' ', '') | replace('-', '') | replace('_', '') }}Error):
+    """Service-layer or business logic error."""
+    pass
+
+
+class IntegrationError({{ project_name | title | replace(' ', '') | replace('-', '') | replace('_', '') }}Error):
+    """External service integration failure."""
+    pass
+```
+
+{% if domain_exception_classes %}
+{{ domain_exception_classes }}
+{% endif %}
+
+---
+
+## Patterns
+
+### Input Validation
+
+```python
+# GOOD: Early validation with specific error
+def process_batch(items: list[dict], batch_size: int) -> list:
+    if not items:
+        raise ValueError("Items list must not be empty")
+    if batch_size <= 0:
+        raise ValueError(f"Batch size must be positive, got {batch_size}")
+    return [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
+
+
+# BAD: Late failure with cryptic error
+def process_batch(items: list[dict], batch_size: int) -> list:
+    return [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
+```
+
+### Exception Chaining
+
+```python
+# GOOD: Preserve original exception context
+try:
+    data = fetch_from_api(endpoint)
+except requests.RequestException as e:
+    raise IntegrationError(f"Failed to fetch data from {endpoint}") from e
+
+
+# BAD: Losing original stack trace
+try:
+    data = fetch_from_api(endpoint)
+except requests.RequestException:
+    raise IntegrationError("Failed to fetch data")  # Lost context
+```
+
+### Graceful Degradation
+
+```python
+# GOOD: Handle expected failures gracefully
+def get_cached_result(key: str) -> dict | None:
+    """Returns cached result or None if unavailable."""
+    try:
+        return cache_client.get(key)
+    except IntegrationError:
+        logger.warning(f"Cache unavailable for key={key}, returning None")
+        return None
+
+
+# BAD: Let optional feature crash the system
+def get_cached_result(key: str) -> dict:
+    return cache_client.get(key)  # Crashes if cache is down
+```
+
+### Expected Failure Logging
+
+When a function fails because its **data source does not exist yet** (not because
+of an error), log an INFO-level message with the exact path or action needed to
+resolve it. Do not use a generic warning or silently return empty results.
+
+```python
+# BAD: Silent empty return -- caller has no idea why data is missing
+def load_features(key: str) -> pd.DataFrame:
+    try:
+        return storage.load(f"features/{key}.parquet")
+    except FileNotFoundError:
+        logger.warning("Feature data unavailable")  # Too vague
+        return pd.DataFrame()
+
+# GOOD: Actionable message tells the operator exactly what to do
+def load_features(key: str) -> pd.DataFrame:
+    try:
+        return storage.load(f"features/{key}.parquet")
+    except FileNotFoundError:
+        logger.info(
+            "Feature data not yet materialized for %s. "
+            "Run: python -m pipeline.materialize --key %s",
+            key, key,
+        )
+        return pd.DataFrame()
+```
+
+**Guideline:** If the "failure" is expected because a pipeline stage hasn't run
+yet, use INFO (not WARNING). Include the specific command, path, or action that
+would create the missing data. This makes debugging straightforward instead of
+requiring the operator to trace through code to figure out what's missing.
+
+### Context Managers for Resources
+
+```python
+# GOOD: Ensure cleanup with context manager
+from contextlib import contextmanager
+
+@contextmanager
+def database_session():
+    session = create_session()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+# Usage
+with database_session() as session:
+    session.execute(query)
+```
+
+---
+
+## Anti-Patterns
+
+### Never Use Bare Except
+
+```python
+# BAD
+try:
+    risky_operation()
+except:  # Catches SystemExit, KeyboardInterrupt, etc.
+    pass
+
+# GOOD
+try:
+    risky_operation()
+except Exception as e:
+    logger.exception("Operation failed")
+    raise
+```
+
+### Never Silence Exceptions Without Logging
+
+```python
+# BAD
+try:
+    optional_operation()
+except Exception:
+    pass  # Silent failure
+
+# GOOD
+try:
+    optional_operation()
+except Exception:
+    logger.debug("Optional operation skipped", exc_info=True)
+```
+
+### Avoid Overly Broad Exception Handling
+
+```python
+# BAD: Catches everything at wrong level
+def complex_pipeline():
+    try:
+        step1()
+        step2()
+        step3()
+    except Exception as e:
+        logger.error(f"Pipeline failed: {e}")  # Which step? Unknown
+
+# GOOD: Handle at appropriate granularity
+def complex_pipeline():
+    try:
+        step1()
+    except Step1Error as e:
+        logger.error(f"Step 1 failed: {e}")
+        raise PipelineError("Step 1 failed") from e
+    
+    try:
+        step2()
+    except Step2Error as e:
+        logger.warning(f"Step 2 failed, using fallback")
+        step2_fallback()
+```
+
+---
+
+## Error Messages
+
+### Format
+
+- Start with what failed: "Failed to fetch data for {key}"
+- Include relevant context: values, identifiers
+- Suggest resolution if obvious: "Check API key configuration"
+
+```python
+# GOOD
+raise ConfigurationError(
+    f"Missing required config key 'service.api_key'. "
+    f"Set via SERVICE_API_KEY environment variable or config file."
+)
+
+# BAD
+raise ConfigurationError("Config error")
+```
+
+---
+
+## Module-Specific Guidelines
+
+{% if domain_error_guidelines %}
+{{ domain_error_guidelines }}
+{% else %}
+### Services Layer
+- Raise `ServiceError` for business logic failures
+- Return safe defaults for edge cases where possible
+- Never raise for recoverable conditions
+
+### Data Layer
+- Raise `DataError` for validation failures
+- Raise `IntegrationError` for external service failures
+- Always include identifiers and context in error messages
+
+### API Layer
+- Map internal exceptions to appropriate HTTP status codes
+- Never expose internal stack traces to API consumers
+- Log full details server-side, return safe messages to clients
+{% endif %}
+
+### Enum-Based Factories
+
+When using enums in factory patterns (e.g., `ItemType` -> handler class),
+wrap the enum lookup in `try/except` to produce user-friendly error messages.
+The raw `ValueError` from `EnumClass(value)` is not helpful.
+
+```python
+# BAD: Raw enum error message
+item_type = ItemType(config_value)
+# ValueError: 'custom_v2' is not a valid ItemType
+
+# GOOD: User-friendly error with valid options
+try:
+    item_type = ItemType(config_value)
+except ValueError:
+    valid = ", ".join(e.value for e in ItemType)
+    raise ValueError(
+        f"Unknown item type '{config_value}'. "
+        f"Valid options: {valid}"
+    ) from None
+```
+

@@ -1,0 +1,196 @@
+# Citation Tracking Standards
+
+This document defines standards for reference management, DOI tracking, dataset citations, and code citations in research projects.
+
+---
+
+## Core Principle: Every External Input Has a Citation
+
+Any data, code, algorithm, or idea that originates outside your project must be cited with sufficient detail for a reader to locate the original source.
+
+---
+
+## Reference Types
+
+### Citation Categories
+
+| Category | What to Cite | Format |
+|----------|-------------|--------|
+| Academic paper | Methods, algorithms, theoretical foundations | BibTeX / DOI |
+| Dataset | Training data, evaluation benchmarks | DOI / URL + access date |
+| Software | Libraries, frameworks, tools | Version + DOI (if available) |
+| Code | Specific implementations, snippets | Repository URL + commit SHA |
+| Pre-trained model | Foundation models, embeddings | Model card URL + version |
+| Standard | ISO, RFC, WCAG | Standard number + version |
+
+---
+
+## DOI Tracking
+
+### When DOIs Are Required
+
+| Source | DOI Required? | Alternative |
+|--------|--------------|-------------|
+| Published paper | Yes | arXiv ID for preprints |
+| Dataset (Zenodo, Figshare) | Yes | URL + access date + hash |
+| Software (JOSS, SciPy) | Yes, if available | Version + URL |
+| Blog post, tutorial | No | URL + access date + archive.org link |
+| Internal document | No | File path + commit SHA |
+
+### DOI Best Practices
+
+- [ ] Every citation has a DOI when one exists
+- [ ] DOIs are validated (resolve correctly) before publication
+- [ ] DOIs use the `https://doi.org/` prefix format
+- [ ] For software without DOI: use Zenodo to mint one from a GitHub release
+
+---
+
+## Dataset Citations
+
+### Required Metadata
+
+| Field | Example | Required? |
+|-------|---------|-----------|
+| Name | "ImageNet-1K" | Yes |
+| Version / Date | "ILSVRC2012" / "2024-01-15 snapshot" | Yes |
+| Creator | "Stanford Vision Lab" | Yes |
+| DOI / URL | `https://doi.org/10.xxxx` | Yes |
+| License | "CC BY 4.0" | Yes |
+| Access date | "2026-02-01" | Yes (for URLs) |
+| Hash (SHA-256) | `a1b2c3d4...` | Recommended |
+| Size | "150 GB" | Recommended |
+| Description | "1000-class image classification" | Recommended |
+
+### Dataset Citation Format
+
+```bibtex
+@dataset{deng2009imagenet,
+  author    = {Deng, Jia and Dong, Wei and Socher, Richard and Li, Li-Jia and Li, Kai and Fei-Fei, Li},
+  title     = {ImageNet: A Large-Scale Hierarchical Image Database},
+  year      = {2009},
+  doi       = {10.1109/CVPR.2009.5206848},
+  note      = {Version ILSVRC2012, accessed 2026-02-01, SHA-256: a1b2c3d4...}
+}
+```
+
+### Dataset Versioning
+
+- [ ] Dataset version is pinned (not "latest")
+- [ ] If dataset is dynamic: snapshot date and hash are recorded
+- [ ] Data preprocessing steps are cited if from another project
+- [ ] Derived datasets cite their source datasets
+
+---
+
+## Software and Code Citations
+
+### Library Citations
+
+For every library that materially contributes to results:
+
+```bibtex
+@software{pytorch2024,
+  author  = {PyTorch Contributors},
+  title   = {PyTorch},
+  version = {2.2.0},
+  year    = {2024},
+  url     = {https://pytorch.org},
+  doi     = {10.5281/zenodo.XXXXXXX}
+}
+```
+
+### When to Cite Software
+
+| Usage | Cite? | Rationale |
+|-------|-------|-----------|
+| Core framework (PyTorch, TensorFlow) | Yes | Results depend on implementation |
+| Statistical library (scipy, statsmodels) | Yes | Test implementations may differ |
+| Utility (pandas, numpy) | Recommended | Version affects numerical behavior |
+| Standard library (os, sys) | No | Universally available |
+| Build tools (make, pip) | No | Not part of results |
+
+### Code Repository Citations
+
+For code adapted from another project:
+
+```bibtex
+@misc{smith2025implementation,
+  author    = {Smith, J.},
+  title     = {Efficient Transformer Implementation},
+  year      = {2025},
+  url       = {https://github.com/jsmith/efficient-transformer},
+  note      = {Commit abc123, accessed 2026-02-01, MIT License}
+}
+```
+
+- [ ] Repository URL is permanent (not a fork that may be deleted)
+- [ ] Specific commit SHA is recorded (not just "main branch")
+- [ ] License compatibility is verified
+- [ ] Modifications from the original are documented
+
+---
+
+## Pre-Trained Model Citations
+
+| Field | Example |
+|-------|---------|
+| Model name | "Llama 3 70B" |
+| Provider | "Meta AI" |
+| Version / Date | "2024-04-18" |
+| Model card URL | `https://huggingface.co/meta-llama/...` |
+| License | "Llama 3 Community License" |
+| Fine-tuning details | "LoRA on domain data, 3 epochs" |
+
+---
+
+## Reference Management
+
+### Tool Requirements
+
+| Capability | Required | Tools |
+|-----------|----------|-------|
+| BibTeX export | Yes | Zotero, Mendeley, manual |
+| DOI auto-lookup | Recommended | Zotero, doi2bib |
+| Duplicate detection | Recommended | Zotero, JabRef |
+| Shared library | For teams | Zotero groups, shared .bib file |
+
+### Reference File Standards
+
+- [ ] All references in a single `.bib` file (or managed by reference tool)
+- [ ] BibTeX keys follow consistent naming: `author_year_keyword`
+- [ ] No orphan references (every entry is cited somewhere)
+- [ ] No missing fields (title, author, year, DOI minimum)
+- [ ] References are sorted alphabetically by key
+
+---
+
+## Citation in Code
+
+### Inline Code Citations
+
+```python
+# Algorithm from: Smith et al. (2023), "Fast Attention Mechanism"
+# DOI: 10.xxxx/yyyy, Section 3.2
+# Modifications: adapted for batch processing, added gradient checkpointing
+def fast_attention(q, k, v):
+    ...
+```
+
+### Citation Checklist for Code
+
+- [ ] Every non-trivial algorithm has a source citation in comments
+- [ ] Modifications from the cited source are documented
+- [ ] License of cited code is compatible with project license
+- [ ] Third-party code is in separate files or clearly delineated
+
+---
+
+## Verification Checklist
+
+- [ ] All DOIs resolve correctly (automated check)
+- [ ] All URLs are accessible (automated check with archive.org fallback)
+- [ ] Dataset versions match what was actually used
+- [ ] Software versions in citations match `requirements.txt`
+- [ ] No uncited external contributions
+- [ ] Reference list is complete and free of duplicates

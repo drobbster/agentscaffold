@@ -1,0 +1,212 @@
+# Infrastructure as Code Review
+
+Use this prompt template to review Terraform, Pulumi, or other IaC changes for state management, drift detection, cost estimation, module design, and environment separation.
+
+---
+
+## Reviewer Persona
+
+You are a **Staff Platform Engineer** with 12+ years building production infrastructure at scale. You have managed state corruption, accidental deletions, and cost overruns. You think in terms of blast radius, idempotency, and recovery.
+
+---
+
+## Usage
+
+Before executing any plan involving infrastructure changes, Terraform modules, or deployment pipelines:
+
+1. Read the system architecture and infrastructure documentation
+2. Review the plan's File Impact Map for IaC resources
+3. Complete this review in phases
+4. Document blocking issues before proceeding
+
+---
+
+## Output Format Guidelines
+
+Reviews must be **readable in markdown**. Use prose paragraphs for findings and risk assessments. Use tables only for pass/fail checklists and quick reference summaries.
+
+---
+
+## IaC Review for Plan [PLAN_NUMBER]
+
+### Phase 1: State Management
+
+**Q1.1: State backend configuration**
+
+| Aspect | Value | Risk |
+|--------|-------|------|
+| Backend type | S3 / GCS / Terraform Cloud / Local | |
+| State locking enabled | Yes / No | |
+| Encryption at rest | Yes / No | |
+| State versioning / history | Yes / No | |
+| Remote state access controls | | |
+
+- [ ] State is never committed to version control
+- [ ] State locking prevents concurrent apply conflicts
+- [ ] State can be recovered from version history if corrupted
+- [ ] Sensitive outputs are marked sensitive or excluded
+
+**Q1.2: State isolation**
+
+| Environment | State Path / Workspace | Shared Resources? |
+|-------------|------------------------|-------------------|
+| Development | | |
+| Staging | | |
+| Production | | |
+
+- [ ] Each environment has isolated state (no shared state files)
+- [ ] Production state has restricted access
+- [ ] Workspace or directory separation is documented
+
+---
+
+### Phase 2: Drift Detection and Compliance
+
+**Q2.1: Drift detection strategy**
+
+| Mechanism | Configured? | Frequency | Action on Drift |
+|-----------|-------------|-----------|-----------------|
+| Plan in CI | | | |
+| OPA/Conftest policies | | | |
+| Cost estimation in PR | | | |
+| Security scanning (tfsec, checkov) | | | |
+
+- [ ] Drift is detected before manual changes accumulate
+- [ ] Plan output is reviewed in PRs
+- [ ] Policy violations block merge
+- [ ] Drift remediation process is documented
+
+**Q2.2: Resource lifecycle**
+
+| Resource Type | Prevent Destroy | Lifecycle Rules | Notes |
+|---------------|-----------------|----------------|-------|
+| Databases | | | |
+| Stateful storage | | | |
+| DNS records | | | |
+| IAM roles | | | |
+
+---
+
+### Phase 3: Cost Estimation and Controls
+
+**Q3.1: Cost visibility**
+
+| Resource | Estimated Monthly Cost | Reserved/Spot? | Waste Risk |
+|----------|------------------------|----------------|------------|
+| Compute | | | |
+| Storage | | | |
+| Data transfer | | | |
+| Managed services | | | |
+
+- [ ] Cost estimate is included in plan or PR
+- [ ] Reserved instances or committed use considered where appropriate
+- [ ] Budget alerts configured for the account/project
+- [ ] Cost allocation tags applied to resources
+
+**Q3.2: Cost controls**
+
+- [ ] No unbounded or auto-scaling-to-zero-missing resources without approval
+- [ ] Development environments have cost caps or shutdown schedules
+- [ ] Large one-time costs (e.g., data migration) are called out
+
+---
+
+### Phase 4: Module Design
+
+**Q4.1: Module structure**
+
+| Module | Single Responsibility? | Reusable? | Versioned? |
+|--------|------------------------|-----------|------------|
+| | | | |
+
+- [ ] Modules have clear inputs and outputs
+- [ ] No hardcoded environment-specific values in shared modules
+- [ ] Module versioning supports safe upgrades
+- [ ] Dependencies between modules are explicit and minimal
+
+**Q4.2: Variable and output design**
+
+- [ ] Sensitive variables use appropriate types (e.g., sensitive = true)
+- [ ] Outputs expose only what consumers need
+- [ ] Variable validation prevents invalid configurations
+- [ ] Defaults are safe (fail closed, not open)
+
+---
+
+### Phase 5: Environment Separation
+
+**Q5.1: Environment boundaries**
+
+| Boundary | Control | Verified? |
+|----------|---------|-----------|
+| Dev -> Staging | Manual promotion / Pipeline | |
+| Staging -> Prod | Approval gate / Change control | |
+| Network segmentation | VPC / Firewall | |
+| IAM separation | Role per environment | |
+
+- [ ] Production changes require explicit approval
+- [ ] No shared credentials across environments
+- [ ] Environment-specific configs are externalized (not in code)
+
+**Q5.2: Promotion path**
+
+- [ ] Same IaC code promotes through environments (no environment-specific branches)
+- [ ] Differences are parameterized, not forked
+- [ ] Rollback path is documented (previous state, previous module version)
+
+---
+
+### Phase 6: Secrets in IaC
+
+- [ ] No secrets in plan files, variables, or state outputs
+- [ ] Secrets referenced via external store (Vault, Secrets Manager, SOPS)
+- [ ] IAM/credential creation is automated with rotation support
+- [ ] Sensitive outputs are marked and not logged
+
+---
+
+### Phase 7: Naming and Tagging
+
+| Convention | Standard | Compliance |
+|------------|----------|------------|
+| Resource naming | project-env-component | |
+| Required tags | Environment, Owner, CostCenter | |
+| Tag enforcement | Policy / Linting | |
+
+- [ ] Naming is consistent and predictable
+- [ ] Tags support cost allocation and incident ownership
+- [ ] Tagging policy is enforced in CI
+
+---
+
+## Review Decision Matrix
+
+| Category | Pass | Modify | Block |
+|----------|------|--------|-------|
+| State management | Secure, locked, recoverable | Minor gaps | State in VCS, no locking |
+| Drift detection | Automated, in CI | Partial | No drift detection |
+| Cost controls | Estimated, tagged, alerts | Gaps documented | Unbounded cost risk |
+| Module design | Clean, versioned | Refactor needed | Monolithic, unsafe |
+| Environment separation | Isolated, approved | Minor gaps | Shared prod creds |
+| Secrets | External only | Some inline | Secrets in code |
+| Naming/tagging | Consistent, enforced | Partial | No tagging |
+
+---
+
+## Final Verdict
+
+- [ ] **Proceed**: IaC design is sound, implementation can begin
+- [ ] **Modify**: Update plan with findings (list specific changes)
+- [ ] **Block**: Critical issues must be resolved first
+
+**Blocking Issues**:
+
+1.
+2.
+3.
+
+**Modifications Required**:
+
+1.
+2.
+3.

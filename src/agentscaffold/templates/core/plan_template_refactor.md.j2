@@ -1,0 +1,84 @@
+# Refactor: {{ refactor_title | default('<REFACTOR_TITLE>') }}
+
+## 0. Metadata
+- Plan: {{ plan_number | default('TBD') }}
+- Issue: #TBD (issue tracker reference, if applicable)
+- Branch: refactor/TBD
+- Author: TBD
+- Reviewers: TBD (recommended for refactors)
+- Approval Required: No | Yes (if touching critical paths)
+
+## 1. Objective
+What does this refactor achieve? Why is it needed now?
+
+## 2. Non-Goals
+What is explicitly NOT being changed in this refactor?
+
+## 3. Constraints / Invariants
+- Must not break: (list all affected APIs, contracts, behaviors)
+- Backward compatibility: Required | Not required (explain)
+- Performance constraints: Must not regress | Acceptable trade-offs
+- Breaking change: No | Yes (if yes, see Breaking Changes protocol)
+
+## 4. Current State
+How does the code work today? Include relevant architecture details.
+
+## 5. Target State
+How will the code work after refactoring? What improves?
+
+## 6. Migration Plan (if breaking)
+If this is a breaking change, how will consumers migrate?
+- [ ] Migration step 1
+- [ ] Migration step 2
+
+## 7. File Impact Map
+| File | Change Type | Notes |
+|-----|------------|-------|
+| TBD | TBD | TBD |
+
+## 8. Tests
+| Test File | Coverage Target | Notes |
+|-----------|-----------------|-------|
+| {{ config.paths.test_dir | default('tests') }}/test_TBD.py | Existing behavior preserved | TBD |
+
+Test approach:
+- [ ] Existing tests continue to pass (no behavior change)
+- [ ] New tests for refactored code structure
+- [ ] Performance benchmarks (if applicable)
+
+## 9. Execution Steps
+- [ ] Step 1: Ensure existing tests pass (baseline)
+- [ ] Step 2: Refactor incrementally (small commits)
+- [ ] Step 3: Verify tests pass after each increment
+- [ ] Step 4: Final validation of all tests
+
+## 10. Validation
+```bash
+{{ config.validation.format_command | default('ruff format .') }}
+{{ config.validation.lint_command | default('ruff check .') }}
+{{ config.validation.test_command | default('pytest -q') }}
+```
+
+Expected results:
+- Lint: no errors
+- Tests: all tests pass (behavior unchanged)
+
+## 11. Rollback Plan
+Detailed rollback procedure:
+- Git revert strategy:
+- Data migration reversal (if applicable):
+- Feature flag to disable (if applicable):
+
+## 12. Risks & Mitigations
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| TBD | Low/Med/High | Low/Med/High | TBD |
+
+## 13. Completion Checklist
+- [ ] All execution steps checked off
+- [ ] All existing tests still pass
+- [ ] New tests written for refactored code
+- [ ] No linter errors
+- [ ] {{ config.paths.workflow_state | default('workflow_state.md') }} updated
+- [ ] Code reviewed (peer review recommended)
+- [ ] Rollback tested (for critical refactors)

@@ -1,0 +1,228 @@
+# Error Response Standards
+
+This document defines standards for API error responses. Use RFC 7807 Problem Details for structured, machine-readable errors.
+
+---
+
+## RFC 7807 Problem Details
+
+### Media Type
+
+```
+Content-Type: application/problem+json
+```
+
+### Standard Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| type | URI | Yes | Identifier for problem type (e.g., docs link) |
+| title | string | Yes | Short, human-readable summary |
+| status | number | Yes | HTTP status code |
+| detail | string | No | Human-readable explanation |
+| instance | URI | No | Request URI that caused the error |
+| trace_id | string | No | Correlation ID for debugging |
+
+### Extension Fields
+
+Add domain-specific fields as needed:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| code | string | Machine-readable error code |
+| errors | array | Validation errors (field, message) |
+| retry_after | number | Seconds to wait (for 429) |
+| documentation_url | URI | Link to docs |
+
+---
+
+## Error Codes
+
+Use consistent, uppercase, snake_case codes for client handling:
+
+| Code | HTTP Status | Use Case |
+|------|-------------|----------|
+| VALIDATION_ERROR | 400 | Request body or params invalid |
+| UNAUTHORIZED | 401 | Missing or invalid credentials |
+| FORBIDDEN | 403 | Authenticated but not allowed |
+| NOT_FOUND | 404 | Resource does not exist |
+| CONFLICT | 409 | State conflict (e.g., duplicate) |
+| RATE_LIMITED | 429 | Too many requests |
+| INTERNAL_ERROR | 500 | Unexpected server error |
+| SERVICE_UNAVAILABLE | 503 | Temporary outage |
+
+### Example
+
+```json
+{
+  "type": "https://api.example.com/errors/validation",
+  "title": "Validation Error",
+  "status": 400,
+  "detail": "The request body failed validation.",
+  "code": "VALIDATION_ERROR",
+  "instance": "/v1/orders",
+  "trace_id": "req_abc123",
+  "errors": [
+    {
+      "field": "/body/email",
+      "message": "Invalid email format"
+    },
+    {
+      "field": "/body/quantity",
+      "message": "Must be a positive integer"
+    }
+  ]
+}
+```
+
+---
+
+## Localization
+
+For user-facing APIs, support localized error messages:
+
+### Accept-Language
+
+Honor `Accept-Language` for `detail` and `title` when possible:
+
+```http
+Accept-Language: es
+```
+
+```json
+{
+  "type": "https://api.example.com/errors/validation",
+  "title": "Error de validación",
+  "detail": "El cuerpo de la solicitud no pasó la validación.",
+  "status": 400,
+  "code": "VALIDATION_ERROR"
+}
+```
+
+### Best Practices
+
+- Keep `code` and `type` stable across locales (machine-readable)
+- Localize `title` and `detail` for user display
+- Fall back to default locale (e.g., en) if requested locale unavailable
+- Document supported locales in API docs
+
+---
+
+## Debugging Info
+
+### In Development/Staging
+
+Include additional fields for debugging:
+
+```json
+{
+  "type": "https://api.example.com/errors/internal",
+  "title": "Internal Server Error",
+  "status": 500,
+  "code": "INTERNAL_ERROR",
+  "trace_id": "req_abc123",
+  "debug": {
+    "exception_type": "ValueError",
+    "message": "Invalid state transition"
+  }
+}
+```
+
+### In Production
+
+- **Never** expose stack traces, exception messages, or internal paths
+- Include `trace_id` for support to correlate with logs
+- Log full details server-side; return minimal info to client
+
+---
+
+## Error Response Examples
+
+### 400 Validation Error
+
+```json
+{
+  "type": "https://api.example.com/errors/validation",
+  "title": "Validation Error",
+  "status": 400,
+  "detail": "Request validation failed",
+  "code": "VALIDATION_ERROR",
+  "instance": "/v1/orders",
+  "trace_id": "req_xyz789",
+  "errors": [
+    {"field": "/body/items/0/sku", "message": "SKU is required"},
+    {"field": "/body/items/0/quantity", "message": "Must be at least 1"}
+  ]
+}
+```
+
+### 404 Not Found
+
+```json
+{
+  "type": "https://api.example.com/errors/not-found",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "Order with id 'ord_123' was not found",
+  "code": "NOT_FOUND",
+  "instance": "/v1/orders/ord_123",
+  "trace_id": "req_abc456"
+}
+```
+
+### 429 Rate Limited
+
+```json
+{
+  "type": "https://api.example.com/errors/rate-limited",
+  "title": "Rate Limit Exceeded",
+  "status": 429,
+  "detail": "You have exceeded 100 requests per minute.",
+  "code": "RATE_LIMITED",
+  "instance": "/v1/orders",
+  "trace_id": "req_def789",
+  "retry_after": 60
+}
+```
+
+### 500 Internal Error
+
+```json
+{
+  "type": "https://api.example.com/errors/internal",
+  "title": "Internal Server Error",
+  "status": 500,
+  "detail": "An unexpected error occurred. Please try again later.",
+  "code": "INTERNAL_ERROR",
+  "instance": "/v1/orders",
+  "trace_id": "req_ghi012"
+}
+```
+
+---
+
+## Implementation Checklist
+
+When implementing error responses:
+
+- [ ] Use `application/problem+json` for error bodies
+- [ ] Include type, title, status in all error responses
+- [ ] Use consistent error codes (VALIDATION_ERROR, NOT_FOUND, etc.)
+- [ ] Include trace_id for correlation
+- [ ] Validate errors array structure (field, message)
+- [ ] Never expose stack traces or internal details in production
+- [ ] Document error codes and types in API docs
+- [ ] Include Retry-After for 429 (and optionally 503)
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|--------------|--------------|------------------|
+| Plain text errors | Not machine-readable | application/problem+json |
+| HTML error pages | Breaks API clients | JSON with Problem Details |
+| Stack traces in production | Security risk | Log server-side, return trace_id |
+| Inconsistent error shape | Client cannot parse | Same structure for all errors |
+| No trace_id | Cannot correlate with logs | Always include trace_id |
+| Vague messages | Hard to debug | Specific detail, link to docs |

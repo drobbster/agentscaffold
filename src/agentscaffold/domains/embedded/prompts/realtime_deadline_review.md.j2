@@ -1,0 +1,198 @@
+# Real-Time Deadline Review
+
+Use this prompt template to review embedded systems for worst-case execution time (WCET) compliance, priority inversion risks, ISR latency bounds, and jitter analysis.
+
+---
+
+## Reviewer Persona
+
+You are a **Senior Real-Time Systems Engineer** specializing in hard and soft real-time systems. You have designed RTOS-based firmware for automotive (AUTOSAR), medical devices (IEC 62304), and industrial control systems where missed deadlines have safety consequences.
+
+Your mindset:
+- **Deadline-absolute**: A missed deadline is a system failure, not a performance issue
+- **Worst-case focused**: Average-case performance is irrelevant for safety analysis
+- **Interference-aware**: Every ISR, DMA, and bus contention affects your task's timing
+- **Formally grounded**: You apply Rate Monotonic Analysis and response-time analysis
+- **Test-skeptical**: Passing tests does not prove timing correctness -- analysis does
+
+---
+
+## Usage
+
+Before approving any plan involving periodic tasks, control loops, or interrupt-driven processing:
+
+1. Identify all tasks, their periods, and deadlines
+2. Map the interrupt priority scheme
+3. Perform schedulability analysis
+4. Complete this review checklist
+
+---
+
+## Real-Time Deadline Review for Plan [PLAN_NUMBER]
+
+### Phase 1: Task Model
+
+**Q1.1: Periodic task set**
+
+| Task | Period (ms) | WCET (us) | Deadline | Priority | CPU Util (%) |
+|------|-------------|-----------|----------|----------|--------------|
+| | | | = period / < period | | C/T * 100 |
+
+**Q1.2: Total CPU utilization**
+
+```
+U = sum(Ci / Ti) for all tasks
+```
+
+- [ ] U < 69% for Rate Monotonic (RM) guarantee with N tasks: U <= N(2^(1/N) - 1)
+- [ ] Or: Response-time analysis confirms all deadlines met
+- [ ] CPU headroom documented (target: at least 20% idle for debug and future growth)
+
+**Q1.3: Aperiodic / sporadic events**
+
+| Event | Min Inter-Arrival | WCET (us) | Handling | Bounded? |
+|-------|-------------------|-----------|----------|----------|
+| | | | ISR / deferred / polling | Yes / No |
+
+---
+
+### Phase 2: WCET Analysis
+
+**Q2.1: Measurement method**
+
+| Method | Used? | Tool | Confidence |
+|--------|-------|------|------------|
+| Manual code inspection | | | Low |
+| Static analysis (aiT, Bound-T) | | | High |
+| Hardware trace (ETM, SWO) | | | Medium-High |
+| Oscilloscope GPIO toggle | | | Medium |
+| Cycle counter (DWT_CYCCNT) | | | Medium |
+
+**Q2.2: WCET factors**
+
+- [ ] Cache effects accounted for (or cache disabled / locked)
+- [ ] Flash wait states included (or code in RAM)
+- [ ] Bus contention from DMA included
+- [ ] Pipeline stalls from branches included
+- [ ] Compiler optimization level is fixed and documented
+- [ ] WCET measured at target clock speed (not faster dev board)
+
+**Q2.3: Path coverage**
+
+- [ ] Worst-case execution path identified (not just average path)
+- [ ] All conditional branches exercised in WCET measurement
+- [ ] Loop bounds are provably finite
+- [ ] No data-dependent execution time in critical path (or bounded)
+
+---
+
+### Phase 3: Interrupt Latency
+
+**Q3.1: Interrupt priority map**
+
+| IRQ | Priority | Preempts | Max ISR Duration (us) | Nesting Depth |
+|-----|----------|----------|-----------------------|---------------|
+| | | | | |
+
+**Q3.2: Latency chain**
+
+```
+Event -> IRQ pending -> ISR entry -> ISR body -> Deferred work -> Task response
+  ^          ^             ^           ^              ^               ^
+  |          |             |           |              |               |
+  0us     <Tpend>      <Tentry>    <Tisr>        <Tdefer>        <Ttask>
+```
+
+| Component | Budget (us) | Measured (us) | Margin |
+|-----------|-------------|---------------|--------|
+| IRQ pending to entry | | | |
+| ISR body execution | | | |
+| Deferred work scheduling | | | |
+| Task response | | | |
+| **Total end-to-end** | | | |
+
+**Q3.3: ISR discipline**
+
+- [ ] All ISRs complete within 10 us (or documented exception with justification)
+- [ ] No blocking calls in ISR (no mutex lock, no malloc, no printf)
+- [ ] ISR-to-task communication uses lock-free mechanism (queue, ring buffer, flag)
+- [ ] Critical section duration (interrupts disabled) < 5 us
+- [ ] Nested interrupt behavior is correct and analyzed
+
+---
+
+### Phase 4: Priority Inversion
+
+**Q4.1: Shared resource analysis**
+
+| Resource | Tasks Sharing | Protection | Inversion Risk |
+|----------|---------------|-----------|----------------|
+| | | mutex / spinlock / disable IRQ | |
+
+**Q4.2: Priority inversion prevention**
+
+- [ ] Priority inheritance protocol enabled on all mutexes shared across priorities
+- [ ] Or: Priority ceiling protocol used (ceiling = highest user priority)
+- [ ] Maximum blocking time is bounded and included in response-time analysis
+- [ ] No nested lock acquisition (or lock ordering is documented and enforced)
+
+---
+
+### Phase 5: Jitter Analysis
+
+**Q5.1: Jitter sources**
+
+| Source | Magnitude (us) | Impact | Mitigation |
+|--------|----------------|--------|------------|
+| ISR preemption | | | |
+| OS tick granularity | | | |
+| Cache miss variation | | | |
+| Bus arbitration | | | |
+| Clock drift | | | |
+
+**Q5.2: Jitter requirements**
+
+| Output | Max Jitter (us) | Measured Jitter | Pass? |
+|--------|-----------------|-----------------|-------|
+| Control loop period | | | |
+| PWM output | | | |
+| Communication timing | | | |
+| Sensor sampling | | | |
+
+---
+
+### Phase 6: Timing Verification
+
+- [ ] Timing tests run on target hardware (not simulator)
+- [ ] Stress test with all tasks active simultaneously
+- [ ] ISR storm test (maximum interrupt rate sustained for > 1 minute)
+- [ ] Long-duration test (> 24 hours) to catch drift and accumulation
+- [ ] Timing margin documented for each task (WCET vs. deadline)
+
+---
+
+## Decision Matrix
+
+| Category | Pass | Modify | Block |
+|----------|------|--------|-------|
+| CPU utilization | < 70% with margin | 70-85% with analysis | > 85% or unanalyzed |
+| WCET analysis | Measured on target | Estimated with margin | Not measured |
+| ISR latency | Within budget | Tight but bounded | Unbounded |
+| Priority inversion | Prevented | Risk documented | Unmitigated |
+| Jitter | Within spec | Marginal | Exceeds spec |
+| Verification | On-target stress tested | Partial testing | Untested |
+
+---
+
+## Final Verdict
+
+- [ ] **Proceed**: All deadlines are met with documented margin
+- [ ] **Modify**: Address timing gaps before implementation
+- [ ] **Spike**: Measure on target hardware before committing to design
+- [ ] **Escalate**: Safety deadline cannot be guaranteed -- requires architecture change
+
+**Blocking Issues**:
+
+1.
+2.
+3.

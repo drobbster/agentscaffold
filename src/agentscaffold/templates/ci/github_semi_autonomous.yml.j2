@@ -1,0 +1,27 @@
+name: Semi-Autonomous PR Checks
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, labeled]
+
+jobs:
+  validate-agent-pr:
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'agent-created') ||
+      startsWith(github.head_ref, 'agent/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Validate safety boundaries
+        run: scaffold validate --check-safety-boundaries
+      - name: Check session summary
+        run: scaffold validate --check-session-summary
+      - name: Run full test suite
+        run: pytest -q
+      - name: Lint
+        run: ruff check .

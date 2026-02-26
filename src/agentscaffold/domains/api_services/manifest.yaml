@@ -1,0 +1,14 @@
+name: api_services
+display_name: "API Services"
+description: "API design reviews, contract testing, backward compatibility, rate limiting, and versioning standards."
+reviews:
+  - api_design
+  - contract_testing
+standards:
+  - backward_compatibility
+  - rate_limiting
+  - openapi_validation
+  - versioning_strategy
+  - error_response
+approval_gates:
+  external_apis: true

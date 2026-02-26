@@ -1,0 +1,119 @@
+# Model Versioning Standards
+
+This document defines standards for versioning ML models from development through production.
+
+---
+
+## Version Naming
+
+### Format
+
+```
+{model_name}/v{major}.{minor}.{patch}
+
+Example: fraud_detector/v2.1.0
+```
+
+| Change Type | Version Bump | Example |
+|-------------|-------------|---------|
+| New architecture or features | Major (v2.0.0) | Switch from XGBoost to transformer |
+| Retrained with new data | Minor (v1.2.0) | Monthly retrain with fresh data |
+| Bug fix or config change | Patch (v1.1.1) | Fix preprocessing bug |
+
+---
+
+## Model Registry Workflow
+
+### Stages
+
+```
+Development -> Staging -> Production -> Archived
+```
+
+| Stage | Purpose | Promotion Criteria |
+|-------|---------|-------------------|
+| Development | Active experimentation | Any run with logged metrics |
+| Staging | Pre-production validation | Passes all validation checks |
+| Production | Serving live traffic | A/B test or shadow mode success |
+| Archived | Historical reference | Replaced by newer version |
+
+### Promotion Checklist
+
+Before promoting from Staging to Production:
+
+- [ ] Offline metrics meet or exceed current production model
+- [ ] Shadow mode comparison shows no regression
+- [ ] Latency meets SLA at production traffic levels
+- [ ] Memory footprint is within serving budget
+- [ ] All governance checks passed (bias, fairness, compliance)
+- [ ] Rollback procedure documented and tested
+- [ ] Monitoring dashboards updated for new model
+- [ ] Stakeholder approval obtained
+
+```python
+import mlflow
+
+client = mlflow.MlflowClient()
+
+# Register a new model version
+model_uri = f"runs:/{run_id}/model"
+mv = client.create_model_version(
+    name="fraud_detector",
+    source=model_uri,
+    run_id=run_id,
+    description="Retrained with Q1 2026 data",
+)
+
+# Promote to staging
+client.set_registered_model_alias("fraud_detector", "staging", mv.version)
+
+# After validation, promote to production
+client.set_registered_model_alias("fraud_detector", "production", mv.version)
+```
+
+---
+
+## Rollback Procedure
+
+### Automated Rollback Triggers
+
+| Signal | Threshold | Action |
+|--------|-----------|--------|
+| Error rate increase | > 2x baseline | Automatic rollback |
+| Latency P99 increase | > 50% baseline | Alert + manual rollback |
+| Prediction distribution shift | KS statistic > 0.1 | Alert + investigate |
+
+### Manual Rollback Steps
+
+1. Identify the previous production version in the registry
+2. Update the production alias to point to the previous version
+3. Verify serving infrastructure picks up the change
+4. Monitor metrics for 15 minutes after rollback
+5. Document the rollback reason and root cause
+
+---
+
+## Model Metadata
+
+### Required Fields Per Version
+
+| Field | Description |
+|-------|-------------|
+| training_data_version | Data version or hash |
+| training_date | When the model was trained |
+| framework_versions | Python, sklearn, torch, etc. |
+| feature_schema | Input feature names, types, ranges |
+| performance_metrics | Key offline metrics |
+| author | Who trained/registered the model |
+| approval | Who approved for production |
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|--------------|--------------|------------------|
+| Overwriting production model in place | No rollback possible | Version and alias |
+| No metadata on model versions | Can't reproduce or audit | Required metadata fields |
+| Skipping staging | Untested in prod conditions | Always stage first |
+| Manual file-based deployment | Error-prone, no audit trail | Use model registry |

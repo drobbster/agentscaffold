@@ -1,0 +1,905 @@
+# Testing Standards
+
+## Principles
+
+1. **Test-First or Test-Alongside**: Never defer tests to later
+2. **Isolation**: Unit tests must not depend on external services
+3. **Coverage Targets**: Enforce minimum coverage per module
+4. **Clear Naming**: Test names describe behavior, not implementation
+
+---
+
+## Test Structure
+
+### Directory Layout
+
+```
+tests/
+  unit/                    # Fast, isolated tests
+    services/
+      test_processor.py
+      test_factory.py
+    data/
+      test_handlers.py
+    conftest.py            # Shared fixtures
+  integration/             # Tests with real dependencies
+    test_api_adapter.py
+    test_data_pipeline.py
+  e2e/                     # End-to-end workflows
+    test_pipeline_flow.py
+  fixtures/                # Shared test data
+    sample_data.csv
+```
+
+### Test File Naming
+
+- `test_{module_name}.py` - Tests for a specific module
+- `test_{feature}_integration.py` - Integration tests
+- `conftest.py` - Shared fixtures (pytest auto-discovers)
+
+---
+
+## Unit Test Patterns
+
+### Test Class Organization
+
+```python
+# tests/unit/services/test_processor.py
+
+import pytest
+from {{ project_name }}.services.processor import BatchProcessor
+
+
+class TestBatchProcessor:
+    """Tests for BatchProcessor item processing."""
+    
+    @pytest.fixture
+    def processor(self):
+        """Create processor with default parameters."""
+        return BatchProcessor(batch_size=10, timeout=30)
+    
+    @pytest.fixture
+    def sample_items(self):
+        """Create sample input items."""
+        return [{"id": i, "value": f"item_{i}"} for i in range(50)]
+    
+    # --- Happy Path Tests ---
+    
+    def test_processes_all_items_in_batch(self, processor, sample_items):
+        """Should return results for all input items."""
+        results = processor.process(sample_items)
+        
+        assert len(results) == len(sample_items)
+        assert all(r["status"] == "complete" for r in results)
+    
+    def test_result_contains_required_fields(self, processor, sample_items):
+        """All results must contain id, status, and timestamp."""
+        results = processor.process(sample_items)
+        
+        for result in results:
+            assert "id" in result
+            assert "status" in result
+            assert "timestamp" in result
+    
+    # --- Edge Cases ---
+    
+    def test_returns_empty_for_empty_input(self, processor):
+        """Should return empty list for empty input."""
+        results = processor.process([])
+        
+        assert results == []
+    
+    def test_handles_single_item(self, processor):
+        """Should handle single-item input correctly."""
+        results = processor.process([{"id": 1, "value": "solo"}])
+        
+        assert len(results) == 1
+    
+    # --- Error Cases ---
+    
+    def test_raises_on_missing_required_fields(self, processor):
+        """Should raise ValueError when required fields missing."""
+        bad_items = [{"wrong_field": "value"}]
+        
+        with pytest.raises(ValueError, match="Missing required field"):
+            processor.process(bad_items)
+    
+    # --- Property Tests ---
+    
+    def test_name_property(self, processor):
+        """Processor name should reflect configuration."""
+        assert processor.name == "batch_processor"
+    
+    def test_get_params_returns_all_parameters(self, processor):
+        """get_params should return all constructor arguments."""
+        params = processor.get_params()
+        
+        assert "batch_size" in params
+        assert "timeout" in params
+        assert params["batch_size"] == 10
+```
+
+### Naming Convention
+
+```python
+# Pattern: test_{action}_{context}_{expected_outcome}
+
+def test_processes_all_items_in_batch(self):
+    """Should return results for all input items."""
+    
+def test_raises_on_missing_required_fields(self):
+    """Should raise ValueError when required fields missing."""
+    
+def test_returns_empty_for_empty_input(self):
+    """Should return empty list for empty input."""
+```
+
+---
+
+## Fixtures
+
+### Shared Fixtures in conftest.py
+
+```python
+# tests/conftest.py
+
+import pytest
+from datetime import date
+
+
+@pytest.fixture
+def sample_records():
+    """Generate sample records for testing."""
+    return [
+        {"id": i, "name": f"item_{i}", "value": i * 10.5, "active": True}
+        for i in range(100)
+    ]
+
+
+@pytest.fixture
+def mock_api_client(mocker):
+    """Create mock API client."""
+    client = mocker.Mock()
+    client.fetch.return_value = {"status": "ok", "data": []}
+    return client
+
+
+@pytest.fixture
+def temp_cache_dir(tmp_path):
+    """Create temporary directory for cache tests."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    return cache_dir
+```
+
+### Fixture Scopes
+
+```python
+@pytest.fixture(scope="session")
+def expensive_setup():
+    """Run once per test session (e.g., database setup)."""
+    db = create_test_database()
+    yield db
+    db.cleanup()
+
+
+@pytest.fixture(scope="module")
+def module_level_data():
+    """Run once per test module."""
+    return load_large_dataset()
+
+
+@pytest.fixture(scope="function")  # Default
+def per_test_fixture():
+    """Fresh instance for each test."""
+    return SomeClass()
+```
+
+---
+
+## Mocking External Dependencies
+
+### Pattern: Mock at Boundary
+
+```python
+# tests/unit/data/test_handlers.py
+
+from unittest.mock import Mock, patch
+
+def test_fetches_data_from_primary_source(mocker):
+    """Should use primary source when available."""
+    mock_source = Mock()
+    mock_source.fetch.return_value = {"items": [...]}
+    
+    handler = DataHandler(primary_source=mock_source)
+    data = handler.fetch_data("users", page=1)
+    
+    mock_source.fetch.assert_called_once_with("users", page=1)
+
+
+def test_falls_back_on_primary_failure(mocker):
+    """Should use fallback when primary raises."""
+    mock_primary = Mock()
+    mock_primary.fetch.side_effect = ConnectionError()
+    
+    mock_fallback = Mock()
+    mock_fallback.fetch.return_value = {"items": [...]}
+    
+    handler = DataHandler(primary_source=mock_primary, fallback_source=mock_fallback)
+    data = handler.fetch_data("users", page=1)
+    
+    mock_fallback.fetch.assert_called_once()
+```
+
+---
+
+## Integration Tests
+
+### Markers for Slow/External Tests
+
+```python
+# tests/integration/test_external_api.py
+
+import pytest
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_fetches_real_data_from_api():
+    """Integration test with real external API."""
+    client = ApiClient(base_url="https://api.example.com")
+    data = client.fetch("items", limit=10)
+    
+    assert len(data) > 0
+    assert "id" in data[0]
+```
+
+### Running Integration Tests
+
+```bash
+# Skip integration tests by default
+pytest -m "not integration"
+
+# Run only integration tests
+pytest -m integration
+
+# Run all tests
+pytest
+```
+
+### pytest.ini Configuration
+
+```ini
+[pytest]
+markers =
+    integration: marks tests as integration tests (deselect with '-m "not integration"')
+    slow: marks tests as slow (deselect with '-m "not slow"')
+    smoke: critical path smoke tests (run with -m smoke)
+```
+
+---
+
+## Smoke Tests
+
+Smoke tests validate critical system paths work end-to-end. They are designed to:
+- Run quickly (<60 seconds total)
+- Use real data where appropriate
+- Test actual component integration
+- Provide fast feedback on system health
+
+### Directory Structure
+
+```
+tests/
+  smoke/
+    __init__.py
+    conftest.py                        # Shared fixtures (real data with cache)
+    test_data_pipeline_smoke.py        # Data fetch -> cache -> validate
+    test_api_smoke.py                  # API endpoint health checks
+    test_service_startup_smoke.py      # Application lifecycle
+```
+
+{% if domain_smoke_tests %}
+{{ domain_smoke_tests }}
+{% endif %}
+
+### Smoke Test Design Principles
+
+| Principle | Implementation |
+|-----------|---------------|
+| **Fast** | <60 seconds total suite |
+| **Comprehensive** | Real data where appropriate |
+| **Critical paths only** | Happy path + 1 error case per component |
+| **Deterministic** | Seeded randomness, cached data |
+
+### Smoke Test Pattern
+
+```python
+# tests/smoke/test_pipeline_smoke.py
+
+import pytest
+
+@pytest.mark.smoke
+class TestPipelineSmoke:
+    """Smoke tests for end-to-end data pipeline."""
+
+    def test_pipeline_completes_successfully(
+        self,
+        smoke_input_data,
+        smoke_config,
+    ) -> None:
+        """Full pipeline runs without errors and produces valid output."""
+        from {{ project_name }}.pipeline import Pipeline
+        
+        pipeline = Pipeline(config=smoke_config)
+        result = pipeline.run(smoke_input_data)
+        
+        assert result is not None
+        assert len(result.output) > 0
+        assert result.errors == []
+```
+
+### Running Smoke Tests
+
+```bash
+# Smoke tests only (fast verification)
+pytest -m smoke -v
+
+# Smoke tests with timing
+pytest -m smoke -v --durations=10
+
+# Verify total time
+time pytest -m smoke
+
+# CI pipeline pattern: smoke first, then full suite
+pytest -m smoke && pytest -m "not smoke"
+```
+
+### When to Add Smoke Tests
+
+Unlike unit tests (required per feature), smoke tests are required at **milestone boundaries**:
+
+| When | Action |
+|------|--------|
+| Complete major phase | Add/update smoke tests for new capabilities |
+| New integration boundary | Test the cross-module interaction |
+| Critical path modification | Update affected smoke tests |
+| Bug fix in single module | No smoke test needed |
+
+---
+
+## Coverage Requirements
+
+### Per-Module Targets
+
+| Module | Min Coverage | Notes |
+|--------|--------------|-------|
+| Core business logic | 95% | Critical paths |
+| Data layer | 90% | Data handling |
+| External integrations | 85% | Adapter code |
+| Application entry points | 80% | CLI/API glue |
+{% if domain_coverage_targets %}
+{{ domain_coverage_targets }}
+{% endif %}
+
+### Running Coverage
+
+```bash
+# Run with coverage
+pytest --cov={{ project_name }} --cov-report=html --cov-fail-under=90
+
+# Check specific module
+pytest --cov={{ project_name }}/services --cov-report=term-missing
+```
+
+---
+
+## Test Data Management
+
+### Use Fixtures for Test Data
+
+```python
+# tests/fixtures/ - CSV/JSON files for common test cases
+# tests/conftest.py - Load fixtures as pytest fixtures
+
+@pytest.fixture
+def sample_data():
+    """Load sample data from fixtures."""
+    return pd.read_csv("tests/fixtures/sample_data.csv", parse_dates=["date"], index_col="date")
+```
+
+### Generating Test Data
+
+```python
+@pytest.fixture
+def ascending_data():
+    """Generate data with clear ascending trend for testing."""
+    import random
+    dates = pd.date_range("2020-01-01", periods=100)
+    base = 100
+    values = [base + i * 0.5 + random.gauss(0, 0.1) for i in range(100)]
+    
+    return pd.DataFrame({
+        "value": values,
+        "category": ["A"] * 50 + ["B"] * 50,
+    }, index=dates)
+```
+
+---
+
+## Pydantic Model Testing
+
+### Validation Happens at Construction
+
+Pydantic models validate at construction time, not at method calls. Test accordingly:
+
+```python
+from pydantic import ValidationError
+
+def test_rejects_invalid_config():
+    """Pydantic validates at construction."""
+    with pytest.raises(ValidationError, match="batch_size"):
+        ProcessorConfig(
+            batch_size=0,  # Fails gt=0 constraint
+            timeout=30,
+        )
+```
+
+---
+
+## FastAPI Dependency Injection Override Pattern
+
+### Problem
+
+When testing FastAPI endpoints that use `Depends()` for injectable dependencies (e.g., data fetchers, services), you need to replace those dependencies with test doubles. A common mistake is reloading modules, which creates new function objects that don't match the registered dependency.
+
+### Solution: Override the Exact Dependency Callable
+
+```python
+# tests/unit/apps/test_endpoint.py
+
+import importlib
+import pytest
+from fastapi.testclient import TestClient
+
+
+def _build_client(monkeypatch: pytest.MonkeyPatch, *, api_keys: str) -> TestClient:
+    """Build test client with env config."""
+    monkeypatch.setenv("API_KEYS", api_keys)
+    
+    main = importlib.import_module("apps.myapp.main")
+    importlib.reload(main)
+    
+    return TestClient(main.app)
+
+
+class StubDataFetcher:
+    """Test double for data fetcher dependency."""
+    
+    def __init__(self, data: dict):
+        self.data = data
+    
+    def fetch(self, key, start_date, end_date):
+        if key not in self.data:
+            raise ValueError(f"No data for {key}")
+        return self.data[key]
+
+
+def test_endpoint_with_stub_fetcher(monkeypatch: pytest.MonkeyPatch):
+    client = _build_client(monkeypatch, api_keys="testkey")
+    
+    from apps.myapp.routers import my_router
+    
+    stub = StubDataFetcher({"items": make_test_data()})
+    
+    main = importlib.import_module("apps.myapp.main")
+    main.app.dependency_overrides[my_router.get_data_fetcher] = lambda: stub
+    
+    resp = client.post("/api/endpoint", json={...}, headers={"x-api-key": "testkey"})
+    assert resp.status_code == 200
+    
+    main.app.dependency_overrides.clear()
+```
+
+### Key Points
+
+1. **Import the router module directly** to get a reference to the dependency function
+2. **Don't reload the router module** after the initial app reload - this creates a new function object
+3. **Override using the exact function reference** from the router module
+4. **Clear overrides after test** to avoid cross-test pollution
+
+### Common Mistakes
+
+```python
+# BAD: Reloading both main and router creates mismatched function objects
+main = importlib.import_module("apps.myapp.main")
+importlib.reload(main)
+router = importlib.import_module("apps.myapp.routers.my_router")
+importlib.reload(router)  # Creates new function that doesn't match app's registered one
+
+# BAD: Using a string key instead of the actual function
+main.app.dependency_overrides["get_data_fetcher"] = lambda: stub  # Won't work
+
+# GOOD: Reference the function from the already-imported router
+from apps.myapp.routers import my_router
+main.app.dependency_overrides[my_router.get_data_fetcher] = lambda: stub
+```
+
+---
+
+## Testing Gotchas
+
+Common testing pitfalls discovered during implementation.
+
+### Lazy Property Mocking
+
+Lazy properties (using `@cached_property` or similar) cannot be mocked with `patch.object()`. Use direct assignment instead.
+
+```python
+# WRONG: patch.object doesn't work for lazy properties
+with patch.object(service, '_component', mock_component):
+    result = service.do_something()  # Still uses real component
+
+# RIGHT: Direct assignment for lazy properties
+service._component = mock_component
+result = service.do_something()  # Uses mock
+```
+
+### Floating Point Precision Before Pydantic
+
+Pydantic validates bounds strictly. Clamp calculated values before validation to avoid spurious failures.
+
+```python
+# WRONG: May fail validation due to floating point precision
+score = calculate_ratio()  # Returns 1.0000000001
+model = ScoreModel(score=score)  # ValidationError: score > 1.0
+
+# RIGHT: Clamp to valid range before validation
+score = min(1.0, max(-1.0, calculate_ratio()))
+model = ScoreModel(score=score)
+```
+
+### Singleton Test Isolation
+
+Singletons with persistent state (e.g., circuit breakers, caches) need `tmp_path` fixtures for test isolation.
+
+```python
+# WRONG: Tests pollute each other via singleton state
+def test_circuit_breaker_trips():
+    breaker = CircuitBreaker()  # Uses default state file
+    breaker.trip()
+    # State persists to next test!
+
+# RIGHT: Use tmp_path for isolated state
+@pytest.fixture
+def isolated_breaker(tmp_path):
+    return CircuitBreaker(state_file=tmp_path / "breaker.json")
+
+def test_circuit_breaker_trips(isolated_breaker):
+    isolated_breaker.trip()
+    # State isolated to this test
+```
+
+**Module-level reference re-patching:** When a singleton is imported at module level
+by other modules, resetting the singleton class is not enough. The consuming module still
+holds a reference to the OLD instance. You must re-patch the consuming module's
+reference after reset.
+
+```python
+@pytest.fixture(autouse=True)
+def _reset_circuit_breaker(tmp_path):
+    """Reset circuit breaker AND re-patch module-level references."""
+    import myapp.circuit_breaker as cb_module
+    import myapp.services.orchestrator as orch_module
+
+    cb_module.CircuitBreaker._instance = None
+    cb_module.DEFAULT_STATE_FILE = str(tmp_path / ".breaker_state")
+
+    cb_module.breaker = cb_module.CircuitBreaker()
+
+    # Re-patch consuming module's reference (CRITICAL)
+    orch_module.breaker = cb_module.breaker
+
+    yield
+
+    cb_module.CircuitBreaker._instance = None
+```
+
+Without the re-patching step, the orchestrator continues using the stale instance
+from the previous test, causing spurious failures.
+
+### structlog Testing with capsys
+
+structlog doesn't integrate with pytest's `caplog` fixture. Use `capsys` to capture stdout instead.
+
+```python
+# WRONG: structlog doesn't write to caplog
+def test_logs_warning(caplog):
+    do_something_that_logs()
+    assert "expected message" in caplog.text  # Fails - empty
+
+# RIGHT: Capture stdout with capsys
+def test_logs_warning(capsys):
+    do_something_that_logs()
+    captured = capsys.readouterr()
+    assert "expected message" in captured.out
+```
+
+### Test Config Interference
+
+Test configurations can interfere with feature tests. Isolate test concerns explicitly.
+
+```python
+# WRONG: Rate limit in test config blocks throughput testing
+config = TestConfig(rate_limit=10, burst_size=100)
+# rate_limit triggers before burst_size can be tested
+
+# RIGHT: Isolate the concern being tested
+config = TestConfig(
+    rate_limit=999999,  # Permissive - not testing this
+    burst_size=100,     # Testing this
+)
+```
+
+### Mock Return Type Matching
+
+Mock return types must match real implementations. Real services return objects, mocks often return primitives.
+
+```python
+# WRONG: Mock returns dict, real returns StatusResult
+mock_service.get_status.return_value = {"status": "ok"}
+
+# RIGHT: Match the real return type
+mock_service.get_status.return_value = StatusResult(
+    status="ok", timestamp=datetime.utcnow()
+)
+
+# Or handle both in code with type checking
+result = service.get_status(item_id)
+status = result.status if hasattr(result, 'status') else result["status"]
+```
+
+### Default Config Changes Breaking Tests
+
+Changing defaults (e.g., `enable_validation=True`) can break existing tests. Verify all affected tests before implementing.
+
+```python
+# Before: Tests assume validation disabled
+# After: Default changed to enable_validation=True
+
+# WRONG: Silently break tests
+# Config change causes rejections that tests don't expect
+
+# RIGHT: Update affected tests explicitly
+def test_processing(permissive_config):
+    config = permissive_config.copy(enable_validation=False)
+```
+
+### Mock Patching Location
+
+Lazy imports inside functions require patching at the **source location** (where the name is looked up), not the import location.
+
+```python
+# WRONG: Patches where DataImporter is defined
+with patch("myapp.importers.DataImporter"):
+    ...
+
+# RIGHT: Patch in the module that uses it via lazy import
+with patch("myapp.services.pipeline.DataImporter"):
+    ...
+```
+
+### Singleton reset() for Test Isolation
+
+When singletons expose a `reset()` method, call it in fixture teardown for test isolation instead of (or in addition to) using `tmp_path` for state-based singletons.
+
+### Mock API Completeness
+
+Mocks must implement all methods the code under test calls. Common miss: client mocks need all accessed methods returning appropriately typed responses.
+
+### Standalone Algorithm Tests
+
+For complex algorithm changes (normalization, scoring, etc.):
+
+1. Create a standalone test that exercises core logic **without** the full environment.
+2. Use minimal mock config with only the required fields.
+3. Verify edge cases (NaN, Inf, zeros, extremes) in isolation.
+4. Add integration tests with the full environment after standalone tests pass.
+
+### Testing Normalized Values
+
+When testing components with `normalize=True` (default in scoring functions):
+
+1. Use `pytest.approx(expected, abs=0.01)` for approximate assertions.
+2. Set `normalize=False` in test configs when exact assertions are needed.
+3. For scheduled or dynamic values, assert relative relationships (e.g., A > B) rather than exact values.
+
+### Async Testing with Blocking Calls
+
+`asyncio.wait_for()` cannot interrupt blocking sync calls (e.g., `model.predict()`). Use async-mock wrappers or run blocking work in a `ThreadPoolExecutor` instead of relying on asyncio timeouts around sync code.
+
+### Fallback Mode Testing
+
+Graceful degradation paths require explicit tests for both degraded behavior and warning/logging. Do not rely on fallback coverage from happy-path tests alone.
+
+{% if domain_testing_gotchas %}
+{{ domain_testing_gotchas }}
+{% endif %}
+
+---
+
+## Flow-Layer Integration Tests
+
+Unit tests that validate library code are necessary but insufficient. Features
+that are wired through pipeline flows or application entry points must also have
+at least one test verifying the **flow layer** actually uses the new library code
+correctly.
+
+**Why this matters:** A feature validated at the library layer may not be wired
+through to the actual pipeline that uses it. The bug runs undetected until
+runtime.
+
+**Pattern: Flow-layer smoke test**
+
+```python
+def test_pipeline_uses_new_feature_when_configured():
+    """Verify pipeline passes the new config through to the processor."""
+    import ast
+    import inspect
+
+    # Option A: Source inspection (no heavy imports needed)
+    source = inspect.getsource(create_pipeline)
+    tree = ast.parse(source)
+    # Verify the parameter appears in the function body
+
+    # Option B: Lightweight integration test
+    config = load_config(feature_enabled=True)
+    pipeline = create_pipeline(config)
+    assert pipeline.feature_enabled is True
+```
+
+**When to add flow-layer tests:**
+- Feature adds a new config option that flows through pipeline layers
+- Feature changes library behavior that pipeline flows consume
+- Feature modifies data contracts between libraries and pipelines
+
+---
+
+## Real Import Path Tests
+
+Tests that mock entire modules via `patch.dict(sys.modules, ...)` can mask real
+integration bugs. At least one test per core function should call the **real
+function** (not a fully mocked version) to verify the import path works.
+
+**Why this matters:** Mocks return whatever the test expects, but real calls would
+have raised TypeError if function signatures changed.
+
+**Pattern:**
+
+```python
+def test_function_real_import():
+    """Verify the real function can be imported and called."""
+    from {{ project_name }}.compute import process_data
+
+    result = process_data(sample_input, storage=None)
+    assert isinstance(result, pd.DataFrame)
+```
+
+**When to apply:**
+- Any module using lazy imports (imports inside function bodies)
+- Functions that are wired via registry or config
+- Functions called by pipeline flows that may have heavy optional deps
+
+---
+
+## Source Inspection Testing (AST)
+
+When a module triggers deep import chains that require heavy optional dependencies,
+traditional import-based tests fail without those dependencies installed. AST-based
+source inspection tests verify wiring and structure without executing imports.
+
+**When to use:**
+- Verifying that a module registers the expected functions/classes
+- Checking that config parameters flow through to the right places
+- Validating function signatures without importing heavy dependencies
+
+**Pattern:**
+
+```python
+import ast
+from pathlib import Path
+
+def test_module_registers_all_handlers():
+    """Verify all handlers are registered without importing heavy deps."""
+    source = Path("{{ project_name }}/handlers/registry.py").read_text()
+    tree = ast.parse(source)
+
+    handler_fns = [
+        node.name for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name.startswith("handle_")
+    ]
+
+    assert len(handler_fns) >= 5
+    assert "handle_create" in handler_fns
+    assert "handle_update" in handler_fns
+
+
+def test_pipeline_passes_config_parameter():
+    """Verify a config parameter appears in the pipeline source."""
+    source = Path("{{ project_name }}/pipeline/main.py").read_text()
+    assert "enable_feature_x" in source, (
+        "Pipeline must pass enable_feature_x to processor config"
+    )
+```
+
+**Limitations:** AST tests verify structure, not runtime behavior. Use them as a
+complement to real integration tests, not a replacement. They are best for catching
+wiring omissions (missing parameters, unregistered functions) that would otherwise
+require heavyweight imports to test.
+
+---
+
+## Anti-Patterns to Avoid
+
+### Don't Test Implementation Details
+
+```python
+# BAD: Testing internal method
+def test_calls_internal_normalize():
+    processor = DataProcessor()
+    # Testing that _normalize is called is brittle
+
+# GOOD: Test behavior
+def test_output_values_are_normalized():
+    processor = DataProcessor(normalize=True)
+    input_data = create_test_data()
+    result = processor.process(input_data)
+    assert all(0 <= v <= 1 for v in result["score"])
+```
+
+### Don't Rely on Test Order
+
+```python
+# BAD: Test depends on another test's side effects
+class TestWithSharedState:
+    data = None
+    
+    def test_step1_load_data(self):
+        self.data = load_data()
+    
+    def test_step2_process_data(self):
+        result = process(self.data)  # Fails if test_step1 didn't run first
+
+# GOOD: Each test is independent
+class TestIndependent:
+    def test_processes_data(self, sample_data):  # Fixture provides data
+        result = process(sample_data)
+```
+
+### Generate Fixtures from Enums Programmatically
+
+When building test fixtures that reference enum values, select from the enum
+programmatically rather than hard-coding member names. Enum names may be verbose
+and hand-coding them leads to `AttributeError` failures that waste debugging time.
+
+```python
+# BAD: Hand-coded enum values -- breaks if naming convention differs
+def _make_config():
+    return Config(
+        mode=ProcessingMode.FAST,      # OK -- simple name
+        priority=PriorityLevel.P3,      # WRONG -- actual name is P3_NORMAL
+    )
+
+# GOOD: Select from the enum list
+def _make_config():
+    return Config(
+        mode=list(ProcessingMode)[0],
+        priority=list(PriorityLevel)[0],
+    )
+
+# ALSO GOOD: Use a specific member but look it up from the enum
+def _make_config():
+    priority = next(p for p in PriorityLevel if "NORMAL" in p.name)
+    return Config(priority=priority, ...)
+```
+

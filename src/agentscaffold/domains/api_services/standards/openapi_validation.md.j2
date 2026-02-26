@@ -1,0 +1,170 @@
+# OpenAPI Validation Standards
+
+This document defines standards for spec-first API development, OpenAPI linting, code generation, and request/response validation.
+
+---
+
+## Spec-First Development
+
+APIs should be designed in OpenAPI before implementation. The spec is the source of truth.
+
+### Workflow
+
+1. **Design**: Write or update OpenAPI spec (YAML or JSON)
+2. **Review**: Validate spec with linter, review with stakeholders
+3. **Generate**: Generate server stubs, client SDKs, or validation middleware
+4. **Implement**: Implement business logic against generated interfaces
+5. **Validate**: Runtime validation against spec
+
+### Benefits
+
+- Contract is explicit and versioned
+- Consumers can generate clients before server is ready
+- Reduces mismatch between docs and implementation
+- Enables automated testing and mock generation
+
+---
+
+## Linting Rules
+
+Use Spectral or equivalent to enforce consistency.
+
+### Required Rules
+
+| Rule | Severity | Description |
+|------|----------|-------------|
+| operation-operationId | Error | Every operation has unique operationId |
+| operation-tags | Error | Every operation has at least one tag |
+| operation-description | Warning | Operations have descriptions |
+| path-params | Error | Path parameters are defined in path and parameters |
+| no-$ref-siblings | Error | $ref cannot have sibling properties |
+| info-description | Warning | API has description |
+| info-contact | Warning | API has contact info |
+| openapi-tags | Warning | Tags are defined with descriptions |
+
+### Recommended Rules
+
+| Rule | Severity | Description |
+|------|----------|-------------|
+| operation-success-response | Error | Operations define 2xx response |
+| operation-error-response | Warning | Operations define 4xx/5xx responses |
+| no-eval-in-markdown | Error | No executable code in descriptions |
+| no-enum-type-mismatch | Error | Enum values match schema type |
+
+### Example Spectral Config
+
+```yaml
+# .spectral.yaml
+extends: ["spectral:oas"]
+rules:
+  operation-operationId: error
+  operation-tags: error
+  operation-success-response: error
+  operation-error-response: warn
+```
+
+---
+
+## Code Generation Patterns
+
+### Server Stubs
+
+Generate route handlers and request/response types:
+
+```bash
+openapi-generator generate -i openapi.yaml -g python-fastapi -o server/
+```
+
+- Implement handler logic; do not modify generated routing
+- Regenerate when spec changes; reconcile manually if needed
+
+### Client SDKs
+
+Generate typed clients for consumers:
+
+```bash
+openapi-generator generate -i openapi.yaml -g python -o client/
+```
+
+- Publish SDK with API releases
+- Version SDK to match API version
+
+### Validation Middleware
+
+Use spec to validate requests and responses at runtime:
+
+```python
+# Conceptual: validate request body against schema
+from openapi_core import validate_request
+from openapi_core.contrib.requests import RequestsOpenAPIRequest
+
+def validate_and_handle(request):
+    openapi_request = RequestsOpenAPIRequest(request)
+    validate_request(openapi_request, spec)
+    return handle(request)
+```
+
+---
+
+## Request/Response Validation
+
+### Request Validation
+
+- Validate Content-Type matches declared consumes
+- Validate request body against schema (required fields, types, formats)
+- Validate path and query parameters
+- Reject unknown query parameters if `additionalProperties: false`
+- Return 400 with RFC 7807 body on validation failure
+
+### Response Validation
+
+- Validate response body against schema before sending (development/staging)
+- Optional in production for performance; use in tests
+- Log validation failures; do not expose to client
+
+### Validation Error Format
+
+```json
+{
+  "type": "https://api.example.com/errors/validation",
+  "title": "Validation Error",
+  "status": 400,
+  "detail": "Request body validation failed",
+  "errors": [
+    {
+      "field": "/body/email",
+      "message": "Invalid email format"
+    },
+    {
+      "field": "/body/age",
+      "message": "Must be >= 0"
+    }
+  ]
+}
+```
+
+---
+
+## Implementation Checklist
+
+When using OpenAPI:
+
+- [ ] Spec exists before or alongside implementation
+- [ ] Linter runs in CI (Spectral or equivalent)
+- [ ] All operations have operationId, tags, descriptions
+- [ ] Request/response schemas are complete
+- [ ] Validation middleware or equivalent validates requests
+- [ ] Generated code is regenerated when spec changes
+- [ ] Spec is versioned with API (e.g., in same repo, tagged)
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|--------------|--------------|------------------|
+| Code-first, spec generated after | Spec may drift from implementation | Spec-first |
+| No linting | Inconsistent, invalid specs | Spectral in CI |
+| Manual client code | Drift from spec, more maintenance | Generate from spec |
+| No request validation | Invalid requests reach handlers | Validate at edge |
+| anyOf/oneOf without discriminator | Unclear which variant | Use discriminator |

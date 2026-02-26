@@ -1,0 +1,11 @@
+name: webapp
+display_name: "Web Application"
+description: "UX design reviews, accessibility standards, frontend testing, and performance budgets for web applications."
+reviews:
+  - product_design
+standards:
+  - accessibility
+  - frontend_testing
+  - performance_budgets
+  - responsive_design
+approval_gates: {}

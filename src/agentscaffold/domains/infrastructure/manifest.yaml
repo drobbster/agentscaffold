@@ -1,0 +1,14 @@
+name: infrastructure
+display_name: "Infrastructure"
+description: "IaC reviews, deployment safety, cost analysis, secret management, and monitoring standards."
+reviews:
+  - iac_review
+  - deployment_safety
+  - cost_analysis
+standards:
+  - iac_patterns
+  - rollback_procedures
+  - secret_management
+  - monitoring_alerting
+approval_gates:
+  infrastructure: true

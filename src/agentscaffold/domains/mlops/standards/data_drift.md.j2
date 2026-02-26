@@ -1,0 +1,103 @@
+# Data Drift Detection Standards
+
+This document defines standards for detecting and responding to data drift in ML systems.
+
+---
+
+## Types of Drift
+
+| Drift Type | Description | Detection Method |
+|------------|-------------|-----------------|
+| Feature drift | Input distribution changes | KS test, PSI, histogram comparison |
+| Concept drift | Relationship between features and target changes | Performance monitoring |
+| Label drift | Target distribution changes | Chi-squared test, distribution comparison |
+| Upstream drift | Data source schema or quality changes | Schema validation, completeness checks |
+
+---
+
+## Detection Methods
+
+### Population Stability Index (PSI)
+
+| PSI Value | Interpretation | Action |
+|-----------|---------------|--------|
+| < 0.10 | No significant drift | Continue monitoring |
+| 0.10 - 0.25 | Moderate drift | Investigate, consider retraining |
+| > 0.25 | Significant drift | Retrain model, investigate root cause |
+
+```python
+import numpy as np
+
+def compute_psi(reference: np.ndarray, current: np.ndarray, bins: int = 10) -> float:
+    """Compute Population Stability Index."""
+    ref_hist, bin_edges = np.histogram(reference, bins=bins)
+    cur_hist, _ = np.histogram(current, bins=bin_edges)
+
+    ref_pct = ref_hist / ref_hist.sum() + 1e-6
+    cur_pct = cur_hist / cur_hist.sum() + 1e-6
+
+    psi = np.sum((cur_pct - ref_pct) * np.log(cur_pct / ref_pct))
+    return float(psi)
+```
+
+### Kolmogorov-Smirnov Test
+
+```python
+from scipy import stats
+
+def detect_drift_ks(reference: np.ndarray, current: np.ndarray, alpha: float = 0.05) -> bool:
+    """Detect drift using two-sample KS test."""
+    statistic, p_value = stats.ks_2samp(reference, current)
+    return p_value < alpha
+```
+
+---
+
+## Monitoring Pipeline
+
+### Reference Windows
+
+| Data Type | Reference Window | Comparison Window | Frequency |
+|-----------|-----------------|-------------------|-----------|
+| Training data | Full training set | Last 24 hours | Hourly |
+| Feature statistics | Last 30 days | Last 24 hours | Daily |
+| Predictions | Last 7 days | Last 24 hours | Daily |
+
+### Alerting Thresholds
+
+| Signal | Warning | Critical | Action |
+|--------|---------|----------|--------|
+| Feature PSI | > 0.10 | > 0.25 | Investigate / Retrain |
+| Prediction distribution KS | p < 0.01 | p < 0.001 | Investigate |
+| Missing values increase | > 5% | > 20% | Check upstream |
+| Schema violation | Any | Any | Block pipeline |
+
+---
+
+## Retraining Triggers
+
+### Automatic Retraining
+
+Trigger automatic retraining when:
+- [ ] PSI > threshold for any critical feature
+- [ ] Model performance drops below acceptable threshold
+- [ ] Scheduled periodic retraining interval reached
+- [ ] New labeled data exceeds minimum batch size
+
+### Manual Retraining
+
+Require manual investigation when:
+- [ ] Multiple features drift simultaneously (possible upstream issue)
+- [ ] Concept drift detected (performance drops without feature drift)
+- [ ] Schema changes in upstream data
+
+---
+
+## Implementation Checklist
+
+- [ ] Reference distributions stored for all features used by the model
+- [ ] Drift detection runs on a schedule (at least daily)
+- [ ] Alerts configured for warning and critical thresholds
+- [ ] Dashboard shows drift metrics over time
+- [ ] Retraining pipeline can be triggered manually or automatically
+- [ ] Drift events are logged with timestamp and affected features

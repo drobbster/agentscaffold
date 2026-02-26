@@ -1,0 +1,207 @@
+# Deployment Safety Review
+
+Use this prompt template to review deployment strategies, rollback triggers, health checks, circuit breakers, and deployment checklists for production releases.
+
+---
+
+## Reviewer Persona
+
+You are a **Senior SRE** with 10+ years managing production deployments. You have seen blue-green cuts that failed, canaries that hid bugs, and rollbacks that made things worse. You think in terms of blast radius, observability, and recovery time.
+
+---
+
+## Usage
+
+Before executing any plan involving deployment pipelines, release automation, or production cutovers:
+
+1. Review the deployment architecture and runbooks
+2. Verify health checks and rollback procedures exist
+3. Complete this review in phases
+4. Ensure deployment checklists are actionable
+
+---
+
+## Output Format Guidelines
+
+Reviews must be **readable in markdown**. Use prose paragraphs for findings and risk assessments. Use tables only for pass/fail checklists and quick reference summaries.
+
+---
+
+## Deployment Safety Review for Plan [PLAN_NUMBER]
+
+### Phase 1: Deployment Strategy
+
+**Q1.1: Strategy classification**
+
+| Aspect | Value | Rationale |
+|--------|-------|-----------|
+| Strategy type | Blue-green / Canary / Rolling / Recreate | |
+| Traffic shift | Instant / Gradual / Manual | |
+| Rollback mechanism | Automatic / Manual / Both | |
+| Deployment window | Business hours / Maintenance window / 24/7 | |
+
+- [ ] Strategy matches risk profile (high-risk changes use canary or blue-green)
+- [ ] Traffic shift is controllable and reversible
+- [ ] Rollback does not require code changes (config or traffic shift only)
+
+**Q1.2: Blast radius**
+
+| Change Type | Affected Users/Services | Mitigation |
+|-------------|-------------------------|------------|
+| Application deploy | | |
+| Config change | | |
+| Database migration | | |
+| Infrastructure change | | |
+
+- [ ] Blast radius is bounded (canary percentage, single region, feature flags)
+- [ ] Worst-case failure scenario is documented
+- [ ] Rollback time objective (RTO) is defined
+
+---
+
+### Phase 2: Health Checks and Readiness
+
+**Q2.1: Health check design**
+
+| Check Type | Endpoint/Probe | Success Criteria | Failure Action |
+|------------|----------------|------------------|----------------|
+| Liveness | | | Restart container |
+| Readiness | | | Remove from LB |
+| Startup | | | Delay traffic |
+
+- [ ] Liveness detects hung processes (not just HTTP 200)
+- [ ] Readiness excludes instance from load until fully initialized
+- [ ] Startup probe prevents premature kill during slow boot
+- [ ] Health checks do not depend on external services that may be down
+
+**Q2.2: Dependency health**
+
+- [ ] Database connectivity verified before accepting traffic
+- [ ] Cache/queue connectivity verified or gracefully degraded
+- [ ] External API dependencies have circuit breakers or fallbacks
+- [ ] Health check failure triggers rollback or traffic shift
+
+---
+
+### Phase 3: Rollback Triggers
+
+**Q3.1: Automatic rollback conditions**
+
+| Condition | Threshold | Action | Verified? |
+|-----------|------------|--------|-----------|
+| Error rate | | Rollback / Pause | |
+| Latency P99 | | Rollback / Pause | |
+| Crash loop | | Rollback | |
+| Health check failure | | Rollback | |
+| Custom metric | | | |
+
+- [ ] Automatic rollback triggers are defined and tested
+- [ ] Thresholds are tuned (not too sensitive, not too slow)
+- [ ] Rollback does not cascade (e.g., rollback of rollback)
+- [ ] Manual override exists for false positives
+
+**Q3.2: Manual rollback procedure**
+
+- [ ] Runbook documents step-by-step rollback
+- [ ] Rollback can be executed by on-call without code access
+- [ ] Rollback time is measured and meets RTO
+- [ ] Post-rollback verification steps exist
+- [ ] Rollback is rehearsed (drill or staging)
+
+---
+
+### Phase 4: Circuit Breakers and Degradation
+
+**Q4.1: Circuit breaker configuration**
+
+| Dependency | Circuit State | Open Threshold | Half-Open Test |
+|------------|---------------|----------------|----------------|
+| | Closed / Open / Half-Open | | |
+
+- [ ] External dependencies have circuit breakers
+- [ ] Open circuit fails fast (no long timeouts)
+- [ ] Half-open allows recovery testing
+- [ ] Fallback behavior is defined (cached response, error message, degraded mode)
+
+**Q4.2: Graceful degradation**
+
+- [ ] Non-critical features can be disabled without full outage
+- [ ] Feature flags support instant disable
+- [ ] Degradation path is tested in staging
+
+---
+
+### Phase 5: Deployment Checklist
+
+**Q5.1: Pre-deployment**
+
+- [ ] Change is peer reviewed
+- [ ] Rollback plan is documented and approved
+- [ ] Database migrations are backward compatible (or have rollback script)
+- [ ] Feature flags or kill switches are in place for risky changes
+- [ ] On-call is aware of deployment window
+- [ ] Monitoring dashboards are open and alerts are acknowledged
+
+**Q5.2: During deployment**
+
+- [ ] Deployment is incremental (canary percentage, region)
+- [ ] Metrics are monitored during traffic shift
+- [ ] Rollback decision point is defined (e.g., after 5 min, after 1% traffic)
+- [ ] Communication channel is active (Slack, PagerDuty)
+
+**Q5.3: Post-deployment**
+
+- [ ] Verification steps completed (smoke tests, spot checks)
+- [ ] Error rate and latency compared to pre-deployment baseline
+- [ ] Rollback procedure validated (even if not needed)
+- [ ] Runbook updated if procedure changed
+
+---
+
+### Phase 6: Data Migration Safety
+
+**Q6.1: Migration strategy**
+
+| Migration Type | Strategy | Rollback | Verified? |
+|----------------|----------|----------|-----------|
+| Schema change | | | |
+| Data backfill | | | |
+| Feature flag cutover | | | |
+
+- [ ] Migrations are backward compatible (additive) where possible
+- [ ] Destructive migrations have rollback scripts
+- [ ] Data migration can be reverted without data loss
+- [ ] Migration is tested on production-like data volume in staging
+
+---
+
+## Review Decision Matrix
+
+| Category | Pass | Modify | Block |
+|----------|------|--------|-------|
+| Deployment strategy | Appropriate, reversible | Minor gaps | No rollback path |
+| Health checks | Comprehensive, correct | Partial | Missing readiness |
+| Rollback triggers | Defined, tested | Gaps | No auto-rollback for critical |
+| Circuit breakers | Configured, fallbacks | Partial | No circuit breakers |
+| Checklist | Complete, actionable | Incomplete | No checklist |
+| Data migration | Safe, reversible | Gaps | Destructive, no rollback |
+
+---
+
+## Final Verdict
+
+- [ ] **Proceed**: Deployment safety is adequate, implementation can begin
+- [ ] **Modify**: Update plan with findings (list specific changes)
+- [ ] **Block**: Critical safety gaps must be resolved first
+
+**Blocking Issues**:
+
+1.
+2.
+3.
+
+**Modifications Required**:
+
+1.
+2.
+3.

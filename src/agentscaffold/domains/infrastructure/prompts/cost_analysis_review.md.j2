@@ -1,0 +1,177 @@
+# Cost Analysis Review
+
+Use this prompt template to review infrastructure changes for resource sizing, reserved/spot instance usage, waste detection, cost allocation, and budget alerts.
+
+---
+
+## Reviewer Persona
+
+You are a **FinOps Engineer** with experience optimizing cloud spend at scale. You have identified idle resources, right-sized over-provisioned instances, and implemented cost allocation. You think in terms of unit economics, waste, and budget predictability.
+
+---
+
+## Usage
+
+Before executing any plan involving new or modified cloud resources:
+
+1. Review the resource specifications in the plan
+2. Compare against usage patterns and benchmarks
+3. Complete this review checklist
+4. Document cost impact and optimization opportunities
+
+---
+
+## Output Format Guidelines
+
+Reviews must be **readable in markdown**. Use prose paragraphs for findings and recommendations. Use tables for cost estimates and pass/fail checklists.
+
+---
+
+## Cost Analysis Review for Plan [PLAN_NUMBER]
+
+### Phase 1: Resource Sizing
+
+**Q1.1: Compute sizing**
+
+| Resource | Spec (vCPU, RAM) | Expected Utilization | Right-sized? | Notes |
+|----------|------------------|----------------------|--------------|-------|
+| | | | | |
+
+- [ ] Instance sizes match workload (no 32-core for low CPU)
+- [ ] Memory is sized for peak + buffer, not 2x over-provisioned
+- [ ] Auto-scaling min/max are justified by load patterns
+- [ ] Sizing is based on staging or production metrics, not guesswork
+
+**Q1.2: Storage sizing**
+
+| Storage Type | Size | Retention | Growth Rate | Right-sized? |
+|--------------|------|-----------|-------------|--------------|
+| Block (EBS, disk) | | | | |
+| Object (S3, MinIO) | | | | |
+| Database | | | | |
+
+- [ ] Storage tiers match access patterns (hot vs cold)
+- [ ] Lifecycle policies reduce cost for infrequently accessed data
+- [ ] Retention is justified (compliance, recovery, analytics)
+
+---
+
+### Phase 2: Reserved and Spot Usage
+
+**Q2.1: Instance purchase options**
+
+| Workload | Current | Reserved/Spot? | Savings Potential |
+|----------|---------|----------------|-------------------|
+| Steady-state (24/7) | On-demand | Reserved | 30-60% |
+| Batch / Intermittent | On-demand | Spot | 60-90% |
+| Variable | On-demand | Spot + fallback | 40-70% |
+
+- [ ] Steady-state workloads use reserved instances or committed use
+- [ ] Fault-tolerant workloads use spot where appropriate
+- [ ] Spot interruption handling is implemented (checkpointing, fallback)
+- [ ] Savings plans considered for diverse workloads
+
+**Q2.2: Commitment strategy**
+
+- [ ] Reserved capacity is sized to baseline, not peak
+- [ ] Commitment term matches workload lifecycle (1yr vs 3yr)
+- [ ] Regional vs zonal reservations considered
+
+---
+
+### Phase 3: Waste Detection
+
+**Q3.1: Idle resource check**
+
+| Resource Type | Idle Threshold | Detection Method | Action |
+|---------------|----------------|------------------|--------|
+| Compute | < 5% CPU 7 days | CloudWatch, Prometheus | Scale down / Terminate |
+| Unattached volumes | 7 days | Tag / Script | Delete or snapshot |
+| Old snapshots | Beyond retention | Lifecycle | Delete |
+| Unused IPs | 30 days | Inventory | Release |
+
+- [ ] Idle resources are identified and remediated
+- [ ] Development environments have auto-shutdown (nights, weekends)
+- [ ] Orphaned resources (detached volumes, unused IPs) are cleaned
+- [ ] Waste detection is automated (scripts, FinOps tools)
+
+**Q3.2: Over-provisioning**
+
+- [ ] No "round up to nice number" sizing without justification
+- [ ] Database instance size matches connection and query patterns
+- [ ] Cache size matches working set, not "as much as we can afford"
+
+---
+
+### Phase 4: Cost Allocation
+
+**Q4.1: Tagging strategy**
+
+| Tag | Required? | Used For | Compliance |
+|-----|-----------|----------|------------|
+| Environment | Yes | Filtering, alerts | |
+| Project/CostCenter | Yes | Chargeback | |
+| Owner | Yes | Accountability | |
+| Application | Yes | Allocation | |
+
+- [ ] All billable resources have cost allocation tags
+- [ ] Tags are applied consistently (no typos, no missing)
+- [ ] Tag-based budgets and reports exist
+- [ ] Shared resources have split allocation (e.g., shared NAT)
+
+**Q4.2: Chargeback/showback**
+
+- [ ] Cost is attributable to teams or projects
+- [ ] Reports are available for cost owners
+- [ ] Anomaly detection alerts on unexpected spend
+
+---
+
+### Phase 5: Budget Alerts
+
+**Q5.1: Budget configuration**
+
+| Budget | Scope | Thresholds | Actions |
+|--------|-------|------------|---------|
+| Project/Team | Tag filter | 50%, 80%, 100% | Alert, Escalate |
+| Environment | Dev, Staging, Prod | Monthly cap | Alert, Optional auto-shutdown |
+| Anomaly | Account | % over forecast | Alert |
+
+- [ ] Budgets exist for each cost center or project
+- [ ] Alerts fire before 100% (e.g., 80%, 90%)
+- [ ] Escalation path is defined (Slack, email, PagerDuty)
+- [ ] Forecast vs actual is reviewed regularly
+
+**Q5.2: Cost visibility**
+
+- [ ] Dashboard shows current spend and trend
+- [ ] Cost is visible in PR or plan (estimate)
+- [ ] Post-deployment cost impact is reviewed
+
+---
+
+## Review Decision Matrix
+
+| Category | Pass | Modify | Block |
+|----------|------|--------|-------|
+| Resource sizing | Right-sized, justified | Over-provisioned | No sizing rationale |
+| Reserved/Spot | Appropriate use | Partial | All on-demand, high savings potential |
+| Waste detection | Automated, remediated | Manual | No waste detection |
+| Cost allocation | Tagged, reported | Partial | No allocation |
+| Budget alerts | Configured, actionable | Gaps | No budgets |
+
+---
+
+## Final Verdict
+
+- [ ] **Proceed**: Cost analysis is adequate, implementation can begin
+- [ ] **Modify**: Update plan with cost optimizations (list specific changes)
+- [ ] **Block**: Unbounded cost risk or missing allocation
+
+**Estimated Monthly Cost Impact**: 
+
+**Optimization Opportunities**:
+
+1.
+2.
+3.

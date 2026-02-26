@@ -1,0 +1,186 @@
+# Frontend Testing Standards
+
+This document defines testing requirements and patterns for web application components, pages, and user flows.
+
+---
+
+## Testing Pyramid
+
+| Level | Tool | Speed | Scope | When to Use |
+|-------|------|-------|-------|-------------|
+| Unit | Vitest / Jest | Fast | Single function/component | Pure logic, utilities, hooks |
+| Component | Testing Library | Fast | Single component in isolation | Rendering, props, events |
+| Integration | Testing Library | Medium | Multiple components together | User flows within a page |
+| E2E | Playwright / Cypress | Slow | Full application | Critical user journeys |
+| Visual | Chromatic / Percy | Medium | Screenshot comparison | Layout, styling changes |
+| Accessibility | axe-core | Fast | WCAG compliance | All components |
+
+---
+
+## Component Testing
+
+### What to Test
+
+- [ ] Component renders without crashing (smoke test)
+- [ ] Props affect rendered output correctly
+- [ ] User interactions trigger expected callbacks
+- [ ] Loading, error, and empty states render correctly
+- [ ] Accessibility: keyboard navigation and ARIA attributes
+- [ ] Edge cases: very long text, missing data, boundary values
+
+### What NOT to Test
+
+- Implementation details (internal state, method calls)
+- CSS styling (use visual regression instead)
+- Third-party library internals
+
+### Testing Library Patterns
+
+```typescript
+import { render, screen, fireEvent } from '@testing-library/react';
+
+describe('SearchInput', () => {
+  it('calls onSearch when user types and submits', async () => {
+    const onSearch = vi.fn();
+    render(<SearchInput onSearch={onSearch} />);
+
+    const input = screen.getByRole('searchbox');
+    await fireEvent.change(input, { target: { value: 'query' } });
+    await fireEvent.submit(input.closest('form')!);
+
+    expect(onSearch).toHaveBeenCalledWith('query');
+  });
+
+  it('shows loading indicator during search', () => {
+    render(<SearchInput isLoading={true} />);
+    expect(screen.getByRole('status')).toHaveTextContent(/loading/i);
+  });
+
+  it('displays error message on failure', () => {
+    render(<SearchInput error="Network error" />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Network error');
+  });
+});
+```
+
+### Query Priority (Testing Library)
+
+Use queries in this order of preference:
+
+1. `getByRole` -- accessible role queries (preferred)
+2. `getByLabelText` -- form elements
+3. `getByPlaceholderText` -- when label is not available
+4. `getByText` -- non-interactive content
+5. `getByTestId` -- last resort
+
+---
+
+## Integration Testing
+
+### User Flow Testing
+
+```typescript
+describe('User Registration Flow', () => {
+  it('completes registration and shows dashboard', async () => {
+    render(<App />);
+
+    // Step 1: Fill registration form
+    await userEvent.type(screen.getByLabelText('Email'), 'user@example.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'SecurePass123!');
+    await userEvent.click(screen.getByRole('button', { name: /sign up/i }));
+
+    // Step 2: Verify redirect to dashboard
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /dashboard/i })).toBeInTheDocument();
+    });
+  });
+});
+```
+
+### API Mocking
+
+```typescript
+import { rest } from 'msw';
+import { setupServer } from 'msw/node';
+
+const server = setupServer(
+  rest.get('/api/users/:id', (req, res, ctx) => {
+    return res(ctx.json({ id: req.params.id, name: 'Test User' }));
+  })
+);
+
+beforeAll(() => server.listen());
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+```
+
+---
+
+## E2E Testing
+
+### Critical User Journeys (MUST have E2E tests)
+
+- [ ] User registration and login
+- [ ] Core feature happy path
+- [ ] Payment/checkout flow (if applicable)
+- [ ] Error recovery (network failure, invalid input)
+- [ ] Cross-browser compatibility (Chrome, Firefox, Safari)
+
+### Playwright Patterns
+
+```typescript
+import { test, expect } from '@playwright/test';
+
+test('user can create and save a document', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New Document' }).click();
+  await page.getByRole('textbox', { name: 'Title' }).fill('My Document');
+  await page.getByRole('button', { name: 'Save' }).click();
+
+  await expect(page.getByText('Document saved')).toBeVisible();
+});
+```
+
+---
+
+## Visual Regression Testing
+
+### When to Use
+
+- Component library changes
+- Theme or design token updates
+- Layout modifications
+- Responsive design changes
+
+### Snapshot Management
+
+- Review all visual diffs before approving
+- Update baselines intentionally, never blindly
+- Test across breakpoints: mobile (375px), tablet (768px), desktop (1280px)
+
+---
+
+## Accessibility Testing
+
+### Automated (In CI)
+
+```typescript
+import { axe, toHaveNoViolations } from 'jest-axe';
+
+expect.extend(toHaveNoViolations);
+
+it('has no accessibility violations', async () => {
+  const { container } = render(<MyComponent />);
+  const results = await axe(container);
+  expect(results).toHaveNoViolations();
+});
+```
+
+### Coverage Requirements
+
+| Component Type | Unit | Component | Integration | E2E | a11y |
+|----------------|------|-----------|-------------|-----|------|
+| Form | Yes | Yes | Yes | If critical | Yes |
+| Data display | No | Yes | No | No | Yes |
+| Navigation | No | Yes | Yes | Yes | Yes |
+| Interactive widget | Yes | Yes | Yes | If critical | Yes |

@@ -1,0 +1,229 @@
+# Infrastructure as Code Patterns
+
+This document defines standards for Terraform, Pulumi, and other IaC tooling. Follow these patterns for state management, module design, environment separation, and naming.
+
+---
+
+## Module Structure
+
+### Directory Layout
+
+```
+infra/
+  modules/
+    vpc/           # Reusable network module
+    eks/           # Kubernetes cluster module
+    rds/           # Database module
+  environments/
+    dev/
+      main.tf
+      variables.tf
+      terraform.tfvars
+    staging/
+    prod/
+  shared/          # Shared config (e.g., provider versions)
+```
+
+### Module Design Principles
+
+| Principle | Description | Example |
+|-----------|-------------|---------|
+| Single responsibility | One module, one resource type or logical unit | vpc module only creates VPC, subnets, route tables |
+| Explicit inputs | All configurable values are variables | No hardcoded region, CIDR, or instance types |
+| Documented outputs | Outputs are documented with description | output "vpc_id" { description = "VPC ID for security group rules" } |
+| Version pinning | Module sources use version constraints | source = "git::https://...?ref=v1.2.0" |
+
+### Module Interface Example
+
+```hcl
+# modules/rds/main.tf
+variable "environment" {
+  type        = string
+  description = "Environment name (dev, staging, prod)"
+}
+
+variable "instance_class" {
+  type        = string
+  description = "RDS instance class"
+}
+
+variable "allocated_storage" {
+  type        = number
+  description = "Storage in GB"
+  validation {
+    condition     = var.allocated_storage >= 20 && var.allocated_storage <= 1000
+    error_message = "Storage must be between 20 and 1000 GB."
+  }
+}
+
+output "endpoint" {
+  value       = aws_db_instance.main.endpoint
+  description = "RDS connection endpoint"
+  sensitive   = true
+}
+```
+
+---
+
+## State Management
+
+### Backend Configuration
+
+```hcl
+# backend.tf
+terraform {
+  backend "s3" {
+    bucket         = "myorg-terraform-state"
+    key            = "environments/prod/terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    dynamodb_table = "terraform-state-lock"
+  }
+}
+```
+
+### State Locking Checklist
+
+- [ ] DynamoDB table (or equivalent) exists for state locking
+- [ ] Lock is acquired before plan/apply
+- [ ] Lock is released on success or failure
+- [ ] No `-lock=false` in production scripts
+- [ ] State file is never in version control
+
+### State Security
+
+| Control | Requirement |
+|---------|-------------|
+| Encryption | State encrypted at rest (S3 SSE, GCS KMS) |
+| Access | Least privilege; prod state requires elevated role |
+| Versioning | State bucket has versioning enabled |
+| Backup | State history retained for recovery |
+
+---
+
+## Secrets in IaC
+
+### Never commit secrets
+
+| Anti-Pattern | Correct Approach |
+|--------------|------------------|
+| Password in .tfvars | Use Vault, Secrets Manager, or SOPS |
+| API key in variable default | Use environment variable or external data source |
+| Private key in repo | Reference from secrets store |
+
+### Secret Reference Pattern
+
+```hcl
+# Use data source to fetch secret at apply time
+data "aws_secretsmanager_secret_version" "db_password" {
+  secret_id = "prod/db/credentials"
+}
+
+resource "aws_db_instance" "main" {
+  password = data.aws_secretsmanager_secret_version.db_password.secret_string
+}
+```
+
+### Sensitive Outputs
+
+```hcl
+output "connection_string" {
+  value     = "postgresql://${var.user}:${var.password}@${aws_db_instance.main.endpoint}/db"
+  sensitive = true
+}
+```
+
+---
+
+## Environment Separation
+
+### Workspace vs Directory Strategy
+
+| Strategy | Use When | Example |
+|----------|----------|---------|
+| Directory per environment | Different configs, clear isolation | environments/dev, environments/prod |
+| Workspace per environment | Same config, different state | terraform workspace select prod |
+| Separate repos | Strict compliance boundaries | infra-dev repo, infra-prod repo |
+
+### Environment Promotion Checklist
+
+- [ ] Same IaC code promotes through environments (no environment-specific branches)
+- [ ] Differences are parameterized via tfvars or workspace variables
+- [ ] Production state is separate and access-controlled
+- [ ] Promotion requires approval (manual or automated gate)
+
+### Variable Per Environment
+
+```hcl
+# environments/prod/terraform.tfvars
+environment = "prod"
+instance_count = 6
+instance_type = "m5.xlarge"
+enable_backup = true
+```
+
+---
+
+## Naming Conventions
+
+### Resource Naming
+
+| Resource Type | Pattern | Example |
+|--------------|---------|---------|
+| General | {project}-{env}-{component}-{resource} | myapp-prod-api-ec2 |
+| Short IDs | {project}-{env}-{component} | myapp-prod-db |
+| VPC/Network | {project}-{env}-vpc | myapp-prod-vpc |
+
+### Tagging Standards
+
+| Tag | Required | Values | Purpose |
+|-----|----------|--------|---------|
+| Environment | Yes | dev, staging, prod | Filtering, cost allocation |
+| Project | Yes | Project name | Cost center, ownership |
+| Owner | Yes | Team or email | Incident contact |
+| ManagedBy | Yes | terraform, pulumi | Indicates IaC-managed |
+| CostCenter | Recommended | Finance code | Chargeback |
+
+### Tag Enforcement
+
+```hcl
+# Use policy or validation to enforce tags
+variable "required_tags" {
+  type = map(string)
+  default = {
+    Environment = "prod"
+    Project     = "myapp"
+    Owner       = "platform-team"
+    ManagedBy   = "terraform"
+  }
+}
+```
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It Fails | Correct Approach |
+|--------------|--------------|-------------------|
+| State in Git | Accidental commit, no locking | Remote backend (S3, GCS) |
+| Secrets in code | Exposure in repo, audit failure | External secrets store |
+| Monolithic root | Hard to test, slow apply | Modular structure |
+| No state locking | Concurrent apply corruption | DynamoDB or equivalent |
+| Hardcoded env values | Can't promote safely | Variables, tfvars |
+| Destroy in automation | Accidental deletion | prevent_destroy lifecycle |
+| No version pinning | Unpredictable upgrades | ref=v1.2.0 or version constraint |
+
+---
+
+## Validation Checklist
+
+Before merging IaC changes:
+
+- [ ] `terraform plan` (or equivalent) runs in CI
+- [ ] Plan output reviewed for unexpected changes
+- [ ] No secrets in plan output or logs
+- [ ] Cost estimate included for new resources
+- [ ] State backend is remote and locked
+- [ ] Required tags present on new resources
+- [ ] Module versions pinned
+- [ ] Documentation updated for new modules

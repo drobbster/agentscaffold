@@ -1,0 +1,133 @@
+# SLA Monitoring Standards
+
+This document defines standards for monitoring data pipeline SLAs, freshness targets, and alerting.
+
+---
+
+## SLA Definitions
+
+### Freshness SLA
+
+| Dataset Category | Freshness Target | Grace Period | Escalation |
+|-----------------|------------------|--------------|------------|
+| Real-time streams | < 5 minutes | 5 minutes | Page on-call |
+| Hourly batches | < 1 hour | 15 minutes | Slack alert |
+| Daily batches | < 4 hours past midnight | 1 hour | Slack alert |
+| Weekly reports | < 24 hours | 4 hours | Email |
+
+### Completeness SLA
+
+| Dataset Category | Completeness Target | Monitoring |
+|-----------------|--------------------|-----------| 
+| Transaction data | 99.9% | Row count vs expected |
+| Event streams | 99.5% | Sequence gap detection |
+| Aggregated reports | 100% | Partition presence check |
+
+---
+
+## Monitoring Implementation
+
+### Freshness Check
+
+```python
+from datetime import datetime, timedelta
+
+def check_freshness(
+    dataset: str,
+    max_age: timedelta,
+    get_latest_timestamp: callable,
+) -> dict:
+    latest = get_latest_timestamp(dataset)
+    age = datetime.utcnow() - latest
+    is_fresh = age <= max_age
+
+    return {
+        "dataset": dataset,
+        "latest_timestamp": latest.isoformat(),
+        "age_seconds": age.total_seconds(),
+        "sla_seconds": max_age.total_seconds(),
+        "status": "ok" if is_fresh else "breach",
+    }
+```
+
+### Row Count Monitoring
+
+```python
+def check_row_count(
+    dataset: str,
+    partition: str,
+    expected_min: int,
+    expected_max: int,
+    actual_count: int,
+) -> dict:
+    status = "ok"
+    if actual_count < expected_min:
+        status = "low"
+    elif actual_count > expected_max:
+        status = "high"
+
+    return {
+        "dataset": dataset,
+        "partition": partition,
+        "actual": actual_count,
+        "expected_range": f"[{expected_min}, {expected_max}]",
+        "status": status,
+    }
+```
+
+---
+
+## Alerting Tiers
+
+| Tier | Condition | Channel | Response Time |
+|------|-----------|---------|---------------|
+| P1 - Critical | Revenue-impacting pipeline down | Page on-call | 15 minutes |
+| P2 - High | SLA breach on critical dataset | Slack + ticket | 1 hour |
+| P3 - Medium | SLA breach on non-critical dataset | Slack | 4 hours |
+| P4 - Low | Warning threshold crossed | Dashboard | Next business day |
+
+### Alert Fatigue Prevention
+
+- [ ] Alerts fire only on actionable conditions
+- [ ] Duplicate alerts are suppressed (deduplicated within window)
+- [ ] Alerts include enough context to diagnose (dataset, partition, expected vs actual)
+- [ ] Alerts link to runbook with troubleshooting steps
+- [ ] Alert thresholds are reviewed quarterly
+
+---
+
+## Dashboard Requirements
+
+### Pipeline Health Dashboard
+
+| Panel | Content |
+|-------|---------|
+| Pipeline status | Green/yellow/red for each pipeline |
+| Freshness heatmap | Time since last update per dataset |
+| SLA compliance | Percentage of SLA met over rolling 30 days |
+| Error trends | Error count over time |
+| Processing duration | P50/P95 pipeline duration over time |
+
+---
+
+## Escalation Procedures
+
+```
+Alert fires -> Check dashboard -> Consult runbook -> Fix or escalate
+
+If not resolved in:
+  15 min (P1) -> Escalate to team lead
+  1 hour (P2) -> Escalate to team lead
+  4 hours (P3) -> Escalate to engineering manager
+```
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|--------------|--------------|------------------|
+| Alert on every failure | Alert fatigue | Alert on SLA breach only |
+| No context in alerts | Can't diagnose | Include dataset, partition, values |
+| No runbook linked | Slow resolution | Link runbook in every alert |
+| Static thresholds | False positives on weekends | Time-aware thresholds |

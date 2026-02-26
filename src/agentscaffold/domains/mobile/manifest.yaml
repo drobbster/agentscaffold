@@ -1,0 +1,12 @@
+name: mobile
+display_name: "Mobile Development"
+description: "Platform compliance reviews, offline-first patterns, performance profiling, and push notification standards."
+reviews:
+  - platform_review
+  - app_store_compliance
+standards:
+  - offline_first
+  - performance_profiling
+  - deep_linking
+  - push_notifications
+approval_gates: {}

@@ -1,0 +1,15 @@
+name: mlops
+display_name: "ML Operations"
+description: "Model lifecycle management, experiment tracking, data drift detection, and ML governance standards."
+reviews:
+  - model_lifecycle
+  - experiment_design
+  - model_governance
+standards:
+  - experiment_tracking
+  - model_versioning
+  - data_drift
+  - feature_store
+  - model_serving
+approval_gates:
+  model_deployment: true

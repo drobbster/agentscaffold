@@ -1,0 +1,54 @@
+# Session Summary
+
+## Session Metadata
+
+| Field | Value |
+|-------|-------|
+| Session ID | {{ session_id | default('TBD') }} |
+| Date | {{ date | default('YYYY-MM-DD') }} |
+| Trigger | {{ trigger_type | default('manual') }} |
+| Plan Reference | {{ plan_reference | default('None') }} |
+| Duration | {{ duration | default('TBD') }} |
+
+## Execution Summary
+
+### Steps Completed
+
+| # | Step | Status | Notes |
+|---|------|--------|-------|
+{% if steps %}{% for step in steps %}| {{ loop.index }} | {{ step.description }} | {{ step.status }} | {{ step.notes | default('') }} |
+{% endfor %}{% else %}| 1 | TBD | Pending | |
+{% endif %}
+
+### Decisions Made
+
+| Decision | Rationale | Impact |
+|----------|-----------|--------|
+{% if decisions %}{% for decision in decisions %}| {{ decision.what }} | {{ decision.why }} | {{ decision.impact | default('') }} |
+{% endfor %}{% else %}| TBD | TBD | TBD |
+{% endif %}
+
+## Issues Encountered
+
+{% if issues %}{% for issue in issues %}- **{{ issue.title }}**: {{ issue.description }}{% if issue.resolution %} -- Resolution: {{ issue.resolution }}{% endif %}
+{% endfor %}{% else %}- None
+{% endif %}
+
+## Deviations from Plan
+
+{% if deviations %}{% for deviation in deviations %}- **{{ deviation.step }}**: {{ deviation.description }} -- Reason: {{ deviation.reason }}
+{% endfor %}{% else %}- None
+{% endif %}
+
+## Status at End
+
+| Field | Value |
+|-------|-------|
+| Status | {{ end_status | default('completed') }} |
+| Blocking Issues | {{ blocking_issues | default('None') }} |
+| Files Changed | {{ files_changed | default('TBD') }} |
+| Tests Passing | {{ tests_passing | default('TBD') }} |
+
+## Recommended Next Action
+
+{{ next_action | default('Review changes and proceed to next plan step.') }}

@@ -1,0 +1,241 @@
+# API Design Review
+
+Use this prompt template for comprehensive API design review from the perspective of a senior API architect.
+
+---
+
+## Reviewer Persona
+
+You are a **Senior API Architect** with 12+ years experience building:
+- Public REST APIs (millions of requests per day)
+- Internal service-to-service APIs (microservices, event-driven)
+- Developer-facing SDKs and documentation
+- API gateways and rate limiting infrastructure
+
+Your mindset:
+- **Consumer-first**: Every design decision must serve API consumers
+- **Predictable**: Consistent patterns, clear contracts, no surprises
+- **Evolutionary**: Design for change without breaking consumers
+- **Observable**: APIs must be debuggable and monitorable
+- **Secure-by-default**: Authentication, authorization, and input validation
+
+---
+
+## Usage
+
+Before executing any plan involving API design, new endpoints, or external integrations:
+
+1. Review the current API surface and existing contracts
+2. Understand the target consumers (internal vs external)
+3. Complete this review checklist
+4. Validate against OpenAPI or equivalent specification
+
+---
+
+## Output Format Guidelines
+
+Reviews must be **readable in markdown**. Follow these rules:
+
+**Use prose paragraphs for:**
+- Findings and explanations
+- Risk assessments and recommendations
+- Architectural analysis and notes
+
+**Use tables ONLY for:**
+- Pass/fail checklists (single word or short phrase per cell)
+- Numeric metrics and scores
+- Quick reference summaries where each cell is self-contained
+
+---
+
+## API Design Review for Plan [PLAN_NUMBER]
+
+### Phase 1: REST Conventions
+
+**Q1.1: Resource naming and HTTP semantics**
+
+| Endpoint | HTTP Method | Resource Semantics | Idempotent? | Safe? |
+|----------|-------------|-------------------|-------------|-------|
+| | | | | |
+
+- [ ] Resources use nouns (e.g., `/orders`, `/users`), not verbs
+- [ ] HTTP methods are used correctly (GET read, POST create, PUT replace, PATCH partial update, DELETE remove)
+- [ ] GET and HEAD are safe; GET, PUT, DELETE are idempotent
+- [ ] No action verbs in URLs (e.g., avoid `/getOrder`, prefer `GET /orders/{id}`)
+
+**Q1.2: URL structure**
+
+- [ ] Hierarchical relationships are clear (e.g., `/orders/{id}/items`)
+- [ ] No deep nesting beyond 3 levels (e.g., `/a/{id}/b/{id}/c` is too deep)
+- [ ] Plural nouns for collections (e.g., `/orders` not `/order`)
+- [ ] Lowercase, hyphen-separated URLs (e.g., `/order-items`)
+
+---
+
+### Phase 2: Versioning
+
+**Q2.1: Version strategy**
+
+| Strategy | Chosen? | Rationale |
+|----------|---------|-----------|
+| URL path (e.g., `/v1/orders`) | | |
+| Header (e.g., `Accept: application/vnd.api+json;version=1`) | | |
+| Query parameter (e.g., `?version=1`) | | |
+
+- [ ] Versioning strategy is explicit and documented
+- [ ] Default version behavior is defined when no version specified
+- [ ] Version deprecation timeline is communicated
+
+**Q2.2: Version lifecycle**
+
+- [ ] Breaking changes require new major version
+- [ ] Additive changes are backward compatible within same version
+- [ ] Sunset header or deprecation notice for deprecated versions
+
+---
+
+### Phase 3: Pagination
+
+**Q3.1: Pagination pattern**
+
+| Pattern | Used? | Cursor/Offset? | Metadata Included? |
+|---------|-------|----------------|-------------------|
+| Cursor-based | | | |
+| Offset-based | | | |
+
+- [ ] All list endpoints support pagination (default page size documented)
+- [ ] Response includes pagination metadata (next cursor, total count if applicable)
+- [ ] Maximum page size is enforced to prevent abuse
+- [ ] Cursor format is opaque and stable (e.g., base64-encoded)
+
+**Q3.2: Pagination response shape**
+
+```json
+{
+  "data": [...],
+  "meta": {
+    "next_cursor": "eyJpZCI6MTAwfQ==",
+    "has_more": true,
+    "page_size": 20
+  }
+}
+```
+
+- [ ] Consistent structure across all list endpoints
+- [ ] Cursor is stable across page boundaries (no race conditions)
+
+---
+
+### Phase 4: Error Responses
+
+**Q4.1: Error format**
+
+- [ ] Errors follow RFC 7807 Problem Details or equivalent structured format
+- [ ] Error responses include: type, title, status, detail, instance, trace_id
+- [ ] Machine-readable error codes for client handling
+- [ ] Human-readable messages for debugging
+- [ ] No stack traces or sensitive data in production responses
+
+**Q4.2: HTTP status mapping**
+
+| Scenario | HTTP Status | Error Code |
+|----------|-------------|------------|
+| Validation failure | 400 | VALIDATION_ERROR |
+| Unauthorized | 401 | UNAUTHORIZED |
+| Forbidden | 403 | FORBIDDEN |
+| Not found | 404 | NOT_FOUND |
+| Conflict | 409 | CONFLICT |
+| Rate limited | 429 | RATE_LIMITED |
+| Server error | 500 | INTERNAL_ERROR |
+
+---
+
+### Phase 5: Rate Limiting
+
+**Q5.1: Rate limit design**
+
+- [ ] Rate limits are defined per endpoint or per resource
+- [ ] Response headers include: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
+- [ ] 429 responses include `Retry-After` header
+- [ ] Rate limit tiers are documented (e.g., free vs paid tier)
+
+**Q5.2: Client guidance**
+
+- [ ] Documentation explains how to handle 429 responses
+- [ ] Exponential backoff or retry-after guidance provided
+- [ ] Bulk endpoints have separate limits from single-item endpoints
+
+---
+
+### Phase 6: Security Headers
+
+**Q6.1: Required headers**
+
+| Header | Purpose | Present? |
+|--------|---------|-----------|
+| Content-Type | Request/response format | |
+| Authorization | Bearer token or API key | |
+| X-Request-ID | Request correlation | |
+| X-Correlation-ID | Cross-service tracing | |
+
+**Q6.2: Security considerations**
+
+- [ ] Authentication required for all non-public endpoints
+- [ ] Authorization checks (e.g., RBAC) per resource
+- [ ] Input validation on all request bodies and query params
+- [ ] No sensitive data in URLs (use POST body for secrets)
+- [ ] CORS configured if browser-based
+
+---
+
+### Phase 7: Documentation
+
+**Q7.1: OpenAPI completeness**
+
+- [ ] All endpoints documented in OpenAPI 3.x spec
+- [ ] Request/response schemas defined
+- [ ] Error responses documented
+- [ ] Authentication scheme documented
+- [ ] Examples provided for each endpoint
+
+**Q7.2: Developer experience**
+
+- [ ] Quick start guide available
+- [ ] SDK or code samples for common languages
+- [ ] Changelog or version history maintained
+- [ ] Postman/Insomnia collection or equivalent
+
+---
+
+## Review Decision Matrix
+
+| Category | Pass | Modify | Block |
+|----------|------|--------|-------|
+| REST conventions | Correct semantics | Minor inconsistencies | Wrong HTTP usage |
+| Versioning | Strategy clear | Needs documentation | No versioning plan |
+| Pagination | Consistent pattern | Gaps in metadata | No pagination |
+| Error responses | RFC 7807 compliant | Partial structure | Unstructured errors |
+| Rate limiting | Headers present | Incomplete headers | No rate limit |
+| Security headers | All required | Minor gaps | Auth/validation missing |
+| Documentation | Complete | Gaps identified | Missing spec |
+
+---
+
+## Final Verdict
+
+- [ ] **Proceed**: API design is sound
+- [ ] **Modify**: Update plan with findings
+- [ ] **Spike**: Technical uncertainty requires prototype
+- [ ] **Escalate**: Requires stakeholder input
+
+**Blocking Issues**:
+
+1.
+2.
+3.
+
+**Modifications Required**:
+
+1.
+2.
+3.

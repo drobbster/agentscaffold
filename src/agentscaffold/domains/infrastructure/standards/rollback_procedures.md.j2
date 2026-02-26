@@ -1,0 +1,217 @@
+# Rollback Procedures
+
+This document defines standards for automated rollback triggers, manual rollback steps, data migration rollback, and feature flag rollback.
+
+---
+
+## Automated Rollback Triggers
+
+### When to Roll Back Automatically
+
+| Trigger | Threshold | Action | Rationale |
+|---------|------------|--------|-----------|
+| Error rate | > 5% over baseline | Rollback | User impact |
+| Latency P99 | > 2x baseline | Rollback | Degraded experience |
+| Health check failure | 3 consecutive | Rollback | Instance unhealthy |
+| Crash loop | 3 restarts in 5 min | Rollback | Application fault |
+| Custom metric | Business-defined | Rollback or alert | Domain-specific |
+
+### Implementation Pattern
+
+```yaml
+# Kubernetes deployment with rollback on failure
+spec:
+  progressDeadlineSeconds: 600
+  revisionHistoryLimit: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+```
+
+```yaml
+# Argo Rollouts - automatic rollback on analysis failure
+spec:
+  analysis:
+    templates:
+    - templateName: success-rate
+    args:
+    - name: service-name
+      value: my-service
+  steps:
+  - setWeight: 25
+  - pause: {duration: 5m}
+  - setWeight: 50
+  - pause: {duration: 5m}
+  - setWeight: 100
+```
+
+### Automated Rollback Checklist
+
+- [ ] Rollback triggers are defined and documented
+- [ ] Thresholds are tuned (not too sensitive, not too slow)
+- [ ] Rollback is tested in staging
+- [ ] Manual override exists for false positives
+- [ ] Rollback does not cascade (e.g., rollback of rollback)
+- [ ] Alerts fire when automatic rollback occurs
+
+---
+
+## Manual Rollback Steps
+
+### Pre-Rollback Verification
+
+1. Confirm the issue is deployment-related (not external)
+2. Check that rollback will not worsen the situation
+3. Notify stakeholders (Slack, incident channel)
+4. Open monitoring dashboard for post-rollback verification
+
+### Kubernetes Rollback
+
+```bash
+# List revisions
+kubectl rollout history deployment/my-app
+
+# Rollback to previous revision
+kubectl rollout undo deployment/my-app
+
+# Rollback to specific revision
+kubectl rollout undo deployment/my-app --to-revision=3
+
+# Verify rollback
+kubectl rollout status deployment/my-app
+```
+
+### Runbook Template
+
+```markdown
+## Rollback: [Service Name]
+
+### Trigger
+- Error rate > X%
+- Latency P99 > X ms
+- Manual decision by [role]
+
+### Steps
+1. [ ] Notify #incidents channel
+2. [ ] Run: `kubectl rollout undo deployment/[name]`
+3. [ ] Verify: `kubectl rollout status deployment/[name]`
+4. [ ] Check metrics: [dashboard link]
+5. [ ] Confirm error rate and latency normalized
+6. [ ] Post incident update
+
+### Rollback Time Objective
+< 5 minutes
+
+### Escalation
+If rollback fails: [on-call contact]
+```
+
+### Manual Rollback Checklist
+
+- [ ] Runbook exists and is current
+- [ ] Rollback can be executed without code deployment
+- [ ] Steps are copy-paste ready
+- [ ] Verification steps are included
+- [ ] Escalation path is documented
+- [ ] Rollback has been rehearsed (drill or staging)
+
+---
+
+## Data Migration Rollback
+
+### Backward-Compatible Migrations
+
+| Migration Type | Rollback Strategy | Example |
+|----------------|-------------------|---------|
+| Add column (nullable) | No rollback needed | ALTER TABLE ADD COLUMN |
+| Add column (non-null, default) | Drop column | ALTER TABLE DROP COLUMN |
+| Rename column | Rename back | ALTER TABLE RENAME COLUMN |
+| Add index | Drop index | DROP INDEX |
+
+### Destructive Migration Rollback
+
+For migrations that remove or transform data:
+
+1. **Pre-migration backup**: Snapshot or export before migration
+2. **Rollback script**: Tested script to restore from backup or reverse migration
+3. **Rollback window**: Define RTO for data restoration
+4. **Verification**: Data integrity checks after rollback
+
+### Migration Rollback Script Template
+
+```sql
+-- Rollback: Add users.email_verified column
+-- Run only if migration v2.3.1 caused issues
+
+BEGIN;
+  -- Restore from backup or reverse the change
+  ALTER TABLE users DROP COLUMN IF EXISTS email_verified;
+  -- Or: Restore from pre-migration snapshot
+COMMIT;
+```
+
+### Data Migration Rollback Checklist
+
+- [ ] Migration is backward compatible where possible
+- [ ] Rollback script exists for destructive migrations
+- [ ] Rollback script is tested on staging copy of prod data
+- [ ] Backup is taken before migration
+- [ ] RTO for data rollback is documented
+- [ ] Feature flag or dual-write supports gradual cutover
+
+---
+
+## Feature Flag Rollback
+
+### Instant Disable Pattern
+
+```python
+# Application checks feature flag at runtime
+if feature_flags.is_enabled("new_checkout_flow"):
+    return new_checkout(request)
+else:
+    return legacy_checkout(request)
+```
+
+### Rollback via Feature Flag
+
+| Step | Action |
+|------|--------|
+| 1 | Disable feature flag (no deploy) |
+| 2 | Traffic routes to legacy path |
+| 3 | Investigate and fix |
+| 4 | Re-enable when ready |
+| 5 | Remove flag and legacy code in future release |
+
+### Feature Flag Rollback Checklist
+
+- [ ] Feature flags support instant disable
+- [ ] Disable does not require deployment
+- [ ] Legacy path remains functional
+- [ ] Flag state is logged for audit
+- [ ] Runbook documents flag disable procedure
+
+---
+
+## Rollback Decision Matrix
+
+| Scenario | Automated | Manual | Data Migration |
+|----------|-----------|--------|----------------|
+| App deploy, error spike | Yes | Fallback | N/A |
+| Config change, latency | Yes | Fallback | N/A |
+| Schema migration | No | Yes | Yes |
+| Feature flag cutover | No | Yes | Maybe |
+| Infrastructure change | Depends | Yes | N/A |
+
+---
+
+## Post-Rollback
+
+- [ ] Verify metrics normalized
+- [ ] Document root cause
+- [ ] Create incident report
+- [ ] Update runbook if procedure changed
+- [ ] Schedule post-mortem if significant impact
+- [ ] Add monitoring or automation to prevent recurrence

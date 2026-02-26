@@ -1,0 +1,162 @@
+# RL Reward Shaping Standards
+
+This document defines standards for reward shaping in RL training, including integration with data quality metrics.
+
+---
+
+## Data Quality Integration in Rewards
+
+### Quality-Weighted Profit Rewards
+
+When computing profit-based rewards, weight them by the data quality of the signals that generated the position. This helps RL agents learn to prefer real data sources over proxies.
+
+**Recommended Formula:**
+
+```python
+data_quality = strategy.get_signal_metadata()["data_quality"]
+r_profit = pnl * data_quality
+```
+
+**Rationale:**
+- Profits from positions based on fallback/proxy data should contribute less to total reward
+- This prevents the agent from becoming overconfident in proxy-based signals
+- Agent learns that positions from high-quality data are more reliable
+
+### Quality Scale Reference
+
+| Quality Level | Score | Description | Reward Weight |
+|---------------|-------|-------------|---------------|
+| PRIMARY | 1.0 | Real external data (market data, macro indicators) | Full reward |
+| FALLBACK | 0.5 | Proxy data derived from OHLCV | 50% reward |
+| STALE | 0.25 | Data older than 1 trading day | 25% reward |
+
+### Implementation Example
+
+```python
+class QualityAwareRewardFunction:
+    """Reward function that accounts for data quality."""
+
+    def __init__(
+        self,
+        profit_scale: float = 1.0,
+        quality_weight: float = 1.0,
+        min_quality: float = 0.1,
+    ):
+        self.profit_scale = profit_scale
+        self.quality_weight = quality_weight
+        self.min_quality = min_quality
+
+    def compute_reward(
+        self,
+        pnl: float,
+        data_quality: float,
+        using_fallback: bool,
+    ) -> float:
+        quality_factor = max(self.min_quality, data_quality)
+        return pnl * quality_factor * self.profit_scale
+```
+
+---
+
+## Adding Data Quality to Observation Space
+
+Including data quality as an observation feature allows the RL agent to learn context-dependent behavior based on data source reliability.
+
+```python
+import numpy as np
+from gymnasium import spaces
+
+observation_space = spaces.Dict({
+    # ... existing features ...
+    "data_quality": spaces.Box(
+        low=0.0, high=1.0, shape=(1,), dtype=np.float32
+    ),
+    "using_fallback": spaces.Discrete(2),
+})
+```
+
+---
+
+## Reward Shaping Best Practices
+
+### Avoid Over-Penalizing Fallback Data
+
+While quality-weighting is important, don't over-penalize fallback data:
+
+```python
+# WRONG: Zero reward for fallback (agent may refuse to trade)
+if using_fallback:
+    reward = 0
+
+# RIGHT: Reduced but non-zero reward
+reward = pnl * data_quality  # 50% for fallback
+```
+
+### Consider Exploration Rewards
+
+Add small exploration rewards for gathering information about data quality:
+
+```python
+def compute_reward(self, ...):
+    r_profit = pnl * data_quality
+
+    if self._is_new_quality_regime(data_quality):
+        r_exploration = 0.001
+    else:
+        r_exploration = 0.0
+
+    return r_profit + r_exploration
+```
+
+### Quality-Aware Position Sizing
+
+RL agents can learn to size positions based on data quality:
+
+```python
+def interpret_action(self, action: int, data_quality: float) -> float:
+    base_size = ACTION_TO_SIZE[action]
+    return base_size * data_quality
+```
+
+---
+
+## Training Considerations
+
+### Curriculum Learning with Data Quality
+
+Consider curriculum learning that gradually exposes agent to lower-quality data:
+
+```python
+class QualityCurriculum:
+    def __init__(self, total_steps: int):
+        self.total_steps = total_steps
+
+    def get_min_quality(self, current_step: int) -> float:
+        progress = current_step / self.total_steps
+        if progress < 0.3:
+            return 0.8  # High quality only
+        elif progress < 0.6:
+            return 0.5  # Include fallback
+        else:
+            return 0.25  # Include stale
+```
+
+### Logging Quality Metrics
+
+Log quality-related metrics during training:
+
+```python
+quality_rewards = []
+fallback_count = 0
+
+for step in training_steps:
+    ...
+    quality_rewards.append(reward * data_quality)
+    if using_fallback:
+        fallback_count += 1
+
+logger.log({
+    "reward/quality_weighted": np.mean(quality_rewards),
+    "data/fallback_fraction": fallback_count / len(training_steps),
+})
+```

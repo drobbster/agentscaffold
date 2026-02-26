@@ -1,0 +1,87 @@
+# Data Quality Review
+
+Use this prompt to review data quality practices, validation rules, and monitoring for data pipelines and datasets.
+
+---
+
+## Data Quality Review for [DATASET_OR_PIPELINE]
+
+### Phase 1: Completeness
+
+- [ ] All expected records are present (row count validation)
+- [ ] No missing values in required fields
+- [ ] All expected time periods are covered (no gaps)
+- [ ] All expected entities are present (no missing partitions)
+
+| Field | Null Rate Target | Actual | Pass? |
+|-------|-----------------|--------|-------|
+| | < X% | | |
+
+---
+
+### Phase 2: Accuracy
+
+- [ ] Values are within expected domains (enums, ranges)
+- [ ] Cross-field consistency checks pass (e.g., start_date <= end_date)
+- [ ] Aggregations match source totals (reconciliation)
+- [ ] Spot-check samples against source of truth
+
+| Validation Rule | Expected | Actual | Pass? |
+|-----------------|----------|--------|-------|
+| | | | |
+
+---
+
+### Phase 3: Consistency
+
+- [ ] Same entity has consistent attributes across tables
+- [ ] Timestamps use consistent timezone (UTC preferred)
+- [ ] Units are consistent (currency, measurement)
+- [ ] Naming conventions are followed
+
+---
+
+### Phase 4: Timeliness
+
+| Dataset | Freshness SLA | Current Freshness | Pass? |
+|---------|---------------|-------------------|-------|
+| | | | |
+
+- [ ] Data arrives within SLA
+- [ ] Staleness is detected and alerted
+- [ ] Late data handling strategy is defined
+
+---
+
+### Phase 5: Data Contracts
+
+- [ ] Schema is versioned and documented
+- [ ] Breaking changes follow migration procedures
+- [ ] Downstream consumers are notified of changes
+- [ ] Contract tests exist between producer and consumer
+
+---
+
+## Quality Score
+
+| Dimension | Weight | Score (1-5) | Weighted Score |
+|-----------|--------|-------------|---------------|
+| Completeness | 25% | | |
+| Accuracy | 30% | | |
+| Consistency | 20% | | |
+| Timeliness | 15% | | |
+| Documentation | 10% | | |
+| **Total** | 100% | | |
+
+---
+
+## Action Items
+
+**Critical (must fix before production):**
+1.
+
+**Important (fix within sprint):**
+1.
+
+**Nice to have (backlog):**
+1.

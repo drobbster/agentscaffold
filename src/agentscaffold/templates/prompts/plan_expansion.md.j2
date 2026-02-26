@@ -1,0 +1,192 @@
+# Plan Expansion Review
+
+Use this prompt template to identify gaps, edge cases, and enhancement opportunities in existing plans.
+
+---
+
+## Usage
+
+Copy this checklist into a conversation and replace `[PLAN_NUMBER]` with the target plan.
+
+---
+
+## Expansion Review for Plan [PLAN_NUMBER]
+
+### 1. Edge Case Analysis
+
+**Identify missing edge cases in the test plan:**
+
+| # | Edge Case | Current Coverage | Recommended Test |
+|---|-----------|------------------|------------------|
+| 1 | | None / Partial / Full | |
+| 2 | | | |
+| 3 | | | |
+| 4 | | | |
+| 5 | | | |
+
+### 2. Error Condition Analysis
+
+**Identify undocumented error conditions:**
+
+| Error Condition | Expected Behavior | Documented? | Test Exists? |
+|-----------------|-------------------|-------------|--------------|
+| | | Yes / No | Yes / No |
+| | | | |
+| | | | |
+
+### 3. Configuration Gap Analysis
+
+**Configuration options that should exist but don't:**
+
+| Configuration | Purpose | Default Value | Why Needed |
+|---------------|---------|---------------|------------|
+| | | | |
+| | | | |
+
+### 4. Performance Considerations
+
+**Performance aspects not addressed:**
+
+| Aspect | Current State | Risk | Recommendation |
+|--------|---------------|------|----------------|
+| Time complexity | | | |
+| Memory usage | | | |
+| I/O operations | | | |
+| Concurrency | | | |
+
+### 5. Security Implications
+
+**Review applicable security controls:**
+
+| Security Aspect | Addressed? | Gap | Remediation |
+|-----------------|------------|-----|-------------|
+| Input validation | | | |
+| Secret handling | | | |
+| Audit logging | | | |
+| Access control | | | |
+
+### 6. Monitoring & Observability
+
+**Observability gaps:**
+
+| Gap | Impact | Recommendation |
+|-----|--------|----------------|
+| Missing metrics | | |
+| Missing log points | | |
+| Missing alerts | | |
+| Missing traces | | |
+
+### 7. Documentation Gaps
+
+**Documentation that should exist:**
+
+- [ ] API documentation (docstrings)
+- [ ] Usage examples in code
+- [ ] Architecture decision rationale
+- [ ] Troubleshooting guide
+- [ ] Configuration reference
+
+### 8. Dependency Analysis
+
+**For each dependency, verify:**
+
+| Dependency | Version Pinned? | Breaking Change Risk | Update Strategy |
+|------------|-----------------|---------------------|-----------------|
+| | | | |
+
+### 9. Implementation Pitfall Analysis
+
+**Identify variables/patterns that linters may flag incorrectly:**
+
+In complex systems, certain patterns appear "unused" but are semantically critical:
+
+| Pattern | Why It Looks Unused | Why It's Actually Needed |
+|---------|---------------------|--------------------------|
+| State variables | Not read in same scope | Needed by next loop iteration or external system |
+| Tracking variables | Updated but not immediately read | Used by downstream aggregation or reporting |
+| Correlation IDs | Assigned but not used locally | Passed to downstream systems for traceability |
+| Flags/counters | Incremented but not read until loop end | Used for summary statistics |
+{% if domain_pitfall_patterns %}
+
+{{ domain_pitfall_patterns }}
+{% endif %}
+
+**Review questions for this plan:**
+
+| Potential Pitfall | Variable/Pattern | Semantic Purpose | Risk if Removed |
+|-------------------|------------------|------------------|-----------------|
+| | | | |
+| | | | |
+
+**Linter warning categories to watch:**
+- [ ] F841 (unused variable) - Review all before auto-fixing
+- [ ] F811 (redefinition) - May be intentional loop pattern
+- [ ] Any warning in loop body that touches state
+
+### 10. External Dependencies Verification
+
+**Before implementation, verify:**
+
+| External Dependency | Access Verified? | Data Availability? | Quirks Documented? |
+|--------------------|------------------|--------------------|--------------------|
+| | Yes / No / N/A | Yes / No / N/A | |
+| | | | |
+
+**API-specific checks:**
+- [ ] Free tier vs paid tier limitations identified
+- [ ] Rate limits documented
+- [ ] Authentication method confirmed
+- [ ] Data format quirks noted (e.g., unexpected null values, format changes)
+
+### 11. Interface Consumer Audit
+
+**If this plan modifies or adds parameters to any config class, data contract, or interface:**
+
+Run `rg "ClassName(" --type py` for each modified class and list ALL instantiation points.
+
+| Modified Class | Instantiation File | Line | In File Impact Map? |
+|----------------|-------------------|------|---------------------|
+| | | | Yes / No |
+
+**For each new parameter, trace the full data flow:**
+
+| New Parameter | Entry Point | -> Hop 1 | -> Hop 2 | -> Final Consumer | Gap? |
+|---------------|-------------|----------|----------|-------------------|------|
+| | | | | | |
+
+**Integration test for each flow path:**
+
+| Flow Path | Test Verifies New Param? |
+|-----------|--------------------------|
+| | Yes / No / Needs Adding |
+
+This section is HIGH PRIORITY and should block execution if any consumer is not in the File Impact Map.
+
+{% if domain_expansion_sections %}
+{{ domain_expansion_sections }}
+{% endif %}
+
+---
+
+## Expansion Recommendations
+
+### High Priority (Block execution if not addressed)
+
+1. 
+
+### Medium Priority (Address during implementation)
+
+1. 
+
+### Low Priority (Add to backlog)
+
+1. 
+
+---
+
+## Backlog Items Identified
+
+| Item | Priority | Add to Backlog? |
+|------|----------|-----------------|
+| | | Yes / No |
+

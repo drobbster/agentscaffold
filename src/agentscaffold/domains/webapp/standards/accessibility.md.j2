@@ -1,0 +1,191 @@
+# Accessibility Standards (WCAG 2.1 AA)
+
+This document defines accessibility requirements for all web application features. Every UI component and page must meet WCAG 2.1 AA compliance.
+
+---
+
+## Color and Contrast
+
+### Minimum Contrast Ratios
+
+| Element | Minimum Ratio | Tool to Verify |
+|---------|---------------|----------------|
+| Normal text (< 18px) | 4.5:1 | Chrome DevTools, axe |
+| Large text (>= 18px or >= 14px bold) | 3:1 | Chrome DevTools, axe |
+| UI components and graphical objects | 3:1 | Manual check |
+| Focus indicators | 3:1 against adjacent colors | Manual check |
+
+### Color Independence
+
+- [ ] Information conveyed by color is also conveyed by text, pattern, or icon
+- [ ] Status indicators use icons in addition to color (green check, red X)
+- [ ] Charts and graphs use patterns or labels, not just color differentiation
+- [ ] Form validation errors use icons and text, not just red borders
+
+```html
+<!-- WRONG: Color only -->
+<span style="color: red">Error</span>
+
+<!-- RIGHT: Color + icon + text -->
+<span class="error" role="alert">
+  <svg aria-hidden="true"><!-- error icon --></svg>
+  Error: Email address is required
+</span>
+```
+
+---
+
+## Keyboard Navigation
+
+### Tab Order
+
+- [ ] Tab order follows visual reading order (left-to-right, top-to-bottom)
+- [ ] All interactive elements are reachable via Tab key
+- [ ] Custom components implement proper `tabindex` (0 for focusable, -1 for programmatic focus)
+- [ ] No `tabindex` values greater than 0
+
+### Focus Management
+
+- [ ] Focus indicator is visible on all interactive elements
+- [ ] Custom focus styles have at least 3:1 contrast ratio
+- [ ] Focus moves logically when modal dialogs open/close
+- [ ] Focus returns to trigger element when closing dialogs
+- [ ] Skip navigation link present as first focusable element
+
+```css
+/* Visible focus indicator */
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+```
+
+### Keyboard Shortcuts
+
+- [ ] Escape closes modals and popovers
+- [ ] Enter activates buttons and links
+- [ ] Space toggles checkboxes and buttons
+- [ ] Arrow keys navigate within composite widgets (tabs, menus, listboxes)
+
+---
+
+## Semantic HTML
+
+### Document Structure
+
+```html
+<header>
+  <nav aria-label="Main navigation">...</nav>
+</header>
+<main>
+  <h1>Page Title</h1>
+  <section aria-labelledby="section-heading">
+    <h2 id="section-heading">Section</h2>
+  </section>
+</main>
+<footer>...</footer>
+```
+
+### Heading Hierarchy
+
+- [ ] Every page has exactly one `h1`
+- [ ] Headings are nested sequentially (h1 -> h2 -> h3, no skipping)
+- [ ] Headings describe the content that follows
+- [ ] Headings are not used for visual styling alone
+
+### Landmark Roles
+
+| HTML Element | Implicit Role | Required |
+|-------------|---------------|----------|
+| `<header>` | banner | Yes |
+| `<nav>` | navigation | Yes |
+| `<main>` | main | Yes |
+| `<footer>` | contentinfo | Yes |
+| `<aside>` | complementary | When applicable |
+
+---
+
+## ARIA Usage
+
+### Rules of ARIA
+
+1. **Prefer native HTML** -- use `<button>`, not `<div role="button">`
+2. **Do not change native semantics** -- do not add `role="heading"` to `<button>`
+3. **All ARIA controls must be keyboard accessible**
+4. **Do not use `role="presentation"` or `aria-hidden="true"` on focusable elements**
+5. **All interactive elements must have accessible names**
+
+### Common Patterns
+
+```html
+<!-- Live region for dynamic updates -->
+<div aria-live="polite" aria-atomic="true">
+  Results updated: 42 items found
+</div>
+
+<!-- Loading state -->
+<div aria-busy="true" aria-live="polite">
+  Loading results...
+</div>
+
+<!-- Expandable section -->
+<button aria-expanded="false" aria-controls="details-panel">
+  Show Details
+</button>
+<div id="details-panel" hidden>...</div>
+```
+
+---
+
+## Forms
+
+### Labels and Instructions
+
+- [ ] Every form input has a visible `<label>` element
+- [ ] Labels are associated via `for`/`id` or wrapping
+- [ ] Required fields are indicated (not just with asterisk)
+- [ ] Instructions are provided before the form, not just in tooltips
+
+### Error Handling
+
+- [ ] Errors are announced to screen readers via `aria-live` or `role="alert"`
+- [ ] Error messages are adjacent to the field they reference
+- [ ] Error messages describe how to fix the issue
+- [ ] Focus moves to the first error on form submission
+
+```html
+<label for="email">Email (required)</label>
+<input id="email" type="email" aria-describedby="email-error" aria-invalid="true" />
+<p id="email-error" role="alert">Please enter a valid email address</p>
+```
+
+---
+
+## Images and Media
+
+- [ ] Decorative images use `alt=""` or `aria-hidden="true"`
+- [ ] Informative images have descriptive alt text
+- [ ] Complex images (charts, diagrams) have long descriptions
+- [ ] Videos have captions and transcripts
+
+---
+
+## Testing Checklist
+
+### Automated Testing
+
+```bash
+# axe-core in CI
+npx axe-cli http://localhost:3000 --exit
+
+# Lighthouse accessibility audit
+npx lighthouse http://localhost:3000 --only-categories=accessibility
+```
+
+### Manual Testing
+
+- [ ] Navigate entire page using only keyboard
+- [ ] Test with screen reader (VoiceOver, NVDA, JAWS)
+- [ ] Test with browser zoom at 200%
+- [ ] Test with high-contrast mode
+- [ ] Verify focus order matches visual order

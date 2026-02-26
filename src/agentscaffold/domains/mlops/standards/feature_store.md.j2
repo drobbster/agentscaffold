@@ -1,0 +1,139 @@
+# Feature Store Standards
+
+This document defines standards for feature engineering, storage, and serving in ML systems.
+
+---
+
+## Feature Definition
+
+### Feature Schema
+
+Every feature must have a documented schema:
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| name | Unique feature identifier | "user_purchase_count_30d" |
+| entity | Primary entity the feature describes | "user", "item", "session" |
+| dtype | Data type | float32, int64, string |
+| description | What the feature represents | "Number of purchases in last 30 days" |
+| owner | Team or person responsible | "team-features" |
+| freshness_sla | Maximum staleness allowed | "1 hour" |
+| source | Where the raw data comes from | "transactions_table" |
+
+### Feature Naming Convention
+
+```
+{entity}_{metric}_{window}_{aggregation}
+
+Examples:
+  user_purchase_count_30d
+  item_view_rate_7d_avg
+  session_duration_total_sum
+```
+
+---
+
+## Point-in-Time Correctness
+
+### The Critical Rule
+
+Features must be computed using only data that was available at the time of the prediction. Using future data creates look-ahead bias.
+
+```python
+# WRONG: Uses all data up to current time (includes future data at training time)
+features = compute_features(df)
+
+# RIGHT: Uses only data available at event_timestamp
+features = compute_features(df, as_of=event_timestamp)
+```
+
+### Implementation Pattern
+
+```python
+def get_features_as_of(entity_id: str, timestamp: datetime) -> dict:
+    """Retrieve features as they were at the given timestamp.
+
+    This ensures training uses only data that was available
+    at prediction time (no look-ahead bias).
+    """
+    features = {}
+    for feature_def in FEATURE_REGISTRY:
+        features[feature_def.name] = feature_def.compute(
+            entity_id=entity_id,
+            as_of=timestamp,
+        )
+    return features
+```
+
+---
+
+## Online vs Offline Serving
+
+| Aspect | Offline (Batch) | Online (Real-time) |
+|--------|-----------------|-------------------|
+| Latency | Minutes to hours | < 10ms |
+| Freshness | Hours to days | Seconds to minutes |
+| Use case | Training, batch inference | Real-time inference |
+| Storage | Data warehouse, Parquet | Redis, DynamoDB |
+| Compute | Spark, Dask | Pre-computed, streaming |
+
+### Parity Between Online and Offline
+
+- [ ] Same feature computation logic used for both online and offline
+- [ ] Feature values are compared between online and offline regularly
+- [ ] Any discrepancy triggers an alert and investigation
+- [ ] Feature transformations are versioned alongside model versions
+
+---
+
+## Feature Freshness
+
+### SLA Definitions
+
+| Feature Category | Freshness SLA | Staleness Action |
+|-----------------|---------------|------------------|
+| Real-time signals | < 1 minute | Use cached + warn |
+| Daily aggregates | < 1 hour | Use previous day |
+| Static features | < 24 hours | Use cached |
+| Derived features | Same as slowest input | Compute on demand |
+
+### Staleness Detection
+
+```python
+def check_feature_freshness(feature_name: str, max_age_seconds: int) -> bool:
+    """Check if a feature is within its freshness SLA."""
+    last_updated = feature_store.get_last_updated(feature_name)
+    age = (datetime.utcnow() - last_updated).total_seconds()
+    if age > max_age_seconds:
+        logger.warning(
+            "Feature stale",
+            feature=feature_name,
+            age_seconds=age,
+            sla_seconds=max_age_seconds,
+        )
+        return False
+    return True
+```
+
+---
+
+## Feature Validation
+
+### Required Checks
+
+- [ ] No null values in required features (or documented null handling)
+- [ ] Feature values within expected range (min, max, mean)
+- [ ] Feature cardinality matches expectations (for categorical features)
+- [ ] Feature distribution has not drifted from baseline
+- [ ] Cross-feature consistency checks pass (e.g., count >= 0)
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|--------------|--------------|------------------|
+| Computing features inline during serving | Latency, inconsistency | Pre-compute and cache |
+| Different code paths for train vs serve | Training/serving skew | Single feature definition |
+| No freshness monitoring | Stale features degrade models | SLA monitoring |
+| Unbounded feature windows | Memory explosion | Fixed-size windows |

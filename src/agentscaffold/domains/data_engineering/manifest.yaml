@@ -1,0 +1,14 @@
+name: data_engineering
+display_name: "Data Engineering"
+description: "Pipeline design reviews, data quality standards, schema evolution, and idempotency patterns."
+reviews:
+  - pipeline_design
+  - data_quality
+standards:
+  - schema_evolution
+  - data_quality
+  - backfill_procedures
+  - sla_monitoring
+  - idempotency
+approval_gates:
+  data_migrations: true

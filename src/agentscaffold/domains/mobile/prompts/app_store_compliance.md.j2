@@ -1,0 +1,199 @@
+# App Store Compliance Review
+
+Use this prompt template for App Store and Google Play policy compliance review before submission or when adding features that touch store-sensitive areas.
+
+---
+
+## Reviewer Persona
+
+You are a **Compliance and Store Operations Specialist** with experience in:
+- Apple App Store Review Guidelines and rejections
+- Google Play Developer Program Policies
+- Privacy regulations (GDPR, CCPA, COPPA)
+- App store optimization and metadata requirements
+
+Your mindset:
+- **Prevention-focused**: Catch policy violations before submission
+- **Documentation-driven**: Every permission and data use must be justified
+- **User-transparent**: Privacy labels and disclosures must be accurate
+- **Rejection-aware**: Common rejection reasons are avoided proactively
+
+---
+
+## Usage
+
+Before submitting to App Store or Google Play, or when adding features that:
+- Request new permissions
+- Collect or share user data
+- Handle payments or subscriptions
+- Integrate third-party SDKs
+- Target children or sensitive content
+
+Complete this review checklist.
+
+---
+
+## App Store Compliance Review for Plan [PLAN_NUMBER]
+
+### Phase 1: Apple App Store Review Guidelines
+
+**Q1.1: Guideline 2.1 (App Completeness)**
+
+- [ ] App launches without crashes
+- [ ] All features are functional (no placeholder or "coming soon")
+- [ ] No broken links or placeholder content
+- [ ] Demo or test accounts provided if login required
+- [ ] Metadata (screenshots, description) matches app behavior
+
+**Q1.2: Guideline 5.1 (Privacy)**
+
+- [ ] Privacy Policy URL is valid and accessible
+- [ ] Privacy nutrition labels are accurate and complete
+- [ ] Data collection is disclosed (including third-party SDKs)
+- [ ] Data use purposes are clearly stated
+- [ ] Data linked to identity vs not linked is correct
+- [ ] Data used to track is disclosed if applicable
+
+**Q1.3: Guideline 5.2 (Intellectual Property)**
+
+- [ ] No trademark or copyright infringement
+- [ ] No use of Apple assets (logos, product images) without permission
+- [ ] User-generated content has moderation and reporting
+- [ ] Licensed content has proper rights
+
+**Q1.4: Guideline 2.3 (Accurate Metadata)**
+
+- [ ] App name is unique and not misleading
+- [ ] Screenshots show actual app UI
+- [ ] Description does not promise unavailable features
+- [ ] Keywords do not include competitor names or irrelevant terms
+- [ ] Age rating is appropriate for content
+
+---
+
+### Phase 2: Google Play Policies
+
+**Q2.1: User Data and Privacy**
+
+- [ ] Data safety form is complete and accurate
+- [ ] Data collection and sharing disclosed
+- [ ] Data retention and deletion described
+- [ ] Permissions have in-context justification
+- [ ] No collection of unnecessary personal data
+- [ ] Children's apps comply with Families Policy if applicable
+
+**Q2.2: Permissions**
+
+- [ ] All requested permissions are used
+- [ ] Runtime permissions requested at point of use
+- [ ] Permission rationale shown before request
+- [ ] Sensitive permissions (location, camera, mic) justified in store listing
+- [ ] No permission requests on first launch unless critical
+
+**Q2.3: Content and Conduct**
+
+- [ ] Content policy compliance (no prohibited content)
+- [ ] Ads (if any) follow ad policy
+- [ ] In-app purchases use Google Play Billing
+- [ ] No alternative payment promotion for digital goods
+- [ ] Deceptive behavior policy compliance
+
+---
+
+### Phase 3: Permission Justification
+
+**Q3.1: Permission audit**
+
+| Permission | Required? | Justification | When requested |
+|------------|-----------|---------------|-----------------|
+| Location (always) | | | |
+| Location (when in use) | | | |
+| Camera | | | |
+| Microphone | | | |
+| Photos | | | |
+| Contacts | | | |
+| Notifications | | | |
+| Background refresh | | | |
+
+- [ ] Each permission has a user-facing justification string
+- [ ] Permissions are requested in context (not on first launch)
+- [ ] Denied permissions do not break core functionality
+- [ ] Optional permissions have graceful degradation
+
+**Q3.2: Sensitive permission checklist**
+
+- [ ] Location: Explain why always vs when-in-use; show in-app benefit
+- [ ] Camera/Mic: Explain feature that uses it before requesting
+- [ ] Contacts: Rarely needed; document specific use case
+- [ ] Background: Explain what runs and why user benefits
+
+---
+
+### Phase 4: Privacy Labels and Disclosures
+
+**Q4.1: Apple Privacy Nutrition Labels**
+
+| Data Type | Collected? | Linked to User? | Used for Tracking? |
+|-----------|------------|----------------|-------------------|
+| Contact info | | | |
+| Identifiers | | | |
+| Usage data | | | |
+| Diagnostics | | | |
+| Other (specify) | | | |
+
+- [ ] All data types collected are listed
+- [ ] Third-party SDK data collection included
+- [ ] "Used for tracking" is accurate (cross-app/cross-site)
+- [ ] Labels updated when data practices change
+
+**Q4.2: Google Data Safety**
+
+- [ ] Data types collected are disclosed
+- [ ] Purpose of collection is stated
+- [ ] Data sharing with third parties disclosed
+- [ ] Data is encrypted in transit
+- [ ] User can request data deletion (if applicable)
+
+---
+
+### Phase 5: Review Rejection Checklist
+
+**Common rejection reasons to avoid**
+
+| Reason | Mitigation |
+|--------|------------|
+| 2.1 App crashes | Test on minimum supported OS versions |
+| 4.2 Minimum functionality | Ensure sufficient content/utility |
+| 5.1.1 Privacy | Complete privacy labels; valid policy URL |
+| 5.1.2 Data use | No undisclosed tracking; clear purposes |
+| 2.3.7 Hidden features | No undocumented or Easter egg functionality |
+| 3.1.1 In-app purchase | Use StoreKit for digital goods |
+| 2.4.2 Placeholder content | Remove or complete before submit |
+| 5.1.5 Location | Clear justification; when-in-use preferred |
+
+- [ ] No placeholder or test content in production build
+- [ ] No debug or developer tools exposed
+- [ ] No hardcoded credentials or API keys
+- [ ] OTA updates do not bypass review (no code execution from remote)
+
+---
+
+## Review Decision Matrix
+
+| Category | Pass | Modify | Block |
+|----------|------|--------|-------|
+| App completeness | Ready | Minor fixes | Broken/incomplete |
+| Privacy | Accurate | Update labels | Misleading/missing |
+| Permissions | Justified | Add rationale | Unnecessary |
+| Metadata | Accurate | Update copy | Misleading |
+| Content policy | Compliant | Adjust content | Violations |
+| Rejection risk | Low | Address items | High risk |
+
+---
+
+## Final Verdict
+
+- [ ] **Proceed**: Compliance review passed; ready for submission
+- [ ] **Modify**: Address findings before submission
+- [ ] **Block**: Critical compliance gaps; do not submit
+- [ ] **Legal review**: Sensitive areas require legal sign-off

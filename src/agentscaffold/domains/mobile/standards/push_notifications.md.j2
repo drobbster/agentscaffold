@@ -1,0 +1,255 @@
+# Push Notification Standards
+
+This document defines patterns for implementing push notifications on iOS and Android. All notification features must follow these standards.
+
+---
+
+## Token Management
+
+### Registration Flow
+
+- [ ] Request notification permission at contextually appropriate moment (not on first launch)
+- [ ] Store device token on backend after successful registration
+- [ ] Associate token with user ID after authentication
+- [ ] Handle token refresh (iOS: token can change; Android: FCM token can rotate)
+- [ ] Send token to backend on every app launch (idempotent upsert)
+- [ ] Remove token from backend when user logs out or disables notifications
+
+### Token Storage
+
+| Location | Purpose |
+|----------|---------|
+| Backend (DB) | Map token to user; target pushes |
+| Keychain (iOS) / EncryptedSharedPrefs (Android) | Persist for re-send on launch |
+| Never in logs | Token is sensitive; do not log |
+
+### Token Refresh Handling
+
+```swift
+// iOS: application(_:didRegisterForRemoteNotificationsWithDeviceToken:)
+// Re-send to backend whenever called; Apple may call multiple times
+func application(_ application: UIApplication,
+                didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+  let token = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
+  backend.updateDeviceToken(token)
+}
+```
+
+```kotlin
+// Android: FirebaseMessaging.getInstance().token
+// Listen for onNewToken; send to backend
+FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+  if (task.isSuccessful) {
+    backend.updateDeviceToken(task.result)
+  }
+}
+```
+
+---
+
+## Permission Best Practices
+
+### When to Request
+
+- [ ] After user has seen value (e.g., completed onboarding, used core feature)
+- [ ] In context (e.g., "Enable notifications to get order updates")
+- [ ] Not on first launch unless critical (e.g., messaging app)
+- [ ] One request; if denied, do not repeatedly prompt
+
+### Permission States
+
+| State | Action |
+|-------|--------|
+| Not determined | Show in-app explanation, then request |
+| Denied | Respect; show "Enable in Settings" only when relevant |
+| Granted | Register for remote notifications |
+| Provisional (iOS) | Delivered quietly; user can promote to full |
+
+### Pre-Permission UX
+
+- [ ] Explain benefit before system dialog
+- [ ] Use custom modal or inline message
+- [ ] Link to Settings only when user has denied and feature needs it
+- [ ] Do not dark-pattern (fake buttons, misleading copy)
+
+---
+
+## Notification Payload Design
+
+### APNs (iOS) Payload
+
+```json
+{
+  "aps": {
+    "alert": {
+      "title": "Order Shipped",
+      "body": "Your order #12345 is on the way."
+    },
+    "badge": 1,
+    "sound": "default",
+    "category": "ORDER_UPDATE",
+    "thread-id": "order-12345",
+    "mutable-content": 1
+  },
+  "order_id": "12345",
+  "deep_link": "/orders/12345"
+}
+```
+
+### FCM (Android) Payload
+
+```json
+{
+  "notification": {
+    "title": "Order Shipped",
+    "body": "Your order #12345 is on the way."
+  },
+  "data": {
+    "order_id": "12345",
+    "deep_link": "/orders/12345"
+  },
+  "android": {
+    "notification": {
+      "channel_id": "orders",
+      "click_action": "OPEN_ORDER"
+    }
+  }
+}
+```
+
+### Payload Rules
+
+- [ ] `data` (FCM) or custom keys (APNs) for routing; do not rely on body parsing
+- [ ] Include `deep_link` or equivalent for navigation on tap
+- [ ] Keep payload under 4 KB (APNs limit)
+- [ ] Use `content-available: 1` for silent/background only (no alert)
+- [ ] `thread-id` (iOS) for grouping related notifications
+
+---
+
+## Channels and Categories
+
+### Android Channels
+
+- [ ] Create notification channel per category (orders, messages, marketing)
+- [ ] User can disable channels individually in system settings
+- [ ] Channel importance affects sound and heads-up
+- [ ] Set channel at first use; cannot change importance after creation
+
+```kotlin
+val channel = NotificationChannel(
+  "orders",
+  "Order Updates",
+  NotificationManager.IMPORTANCE_HIGH
+).apply {
+  description = "Shipping and delivery updates"
+  enableVibration(true)
+}
+notificationManager.createNotificationChannel(channel)
+```
+
+### iOS Categories
+
+- [ ] Register categories for actionable notifications
+- [ ] Define actions (e.g., "View", "Dismiss", "Reply")
+- [ ] Handle actions in `userNotificationCenter(_:didReceive:withCompletionHandler:)`
+- [ ] Categories allow custom actions on lock screen and notification center
+
+---
+
+## Rich Notifications
+
+### iOS (Notification Service Extension)
+
+- [ ] Use NSE to modify content (e.g., download image)
+- [ ] Set `mutable-content: 1` in payload
+- [ ] Complete with modified content or original within time limit (~30s)
+- [ ] Handle failure gracefully (show without image)
+
+### Android (BigPictureStyle, etc.)
+
+- [ ] Use `BigPictureStyle` for image notifications
+- [ ] Use `BigTextStyle` for long content
+- [ ] Use `MessagingStyle` for conversation threads
+- [ ] Images: use URL; download in app or use FCM image URL support
+
+### Media Guidelines
+
+- [ ] Image max 1 MB (iOS); 1 MB recommended (Android)
+- [ ] Aspect ratio 2:1 or 1:1
+- [ ] Fallback when image fails to load
+- [ ] Do not include sensitive data in images
+
+---
+
+## Silent Push
+
+### Use Case
+
+Wake app for background sync, refresh content, or update without user-visible notification.
+
+### iOS (Background Push)
+
+- [ ] `content-available: 1` in aps
+- [ ] No `alert`, `sound`, or `badge` (or minimal)
+- [ ] App has limited time (~30s) to complete work
+- [ ] Use BGAppRefreshTask or BGProcessingTask for longer work
+- [ ] Do not rely on delivery; system may throttle
+
+### Android (Data-Only)
+
+- [ ] Omit `notification` key; include only `data`
+- [ ] Handled by `FirebaseMessagingService.onMessageReceived`
+- [ ] Works when app in background (service runs)
+- [ ] Do not use for critical delivery; may be delayed or batched
+
+### Best Practices
+
+- [ ] Silent push is best-effort; do not assume delivery
+- [ ] Use for non-critical updates (sync, prefetch)
+- [ ] Respect user's battery and data; do not overuse
+- [ ] Document rate limits and throttling expectations
+
+---
+
+## Handling and Routing
+
+### On Tap
+
+- [ ] Parse `deep_link` or equivalent from payload
+- [ ] Route to correct in-app screen
+- [ ] Pass context (e.g., order ID) for full load
+- [ ] Handle when app was killed (cold start to destination)
+- [ ] Clear badge when appropriate (iOS)
+
+### When App in Foreground
+
+- [ ] Decide: show in-app banner, in-app modal, or system notification
+- [ ] Document behavior in product spec
+- [ ] Do not duplicate (e.g., system + in-app) unless intentional
+- [ ] Update UI if notification relates to visible content
+
+### Foreground Handling (iOS)
+
+```swift
+func userNotificationCenter(_ center: UNUserNotificationCenter,
+                            willPresent notification: UNNotification) -> UNNotificationPresentationOptions {
+  // Return [] to suppress, or [.banner, .sound, .badge] to show
+  return applicationState == .active ? [] : [.banner, .sound, .badge]
+}
+```
+
+---
+
+## Checklist Summary
+
+| Area | Required |
+|------|----------|
+| Token management | Register, refresh, remove on logout |
+| Permission timing | Contextual; not first launch |
+| Payload design | data/deep_link; under 4 KB |
+| Channels (Android) | Per category; user-configurable |
+| Categories (iOS) | For actionable notifications |
+| Rich notifications | NSE/BigPicture; fallback on failure |
+| Silent push | Best-effort; document limits |
+| Tap handling | Route to correct screen |

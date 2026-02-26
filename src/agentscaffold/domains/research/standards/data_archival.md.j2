@@ -1,0 +1,193 @@
+# Data Archival Standards
+
+This document defines standards for long-term data storage, format selection, metadata requirements, and access control for research data.
+
+---
+
+## Core Principle: Data Must Outlive the Project
+
+Research data must remain accessible and interpretable for at least 10 years after the project ends, independent of the original software, hardware, or team.
+
+---
+
+## Storage Tiers
+
+### Tier Classification
+
+| Tier | Retention | Access Frequency | Storage Class | Example |
+|------|-----------|------------------|---------------|---------|
+| Hot | Active project | Daily | SSD, local NVMe | Working datasets |
+| Warm | 1-3 years | Monthly | Object storage (S3 Standard) | Completed experiment data |
+| Cold | 3-10 years | Yearly | Object storage (S3 Glacier) | Archived datasets |
+| Archive | 10+ years | Rarely | Tape, institutional repository | Published dataset snapshots |
+
+### Storage Selection Rules
+
+| Data Type | Recommended Tier | Rationale |
+|-----------|-----------------|-----------|
+| Raw experimental data | Warm -> Cold | Must be preserved for reproduction |
+| Processed / intermediate | Hot -> delete | Can be regenerated from raw + code |
+| Final results | Warm -> Archive | Referenced by publications |
+| Model checkpoints | Hot -> Cold | Large, can be retrained if needed |
+| Logs and metadata | Warm | Needed for debugging / audit |
+
+---
+
+## Format Selection
+
+### Preferred Formats (Open, Self-Describing)
+
+| Data Type | Preferred Format | Avoid | Rationale |
+|-----------|-----------------|-------|-----------|
+| Tabular data | Parquet, CSV | Excel (.xlsx) | Open, schema-embedded (Parquet) |
+| Time series | Parquet, HDF5 | Pickle | Columnar, efficient |
+| Images | PNG (lossless), TIFF | BMP, proprietary RAW | Open, widely supported |
+| Text | UTF-8 plain text, JSON | Word (.docx) | Human-readable, open |
+| Structured data | JSON, YAML | XML (if avoidable) | Readable, well-tooled |
+| Multidimensional arrays | NetCDF, HDF5, Zarr | NumPy .npy | Self-describing, metadata |
+| Model weights | ONNX, SafeTensors | Pickle | Portable, secure |
+| Geospatial | GeoParquet, GeoTIFF | Shapefile | Modern, efficient |
+
+### Format Anti-Patterns
+
+| Pattern | Risk | Alternative |
+|---------|------|-------------|
+| Python pickle files | Security risk, Python-version dependent | Parquet, JSON, SafeTensors |
+| Proprietary formats | Vendor lock-in, may become unreadable | Convert to open format |
+| Compressed without manifest | Cannot inspect without decompressing | Parquet (built-in compression) |
+| Format without schema | Interpretation depends on external docs | Self-describing formats |
+
+---
+
+## Metadata Requirements
+
+### Required Metadata for Every Archived Dataset
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| Title | Human-readable name | "MNIST digit recognition dataset v2" |
+| Description | What the data contains and how it was collected | 500 words max |
+| Creator | Who created or collected the data | "Lab Name, PI Name" |
+| Date created | When data was collected or generated | ISO 8601: 2026-02-15 |
+| Version | Dataset version identifier | "v2.1" |
+| License | Usage rights | "CC BY 4.0" |
+| Format | File format(s) | "Parquet, PNG" |
+| Size | Total storage size | "15 GB" |
+| Hash | Content integrity hash | SHA-256 of archive |
+| Schema | Column names, types, units | Embedded or sidecar file |
+| Provenance | How data was derived | "Collected from X, processed by Y" |
+| Related publications | Papers using this data | DOI list |
+
+### Metadata File Format
+
+```yaml
+# dataset_metadata.yaml -- co-located with data
+title: "Experiment 42 Results"
+description: "Training and evaluation results for attention mechanism comparison"
+creator: "Research Team"
+date_created: "2026-02-15"
+version: "1.0"
+license: "CC BY 4.0"
+format: "Parquet"
+size_bytes: 1073741824
+sha256: "abc123..."
+schema:
+  - name: "epoch"
+    type: "int"
+    description: "Training epoch number"
+  - name: "loss"
+    type: "float64"
+    description: "Cross-entropy loss"
+    unit: "nats"
+provenance:
+  source_code: "https://github.com/org/repo, commit abc123"
+  source_data: "doi:10.xxxx/yyyy"
+  processing_steps:
+    - "Raw logs parsed by scripts/parse_logs.py"
+    - "Outlier runs excluded per pre-registered criteria"
+```
+
+---
+
+## Access Control
+
+### Access Levels
+
+| Level | Who | Permissions | Use Case |
+|-------|-----|-------------|----------|
+| Public | Anyone | Read-only | Published datasets |
+| Restricted | Authenticated users | Read-only | Licensed datasets |
+| Team | Project members | Read/write | Active project data |
+| Personal | Individual | Full control | Drafts, intermediate work |
+
+### Access Control Checklist
+
+- [ ] Sensitive data is encrypted at rest
+- [ ] Access logs are maintained for restricted datasets
+- [ ] Data sharing agreements are documented
+- [ ] PII is anonymized or pseudonymized before archival
+- [ ] Retention policy complies with institutional and legal requirements
+
+---
+
+## Integrity Verification
+
+### Hash Verification
+
+- [ ] SHA-256 hash computed at archival time and stored in metadata
+- [ ] Hash verified after transfer to new storage
+- [ ] Periodic integrity checks (yearly) for cold/archive tier
+- [ ] Hash mismatch triggers alert and investigation
+
+### Backup Strategy
+
+| Tier | Backup Frequency | Copies | Geographic Distribution |
+|------|-------------------|--------|------------------------|
+| Hot | Daily incremental | 2 | Same region |
+| Warm | Weekly | 3 | 2 regions |
+| Cold | At archival time | 3 | 2 regions |
+| Archive | At archival time | 3+ | 2+ regions, 1 offline |
+
+---
+
+## Lifecycle Management
+
+### Data Lifecycle
+
+```
+Collect -> Validate -> Process -> Analyze -> Archive -> (Retrieve) -> Delete
+  |          |           |          |          |            |            |
+  v          v           v          v          v            v            v
+ Raw      Checked     Features   Results   Cold store   On-demand    Policy
+```
+
+### Lifecycle Checklist
+
+- [ ] Retention period defined for each data class
+- [ ] Automated archival pipeline (not manual copy)
+- [ ] Deletion is logged and auditable
+- [ ] "Do not delete" flag available for data under legal hold
+- [ ] Archived data can be retrieved within documented SLA (e.g., < 24 hours for cold)
+
+---
+
+## Institutional Repository Integration
+
+### Publishing to Repository
+
+| Repository | Type | DOI Minting | Size Limit |
+|-----------|------|-------------|------------|
+| Zenodo | General | Yes (automatic) | 50 GB |
+| Figshare | General | Yes | 5 TB |
+| Dryad | Biodiversity / ecology | Yes | 300 GB |
+| HuggingFace Hub | ML datasets/models | No (but versioned) | Unlimited |
+| Institutional | University-specific | Varies | Varies |
+
+### Publishing Checklist
+
+- [ ] Metadata is complete (see Required Metadata above)
+- [ ] License is selected and compatible with data sources
+- [ ] README file included with dataset
+- [ ] Example usage code included
+- [ ] DOI reserved before publication (for citation in paper)
+- [ ] Embargo period set if required by journal

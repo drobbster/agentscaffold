@@ -1,0 +1,168 @@
+# Power Consumption Standards (Embedded)
+
+This document defines power management standards for battery-powered and energy-constrained embedded systems: sleep modes, peripheral gating, wake sources, and duty cycling.
+
+---
+
+## Core Principle: Default to Lowest Power State
+
+The system should spend the maximum possible time in the deepest sleep mode. Every peripheral, clock domain, and voltage rail that is not actively needed must be disabled.
+
+---
+
+## Sleep Mode Hierarchy
+
+### Mode Definitions
+
+| Mode | CPU | SRAM | Peripherals | Wake Latency | Typical Current |
+|------|-----|------|-------------|--------------|-----------------|
+| Active | Running | Retained | Enabled | N/A | 10-50 mA |
+| Sleep (WFI) | Halted | Retained | Enabled | < 1 us | 2-10 mA |
+| Stop / Low-power sleep | Halted | Retained | Gated | 2-10 us | 10-100 uA |
+| Standby / Deep sleep | Off | Partial | Off | 100 us - 5 ms | 1-10 uA |
+| Shutdown / Off | Off | Lost | Off | Full boot | < 1 uA |
+
+### Mode Selection Rules
+
+| Condition | Recommended Mode | Rationale |
+|-----------|-----------------|-----------|
+| Idle between periodic tasks (< 10 ms) | Sleep (WFI) | Fast wake, low overhead |
+| No work for 10 ms - 1 s | Stop mode | Significant power savings |
+| No work for > 1 s | Standby | Deep savings, SRAM may be lost |
+| Shipping / storage | Shutdown | Minimal battery drain |
+
+---
+
+## Peripheral Power Gating
+
+### Clock Gating Checklist
+
+- [ ] Unused peripheral clocks disabled at boot
+- [ ] Peripherals clocked only when transaction is active
+- [ ] GPIO pins configured to lowest-power state when unused (input with pull-down, or analog)
+- [ ] ADC powered down between conversions
+- [ ] Radio / modem powered down between transmissions
+- [ ] Display backlight dimmed or off when inactive
+
+### Peripheral State Machine
+
+```
+       +-------+    enable     +--------+    transact    +--------+
+       |  OFF  | -----------> | IDLE   | ------------> | ACTIVE |
+       +-------+              +--------+               +--------+
+           ^                      |                         |
+           |     disable          |        complete         |
+           +----------------------+-------------------------+
+```
+
+Every peripheral driver must implement explicit `enable()`, `disable()`, and `is_active()` methods. The power manager calls `disable()` when the peripheral reports idle.
+
+---
+
+## Wake Source Management
+
+### Wake Source Registry
+
+| Wake Source | Event | Target Mode | Latency Budget |
+|-------------|-------|-------------|----------------|
+| RTC alarm | Periodic sampling | Stop -> Active | < 1 ms |
+| GPIO (button) | User interaction | Standby -> Active | < 50 ms |
+| UART RX | Incoming command | Stop -> Active | < 5 ms |
+| Radio IRQ | Incoming packet | Stop -> Active | < 2 ms |
+| Watchdog | Fault recovery | Any -> Reset | N/A |
+
+### Wake Configuration Rules
+
+- [ ] Only necessary wake sources are enabled for each sleep mode
+- [ ] Wake source interrupt is configured before entering sleep
+- [ ] Wake reason is logged after every wake (for power profiling)
+- [ ] Spurious wake rate is measured (target: < 1 per hour)
+- [ ] Wake latency measured on target hardware
+
+---
+
+## Duty Cycling
+
+### Sensor Duty Cycle
+
+```
+    Active         Sleep              Active         Sleep
+  |------|----------------------------|------|---------------------------...
+   Tsample         Tsleep              Tsample         Tsleep
+
+  Duty cycle = Tsample / (Tsample + Tsleep)
+  Average current = (Iactive * Tsample + Isleep * Tsleep) / (Tsample + Tsleep)
+```
+
+### Duty Cycle Budgeting
+
+| Subsystem | Active Time | Sleep Time | Duty Cycle | Avg Current |
+|-----------|-------------|------------|------------|-------------|
+| Sensor sampling | | | | |
+| Radio TX/RX | | | | |
+| Processing | | | | |
+| Display | | | | |
+| **Total system** | | | | |
+
+### Communication Duty Cycle
+
+- [ ] Radio uses shortest possible TX window
+- [ ] Batching: aggregate multiple readings before transmitting
+- [ ] Adaptive interval: increase sleep time when data is static
+- [ ] Acknowledgment timeout is bounded (prevent indefinite radio-on)
+
+---
+
+## Battery Life Estimation
+
+### Calculation Template
+
+```
+Battery capacity: C mAh
+Average current:  I_avg mA
+
+Battery life (hours) = C / I_avg
+Battery life (days)  = C / (I_avg * 24)
+```
+
+### Margin Rules
+
+| Factor | Value | Rationale |
+|--------|-------|-----------|
+| Battery self-discharge | 5-10% per year | Chemistry-dependent |
+| Temperature derating | 20-40% at 0 C | Capacity drops in cold |
+| Component aging | 10% over product life | Leakage increases |
+| Safety margin | 20% | Unpredicted wake events |
+
+---
+
+## Power Profiling
+
+### Measurement Methods
+
+| Method | Resolution | Use Case |
+|--------|------------|----------|
+| Multimeter (avg) | mA | Rough estimate |
+| Current shunt + scope | uA, us resolution | Mode transition analysis |
+| Nordic PPK / Joulescope | nA, us resolution | Full power profile |
+| Coulomb counter IC | mAh | Long-term battery tracking |
+
+### Profiling Checklist
+
+- [ ] Each sleep mode current measured on target hardware
+- [ ] Mode transition currents measured (spikes during wake)
+- [ ] 24-hour power profile captured under realistic workload
+- [ ] Battery life estimate validated against measured profile
+- [ ] Power regression test: current draw compared across firmware versions
+
+---
+
+## Design Review Checklist
+
+- [ ] Default GPIO state is lowest power (no floating inputs)
+- [ ] Unused pins are tied to defined state (not floating)
+- [ ] Pull-up/pull-down resistors accounted for in power budget
+- [ ] External components (sensors, radios) have shutdown pins controlled by firmware
+- [ ] Voltage regulators support low-Iq mode
+- [ ] Debug interfaces (SWD, JTAG) can be disabled in production firmware
+- [ ] Power-on sequence ensures no shoot-through or contention

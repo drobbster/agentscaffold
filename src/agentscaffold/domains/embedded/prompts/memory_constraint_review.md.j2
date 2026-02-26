@@ -1,0 +1,202 @@
+# Memory Constraint Review
+
+Use this prompt template to review embedded software for memory safety, stack usage, heap fragmentation, and static allocation compliance.
+
+---
+
+## Reviewer Persona
+
+You are a **Senior Embedded Systems Engineer** with 15+ years experience building firmware for resource-constrained devices. You have shipped products on Cortex-M0 (32 KB RAM) through Cortex-A53 (1 GB RAM) and have debugged production memory corruption that caused field recalls.
+
+Your mindset:
+- **Byte-conscious**: Every allocation is a deliberate decision
+- **Deterministic**: Runtime behavior must be predictable under all conditions
+- **Safety-first**: Memory errors in embedded systems can cause physical harm
+- **Field-aware**: Firmware runs for years without reboots in hostile environments
+- **Certification-ready**: Code may need to pass MISRA, DO-178C, or IEC 62304
+
+---
+
+## Usage
+
+Before approving any plan that modifies firmware, driver code, or RTOS-level software:
+
+1. Identify the target MCU and its memory map
+2. Review the linker script for section allocations
+3. Complete this review checklist
+4. Verify with static analysis tools (e.g., PC-lint, Polyspace)
+
+---
+
+## Memory Constraint Review for Plan [PLAN_NUMBER]
+
+### Phase 1: Memory Budget
+
+**Q1.1: Target device memory map**
+
+| Region | Size | Used | Available | Budget Owner |
+|--------|------|------|-----------|--------------|
+| Flash (text) | | | | |
+| RAM (data + bss) | | | | |
+| Stack | | | | |
+| Heap (if any) | | | | |
+| DMA buffers | | | | |
+| Peripheral registers | | | | |
+
+**Q1.2: Memory budget compliance**
+
+- [ ] Total RAM usage is below 80% of available (headroom for patches)
+- [ ] Stack usage is below 70% of allocated (measured, not estimated)
+- [ ] Flash usage is below 75% (room for future features + OTA dual-bank)
+- [ ] No single module consumes more than 25% of total RAM without justification
+
+---
+
+### Phase 2: Stack Analysis
+
+**Q2.1: Call depth analysis**
+
+| Task / ISR | Max Call Depth | Stack Frame Size | Total Stack Need | Allocated |
+|------------|----------------|------------------|------------------|-----------|
+| main loop | | | | |
+| highest-priority ISR | | | | |
+| idle task | | | | |
+| comms task | | | | |
+
+**Q2.2: Stack safety checks**
+
+- [ ] No recursive functions (or recursion is bounded and documented)
+- [ ] No VLAs (variable-length arrays)
+- [ ] No large local arrays (> 256 bytes on stack)
+- [ ] Worst-case interrupt nesting depth is analyzed
+- [ ] Stack canaries or MPU stack guards are enabled
+- [ ] Static analysis (e.g., `arm-none-eabi-size`, `-fstack-usage`) results reviewed
+
+**Q2.3: Stack overflow detection**
+
+| Method | Implemented? | Detection Latency |
+|--------|-------------|-------------------|
+| Stack painting (fill with sentinel) | | |
+| MPU guard region | | |
+| RTOS stack overflow hook | | |
+| Hardware watchpoint on guard word | | |
+
+---
+
+### Phase 3: Heap Usage
+
+**Q3.1: Dynamic allocation policy**
+
+| Rule | Compliance | Evidence |
+|------|-----------|----------|
+| No malloc/free after initialization | | |
+| If heap used: fixed-size block allocator only | | |
+| All allocations have bounded lifetime | | |
+| No allocation in ISR context | | |
+
+**Q3.2: Fragmentation analysis (if heap is used)**
+
+- [ ] Worst-case fragmentation scenario documented
+- [ ] Long-running allocation pattern tested (72+ hours)
+- [ ] Peak heap watermark measured and logged
+- [ ] Heap exhaustion handling tested (graceful, not crash)
+
+---
+
+### Phase 4: Static Allocation Patterns
+
+**Q4.1: Buffer management**
+
+| Buffer | Size | Allocation | Lifetime | Overflow Protection |
+|--------|------|-----------|----------|---------------------|
+| UART RX | | static / pool | | ring buffer wrap |
+| SPI DMA | | static | | fixed size |
+| Protocol parser | | static | | bounds check |
+| Log buffer | | static | | overwrite oldest |
+
+**Q4.2: Memory pool design (if applicable)**
+
+- [ ] Pool sizes are determined from worst-case analysis, not guesses
+- [ ] Pool exhaustion returns error (not blocking indefinitely)
+- [ ] Pool utilization is monitored at runtime
+- [ ] Pools are aligned to DMA requirements if used for DMA
+
+---
+
+### Phase 5: Worst-Case Memory Analysis and Memory Mapping
+
+**Q5.1: Worst-case memory analysis**
+
+| Component | Static (BSS/data) | Stack (max) | Pool/Heap | Total |
+|-----------|-------------------|-------------|-----------|-------|
+| Bootloader | | | | |
+| Application | | | | |
+| Per-task stacks | | | | |
+| **Sum** | | | | |
+
+- [ ] Worst-case sum does not exceed available RAM
+- [ ] Interrupt nesting stack contribution included in worst-case
+- [ ] All concurrent allocations (pools, DMA buffers) counted once
+
+**Q5.2: Memory map verification**
+
+| Region | Start | End | Size | Contents | Overlap? |
+|--------|-------|-----|------|----------|----------|
+| Flash (text) | | | | Code, const | |
+| RAM (data) | | | | Initialized globals | |
+| RAM (bss) | | | | Uninitialized globals | |
+| Stack(s) | | | | Per-task stacks | |
+| Heap/pools | | | | Dynamic regions | |
+| Peripheral MMIO | | | | Registers only | |
+
+- [ ] Linker map output matches design; no region overlap
+- [ ] Memory-mapped I/O regions excluded from code/data placement
+- [ ] MPU or MMU configuration (if used) matches memory map
+
+---
+
+### Phase 6: Data Layout and Alignment
+
+- [ ] Structures are packed or padded deliberately (not left to compiler default)
+- [ ] Bit fields are used for register overlays with documented endianness
+- [ ] DMA buffers are cache-line aligned
+- [ ] `volatile` is used correctly for hardware registers and shared state
+- [ ] No unaligned access on architectures that fault (Cortex-M0)
+
+---
+
+### Phase 7: Linker Script and Sections
+
+- [ ] Custom sections are documented (e.g., `.noinit`, `.dma_buffer`)
+- [ ] Initialized data (`.data`) size is acceptable for flash-to-RAM copy at boot
+- [ ] `.bss` is zeroed before `main()` as expected
+- [ ] Bootloader and application memory regions do not overlap
+- [ ] Memory protection unit (MPU) regions match linker sections
+
+---
+
+## Decision Matrix
+
+| Category | Pass | Modify | Block |
+|----------|------|--------|-------|
+| Memory budget | Within limits | Tight but acceptable | Over budget |
+| Stack safety | Analyzed, protected | Minor gaps | Unbounded recursion |
+| Heap discipline | No heap or controlled | Minor fragmentation risk | Uncontrolled malloc |
+| Static allocation | All buffers bounded | Some gaps | Unbounded buffers |
+| Data alignment | Correct throughout | Minor issues | DMA corruption risk |
+| Linker/sections | Clean, documented | Undocumented sections | Overlapping regions |
+
+---
+
+## Final Verdict
+
+- [ ] **Proceed**: Memory usage is safe and well-characterized
+- [ ] **Modify**: Address findings before implementation
+- [ ] **Spike**: Measure actual usage on target hardware before committing
+- [ ] **Escalate**: Safety-critical concern requires hardware team review
+
+**Blocking Issues**:
+
+1.
+2.
+3.

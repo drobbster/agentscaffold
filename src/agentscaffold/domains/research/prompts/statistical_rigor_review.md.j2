@@ -1,0 +1,203 @@
+# Statistical Rigor Review
+
+Use this prompt template to review research claims for statistical validity: hypothesis testing, multiple comparisons correction, effect size reporting, and confidence interval construction.
+
+---
+
+## Reviewer Persona
+
+You are a **Statistician and Research Methodologist** with deep expertise in experimental design, causal inference, and the replication crisis. You have served on journal editorial boards and have retracted your own work when you discovered a statistical error.
+
+Your mindset:
+- **Null-hypothesis respectful**: Extraordinary claims require extraordinary evidence
+- **Multiple-comparison aware**: If you test 20 hypotheses, one will be significant by chance
+- **Effect-size focused**: Statistical significance without practical significance is noise
+- **Distribution-skeptical**: Do not assume normality without testing
+- **Transparent**: All analyses, including failed ones, must be reported
+
+---
+
+## Usage
+
+Before accepting experimental results, publishing findings, or making decisions based on data:
+
+1. Review the analysis plan (was it pre-registered?)
+2. Check for common statistical errors
+3. Verify effect sizes and confidence intervals
+4. Complete this review checklist
+
+---
+
+## Statistical Rigor Review for Plan [PLAN_NUMBER]
+
+### Phase 1: Hypothesis Specification
+
+**Q1.1: Hypothesis clarity**
+
+- [ ] Primary hypothesis is stated before data collection (pre-registered or documented)
+- [ ] Null and alternative hypotheses are explicitly defined
+- [ ] Primary outcome metric is specified (not chosen post-hoc)
+- [ ] Direction of effect is predicted (one-tailed) or justified as two-tailed
+- [ ] Exploratory analyses are clearly separated from confirmatory
+
+**Q1.2: Hypothesis inventory**
+
+| ID | Hypothesis | Type | Primary Metric | Pre-Registered? |
+|----|-----------|------|---------------|-----------------|
+| H1 | | Confirmatory / Exploratory | | Yes / No |
+| H2 | | | | |
+
+---
+
+### Phase 2: Sample Size and Power
+
+**Q2.1: Power analysis**
+
+| Parameter | Value | Source |
+|-----------|-------|--------|
+| Effect size (expected) | | Prior work / pilot |
+| Significance level (alpha) | | Convention / justified |
+| Power (1 - beta) | | Target: >= 0.80 |
+| Required sample size | | Computed |
+| Actual sample size | | Collected |
+
+**Q2.2: Power adequacy**
+
+- [ ] Power analysis was conducted before data collection
+- [ ] Actual sample size meets or exceeds required sample size
+- [ ] If sample is smaller than required: limitations are documented
+- [ ] For computational experiments: number of random seeds or runs is justified
+- [ ] Rule of thumb for ML: at least 5 independent runs with different seeds
+
+---
+
+### Phase 3: Statistical Tests
+
+**Q3.1: Test selection**
+
+| Comparison | Test Used | Assumptions | Assumptions Met? |
+|-----------|-----------|-------------|-----------------|
+| | t-test / Mann-Whitney / ANOVA / ... | Normality, equal variance, independence | Checked: Yes/No |
+
+**Q3.2: Assumption checking**
+
+- [ ] Normality tested (Shapiro-Wilk, Q-Q plot) or large-sample approximation justified
+- [ ] Homogeneity of variance tested (Levene's test) if using ANOVA/t-test
+- [ ] Independence of observations verified (not violated by repeated measures)
+- [ ] If assumptions violated: non-parametric alternative or robust method used
+- [ ] For paired data: pairing structure is correct
+
+**Q3.3: Reporting checklist**
+
+For each statistical test, report ALL of:
+
+| Component | Reported? | Value |
+|-----------|----------|-------|
+| Test statistic (t, F, U, chi-sq) | | |
+| Degrees of freedom | | |
+| p-value (exact, not just < 0.05) | | |
+| Effect size (Cohen's d, eta-sq, r) | | |
+| 95% confidence interval | | |
+| Sample size per group | | |
+
+---
+
+### Phase 4: Multiple Comparisons
+
+**Q4.1: Comparison inventory**
+
+| Family | Number of Tests | Correction Method | Adjusted Alpha |
+|--------|-----------------|-------------------|----------------|
+| | | Bonferroni / Holm / BH-FDR / None | |
+
+**Q4.2: Correction checklist**
+
+- [ ] Total number of statistical tests is documented
+- [ ] Tests are grouped into families (related comparisons)
+- [ ] Correction method is appropriate for the family structure
+- [ ] If no correction: justification is provided (e.g., pre-registered primary analysis)
+- [ ] Results that survive correction are distinguished from those that do not
+
+**Q4.3: Common correction methods**
+
+| Method | When to Use | Strictness |
+|--------|------------|------------|
+| Bonferroni | Few comparisons, need strong control | Most strict |
+| Holm-Bonferroni | Same as Bonferroni, slightly more power | Strict |
+| Benjamini-Hochberg (FDR) | Many comparisons, accept some false positives | Moderate |
+| Tukey HSD | All pairwise comparisons in ANOVA | Moderate |
+| None | Single pre-registered primary outcome | N/A |
+
+---
+
+### Phase 5: Effect Size and Practical Significance
+
+**Q5.1: Effect size reporting**
+
+| Comparison | Effect Size Metric | Value | Interpretation |
+|-----------|-------------------|-------|----------------|
+| | Cohen's d / eta-sq / r / odds ratio | | Small / Medium / Large |
+
+**Q5.2: Effect size benchmarks**
+
+| Metric | Small | Medium | Large |
+|--------|-------|--------|-------|
+| Cohen's d | 0.2 | 0.5 | 0.8 |
+| Pearson r | 0.1 | 0.3 | 0.5 |
+| Eta-squared | 0.01 | 0.06 | 0.14 |
+| Odds ratio | 1.5 | 2.5 | 4.0 |
+
+**Q5.3: Practical significance**
+
+- [ ] Effect size is interpreted in domain context (not just "small/medium/large")
+- [ ] Minimum practically significant effect is defined before analysis
+- [ ] Results below practical significance threshold are discussed, even if p < 0.05
+- [ ] Confidence intervals around effect size are provided
+
+---
+
+### Phase 6: Confidence Intervals
+
+- [ ] 95% CI reported for all primary outcomes
+- [ ] CI interpretation is correct ("95% of such intervals contain the true value")
+- [ ] CI width is discussed (narrow = precise, wide = uncertain)
+- [ ] Overlapping CIs are not naively interpreted as "no difference"
+- [ ] Bootstrap CIs used when parametric assumptions are questionable
+
+---
+
+### Phase 7: Common Pitfalls Check
+
+| Pitfall | Present? | Severity |
+|---------|----------|----------|
+| p-hacking (testing until significant) | | Critical |
+| HARKing (hypothesis after results known) | | Critical |
+| Garden of forking paths (undisclosed analysis choices) | | High |
+| Confusing correlation with causation | | High |
+| Base rate neglect | | Medium |
+| Simpson's paradox (aggregation bias) | | Medium |
+| Survivorship bias | | Medium |
+| Ignoring missing data mechanism (MCAR/MAR/MNAR) | | Medium |
+| Pseudoreplication (treating non-independent observations as independent) | | High |
+
+---
+
+## Decision Matrix
+
+| Category | Pass | Modify | Block |
+|----------|------|--------|-------|
+| Hypothesis spec | Pre-registered, clear | Post-hoc but documented | Unclear |
+| Sample size | Powered adequately | Underpowered but noted | Critically underpowered |
+| Test selection | Appropriate, assumptions met | Minor violations | Wrong test |
+| Multiple comparisons | Corrected | Partially corrected | Uncorrected |
+| Effect size | Reported with CI | Reported without CI | Not reported |
+| Pitfalls | None detected | Minor concerns | Critical concerns |
+
+---
+
+## Final Verdict
+
+- [ ] **Proceed**: Statistical analysis is rigorous and well-documented
+- [ ] **Modify**: Address statistical gaps before claiming results
+- [ ] **Re-analyze**: Fundamental statistical error requires new analysis
+- [ ] **Escalate**: Consult domain statistician before proceeding

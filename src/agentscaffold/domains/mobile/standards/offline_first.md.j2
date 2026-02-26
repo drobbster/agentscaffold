@@ -1,0 +1,248 @@
+# Offline-First Standards
+
+This document defines patterns for building mobile applications that work reliably without network connectivity. All features that persist or sync data must follow these standards.
+
+---
+
+## Sync Strategy Selection
+
+### Strategy Comparison
+
+| Strategy | Use Case | Conflict Risk | Complexity | Examples |
+|----------|----------|---------------|------------|----------|
+| Last-Write-Wins (LWW) | Single-user, low conflict | Low | Low | Settings, preferences |
+| CRDT | Multi-user, real-time collab | High | High | Collaborative docs |
+| Operational Transform (OT) | Multi-user, ordered ops | Medium | High | Text editing |
+| Merge by timestamp | Single-user, infrequent sync | Low | Low | Notes, todos |
+| Server authoritative | Financial, compliance | N/A | Low | Transactions |
+
+### Selection Checklist
+
+- [ ] Identify conflict scenarios (same record edited on multiple devices)
+- [ ] Choose strategy based on conflict frequency and data criticality
+- [ ] Document chosen strategy in architecture
+- [ ] LWW is default for single-user apps; justify if using CRDT/OT
+
+---
+
+## Last-Write-Wins Implementation
+
+### Requirements
+
+- [ ] Every syncable entity has `updated_at` (ISO 8601 UTC)
+- [ ] Client sends full record with timestamp on sync
+- [ ] Server compares timestamps; newer wins
+- [ ] Deleted records use tombstone with `deleted_at` timestamp
+- [ ] Tombstones retained for sync window (e.g., 30 days)
+
+### Example Schema
+
+```json
+{
+  "id": "rec_abc123",
+  "updated_at": "2025-02-26T14:30:00Z",
+  "deleted_at": null,
+  "data": { ... }
+}
+```
+
+### Conflict Handling
+
+```python
+def merge_lww(local: Record, remote: Record) -> Record:
+    """Last-write-wins merge. Returns the record with later updated_at."""
+    if remote.get("deleted_at") and local.get("deleted_at"):
+        return remote if remote["updated_at"] > local["updated_at"] else local
+    if remote.get("deleted_at"):
+        return remote  # Deletion wins if newer
+    if local.get("deleted_at"):
+        return local
+    return remote if remote["updated_at"] >= local["updated_at"] else local
+```
+
+---
+
+## CRDT (Conflict-free Replicated Data Types)
+
+### When to Use
+
+- Real-time collaboration (multiple users editing same document)
+- Offline edits that must merge without server arbitration
+- Order-independent collections (sets, maps)
+
+### Common CRDTs
+
+| Type | Use Case | Library/Reference |
+|------|----------|-------------------|
+| LWW-Element-Set | Unique items with timestamps | Yjs, Automerge |
+| RGA (Replicated Growable Array) | Ordered lists | Yjs |
+| LWW-Map | Key-value with last-write per key | Automerge |
+| G-Counter | Increment-only counters | Standard |
+
+### Implementation Notes
+
+- [ ] Use established libraries (Yjs, Automerge) rather than custom CRDTs
+- [ ] Document which CRDT type is used for each entity
+- [ ] Test merge behavior with concurrent edits
+- [ ] Consider size growth (CRDT metadata can accumulate)
+
+---
+
+## Operational Transforms (OT)
+
+### When to Use
+
+- Rich text editing with multiple cursors
+- Ordered operations where sequence matters
+- When CRDT is not available for the data model
+
+### Requirements
+
+- [ ] OT server must be authoritative for conflict resolution
+- [ ] Client buffers operations when offline
+- [ ] Rebase/transform on reconnect
+- [ ] Document OT algorithm and version
+
+---
+
+## Queue Management
+
+### Offline Queue
+
+- [ ] All mutating operations go through a queue when offline
+- [ ] Queue persists to local storage (survives app restart)
+- [ ] Queue is processed in order when connection restored
+- [ ] Failed operations are retried with backoff (exponential)
+- [ ] Max retries with dead-letter or user notification
+
+### Queue Implementation Pattern
+
+```python
+class OfflineQueue:
+    def enqueue(self, op: Operation) -> None:
+        """Add operation to queue. Persist immediately."""
+        self.storage.append(op)
+        self.persist()
+
+    async def process(self) -> None:
+        """Process queue when online. Stop on first failure."""
+        while self.queue and self.is_online():
+            op = self.queue[0]
+            try:
+                await self.execute(op)
+                self.queue.pop(0)
+                self.persist()
+            except RetryableError:
+                op.retry_count += 1
+                if op.retry_count >= MAX_RETRIES:
+                    self.dead_letter(op)
+                break
+```
+
+### Queue Limits
+
+| Item | Limit | Action when exceeded |
+|------|-------|--------|
+| Queue size | 1000 ops | Block new ops or drop oldest |
+| Single op size | 100 KB | Reject or chunk |
+| Stale ops | 7 days | Discard or flag for user |
+
+---
+
+## Storage Limits
+
+### Platform Limits
+
+| Platform | Approx. Limit | Mitigation |
+|----------|---------------|------------|
+| iOS (UserDefaults) | 1 MB | Use for small config only |
+| iOS (Core Data/SQLite) | Device-dependent | Monitor usage; prune old data |
+| Android (SharedPreferences) | 1 MB | Use for small config only |
+| Android (Room/SQLite) | Device-dependent | Monitor usage; prune old data |
+
+### Storage Budget
+
+- [ ] Define max storage per data type (e.g., 50 MB for cache)
+- [ ] Implement LRU eviction when limit reached
+- [ ] Prune sync metadata older than retention window
+- [ ] Log storage usage in diagnostics
+
+### Eviction Checklist
+
+- [ ] Eviction policy documented (LRU, TTL, manual)
+- [ ] User data is never evicted without user action
+- [ ] Eviction does not corrupt data integrity
+- [ ] Eviction runs in background; does not block UI
+
+---
+
+## Optimistic UI
+
+### Principles
+
+- [ ] UI updates immediately on user action
+- [ ] Pending state is visually indicated (e.g., dimmed, spinner)
+- [ ] Rollback on failure with user notification
+- [ ] Rollback restores previous state correctly
+
+### Implementation
+
+```typescript
+// Optimistic update pattern
+async function updateItem(item: Item) {
+  const previous = getItem(item.id);
+  setItem(item);  // Optimistic UI update
+  setPending(item.id, true);
+
+  try {
+    await syncAPI.update(item);
+  } catch (e) {
+    setItem(previous);  // Rollback
+    showError("Could not save. Changes reverted.");
+  } finally {
+    setPending(item.id, false);
+  }
+}
+```
+
+### Rollback Requirements
+
+- [ ] Previous state is stored before optimistic update
+- [ ] Rollback is atomic (all or nothing for related updates)
+- [ ] User is informed when rollback occurs
+- [ ] Conflict resolution does not silently overwrite user intent
+
+---
+
+## Conflict Resolution
+
+### User-Facing Conflicts
+
+When automatic merge is not possible (e.g., LWW with user-critical data):
+
+- [ ] Present both versions to user
+- [ ] Allow "Keep mine" / "Keep theirs" / "Merge manually"
+- [ ] Store resolution for audit
+- [ ] Do not lose data; preserve both until resolved
+
+### Conflict Notification
+
+- [ ] User is notified when conflict is detected
+- [ ] Notification is non-blocking but visible
+- [ ] Resolution flow is accessible from notification
+- [ ] Unresolved conflicts are surfaced in settings or dashboard
+
+---
+
+## Checklist Summary
+
+| Area | Required |
+|------|----------|
+| Sync strategy documented | Yes |
+| LWW/CRDT/OT chosen appropriately | Yes |
+| Offline queue with persistence | Yes |
+| Queue retry and dead-letter | Yes |
+| Storage limits and eviction | Yes |
+| Optimistic UI with rollback | Yes |
+| Conflict resolution path | Yes |
+| User notification on sync failure | Yes |

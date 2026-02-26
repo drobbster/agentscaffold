@@ -1,0 +1,212 @@
+# Responsive Design Standards
+
+This document defines responsive design patterns, breakpoints, and mobile-first development practices for web applications.
+
+---
+
+## Breakpoint System
+
+### Standard Breakpoints
+
+| Name | Min Width | Typical Devices | Columns |
+|------|-----------|-----------------|---------|
+| xs | 0 | Small phones | 4 |
+| sm | 640px | Large phones | 4 |
+| md | 768px | Tablets (portrait) | 8 |
+| lg | 1024px | Tablets (landscape), small laptops | 12 |
+| xl | 1280px | Desktop | 12 |
+| 2xl | 1536px | Large desktop | 12 |
+
+### CSS Custom Properties
+
+```css
+:root {
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1536px;
+}
+```
+
+### Mobile-First Media Queries
+
+Always write mobile styles first, then add complexity for larger screens:
+
+```css
+/* Mobile (default) */
+.card-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+/* Tablet */
+@media (min-width: 768px) {
+  .card-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Desktop */
+@media (min-width: 1024px) {
+  .card-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+```
+
+---
+
+## Touch Targets
+
+### Minimum Sizes
+
+| Element | Minimum Size | Minimum Spacing |
+|---------|-------------|-----------------|
+| Buttons | 44 x 44 px | 8px between targets |
+| Links in text | 44px inline height | N/A |
+| Icon buttons | 44 x 44 px (touch area) | 8px between targets |
+| Form inputs | 44px height | 8px between fields |
+| Checkboxes/radios | 44 x 44 px (touch area) | 8px between options |
+
+### Implementation
+
+```css
+/* Ensure minimum touch target even for small visual elements */
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px;
+}
+```
+
+---
+
+## Layout Patterns
+
+### Responsive Navigation
+
+| Screen Size | Pattern | Implementation |
+|-------------|---------|---------------|
+| Mobile (< 768px) | Hamburger menu or bottom tab bar | Off-canvas drawer, fixed bottom nav |
+| Tablet (768-1024px) | Collapsed sidebar or top nav | Collapsible sidebar, icon-only mode |
+| Desktop (> 1024px) | Full sidebar or horizontal nav | Persistent sidebar, top navigation |
+
+### Content Reflow
+
+- [ ] Horizontal scrolling is never required at any breakpoint
+- [ ] Content remains readable at 320px width minimum
+- [ ] Tables switch to card layout or horizontal scroll container on mobile
+- [ ] Side-by-side layouts stack vertically on mobile
+- [ ] Images scale proportionally (max-width: 100%)
+
+### Responsive Data Tables
+
+```css
+/* Mobile: Card layout for tables */
+@media (max-width: 767px) {
+  table, thead, tbody, tr, th, td {
+    display: block;
+  }
+
+  thead { display: none; }
+
+  td::before {
+    content: attr(data-label);
+    font-weight: bold;
+    display: block;
+  }
+}
+```
+
+---
+
+## Typography Scaling
+
+### Fluid Typography
+
+```css
+/* Fluid type scale: 16px at 320px viewport, 20px at 1280px viewport */
+:root {
+  --font-size-base: clamp(1rem, 0.875rem + 0.5vw, 1.25rem);
+  --font-size-lg: clamp(1.25rem, 1rem + 0.75vw, 1.5rem);
+  --font-size-xl: clamp(1.5rem, 1.125rem + 1.25vw, 2rem);
+  --font-size-2xl: clamp(2rem, 1.5rem + 1.5vw, 3rem);
+}
+```
+
+### Line Length
+
+- [ ] Body text maximum width: 65-75 characters (approximately 600px)
+- [ ] Use `max-width: 65ch` for readable content columns
+- [ ] Headings can be wider but should not span full viewport on desktop
+
+---
+
+## Viewport Units and Container Queries
+
+### Safe Viewport Units
+
+```css
+/* Use dynamic viewport height for mobile (accounts for browser chrome) */
+.full-height {
+  height: 100dvh; /* Dynamic viewport height */
+}
+
+/* Fallback for older browsers */
+@supports not (height: 100dvh) {
+  .full-height {
+    height: 100vh;
+  }
+}
+```
+
+### Container Queries
+
+```css
+.card-container {
+  container-type: inline-size;
+}
+
+@container (min-width: 400px) {
+  .card {
+    display: flex;
+    flex-direction: row;
+  }
+}
+
+@container (max-width: 399px) {
+  .card {
+    display: flex;
+    flex-direction: column;
+  }
+}
+```
+
+---
+
+## Testing
+
+### Device Testing Matrix
+
+| Device Category | Representative Devices | Must Test |
+|----------------|----------------------|-----------|
+| Small phone | iPhone SE, Galaxy S21 | Yes |
+| Large phone | iPhone 15 Pro Max, Pixel 8 | Yes |
+| Tablet portrait | iPad, Galaxy Tab | Yes |
+| Tablet landscape | iPad Pro | If applicable |
+| Desktop | 1280px, 1920px | Yes |
+| Ultrawide | 2560px+ | If applicable |
+
+### Responsive Testing Checklist
+
+- [ ] All breakpoints tested (xs, sm, md, lg, xl)
+- [ ] Touch targets meet minimum 44x44px on mobile
+- [ ] No horizontal scrollbar at any breakpoint
+- [ ] Text is readable without zooming on mobile
+- [ ] Forms are usable with on-screen keyboard visible
+- [ ] Orientation changes handled (portrait <-> landscape)

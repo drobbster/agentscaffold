@@ -1,0 +1,218 @@
+# OTA Update Standards (Embedded)
+
+This document defines standards for over-the-air firmware updates: partition layout, signature verification, rollback mechanisms, and atomic update guarantees.
+
+---
+
+## Core Principle: An Update Must Never Brick the Device
+
+Every OTA update must be atomic (complete or rolled back), authenticated (signed by a trusted authority), and recoverable (previous version is always available for fallback).
+
+---
+
+## Partition Layout
+
+### Dual-Bank (A/B) Scheme
+
+```
++------------------+
+| Bootloader       |  Protected, rarely updated
++------------------+
+| Partition A      |  Active firmware
+| (Application)    |
++------------------+
+| Partition B      |  Staging area for new firmware
+| (Update slot)    |
++------------------+
+| Config / NVS     |  Persistent settings (survives update)
++------------------+
+| Recovery          |  Minimal fallback (optional)
++------------------+
+```
+
+### Partition Requirements
+
+| Partition | Size Rule | Write Protection |
+|-----------|-----------|-----------------|
+| Bootloader | Minimal, fits in first sector | Write-locked after provisioning |
+| App slot A | Max app size + metadata header | Unlocked only during OTA |
+| App slot B | Same size as slot A | Unlocked only during OTA |
+| Config / NVS | Wear-leveled region | Application-managed |
+| Recovery | Subset of bootloader | Write-locked |
+
+---
+
+## Update Flow
+
+### Standard OTA Sequence
+
+```
+1. Receive update manifest (version, size, hash, signature)
+2. Validate: version > current? Space available? Battery > 30%?
+3. Download firmware image to inactive slot (B)
+4. Verify integrity: SHA-256 hash of downloaded image
+5. Verify authenticity: Ed25519 or ECDSA signature
+6. Mark inactive slot as "pending verification"
+7. Reboot into bootloader
+8. Bootloader sees "pending verification" -> boots slot B
+9. Application runs self-test
+10. If self-test passes: mark slot B as "confirmed" (new active)
+11. If self-test fails or watchdog fires: bootloader reverts to slot A
+```
+
+### Pre-Update Checks
+
+| Check | Required? | Rationale |
+|-------|-----------|-----------|
+| Battery level > 30% | Yes | Prevent brick from power loss mid-write |
+| Version is newer | Yes | Prevent downgrade (unless explicitly allowed) |
+| Sufficient flash space | Yes | Prevent partial write |
+| No active safety-critical operation | Yes | E.g., do not update during motor control |
+| Network connection stable | Recommended | Reduce partial download risk |
+
+---
+
+## Signature Verification
+
+### Cryptographic Requirements
+
+| Property | Requirement | Rationale |
+|----------|------------|-----------|
+| Algorithm | Ed25519 or ECDSA P-256 | Asymmetric -- device has public key only |
+| Hash | SHA-256 | Integrity of firmware image |
+| Key storage | OTP fuses or secure element | Cannot be modified by software |
+| Signature scope | Entire firmware image + metadata | Prevent partial tampering |
+
+### Verification Checklist
+
+- [ ] Public key is stored in one-time-programmable (OTP) memory or secure element
+- [ ] Private key is never on the device (only in build/signing server)
+- [ ] Signature covers: firmware binary + version + target hardware ID
+- [ ] Downgrade protection: version counter in OTP prevents replaying old firmware
+- [ ] Key rotation plan exists (multiple key slots, one active)
+
+### Signing Pipeline
+
+```
+Build Server:
+  1. Compile firmware
+  2. Compute SHA-256 of binary
+  3. Sign hash with private key (HSM or secure build env)
+  4. Package: binary + manifest (version, hash, signature, hw_id)
+
+Device:
+  1. Download package
+  2. Compute SHA-256 of received binary
+  3. Verify signature using stored public key
+  4. Compare computed hash with manifest hash
+  5. Accept only if both checks pass
+```
+
+---
+
+## Rollback Mechanism
+
+### Automatic Rollback
+
+| Trigger | Action | Timeout |
+|---------|--------|---------|
+| Self-test failure after update | Revert to previous slot | Immediate |
+| Watchdog reset within first boot | Revert to previous slot | Watchdog period |
+| N consecutive boot failures | Revert to previous slot | Configurable (default: 3) |
+| Explicit rollback command | Revert to previous slot | Immediate |
+
+### Rollback Safety Rules
+
+- [ ] Previous firmware is never erased until new firmware is confirmed
+- [ ] Boot counter tracks consecutive boot attempts (reset on successful confirm)
+- [ ] Bootloader has independent watchdog (not dependent on application)
+- [ ] Config/NVS format is backward-compatible (old firmware can read new config)
+- [ ] Rollback event is logged to persistent storage for diagnostics
+
+### Confirmation Protocol
+
+```c
+/* Application must call this after successful self-test */
+void ota_confirm_update(void) {
+    set_boot_flag(SLOT_CONFIRMED);
+    reset_boot_counter();
+    log_event("OTA confirmed: version %s", get_version());
+}
+
+/* Bootloader logic at boot */
+if (boot_counter >= MAX_BOOT_ATTEMPTS) {
+    revert_to_previous_slot();
+} else {
+    increment_boot_counter();
+    boot_pending_slot();
+}
+```
+
+---
+
+## Download Resilience
+
+### Partial Download Recovery
+
+- [ ] Download uses chunked transfer with per-chunk CRC
+- [ ] Download progress is persisted (can resume after power loss)
+- [ ] Flash is written sequentially (no random writes during download)
+- [ ] Incomplete download does not corrupt inactive slot metadata
+- [ ] Timeout on download: if no progress for 5 minutes, abort and retry
+
+### Bandwidth and Storage
+
+| Constraint | Approach |
+|-----------|----------|
+| Slow connection (< 10 kbps) | Delta updates (binary diff) |
+| Limited flash | Streaming decompression (zlib with fixed window) |
+| Unreliable link | Chunked download with resume |
+| Metered connection | Compressed images, schedule for off-peak |
+
+---
+
+## Version Management
+
+### Version Scheme
+
+```
+Major.Minor.Patch+Build
+Example: 2.3.1+20260215
+
+Major: Breaking changes, hardware revision
+Minor: New features, backward compatible
+Patch: Bug fixes only
+Build: CI build number (metadata, not compared)
+```
+
+### Version Rules
+
+- [ ] Version is embedded in firmware binary at known offset
+- [ ] Bootloader can read version from both slots without booting them
+- [ ] Anti-rollback counter prevents installing older major versions
+- [ ] Version is reported in device status / telemetry
+
+---
+
+## Testing Requirements
+
+### OTA Test Matrix
+
+| Test | Method | Pass Criteria |
+|------|--------|---------------|
+| Normal update | Full OTA flow | New version running, confirmed |
+| Power loss during download | Kill power mid-transfer | Resumes or restarts cleanly |
+| Power loss during flash write | Kill power mid-write | Boots previous version |
+| Corrupted image | Flip bits in downloaded image | Rejected at hash check |
+| Invalid signature | Sign with wrong key | Rejected at signature check |
+| Rollback on boot failure | Inject crash in new firmware | Reverts to previous version |
+| Downgrade attempt | Send older version | Rejected by version check |
+| Full flash wear cycle | 10,000 update cycles | No flash failure |
+
+### Test Automation
+
+- [ ] OTA test suite runs on real hardware (not just simulator)
+- [ ] Power-loss tests use controllable power supply
+- [ ] Corruption tests use bit-flip injection
+- [ ] Rollback tests verify previous version boots and functions
+- [ ] Test results include timing (download, verify, reboot)

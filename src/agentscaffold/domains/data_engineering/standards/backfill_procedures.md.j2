@@ -1,0 +1,149 @@
+# Backfill Procedures
+
+This document defines standards for performing data backfills safely and reliably.
+
+---
+
+## Backfill Principles
+
+1. **Idempotent**: Running the same backfill twice produces identical results
+2. **Observable**: Progress is tracked and visible
+3. **Resumable**: Interrupted backfills can continue from where they stopped
+4. **Validated**: Output is verified after completion
+5. **Isolated**: Backfill does not interfere with live pipeline
+
+---
+
+## Backfill Types
+
+| Type | Description | Risk Level |
+|------|-------------|------------|
+| Additive | Add new columns or records | Low |
+| Recompute | Recalculate existing values | Medium |
+| Schema migration | Change data structure | High |
+| Source correction | Fix upstream data errors | High |
+
+---
+
+## Pre-Backfill Checklist
+
+- [ ] Backfill scope is defined (date range, partitions, tables)
+- [ ] Resource requirements estimated (compute, storage, time)
+- [ ] Impact on live pipeline assessed (will it compete for resources?)
+- [ ] Downstream consumers notified if data will change
+- [ ] Rollback plan documented
+- [ ] Validation queries prepared
+- [ ] Monitoring alerts adjusted (to avoid false alarms during backfill)
+
+---
+
+## Implementation Pattern
+
+```python
+from datetime import date, timedelta
+
+def backfill_range(
+    start_date: date,
+    end_date: date,
+    batch_size_days: int = 1,
+    checkpoint_path: str = "backfill_checkpoint.json",
+):
+    """Idempotent, resumable backfill."""
+    checkpoint = load_checkpoint(checkpoint_path)
+    current = checkpoint.get("last_completed", start_date - timedelta(days=1))
+    current = current + timedelta(days=1)
+
+    total_days = (end_date - start_date).days + 1
+    completed = (current - start_date).days
+
+    while current <= end_date:
+        batch_end = min(current + timedelta(days=batch_size_days - 1), end_date)
+
+        logger.info(
+            "Processing batch",
+            start=current.isoformat(),
+            end=batch_end.isoformat(),
+            progress=f"{completed}/{total_days}",
+        )
+
+        process_date_range(current, batch_end)
+        validate_date_range(current, batch_end)
+
+        save_checkpoint(checkpoint_path, {"last_completed": batch_end.isoformat()})
+
+        current = batch_end + timedelta(days=1)
+        completed += batch_size_days
+```
+
+---
+
+## Progress Tracking
+
+| Field | Description |
+|-------|-------------|
+| backfill_id | Unique identifier for this backfill run |
+| total_partitions | Number of partitions to process |
+| completed_partitions | Number finished |
+| failed_partitions | Number that failed (with error details) |
+| start_time | When the backfill started |
+| estimated_completion | Based on current throughput |
+| status | running / completed / failed / paused |
+
+---
+
+## Validation After Backfill
+
+### Required Checks
+
+- [ ] Row counts match expected values
+- [ ] No duplicate records introduced
+- [ ] Data quality checks pass on backfilled data
+- [ ] Backfilled data is consistent with adjacent time periods
+- [ ] Downstream consumers produce correct results with backfilled data
+
+### Reconciliation
+
+```sql
+-- Compare backfilled data with expected
+SELECT
+  partition_date,
+  COUNT(*) as actual_rows,
+  expected_rows,
+  CASE WHEN COUNT(*) = expected_rows THEN 'PASS' ELSE 'FAIL' END as status
+FROM backfilled_table
+JOIN expected_counts USING (partition_date)
+WHERE partition_date BETWEEN '2026-01-01' AND '2026-01-31'
+GROUP BY partition_date, expected_rows;
+```
+
+---
+
+## Rollback
+
+### Before Starting
+
+Save the current state so you can roll back:
+
+```bash
+# Snapshot current data (if small enough)
+# Or: Record current partition metadata for restoration
+```
+
+### If Backfill Fails
+
+1. Stop the backfill process
+2. Identify which partitions were modified
+3. Restore from backup/snapshot
+4. Verify restoration with validation queries
+5. Investigate root cause before retrying
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|--------------|--------------|------------------|
+| Non-idempotent writes | Duplicate data on retry | Upsert or replace semantics |
+| No progress tracking | Can't resume after failure | Checkpoint after each batch |
+| No validation | Silent data corruption | Validate every batch |
+| Competing with live pipeline | Resource contention | Schedule during off-peak |

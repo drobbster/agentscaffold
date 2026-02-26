@@ -1,0 +1,164 @@
+# Performance Patterns
+
+This document captures performance optimization patterns for trading systems. These patterns are particularly important for hot paths in backtesting and RL training.
+
+---
+
+## Pre-Allocated Buffers
+
+### View-Based Windowing (No Copies)
+
+For NumPy performance in hot paths, use pre-allocated buffers with view-based windowing instead of creating new arrays.
+
+```python
+# WRONG: Creates new array each call (slow, GC pressure)
+def get_window(self, size: int) -> np.ndarray:
+    return self.data[-size:].copy()
+
+# RIGHT: Pre-allocate buffer, return views
+class OHLCVBuffer:
+    def __init__(self, max_size: int, num_features: int):
+        self._buffer = np.zeros((max_size, num_features), dtype=np.float32)
+        self._index = 0
+
+    def get_window(self, size: int) -> np.ndarray:
+        start = max(0, self._index - size)
+        return self._buffer[start:self._index]  # View, not copy
+```
+
+**When to use**: Any code called per-step in backtesting or RL training.
+
+### Pre-Allocated Parameter Tables
+
+Use class attributes with frozen dataclasses for parameter lookup tables in hot paths.
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class RegimeMultipliers:
+    low_vol: float = 1.5
+    normal: float = 1.0
+    high_vol: float = 0.5
+
+class RiskManager:
+    _MULTIPLIERS = RegimeMultipliers()
+
+    def get_multiplier(self, regime: str) -> float:
+        return getattr(self._MULTIPLIERS, regime)
+```
+
+---
+
+## Serialization
+
+### PyArrow for DataFrames (10-50x Faster Than Pickle)
+
+For DataFrame serialization (caching, IPC), PyArrow is significantly faster than pickle.
+
+```python
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+def serialize_df(df: pd.DataFrame) -> bytes:
+    table = pa.Table.from_pandas(df)
+    sink = pa.BufferOutputStream()
+    pq.write_table(table, sink)
+    return sink.getvalue().to_pybytes()
+
+def deserialize_df(data: bytes) -> pd.DataFrame:
+    reader = pa.BufferReader(data)
+    table = pq.read_table(reader)
+    return table.to_pandas()
+```
+
+**Benchmarks** (approximate, 100K row DataFrame):
+- Pickle: ~500ms serialize, ~300ms deserialize
+- PyArrow: ~10ms serialize, ~15ms deserialize
+
+---
+
+## Memory Optimization
+
+### Avoid DataFrame Operations in Hot Paths
+
+DataFrame operations have overhead. Convert to NumPy arrays for hot paths.
+
+```python
+# WRONG: DataFrame operations per step
+def calculate_signal(self, df: pd.DataFrame) -> float:
+    return df["close"].pct_change().mean()
+
+# RIGHT: Pre-convert to NumPy
+def __init__(self, df: pd.DataFrame):
+    self._closes = df["close"].to_numpy()
+
+def calculate_signal(self, end_idx: int) -> float:
+    window = self._closes[max(0, end_idx-20):end_idx]
+    return np.mean(np.diff(window) / window[:-1])
+```
+
+### Lazy Evaluation for Logging
+
+Defer string formatting until the log message is actually emitted.
+
+```python
+# WRONG: String formatted even if debug logging disabled
+logger.debug(f"Processing {len(items)} items: {[i.id for i in items]}")
+
+# RIGHT: Lazy formatting with structlog
+logger.debug("processing_items", count=len(items))
+# Or with standard logging
+logger.debug("Processing %d items", len(items))
+```
+
+---
+
+## Allocation Minimization
+
+### Object Pools for Frequently Created Objects
+
+For objects created/destroyed frequently (e.g., per bar), consider object pools.
+
+```python
+class SignalPool:
+    def __init__(self, size: int = 100):
+        self._pool = [Signal() for _ in range(size)]
+        self._index = 0
+
+    def acquire(self) -> Signal:
+        signal = self._pool[self._index % len(self._pool)]
+        self._index += 1
+        return signal
+```
+
+**When to use**: Only when profiling shows allocation is a bottleneck. Premature optimization otherwise.
+
+---
+
+## Benchmarking Patterns
+
+### Always Benchmark Before Optimizing
+
+```python
+import time
+
+def benchmark(func, *args, iterations=1000):
+    start = time.perf_counter()
+    for _ in range(iterations):
+        func(*args)
+    elapsed = time.perf_counter() - start
+    return elapsed / iterations
+```
+
+### Profile Before Assuming
+
+Use profiling to find actual bottlenecks, not assumed ones.
+
+```bash
+# Line profiler for hot functions
+kernprof -l -v your_script.py
+
+# Memory profiler for allocation issues
+python -m memory_profiler your_script.py
+```

@@ -1,0 +1,14 @@
+name: trading
+display_name: "Quantitative Trading"
+description: "Review prompts and standards for quantitative finance, RL, and trading systems."
+reviews:
+  - quant_architect
+  - quant_architect_implementation
+standards:
+  - traceability
+  - rl_patterns
+  - rl_reward_shaping
+  - performance_patterns
+  - concurrency_patterns
+approval_gates:
+  financial_calculations: true

@@ -1,0 +1,365 @@
+# Logging Standards
+
+## Principles
+
+1. **Structured Logging**: Use structured format for machine parsing
+2. **Appropriate Levels**: Use correct log levels consistently
+3. **Context Inclusion**: Always include relevant identifiers
+4. **Performance Aware**: Avoid expensive operations in log calls
+
+---
+
+## Logger Configuration
+
+### Standard Setup
+
+```python
+import logging
+import structlog
+
+def configure_logging(level: str = "INFO") -> None:
+    """Configure structured logging for the application."""
+    structlog.configure(
+        processors=[
+            structlog.stdlib.filter_by_level,
+            structlog.stdlib.add_logger_name,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.UnicodeDecoder(),
+            structlog.processors.JSONRenderer()
+        ],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+    
+    logging.basicConfig(
+        format="%(message)s",
+        level=getattr(logging, level.upper()),
+    )
+```
+
+### API Differences: structlog vs Standard Logging
+
+**IMPORTANT**: structlog and standard logging have different APIs. Code using standard logging MUST use %-formatting, not keyword arguments.
+
+```python
+# structlog API (keyword arguments work)
+import structlog
+logger = structlog.get_logger()
+logger.info("User logged in", user_id=123, ip="10.0.0.1")  # OK
+
+# Standard logging API (keyword arguments DON'T work)
+import logging
+logger = logging.getLogger(__name__)
+logger.info("User logged in", user_id=123)  # RAISES TypeError!
+logger.info("User logged in: user_id=%s, ip=%s", 123, "10.0.0.1")  # OK
+```
+
+When writing new code, check which logging API the module uses before adding log statements.
+
+### Module Logger Pattern
+
+```python
+# At top of each module
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+
+# In classes
+class MyClass:
+    def __init__(self):
+        self.logger = structlog.get_logger(__name__).bind(
+            class_name=self.__class__.__name__
+        )
+```
+
+---
+
+## Log Levels
+
+| Level | Use Case | Example |
+|-------|----------|---------|
+| DEBUG | Detailed diagnostic info, not for production | Loop iterations, intermediate calculations |
+| INFO | Normal operation events | Request processed, job completed |
+| WARNING | Unexpected but handled conditions | Fallback used, cache miss |
+| ERROR | Failures requiring attention | API failure, validation error |
+| CRITICAL | System-threatening failures | Unrecoverable state, data corruption |
+
+### Level Selection Guide
+
+```python
+# DEBUG - Development troubleshooting
+logger.debug("Processing batch", batch_size=20, items_count=len(items))
+
+# INFO - Business events worth recording
+logger.info("Request processed", endpoint="/api/users", status=200, latency_ms=45)
+
+# WARNING - Anomalies handled gracefully
+logger.warning("Cache unavailable, using fallback",
+               cache_key="user_123", fallback_age_hours=4)
+
+# ERROR - Failures needing investigation
+logger.error("External API request failed",
+             endpoint="https://api.example.com/data", status=503, retries=3)
+
+# CRITICAL - Immediate action required
+logger.critical("Circuit breaker tripped",
+                service="payment-gateway", failure_rate=0.45)
+```
+
+---
+
+## Context and Binding
+
+### Always Include Identifiers
+
+```python
+# GOOD: Rich context
+logger.info("Request processed",
+    request_id="req_12345",
+    user_id="usr_789",
+    endpoint="/api/items",
+    method="POST",
+    status=201,
+    latency_ms=87,
+)
+
+# BAD: Missing context
+logger.info("Request processed")
+```
+
+### Use Bound Loggers for Operations
+
+```python
+def process_item(item_id: str) -> None:
+    log = logger.bind(item_id=item_id)
+    
+    log.info("Starting processing")
+    data = fetch_data(item_id)
+    log.debug("Data fetched", rows=len(data))
+    
+    result = transform(data)
+    log.info("Processing complete", output_rows=len(result))
+```
+
+### Request/Transaction Context
+
+```python
+from contextvars import ContextVar
+
+request_id: ContextVar[str] = ContextVar("request_id", default="unknown")
+
+def with_request_context(func):
+    """Decorator to add request context to logs."""
+    def wrapper(*args, **kwargs):
+        rid = generate_request_id()
+        request_id.set(rid)
+        log = logger.bind(request_id=rid)
+        return func(*args, **kwargs, log=log)
+    return wrapper
+```
+
+---
+
+## Performance Considerations
+
+### Avoid Expensive Operations
+
+```python
+# BAD: Expensive operation always executed
+logger.debug(f"Data summary: {data.describe()}")
+
+# GOOD: Only compute if level is enabled
+if logger.isEnabledFor(logging.DEBUG):
+    logger.debug("Data summary", summary=data.describe().to_dict())
+
+# BEST: Use lazy evaluation with structlog
+logger.debug("Data summary", summary=lambda: data.describe().to_dict())
+```
+
+### Sampling for High-Volume Events
+
+```python
+import random
+
+SAMPLE_RATE = 0.01  # Log 1% of events
+
+def log_sampled(log_func, *args, **kwargs):
+    """Log with sampling for high-frequency events."""
+    if random.random() < SAMPLE_RATE:
+        kwargs["sampled"] = True
+        kwargs["sample_rate"] = SAMPLE_RATE
+        log_func(*args, **kwargs)
+```
+
+---
+
+## Sensitive Data
+
+### Never Log Secrets
+
+```python
+# BAD
+logger.info("Connecting to service", api_key=config.api_key)
+
+# GOOD
+logger.info("Connecting to service", api_key_last4=config.api_key[-4:])
+```
+
+### Mask PII and Sensitive Details
+
+```python
+def mask_identifier(value: str) -> str:
+    """Mask identifier for logging."""
+    return f"***{value[-4:]}"
+
+logger.info("Account updated",
+            account=mask_identifier(account_id),
+            action="settings_change")
+```
+
+---
+
+## Module-Specific Guidelines
+
+{% if domain_logging_guidelines %}
+{{ domain_logging_guidelines }}
+{% else %}
+### API Layer
+
+**Required Context:**
+- request_id, user_id, endpoint, method
+- status_code, latency_ms
+- error details (if applicable)
+
+**Logging Levels:**
+- DEBUG: Request/response bodies (sanitized)
+- INFO: Request completion with status
+- WARNING: Slow responses, rate limiting applied
+- ERROR: 5xx errors with full context
+
+### Data Layer
+
+**Required Context:**
+- source, operation, record_count
+- data_quality metrics (if applicable)
+- latency_ms, cache_status
+
+**Logging Levels:**
+- DEBUG: Raw query details
+- INFO: Successful operations with metrics
+- WARNING: Cache misses, stale data, quality issues
+- ERROR: Fetch failures with retry info
+
+### Background Jobs
+
+**Required Context:**
+- job_id, job_type, queue_name
+- start_time, duration_ms
+- items_processed, items_failed
+
+**Logging Levels:**
+- DEBUG: Per-item processing details
+- INFO: Job start/complete with summary
+- WARNING: Partial failures, retries
+- ERROR: Job failures
+{% endif %}
+
+---
+
+## Decision Chains (Cross-Module Correlation)
+
+For tracing purposes, link related events using a correlation ID:
+
+```python
+# 1. Request received
+logger.info("Request received", correlation_id="cor_123", action="create_item")
+
+# 2. Validation passed
+logger.info("Validation passed", correlation_id="cor_123", valid=True)
+
+# 3. Processing started
+logger.info("Processing started", correlation_id="cor_123", processor="default")
+
+# 4. Processing complete
+logger.info("Processing complete", correlation_id="cor_123", result="success")
+```
+
+### Generating Correlation IDs
+
+```python
+import uuid
+from datetime import datetime
+
+def generate_correlation_id() -> str:
+    """Generate unique correlation ID."""
+    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    short_uuid = uuid.uuid4().hex[:8]
+    return f"cor_{timestamp}_{short_uuid}"
+```
+
+---
+
+## Log Retention and Audit
+
+### Retention Periods
+
+| Log Type | Retention | Reason |
+|----------|-----------|--------|
+| DEBUG | 7 days | Troubleshooting only |
+| INFO (operational) | 90 days | Operational review |
+| WARNING/ERROR | 1 year | Incident review |
+| CRITICAL | 7 years | Audit trail |
+{% if domain_retention_periods %}
+{{ domain_retention_periods }}
+{% endif %}
+
+### Log Spam Prevention
+
+Use instance-level flags to emit WARNING on first occurrence, DEBUG on subsequent:
+
+```python
+class ServiceClient:
+    def __init__(self):
+        self._fallback_warned = False
+    
+    def fetch(self, key):
+        if not self._primary_available():
+            if not self._fallback_warned:
+                logger.warning("Primary unavailable, using fallback", key=key)
+                self._fallback_warned = True
+            else:
+                logger.debug("Using fallback", key=key)
+            return self._fallback.fetch(key)
+```
+
+### Logging API (structlog kwargs)
+
+This project uses structlog configured with standard Python logging processors. Use keyword arguments for structured fields, not %-formatting:
+
+```python
+# Correct: structlog keyword args
+logger.info("Item processed", item_id="abc_123", status="complete", duration_ms=45)
+
+# Wrong: %-formatting (loses structured data)
+logger.info("Item processed: %s status=%s", "abc_123", "complete")
+```
+
+### Audit Trail Requirements
+
+{% if domain_audit_requirements %}
+{{ domain_audit_requirements }}
+{% else %}
+Critical operations require immutable audit logging:
+- Correlation IDs must be unique and traceable
+- Timestamps must be UTC ISO format
+- No log entries may be deleted or modified
+- Store in append-only audit log separate from operational logs
+{% endif %}
+

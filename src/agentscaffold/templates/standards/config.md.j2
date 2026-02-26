@@ -1,0 +1,401 @@
+# Configuration Standards
+
+## Principles
+
+1. **Environment-First**: Secrets from environment, settings from files
+2. **Layered Configuration**: Defaults < file < environment < CLI
+3. **Validation on Load**: Fail fast with clear error messages
+4. **Type Safety**: Use Pydantic for configuration models
+
+---
+
+## Configuration Hierarchy
+
+```
+1. Default values (in code)
+2. Base config file (configs/base.yaml)
+3. Environment-specific (configs/{env}.yaml)
+4. Environment variables
+5. CLI arguments (for scripts)
+```
+
+Higher numbers override lower.
+
+---
+
+## Configuration Patterns
+
+### Pydantic Settings Model
+
+```python
+# {{ project_name }}/config.py
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class DatabaseConfig(BaseSettings):
+    """Database connection configuration."""
+    
+    model_config = SettingsConfigDict(
+        env_prefix="DB_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+    )
+    
+    host: str = Field(default="localhost", description="Database host")
+    port: int = Field(default=5432, description="Database port")
+    name: str = Field(default="{{ project_name }}", description="Database name")
+    user: str = Field(..., description="Database user")
+    password: str = Field(..., description="Database password")
+
+
+class ServiceConfig(BaseSettings):
+    """External service configuration."""
+    
+    model_config = SettingsConfigDict(env_prefix="SERVICE_")
+    
+    api_key: str = Field(..., description="Service API key")
+    base_url: str = Field(
+        default="https://api.example.com",
+        description="Service base URL"
+    )
+    timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=300,
+        description="Request timeout in seconds"
+    )
+    max_retries: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        description="Maximum retry attempts"
+    )
+
+
+class AppConfig(BaseSettings):
+    """Main application configuration."""
+    
+    model_config = SettingsConfigDict(env_prefix="APP_")
+    
+    env: str = Field(default="development", pattern="^(development|staging|production)$")
+    log_level: str = Field(default="INFO", pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
+    
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    service: ServiceConfig = Field(default_factory=ServiceConfig)
+```
+
+{% if domain_config_models %}
+{{ domain_config_models }}
+{% endif %}
+
+### Loading Configuration
+
+```python
+from functools import lru_cache
+
+@lru_cache
+def get_config() -> AppConfig:
+    """Load and cache application configuration."""
+    return AppConfig()
+
+
+# Usage
+config = get_config()
+print(config.database.host)
+```
+
+---
+
+## Hydra Integration
+
+For complex applications, use Hydra for hierarchical configuration:
+
+```yaml
+# configs/hydra/config.yaml
+defaults:
+  - database: postgres
+  - service: default
+
+app:
+  env: development
+  log_level: INFO
+```
+
+```yaml
+# configs/hydra/database/postgres.yaml
+host: ${oc.env:DB_HOST,localhost}
+port: 5432
+name: {{ project_name }}
+user: ${oc.env:DB_USER}
+password: ${oc.env:DB_PASSWORD}
+```
+
+```python
+import hydra
+from omegaconf import DictConfig
+
+@hydra.main(config_path="configs/hydra", config_name="config")
+def main(cfg: DictConfig) -> None:
+    print(cfg.database.host)
+```
+
+---
+
+## Environment Variables
+
+### Naming Convention
+
+```
+{PREFIX}_{COMPONENT}_{SETTING}
+
+Examples:
+- DB_HOST
+- DB_PASSWORD
+- SERVICE_API_KEY
+- APP_ENV
+- APP_LOG_LEVEL
+```
+
+### Required vs Optional
+
+```python
+class Config(BaseSettings):
+    # Required - no default, raises if missing
+    api_key: str = Field(...)
+    
+    # Optional with default
+    timeout: int = Field(default=30)
+    
+    # Optional, None allowed
+    proxy_url: str | None = Field(default=None)
+```
+
+---
+
+## Secrets Management
+
+### Development
+
+```bash
+# .env (git-ignored)
+DB_USER=dev_user
+DB_PASSWORD=dev_password
+SERVICE_API_KEY=your-dev-key
+```
+
+### Production
+
+```python
+# Use a secrets manager
+from {{ project_name }}.secrets import get_secret
+
+class ServiceConfig(BaseSettings):
+    @property
+    def api_key(self) -> str:
+        return get_secret("service/api_key")
+```
+
+### Never Commit Secrets
+
+```gitignore
+# .gitignore
+.env
+.env.local
+*.pem
+*_key.json
+secrets/
+```
+
+---
+
+## Validation Patterns
+
+### Custom Validators
+
+```python
+from pydantic import field_validator
+
+class ServiceConfig(BaseSettings):
+    timeout_seconds: int
+    max_retries: int
+    
+    @field_validator("timeout_seconds")
+    @classmethod
+    def validate_timeout(cls, v: int) -> int:
+        if not 1 <= v <= 300:
+            raise ValueError(f"Timeout must be in [1, 300], got {v}")
+        return v
+```
+
+### Cross-Field Validation
+
+```python
+from pydantic import model_validator
+
+class RetryConfig(BaseSettings):
+    max_retries: int
+    retry_delay_seconds: float
+    max_delay_seconds: float
+    
+    @model_validator(mode="after")
+    def validate_delays(self) -> "RetryConfig":
+        if self.max_delay_seconds < self.retry_delay_seconds:
+            raise ValueError(
+                f"max_delay ({self.max_delay_seconds}) must be >= "
+                f"retry_delay ({self.retry_delay_seconds})"
+            )
+        return self
+```
+
+{% if domain_validation_patterns %}
+{{ domain_validation_patterns }}
+{% endif %}
+
+---
+
+## Safety-Critical Configuration Validation
+
+For config fields that affect safety features or critical system behavior:
+
+1. Define MANDATORY minimums as frozen constants
+2. Config can ADD to mandatory sets but NEVER remove
+3. Validate at load time, not runtime -- raise `ValueError` with all errors listed
+4. Log safety-critical values at CRITICAL level at startup
+5. Test: `test_safety_field_cannot_be_emptied()` for every critical field
+
+```python
+_MANDATORY_CIRCUIT_BREAKER_CODES = frozenset({500, 502, 503})
+
+@dataclass(frozen=True)
+class CircuitBreakerConfig:
+    trip_on_status_codes: tuple[int, ...]
+    
+    def __post_init__(self):
+        missing = _MANDATORY_CIRCUIT_BREAKER_CODES - set(self.trip_on_status_codes)
+        if missing:
+            raise ValueError(f"Cannot remove mandatory circuit breaker codes: {missing}")
+```
+
+---
+
+## Dataclass Config with __post_init__ Validation
+
+Use `__post_init__` in dataclasses (or `@model_validator` in Pydantic) for parameter validation at construction time. This catches bad values immediately with clear messages.
+
+```python
+@dataclass(frozen=True)
+class BatchProcessorConfig:
+    batch_size: int = 100
+    max_workers: int = 4
+    
+    def __post_init__(self):
+        if self.batch_size <= 0:
+            raise ValueError(f"batch_size must be positive, got {self.batch_size}")
+        if self.max_workers <= 0:
+            raise ValueError(f"max_workers must be positive, got {self.max_workers}")
+```
+
+---
+
+## YAML Config with CLI Overrides
+
+Load base config from YAML, apply `--override key=value` CLI args. Balances reproducibility with flexibility.
+
+**Important**: Nested YAML structure vs flat dataclass fields -- flatten YAML first, THEN apply overrides. Applying overrides to a nested dict loses values.
+
+---
+
+## Profile Inheritance
+
+Use an `inherit_from` field so child profiles only override what they need. Child profiles load the parent, then apply overrides.
+
+---
+
+## Environment-Aware Storage
+
+Auto-detect the storage backend based on environment (PostgreSQL in production, SQLite in development, in-memory for tests). Pattern:
+
+```python
+def create_storage(env: str = None) -> StorageBackend:
+    if env is None:
+        env = os.getenv("APP_ENV", "development")
+    if env == "production":
+        return PostgresStorage(...)
+    elif env == "test":
+        return InMemoryStorage()
+    else:
+        return SQLiteStorage(...)
+```
+
+---
+
+## Instance State vs Parameter Threading
+
+When adding optional dynamic state to an existing class (e.g., adding a rate limiter
+or feature flag to a service), choose between two patterns:
+
+**Option A: Thread parameters through every call site**
+
+```python
+# Every caller must pass the new params
+def process(self, item, rate_limit=None, feature_flags=None):
+    return self._do_work(item, rate_limit, feature_flags)
+
+def validate(self, item, rate_limit=None, feature_flags=None):
+    return self._do_work(item, rate_limit, feature_flags)
+```
+
+**Option B: Store on instance, use as defaults (preferred)**
+
+```python
+def set_dynamic_config(self, rate_limit=None, feature_flags=None):
+    """Store dynamic state. All internal methods automatically use it."""
+    self._rate_limit = rate_limit
+    self._feature_flags = feature_flags
+
+def _do_work(self, item, rate_limit=None, feature_flags=None):
+    limit = rate_limit if rate_limit is not None else self._rate_limit
+    flags = feature_flags if feature_flags is not None else self._feature_flags
+    ...
+```
+
+**When to use Option B:**
+- Multiple internal methods need the same dynamic state
+- Callers already use the class through several entry points
+- The dynamic state changes infrequently (e.g., once per config reload, not per request)
+- You want to avoid breaking existing callers' signatures
+
+**When to stick with Option A:**
+- Only one method needs the parameter
+- The dynamic state changes on every call
+- Thread safety requires explicit per-call values
+
+Always include `reset()` to clear stored state, and explicit parameters should
+override stored defaults for flexibility.
+
+---
+
+## Configuration Testing
+
+```python
+import pytest
+from unittest.mock import patch
+
+def test_config_loads_from_env():
+    with patch.dict("os.environ", {"SERVICE_API_KEY": "test-key"}):  # pragma: allowlist secret
+        config = ServiceConfig()
+        assert config.api_key == "test-key"  # pragma: allowlist secret
+
+
+def test_config_validates_timeout():
+    with pytest.raises(ValueError, match="must be in"):
+        ServiceConfig(api_key="key", timeout_seconds=999)  # pragma: allowlist secret
+
+
+def test_config_requires_api_key():
+    with pytest.raises(ValueError, match="api_key"):
+        ServiceConfig()  # Missing required field
+```
+

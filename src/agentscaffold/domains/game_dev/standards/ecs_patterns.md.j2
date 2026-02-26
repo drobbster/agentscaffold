@@ -1,0 +1,211 @@
+# ECS Patterns
+
+This document defines Entity-Component-System (ECS) architecture patterns for game development. ECS promotes data-oriented design, cache efficiency, and clear separation of concerns.
+
+---
+
+## Core Concepts
+
+### Entity
+
+An entity is a unique ID. It has no behavior or data; it is a handle to a set of components.
+
+```cpp
+using Entity = uint32_t;
+const Entity NULL_ENTITY = 0;
+```
+
+### Component
+
+A component is a plain data struct. No logic, no methods beyond trivial accessors. Components are stored in contiguous arrays (SoA or AoS) for cache efficiency.
+
+```cpp
+struct Position {
+    float x, y, z;
+};
+
+struct Velocity {
+    float vx, vy, vz;
+};
+
+struct Health {
+    int current;
+    int max;
+};
+```
+
+### System
+
+A system is a function that operates on entities matching a specific component query. Systems are stateless and process entities in batches.
+
+```cpp
+void movement_system(Query<Position, Velocity>& query, float dt) {
+    for (auto [entity, pos, vel] : query) {
+        pos.x += vel.vx * dt;
+        pos.y += vel.vy * dt;
+        pos.z += vel.vz * dt;
+    }
+}
+```
+
+---
+
+## Archetypes
+
+### Definition
+
+An archetype is the set of component types attached to an entity. Entities with the same archetype are stored together for efficient iteration.
+
+| Archetype | Components | Use Case |
+|-----------|-------------|----------|
+| Static | Transform | Environment props |
+| Dynamic | Transform, Velocity, Collider | Moving objects |
+| Character | Transform, Velocity, Health, Input | Player/NPC |
+| Projectile | Transform, Velocity, Lifetime | Bullets, effects |
+
+### Archetype Transitions
+
+When adding or removing a component, the entity moves to a new archetype. This is a structural change and should be deferred to end of frame when possible.
+
+```cpp
+// Defer structural changes
+world.defer([&]() {
+    world.add_component(entity, Health{100, 100});
+});
+```
+
+---
+
+## System Ordering
+
+### Dependency Graph
+
+Systems have implicit dependencies based on read/write component access. Order systems to respect data flow.
+
+```
+InputSystem (writes Input)
+    -> MovementSystem (reads Input, Velocity; writes Position)
+    -> CollisionSystem (reads Position, Collider; writes CollisionEvents)
+    -> HealthSystem (reads CollisionEvents; writes Health)
+    -> RenderSystem (reads Position, Sprite)
+```
+
+### Execution Order Rules
+
+1. Systems that write a component must run before systems that read it (for same-frame use).
+2. Parallel systems: no shared writes. Multiple readers of same data can run in parallel.
+3. Document system order in a central registry or config.
+
+### Example Ordering Config
+
+```yaml
+systems:
+  - input
+  - movement
+  - collision
+  - health
+  - ai
+  - render
+```
+
+---
+
+## Queries
+
+### Query Design
+
+Queries select entities by component presence. Use inclusive (has all) and optional exclusive (has none) filters.
+
+```cpp
+// Entities with Position and Velocity, without Frozen
+Query<Position, Velocity>.Exclude<Frozen>
+
+// Entities with Health, optionally with Shield
+Query<Health>.Optional<Shield>
+```
+
+### Query Performance
+
+- [ ] Queries are cached; avoid creating queries per frame
+- [ ] Iterate in archetype order to maximize cache hits
+- [ ] Prefer sequential access over random access
+- [ ] Batch process when possible (e.g., 64 entities at a time)
+
+---
+
+## Component Design
+
+### Guidelines
+
+| Guideline | Rationale |
+|-----------|-----------|
+| Components are data only | Enables SoA, cache efficiency |
+| Keep components small | Better cache utilization |
+| Avoid pointers in components | Breaks cache locality, complicates serialization |
+| Use IDs to reference other entities | Enables archetype separation |
+| No circular dependencies | Simplifies system order |
+
+### Anti-Patterns
+
+| Anti-Pattern | Problem | Correct Approach |
+|--------------|---------|------------------|
+| Logic in components | Defeats ECS benefits | Move to systems |
+| Large heterogeneous components | Cache thrashing | Split into focused components |
+| Components holding resources | Hard to relocate | Use resource handles (IDs) |
+| Inheritance in components | Complicates queries | Composition via multiple components |
+
+---
+
+## World Management
+
+### World Lifecycle
+
+```
+Create World -> Load Scene -> Spawn Entities -> Run Systems (loop) -> Unload Scene -> Destroy World
+```
+
+### Entity Creation
+
+```cpp
+Entity e = world.spawn();
+world.add_component(e, Transform{0, 0, 0});
+world.add_component(e, Velocity{1, 0, 0});
+world.add_component(e, Health{100, 100});
+```
+
+### Entity Destruction
+
+Defer destruction to avoid invalidating iterators during system execution.
+
+```cpp
+world.destroy_deferred(entity);
+// Processed at end of frame
+```
+
+### Prefabs
+
+Define entity templates for common configurations.
+
+```yaml
+prefab: enemy_soldier
+components:
+  - Transform
+  - Velocity
+  - Health: { current: 100, max: 100 }
+  - AI: { behavior: patrol }
+  - Collider: { radius: 0.5 }
+```
+
+---
+
+## Checklist
+
+Before implementing or refactoring ECS:
+
+- [ ] Components are plain data structs
+- [ ] Systems are stateless and operate on queries
+- [ ] System order respects read/write dependencies
+- [ ] Structural changes (add/remove component, destroy) are deferred
+- [ ] Queries are cached, not created per frame
+- [ ] No logic in components
+- [ ] Entity references use IDs, not raw pointers

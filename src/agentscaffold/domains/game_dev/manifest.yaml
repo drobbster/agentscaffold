@@ -1,0 +1,12 @@
+name: game_dev
+display_name: "Game Development"
+description: "Game loop reviews, ECS patterns, asset pipeline standards, frame budgets, and network synchronization."
+reviews:
+  - game_loop
+  - performance_profiling
+standards:
+  - ecs_patterns
+  - asset_pipeline
+  - frame_budget
+  - state_sync
+approval_gates: {}

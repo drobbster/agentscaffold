@@ -1,0 +1,181 @@
+# Backward Compatibility Standards
+
+This document defines standards for maintaining backward compatibility when evolving APIs. Breaking changes must be avoided or managed through explicit versioning and deprecation.
+
+---
+
+## Additive Changes (Safe)
+
+The following changes are backward compatible and do not require a new major version:
+
+| Change | Example | Rationale |
+|--------|---------|-----------|
+| New optional field | Add `metadata?: object` to response | Old clients ignore; new clients use |
+| New endpoint | `POST /v1/orders/{id}/cancel` | No impact on existing endpoints |
+| New optional query parameter | Add `?include=metadata` | Old clients omit; behavior unchanged |
+| New enum value | Add `"PENDING"` to status enum | Old clients handle unknown values |
+| New optional header | `X-Request-Source` | Old clients omit; no impact |
+| Loosen validation | Accept more formats for date | Expands acceptance; no narrowing |
+
+### Implementation Checklist for Additive Changes
+
+- [ ] New fields are optional (not required)
+- [ ] New enum values do not change semantics of existing values
+- [ ] Default behavior when new parameter omitted matches previous behavior
+- [ ] Documentation updated
+- [ ] Changelog entry added
+
+---
+
+## Breaking Changes (Require Version Bump)
+
+The following changes break backward compatibility and require a new major version or explicit migration:
+
+| Change | Example | Why Breaking |
+|--------|---------|--------------|
+| Remove field | Remove `created_at` from response | Consumers may depend on it |
+| Rename field | `user_id` to `userId` | Consumer code breaks |
+| Change field type | `count: string` to `count: number` | Type mismatch |
+| Add required field | New required `tenant_id` in request | Old clients fail validation |
+| Remove endpoint | Delete `GET /v1/legacy` | Consumers get 404 |
+| Change HTTP semantics | GET returns 201 | Violates REST conventions |
+| Stricter validation | Reject previously valid input | Valid old requests fail |
+
+### Migration Path for Breaking Changes
+
+1. **Announce**: Document breaking change in changelog with target date
+2. **Deprecate**: Add `Deprecation` and `Sunset` headers to affected endpoints
+3. **Support both**: Run old and new versions in parallel during transition
+4. **Migrate consumers**: Provide migration guide and SDK updates
+5. **Retire**: Remove old version after sunset date
+
+---
+
+## Deprecation Headers
+
+### Sunset Header (RFC 8594)
+
+Communicates when an endpoint or version will be removed.
+
+```
+Sunset: Sat, 31 Dec 2026 23:59:59 GMT
+```
+
+- Include in all responses from deprecated endpoints
+- Use HTTP-date format (RFC 7231)
+- Document in API docs and changelog
+
+### Deprecation Header
+
+Marks an endpoint as deprecated (may remain available).
+
+```
+Deprecation: true
+```
+
+Or with a date:
+
+```
+Deprecation: Sat, 31 Dec 2026 23:59:59 GMT
+```
+
+### Link Header for Migration
+
+Point consumers to the replacement:
+
+```
+Link: <https://api.example.com/v2/orders>; rel="successor-version"
+```
+
+### Example Response Headers
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Deprecation: true
+Sunset: Sat, 31 Dec 2026 23:59:59 GMT
+Link: <https://api.example.com/v2/orders>; rel="successor-version"
+
+{"data": [...]}
+```
+
+---
+
+## Versioning Rules
+
+| Rule | Description |
+|------|-------------|
+| Major version | Breaking changes only |
+| Minor version | Additive changes, new optional fields |
+| Patch version | Bug fixes, documentation, no contract change |
+| Default version | When no version specified, use latest stable |
+| Deprecation window | Minimum 6 months for external APIs; 3 months for internal |
+
+---
+
+## Migration Guides
+
+When introducing breaking changes, provide a migration guide that includes:
+
+1. **Summary**: What changed and why
+2. **Before/After**: Code examples for common use cases
+3. **Field mapping**: Old field to new field (if renamed)
+4. **Timeline**: Deprecation date, sunset date
+5. **Support**: How to get help (docs, Slack, email)
+
+### Migration Guide Template
+
+```markdown
+## Migrating from v1 to v2
+
+### Summary
+v2 introduces a new response format for orders. The `items` array is now paginated.
+
+### Timeline
+- v1 deprecated: 2026-03-01
+- v1 sunset: 2026-09-01
+
+### Changes
+
+| v1 | v2 |
+|----|-----|
+| `items: OrderItem[]` | `items: { data: OrderItem[], next_cursor?: string }` |
+| `GET /orders` returns all items | `GET /orders` returns first page; use cursor for more |
+
+### Example
+
+v1:
+```json
+{"id": "o1", "items": [{"id": "i1"}]}
+```
+
+v2:
+```json
+{"id": "o1", "items": {"data": [{"id": "i1"}], "next_cursor": "abc"}}
+```
+```
+
+---
+
+## Implementation Checklist
+
+When evolving an API:
+
+- [ ] Classify change as additive or breaking
+- [ ] If additive: ensure optional, document, changelog
+- [ ] If breaking: plan version bump, deprecation headers, migration guide
+- [ ] Add Sunset header with concrete date for deprecated endpoints
+- [ ] Run backward compatibility tests before release
+- [ ] Notify consumers of deprecation (email, changelog, status page)
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|--------------|--------------|------------------|
+| Adding required field without version bump | All existing clients fail | Add as optional, or new major version |
+| Removing field without deprecation | Consumers get unexpected null/undefined | Deprecate first, sunset later |
+| Silent behavior change | Same request, different response | Document or version bump |
+| No deprecation window | Consumers have no time to migrate | Minimum 3-6 months |
+| Ignoring unknown fields in consumer | Consumer sends new field, server ignores | Document; consider accepting and logging |

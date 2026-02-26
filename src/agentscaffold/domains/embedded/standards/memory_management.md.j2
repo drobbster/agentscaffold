@@ -1,0 +1,183 @@
+# Memory Management Standards (Embedded)
+
+This document defines memory management standards for embedded firmware: allocation policies, stack discipline, buffer management, and leak prevention.
+
+---
+
+## Core Principle: No Dynamic Allocation After Init
+
+All memory must be statically allocated or allocated from fixed pools during system initialization. After `main()` enters its run loop, no `malloc`, `calloc`, `realloc`, or `free` calls are permitted.
+
+**Rationale**: Dynamic allocation introduces fragmentation, non-deterministic timing, and failure modes that are unacceptable in long-running embedded systems.
+
+---
+
+## Allocation Policy
+
+### Permitted Patterns
+
+| Pattern | When to Use | Example |
+|---------|-------------|---------|
+| Static global | Singleton resources, device drivers | `static uint8_t uart_rx_buf[256];` |
+| Static local | Per-function persistent state | `static uint32_t last_timestamp;` |
+| Pool allocator | Variable-count fixed-size objects | Message pool, connection pool |
+| Stack local | Short-lived, small (< 256 bytes) | Local calculation buffers |
+
+### Prohibited Patterns
+
+| Pattern | Risk | Alternative |
+|---------|------|-------------|
+| `malloc` / `free` in run loop | Fragmentation, OOM | Static or pool allocation |
+| VLA (variable-length array) | Stack overflow | Fixed-size array with bounds check |
+| `alloca` | Stack overflow, non-portable | Fixed-size local buffer |
+| Recursive functions | Unbounded stack | Iterative with explicit stack |
+| Large stack locals (> 256 bytes) | Stack overflow | Static buffer or pool |
+
+---
+
+## Memory Pool Design
+
+### Pool Allocator Requirements
+
+```c
+/* Pool allocator interface */
+typedef struct {
+    void *base;
+    size_t block_size;
+    size_t block_count;
+    size_t used_count;
+    uint32_t *free_bitmap;
+} mem_pool_t;
+
+/* Initialize pool from static buffer */
+void pool_init(mem_pool_t *pool, void *buffer, size_t block_size, size_t count);
+
+/* Allocate a block -- returns NULL if exhausted */
+void *pool_alloc(mem_pool_t *pool);
+
+/* Free a block back to pool */
+void pool_free(mem_pool_t *pool, void *ptr);
+
+/* Diagnostic: current utilization */
+size_t pool_used(const mem_pool_t *pool);
+size_t pool_available(const mem_pool_t *pool);
+```
+
+### Pool Sizing Rules
+
+| Rule | Rationale |
+|------|-----------|
+| Size pools for worst-case concurrent usage + 20% | Headroom for bursts |
+| Log pool high-water mark at runtime | Detect sizing errors before OOM |
+| Pool exhaustion returns NULL (never blocks in ISR) | ISR must not block |
+| Test with pool artificially reduced to 50% | Verify graceful degradation |
+
+---
+
+## Stack Management
+
+### Stack Allocation
+
+| Task Type | Minimum Stack | Sizing Method |
+|-----------|---------------|---------------|
+| Idle task | 128 bytes | Fixed (minimal) |
+| Sensor task | 512 bytes | Static analysis + 50% margin |
+| Comms task | 1024 bytes | Static analysis + 50% margin |
+| ISR stack | 256 bytes | Worst-case nesting analysis |
+
+### Stack Monitoring
+
+```c
+/* Fill stack with known pattern at init */
+void stack_paint(uint32_t *stack_base, size_t size_words) {
+    for (size_t i = 0; i < size_words; i++) {
+        stack_base[i] = 0xDEADBEEF;
+    }
+}
+
+/* Check how much stack was used (high-water mark) */
+size_t stack_used(const uint32_t *stack_base, size_t size_words) {
+    size_t unused = 0;
+    while (unused < size_words && stack_base[unused] == 0xDEADBEEF) {
+        unused++;
+    }
+    return (size_words - unused) * sizeof(uint32_t);
+}
+```
+
+### Stack Safety Checklist
+
+- [ ] All stacks painted with sentinel at boot
+- [ ] Stack high-water marks logged periodically (e.g., every 60 seconds)
+- [ ] MPU guard regions configured below each stack
+- [ ] RTOS stack overflow hook triggers system reset or safe state
+- [ ] Maximum call depth verified with `-fstack-usage` compiler flag
+
+---
+
+## Buffer Overflow Prevention
+
+### Ring Buffer Pattern
+
+```c
+typedef struct {
+    uint8_t *buf;
+    size_t size;        /* must be power of 2 */
+    volatile size_t head;
+    volatile size_t tail;
+} ring_buf_t;
+
+static inline size_t ring_count(const ring_buf_t *r) {
+    return (r->head - r->tail) & (r->size - 1);
+}
+
+static inline bool ring_put(ring_buf_t *r, uint8_t byte) {
+    if (ring_count(r) >= r->size - 1) return false;
+    r->buf[r->head & (r->size - 1)] = byte;
+    r->head++;
+    return true;
+}
+```
+
+### Buffer Safety Rules
+
+| Rule | Enforcement |
+|------|-------------|
+| All buffers have compile-time known size | `sizeof()` or `#define` |
+| All copy operations use bounded variants | `strncpy`, `memcpy` with explicit length |
+| No `sprintf` -- use `snprintf` only | Static analysis / grep |
+| Array indices checked against bounds | Assert or explicit check |
+| DMA transfer length <= buffer size | Validated before DMA start |
+
+---
+
+## Watchdog and Recovery
+
+- [ ] Watchdog timer enabled with timeout matching worst-case task period
+- [ ] Watchdog kick only in main loop (not in ISR -- detects main loop hang)
+- [ ] RAM integrity check at boot (pattern write/read)
+- [ ] Critical state stored in non-volatile memory for recovery after reset
+- [ ] Brown-out detection configured to trigger orderly shutdown
+
+---
+
+## Diagnostic and Telemetry
+
+| Metric | Collection Method | Frequency |
+|--------|-------------------|-----------|
+| Stack high-water marks | Stack painting | Every 60s |
+| Pool utilization | Pool diagnostic API | Every 60s |
+| Heap fragmentation (if heap used) | Heap walk | Every 300s |
+| Total free RAM | Linker symbol arithmetic | At boot |
+| Flash usage | Build output (.map file) | Each build |
+
+---
+
+## Verification Checklist
+
+- [ ] `arm-none-eabi-size` output reviewed for each build
+- [ ] `.map` file reviewed for unexpected growth
+- [ ] Static analysis clean (no buffer overflow warnings)
+- [ ] All pools tested at capacity (forced exhaustion test)
+- [ ] 72-hour soak test with no memory growth
+- [ ] Stack high-water marks have >= 30% remaining margin

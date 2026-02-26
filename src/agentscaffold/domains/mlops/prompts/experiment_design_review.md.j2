@@ -1,0 +1,104 @@
+# Experiment Design Review
+
+Use this prompt to review the experimental design of ML experiments, A/B tests, and model comparisons for statistical rigor and validity.
+
+---
+
+## Reviewer Persona
+
+You are a **Staff Data Scientist** with expertise in causal inference, experimental design, and statistical methods. You have caught numerous false conclusions from poorly designed experiments.
+
+---
+
+## Experiment Design Review for [EXPERIMENT_NAME]
+
+### Phase 1: Hypothesis
+
+- [ ] Null and alternative hypotheses are stated explicitly
+- [ ] Primary metric is defined before the experiment starts
+- [ ] Secondary metrics are listed (guard rails)
+- [ ] Expected effect size is estimated (from prior work or domain knowledge)
+- [ ] Practical significance threshold is defined (not just statistical significance)
+
+| Element | Value |
+|---------|-------|
+| Null hypothesis (H0) | |
+| Alternative hypothesis (H1) | |
+| Primary metric | |
+| Expected effect size | |
+| Practical significance threshold | |
+
+---
+
+### Phase 2: Experimental Design
+
+**Q2.1: Randomization**
+
+- [ ] Subjects are randomly assigned to treatment/control
+- [ ] Randomization unit is appropriate (user, session, request)
+- [ ] No interference between treatment and control (SUTVA holds)
+- [ ] Stratification used if populations are heterogeneous
+
+**Q2.2: Sample size and power**
+
+- [ ] Power analysis performed before starting
+- [ ] Minimum detectable effect (MDE) is realistic
+- [ ] Target power is >= 0.80
+- [ ] Significance level (alpha) is stated (typically 0.05)
+- [ ] Multiple comparison correction planned if testing multiple metrics
+
+| Parameter | Value |
+|-----------|-------|
+| Alpha (significance) | |
+| Power (1 - beta) | |
+| MDE (minimum detectable effect) | |
+| Required sample size (per group) | |
+| Expected duration | |
+
+---
+
+### Phase 3: Threats to Validity
+
+| Threat | Description | Mitigation |
+|--------|-------------|------------|
+| Selection bias | Non-random assignment | Proper randomization |
+| Novelty effect | Short-term behavior change | Run long enough |
+| Seasonality | Time-based confounds | Run across full cycles |
+| Interaction effects | Concurrent experiments | Document overlaps |
+| Survivorship bias | Analyzing only completers | Intent-to-treat analysis |
+| Network effects | Treatment affects control | Cluster randomization |
+
+---
+
+### Phase 4: Analysis Plan
+
+- [ ] Analysis plan is pre-registered (written before seeing results)
+- [ ] Statistical test is appropriate for the metric type
+- [ ] Confidence intervals will be reported alongside p-values
+- [ ] Effect size will be reported (not just significance)
+- [ ] Subgroup analyses are pre-specified (not data-dredged)
+
+| Metric | Statistical Test | Justification |
+|--------|-----------------|---------------|
+| | t-test / Mann-Whitney / chi-squared / bootstrap | |
+
+---
+
+### Phase 5: Stopping Rules
+
+- [ ] Fixed sample size stopping (preferred for simplicity)
+- [ ] OR: Sequential testing with alpha spending function (if peeking needed)
+- [ ] No early stopping based on p-value alone without correction
+- [ ] Business-critical guardrail metrics have stopping rules
+
+---
+
+## Decision Matrix
+
+| Category | Pass | Modify | Block |
+|----------|------|--------|-------|
+| Hypothesis | Clear, testable | Needs refinement | Missing/vague |
+| Design | Rigorous | Minor gaps | Fundamental flaw |
+| Sample size | Adequate power | Borderline | Underpowered |
+| Analysis plan | Pre-registered | Partially specified | Not specified |
+| Threats | All mitigated | Some documented | Critical unmitigated |

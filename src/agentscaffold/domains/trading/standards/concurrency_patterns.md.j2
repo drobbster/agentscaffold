@@ -1,0 +1,225 @@
+# Concurrency Patterns
+
+This document captures concurrency and thread safety patterns for trading systems. These patterns are critical for parallel backtesting and data fetching.
+
+---
+
+## Thread Safety
+
+### RLock for Shared Components
+
+Use `threading.RLock` (reentrant lock) for components shared across parallel backtests.
+
+```python
+import threading
+
+class SharedCache:
+    """Thread-safe cache for parallel backtests."""
+
+    def __init__(self):
+        self._cache = {}
+        self._lock = threading.RLock()
+
+    def get(self, key: str):
+        with self._lock:
+            return self._cache.get(key)
+
+    def set(self, key: str, value) -> None:
+        with self._lock:
+            self._cache[key] = value
+
+    def get_or_compute(self, key: str, compute_fn):
+        with self._lock:
+            if key not in self._cache:
+                self._cache[key] = compute_fn()
+            return self._cache[key]
+```
+
+**Why RLock over Lock**: Reentrant locks allow the same thread to acquire the lock multiple times, preventing deadlocks in nested calls.
+
+---
+
+## Cache Management
+
+### LRU Eviction for Memory Bounds
+
+Unbounded caches cause memory exhaustion in long-running processes.
+
+```python
+from collections import OrderedDict
+from threading import RLock
+
+class BoundedLRUCache:
+    """Thread-safe LRU cache with size limit."""
+
+    def __init__(self, max_size: int = 1000):
+        self._cache: OrderedDict = OrderedDict()
+        self._max_size = max_size
+        self._lock = RLock()
+
+    def get(self, key: str):
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                return self._cache[key]
+            return None
+
+    def set(self, key: str, value):
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+            self._cache[key] = value
+            while len(self._cache) > self._max_size:
+                self._cache.popitem(last=False)
+```
+
+---
+
+## asyncio Timeout Limitations
+
+`asyncio.wait_for(coro, timeout)` can only timeout **awaitable operations**. Blocking synchronous calls (like ML model inference, CPU-bound computations) cannot be interrupted by asyncio.
+
+**Workarounds:**
+
+1. **ThreadPoolExecutor** for true timeout:
+```python
+async def with_thread_timeout(func, *args, timeout: float):
+    loop = asyncio.get_event_loop()
+    return await asyncio.wait_for(
+        loop.run_in_executor(None, func, *args),
+        timeout=timeout
+    )
+```
+
+2. **Accept the limitation** and document in tests.
+
+3. **Subprocess** for true cancellation (heavyweight).
+
+---
+
+## ThreadPoolExecutor Patterns
+
+### Timeout Doesn't Cancel Threads
+
+`ThreadPoolExecutor` timeout in `as_completed()` only affects waiting, not execution.
+
+### Parallel Fetch with Proper Error Handling
+
+Pattern for parallel data fetching with per-task error handling.
+
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def fetch_parallel(
+    requirements: list[str],
+    fetch_fn,
+    max_workers: int = 4,
+    timeout: float = 60.0,
+) -> dict:
+    results = {}
+    errors = {}
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_req = {
+            executor.submit(fetch_fn, req): req
+            for req in requirements
+        }
+
+        for future in as_completed(future_to_req, timeout=timeout):
+            req = future_to_req[future]
+            try:
+                results[req] = future.result()
+            except Exception as e:
+                errors[req] = e
+
+    if errors:
+        logger.warning("Partial failure: %d/%d failed", len(errors), len(requirements))
+
+    return results
+```
+
+---
+
+## Conditional Imports
+
+### importlib.util.find_spec() for Optional Dependencies
+
+Use `find_spec()` to check for optional dependencies without importing them.
+
+```python
+import importlib.util
+
+HAS_GYMNASIUM = importlib.util.find_spec("gymnasium") is not None
+
+def get_env():
+    if not HAS_GYMNASIUM:
+        raise ImportError("gymnasium required for RL environments")
+    import gymnasium as gym
+    return gym.make("CartPole-v1")
+```
+
+**Benefit**: Module loads successfully even without optional dependencies. Error only occurs when the feature is actually used.
+
+---
+
+## Resilience Patterns
+
+### Local Filesystem Fallback
+
+External services (MinIO, Redis) may be unavailable. Implement local fallback.
+
+```python
+class ResilientStorage:
+    def __init__(self, remote_client, local_path: Path):
+        self._remote = remote_client
+        self._local = local_path
+        self._local.mkdir(parents=True, exist_ok=True)
+
+    def save(self, key: str, data: bytes) -> bool:
+        try:
+            self._remote.put(key, data)
+            return True
+        except Exception as e:
+            logger.warning("Remote save failed, using local: %s", e)
+
+        local_path = self._local / key
+        local_path.write_bytes(data)
+        return True
+```
+
+---
+
+## Default to Conservative Mode
+
+When external services are unavailable, default to conservative/safe behavior.
+
+```python
+class GatedExecutor:
+    def get_mode(self) -> str:
+        try:
+            return self._service.get_current_mode()
+        except Exception:
+            logger.warning("Service unavailable, defaulting to CAUTION")
+            return "CAUTION"  # Fail-safe, not fail-open
+```
+
+**Principle**: Fail-safe over fail-open for trading systems.
+
+---
+
+## Fire-and-Forget Async Pattern
+
+For parallel processing that must not add latency to the main path:
+
+```python
+import asyncio
+
+async def process_shadow(action):
+    try:
+        await asyncio.wait_for(shadow_service.evaluate(action), timeout=5.0)
+    except asyncio.TimeoutError:
+        logger.warning("Shadow processing timed out")
+
+# In main path:
+asyncio.create_task(process_shadow(action))  # Does not block caller
+```

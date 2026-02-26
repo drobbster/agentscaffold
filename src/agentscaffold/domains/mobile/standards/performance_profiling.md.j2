@@ -1,0 +1,207 @@
+# Performance Profiling Standards
+
+This document defines performance targets and profiling practices for mobile applications. All features must meet these budgets and be profiled before release.
+
+---
+
+## Startup Time Targets
+
+### Cold Start (App Launch)
+
+| Platform | Target | Acceptable | Poor |
+|----------|--------|------------|------|
+| iOS | < 2.0s | 2.0-3.0s | > 3.0s |
+| Android | < 2.5s | 2.5-4.0s | > 4.0s |
+
+Measured from process start to first interactive frame (TTI).
+
+### Warm Start (Resume from Background)
+
+| Platform | Target | Acceptable |
+|----------|--------|------------|
+| iOS | < 0.5s | 0.5-1.0s |
+| Android | < 0.8s | 0.8-1.5s |
+
+### Startup Optimization Checklist
+
+- [ ] Defer non-critical initialization (analytics, crash reporting) until after first frame
+- [ ] Lazy-load heavy modules (maps, camera, ML)
+- [ ] Minimize work on main thread during launch
+- [ ] Use pre-main metrics (Xcode Instruments, Android StrictMode) to find blockers
+- [ ] Profile on low-end devices (not just simulators)
+
+### Measurement
+
+```bash
+# iOS: Xcode Organizer or Instruments App Launch template
+# Android: adb shell am start -W -n <package>/<activity>
+
+# React Native
+npx react-native run-ios --configuration Release
+# Use Xcode Instruments for detailed trace
+```
+
+---
+
+## Frame Rate
+
+### Targets
+
+| Context | Target | Minimum |
+|---------|--------|---------|
+| Scrolling | 60 fps | 55 fps |
+| Animations | 60 fps | 55 fps |
+| ProMotion devices (120Hz) | 120 fps | 90 fps |
+| Complex lists (100+ items) | 60 fps | 55 fps |
+
+### Frame Budget
+
+- [ ] 16.67ms per frame at 60fps (16ms at 60fps is acceptable)
+- [ ] 8.33ms per frame at 120fps
+- [ ] No frame drops during scroll (jank-free)
+- [ ] Animations use native drivers (not JS thread) where possible
+
+### Profiling Tools
+
+| Platform | Tool | Use Case |
+|----------|------|----------|
+| iOS | Instruments (Time Profiler, Core Animation) | CPU, GPU, frame drops |
+| iOS | Xcode Debug Navigator | Real-time FPS |
+| Android | Android Studio Profiler | CPU, memory, frame timeline |
+| Android | Perfetto | System-wide trace |
+| React Native | Flipper, React DevTools | JS thread, bridge |
+| Flutter | DevTools Performance | Frame rendering |
+
+### Jank Prevention
+
+- [ ] Avoid synchronous work on main/UI thread > 16ms
+- [ ] Use virtualization for lists > 50 items
+- [ ] Offload image decoding to background
+- [ ] Prefer CSS/GPU animations over JS-driven
+- [ ] Profile before and after changes that affect scroll
+
+---
+
+## Memory Budgets
+
+### Per-Process Limits (Approximate)
+
+| Platform | Typical Limit | Low-End Devices |
+|----------|---------------|-----------------|
+| iOS | 1-2 GB | 512 MB |
+| Android | 256-512 MB (varies) | 128 MB |
+
+### Budget Guidelines
+
+| Resource | Budget | Action when exceeded |
+|----------|--------|---------------------|
+| App heap | 150 MB (baseline) | Profile and reduce |
+| Image cache | 50 MB | LRU eviction |
+| Offline data | 100 MB | User-configurable; warn |
+| Total memory | 200 MB (target) | Investigate leaks |
+
+### Memory Checklist
+
+- [ ] No retain cycles (use weak references for delegates/closures)
+- [ ] Large objects released when not needed (images, caches)
+- [ ] Memory warnings handled (iOS: didReceiveMemoryWarning; Android: onTrimMemory)
+- [ ] Leak detection run in CI or pre-release (Xcode Leaks, LeakCanary)
+- [ ] Profile on device, not just simulator
+
+### Leak Detection
+
+```kotlin
+// Android: LeakCanary
+dependencies {
+  debugImplementation 'com.squareup.leakcanary:leakcanary-android:2.12'
+}
+```
+
+```swift
+// iOS: Enable Malloc Stack Logging in scheme
+// Run with Instruments Leaks template
+```
+
+---
+
+## Battery Consumption
+
+### Targets
+
+| Scenario | Target | Measurement |
+|----------|--------|-------------|
+| Idle (background) | < 1% per hour | Xcode Energy Log, Android Battery Historian |
+| Active use (1 hr) | < 15% drain | Same |
+| Background fetch | Minimal; batch work | Limit frequency |
+
+### Optimization Checklist
+
+- [ ] Reduce wake locks; release as soon as work done
+- [ ] Batch network requests; avoid frequent polling
+- [ ] Use background task APIs correctly (iOS BGAppRefresh, Android WorkManager)
+- [ ] Avoid unnecessary location updates (use significant change when possible)
+- [ ] Profile with Energy Log (iOS) and Battery Historian (Android)
+- [ ] Disable debug logging and analytics verbosity in release
+
+### Network Efficiency
+
+- [ ] Compress requests (gzip, Brotli)
+- [ ] Use delta sync instead of full fetch when possible
+- [ ] Cache responses; respect cache headers
+- [ ] Prefer HTTP/2 or HTTP/3 for multiplexing
+- [ ] Avoid large payloads; paginate lists
+- [ ] Use CDN for static assets
+
+---
+
+## Network Efficiency
+
+### Request Budgets
+
+| Request Type | Target Latency | Max Payload |
+|--------------|----------------|-------------|
+| API call | < 500ms | 100 KB |
+| List fetch | < 1s | 200 KB (paginated) |
+| Image load | < 2s | Per-image budget |
+| Initial data | < 2s | 500 KB total |
+
+### Best Practices
+
+- [ ] Request only needed fields (GraphQL, sparse fieldsets)
+- [ ] Use pagination (limit 20-50 per page)
+- [ ] Implement request deduplication
+- [ ] Cancel in-flight requests when view dismissed
+- [ ] Use connection pooling; reuse connections
+
+---
+
+## Profiling Workflow
+
+### Pre-Release Checklist
+
+- [ ] Cold start measured on minimum supported OS version
+- [ ] Scroll performance tested with 100+ items
+- [ ] Memory profiled for 10+ minutes of typical use
+- [ ] No leaks detected
+- [ ] Battery impact estimated (or measured) for key flows
+- [ ] Profile on low-end device (e.g., older iPhone, budget Android)
+
+### CI Integration
+
+- [ ] Startup time regression test (fail if > 20% increase)
+- [ ] Bundle size budget (fail if exceeded)
+- [ ] Static analysis for obvious performance anti-patterns
+- [ ] Manual profiling required for major releases
+
+---
+
+## Checklist Summary
+
+| Area | Target |
+|------|--------|
+| Cold start | < 2.5s |
+| Frame rate | 60 fps (120 on ProMotion) |
+| Memory | < 200 MB baseline |
+| Battery | < 1%/hr idle |
+| Network | < 500ms API, paginated lists |
+| Profiling | Before every release |

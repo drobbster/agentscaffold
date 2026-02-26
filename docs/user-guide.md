@@ -1,0 +1,760 @@
+# User Guide: Working with an AI Agent Using AgentScaffold
+
+This guide documents proven interaction patterns for human-AI collaboration using the AgentScaffold framework. These patterns were extracted from hundreds of real implementation sessions and represent the most effective ways to communicate with your AI coding agent.
+
+## The Canonical Session Flow
+
+Every plan implementation session follows a predictable arc. Learning this arc makes your sessions faster and more consistent.
+
+```
+Open -> Assess -> Branch -> Review -> Gaps Sweep -> Execute -> Steer -> Close Out -> Commit
+```
+
+Each phase has specific trigger phrases and expectations. The sections below detail each one.
+
+But first -- if you don't have any plans yet because you're starting a brand new project, read the Greenfield Onboarding section below.
+
+---
+
+## Greenfield Onboarding: Starting from Scratch
+
+Not every project starts with a clear architecture. If you just ran `scaffold init` and are staring at blank templates, this section walks you through using your AI agent to discover your system design, define your architecture layers, and create your first plans.
+
+### Step 1: Describe Your Vision
+
+Open your IDE with the agent and describe what you want to build in plain language. Don't worry about architecture layers, module boundaries, or technical specifics yet. Focus on the *what* and the *why*.
+
+```
+I want to build a personal finance dashboard that aggregates
+data from multiple bank accounts, categorizes transactions,
+and shows spending trends over time. Eventually I want to add
+budget alerts and maybe a mobile app.
+```
+
+Or more technically:
+
+```
+I'm building an internal tool that ingests sensor data from
+IoT devices, runs anomaly detection, and sends alerts to a
+Slack channel. We have about 200 devices sending data every
+30 seconds.
+```
+
+The agent will ask clarifying questions about scale, users, data sources, and constraints. Answer honestly -- including "I don't know yet."
+
+### Step 2: Architecture Discovery Session
+
+Once the agent understands your vision, ask it to help define the architecture:
+
+```
+based on what I've described, help me define my system
+architecture layers. what would a clean separation of concerns
+look like for this project?
+```
+
+The agent will propose layers based on your domain. For example, a typical web application might get:
+
+| Layer | Purpose |
+|-------|---------|
+| Layer 1: Data Ingestion | External APIs, data feeds, storage |
+| Layer 2: Business Logic | Rules, calculations, domain models |
+| Layer 3: Presentation | UI, API endpoints, notifications |
+
+A more complex system might need 4-6 layers. The right number depends on your project's complexity and your team's experience. There is no universally correct answer.
+
+**Key questions to ask during this conversation:**
+
+```
+is this too many layers for the scope of this project?
+```
+
+```
+what would happen if we combined layers 2 and 3?
+```
+
+```
+where does authentication fit in this model?
+```
+
+```
+what are the interfaces between these layers? what data
+flows between them?
+```
+
+### Step 3: Fill In the System Architecture Document
+
+Once you agree on layers, ask the agent to populate the generated template:
+
+```
+lets fill in the system architecture document with the layers
+we just discussed. for each layer, describe the current state
+as "not started" and list the components we identified.
+```
+
+The system architecture document lives at `docs/ai/system_architecture.md`. It was generated with blank layer stubs when you ran `scaffold init`. Now you're filling it in with real content.
+
+If you chose 3 layers during init but your discovery session produced 5, update `scaffold.yaml` and regenerate:
+
+```bash
+# Edit scaffold.yaml: change architecture_layers from 3 to 5
+scaffold agents generate
+```
+
+### Step 4: Create a Product Vision and Roadmap
+
+Before diving into plans, establish the big picture:
+
+```
+based on our architecture discussion, help me create a product
+vision document. what are the key milestones to get from zero
+to a working MVP?
+```
+
+The agent will draft content for `docs/ai/product_vision.md` and `docs/ai/strategy_roadmap.md`. These become the strategic guardrails for all future plans.
+
+### Step 5: Create Your First Plans
+
+Now you're ready to create plans. Start with the foundation:
+
+```
+what should our first 3-5 plans be to get the foundation
+layers working? lets start with the most critical path.
+```
+
+For each plan the agent suggests:
+
+```bash
+scaffold plan create setup-database --type feature
+scaffold plan create data-ingestion-pipeline --type feature
+scaffold plan create core-domain-models --type feature
+```
+
+Then review and implement each one using the canonical session flow described in the rest of this guide.
+
+### Step 6: Iterate on the Architecture
+
+Your initial architecture is a hypothesis. As you implement plans, you'll discover things that don't fit. This is expected and healthy.
+
+**When something doesn't fit:**
+
+```
+this component doesn't seem to belong in layer 2. it feels
+more like a cross-cutting concern. should we restructure?
+```
+
+**When you need a new layer:**
+
+```
+we keep adding things to layer 3 that don't really belong
+together. should we split it into two layers?
+```
+
+**When a layer is overkill:**
+
+```
+layer 4 only has one component and it's trivial. should we
+merge it into layer 3?
+```
+
+The agent will propose changes. If they affect the architecture document, the agent should add an entry to `docs/ai/architectural_design_changelog.md` and ask for your approval before modifying the architecture.
+
+### Quick Start Paths
+
+Depending on your project type, here are suggested starting configurations:
+
+| Project Type | Layers | Domain Pack | Rigor | First Plans |
+|-------------|--------|-------------|-------|-------------|
+| Simple web app | 3 | webapp | minimal | DB setup, API routes, UI shell |
+| Data pipeline | 3-4 | data-engineering | standard | Ingestion, transforms, storage, scheduling |
+| ML/AI project | 4-5 | mlops | standard | Data prep, training pipeline, evaluation, serving |
+| Trading system | 5-6 | trading | strict | Market data, strategy engine, risk, backtesting, execution |
+| API service | 3 | api-services | standard | Schema design, core endpoints, auth |
+| Mobile app | 3-4 | mobile | standard | Data layer, business logic, UI components |
+| Side project / prototype | 2-3 | (none) | minimal | Core feature, basic UI |
+
+These are starting points, not prescriptions. Your agent will help you adjust as the project evolves.
+
+### Common Onboarding Mistakes
+
+**Trying to define everything upfront.** You don't need a perfect architecture before writing code. Start with 3 layers and let them evolve. The framework's changelog and retrospective system is designed to track architectural evolution.
+
+**Choosing too many layers for a simple project.** A personal blog doesn't need 6 layers. If your project is small, 2-3 layers is fine. You can always add more later.
+
+**Skipping the architecture document.** Even for prototypes, a lightweight architecture document prevents the agent from making contradictory design decisions across sessions. It takes 10 minutes and saves hours.
+
+**Not installing a domain pack.** Domain packs add review prompts that catch domain-specific mistakes. A `webapp` pack catches accessibility and performance issues. A `data-engineering` pack catches schema evolution risks. Pick the one closest to your project even if it's not a perfect fit.
+
+---
+
+## Phase 1: Opening a Session
+
+### Pattern: Plan Pull-Up with Protocol Reference
+
+The most effective way to start an implementation session is to name the plan and invoke the collaboration protocol in a single sentence. This tells the agent exactly what to do: read the plan, check its status, verify dependencies, and begin the review sequence.
+
+**Examples:**
+
+```
+lets bring up plan 015 and review it following the collaboration protocol
+```
+
+```
+lets review plan 042 using the collab protocols
+```
+
+```
+prepare to implement plan 008 following the collab protocols,
+and create a new feature branch for it
+```
+
+**When to use:** Start of every plan implementation session.
+
+**What the agent does:** Reads the plan file, checks workflow_state.md for blockers, verifies dependencies are complete, then begins pre-implementation reviews.
+
+### Pattern: Status Inquiry Opener
+
+When resuming a session or checking where things stand, open with a targeted status question.
+
+**Examples:**
+
+```
+plan 089 phase 9 is incomplete yes?
+```
+
+```
+where are we on plan 110?
+```
+
+```
+I want to work on plan 118, but I am working on plan 108 with
+a different agent. Can we keep our work separate?
+```
+
+### Pattern: Operational Triage Opener
+
+Not all sessions are about plan implementation. When something is broken or you need to investigate an issue, open directly with the problem.
+
+**Examples:**
+
+```
+it looks like our infrastructure is down. will you redeploy it
+```
+
+```
+I need a complete review of what plans remain and what's in our backlog
+```
+
+### Pattern: Handoff Summary Opener
+
+When resuming work from a previous session (especially if background processes are running), provide a structured handoff.
+
+**Example:**
+
+```
+Handoff Summary:
+- Current State: Active flow running on PID 10099
+- Last completed: Steps 1-14 of Plan 120
+- Known issues: CI timeout on integration tests
+- Next steps: Complete Step 15 (model evaluation), then run retro
+```
+
+**When to use:** When starting a new chat session that continues work from a prior session. Especially important when background jobs (training, pipelines) are running.
+
+---
+
+## Phase 2: Staleness Assessment
+
+Plans can go stale if they were written weeks ago and the codebase has changed. Always check.
+
+**Examples:**
+
+```
+assess this plan to see if it needs to be revised due to all
+our system architectural changes
+```
+
+```
+please read the system architecture doc to see if we need to
+add anything to this plan after gathering context from that doc
+```
+
+```
+check the date of its creation to see if it needs to be
+refactored for architectural changes
+```
+
+**When to use:** Any time you are picking up a plan that was written more than a week ago, or after significant architectural work has been completed.
+
+---
+
+## Phase 3: Branch Management
+
+Be explicit about branch state. The agent needs to know where it is in the git tree.
+
+**Examples:**
+
+```
+create a new branch for this work. we are on staging and its up to date
+```
+
+```
+also create a feature branch for this work. we are on staging
+and its up to date. then proceed
+```
+
+```
+can we change the name of the branch to 119-dirichlet-policy-optimization
+since it was improperly named
+```
+
+**Key pattern:** Always state your current branch and whether it is up to date. This prevents the agent from making assumptions about git state.
+
+---
+
+## Phase 4: Pre-Implementation Reviews
+
+The collaboration protocol triggers three reviews before execution: devil's advocate, expansion, and (if a domain pack is installed) a domain-specific review. Sometimes the agent tries to skip these.
+
+### Enforcing Reviews
+
+If the agent jumps ahead to implementation, pull it back:
+
+```
+hold on. we have to do the pre-reviews
+```
+
+```
+pre reviews first.
+```
+
+```
+you normally share all three reviews with me, and we confirm
+the additional todos. why did you change your approach?
+```
+
+### Engaging with Review Findings
+
+Don't just rubber-stamp reviews. Probe the findings:
+
+```
+talk to me about the alternative approaches
+```
+
+```
+lets discuss these. I'm not sure if I agree.
+```
+
+```
+I approve. but explain to me what ADX 20-25 is?
+```
+
+**Tip:** Ask "why" questions during reviews. This is where you catch design mistakes before they become code.
+
+---
+
+## Phase 5: The Gaps Sweep
+
+This is the most distinctive and important pattern. After the agent delivers its reviews, demand a comprehensive sweep across all concern categories. Do not skip this step -- it consistently catches issues that individual reviews miss.
+
+### The Formula
+
+Use a comprehensive list of concern categories:
+
+```
+make sure we have ALL gaps, mitigations, future regret items,
+silent failure modes, edge cases, error conditions, config gaps,
+monitoring gaps, integration gaps, security gaps, interface
+consumer items, state synchronization issues, failure modes,
+and data corruption mitigations. EVERYTHING.
+```
+
+### Variations
+
+```
+rereview all three reviews for all gaps, mitigations,
+recommendations, error conditions, edge cases, future regret
+items, and update your todo list accordingly
+```
+
+```
+circle back to the reviews and make sure we have all gaps,
+mitigations, future regret items, silent failure modes, edge
+cases, error conditions, etc.
+```
+
+### The Compound Gaps Directive
+
+The most effective version combines the gaps sweep with plan updates and execution approval:
+
+```
+rereview the 3 reviews. make sure all gaps, mitigations and
+recommendations are added to your todo list. including future
+regret solutions, silent failures, integration gaps, edge cases
+and errors, config gaps, monitoring and observability
+recommendations. EVERYTHING. document the reviews in the plan
+appendix, and proceed.
+```
+
+**Why this works:** The agent's initial reviews are good but not exhaustive. The gaps sweep forces a second pass that catches cross-cutting concerns the individual reviews missed. The word "EVERYTHING" signals to the agent that this is not a cursory re-check.
+
+---
+
+## Phase 6: Execution Triggers
+
+After reviews are accepted and the plan is updated, trigger implementation with short, decisive phrases.
+
+**Examples:**
+
+```
+ok proceed
+```
+
+```
+begin implementation
+```
+
+```
+build!
+```
+
+```
+ok begin implementation following the collab protocol
+```
+
+```
+yes please apply now, then begin implementation
+```
+
+For multi-phase plans, explicitly manage phase transitions:
+
+```
+proceed with step 2 when complete
+```
+
+```
+is phase A complete then? do we move on to phase B?
+```
+
+```
+yes continue with phase 4
+```
+
+---
+
+## Phase 7: Steering During Execution
+
+Execution is not hands-off. Actively steer the agent with domain knowledge, quality challenges, and boundary enforcement.
+
+### Domain Knowledge Injection
+
+Provide context the agent cannot know from the codebase alone:
+
+```
+we have data already backfilled from databento
+```
+
+```
+All production data should be coming from the feast feature store
+```
+
+```
+we are only paying for options data from polygon
+```
+
+```
+oh wait the market isn't open
+```
+
+### Quality Challenges
+
+Challenge the agent when something looks wrong:
+
+```
+are you sure you are following the same implementation pattern?
+```
+
+```
+no I want you to check your code, and make sure it follows the
+same design pattern as the others. they are currently running
+and I don't want you to mess it up
+```
+
+```
+I want complete work not lightweight
+```
+
+```
+why is this called phase6_meta.yaml? phase 6 seems inappropriate
+```
+
+### Boundary Enforcement
+
+Set hard limits when the agent oversteps:
+
+```
+hold on you cant push without my permission
+```
+
+```
+hey! you are not to change the system architecture document
+```
+
+```
+we are not executing any plans now. only revising them
+```
+
+```
+dont commit changes yet
+```
+
+### Wiring Verification
+
+The most important validation question during execution:
+
+```
+did you stub anything out or is everything wired up?
+```
+
+```
+please double check everything is wired up correctly
+```
+
+```
+did you run them? is everything wired up?
+```
+
+### Test Verification
+
+Probe whether real tests were run, not just written:
+
+```
+have you run integration tests and/or e2e tests on these new features?
+```
+
+```
+did you run any integration tests? with real data?
+```
+
+```
+yes. but first did you double check if everything is wired up
+correctly? integration or smoke tests?
+```
+
+---
+
+## Phase 8: The Close-Out Sequence
+
+After implementation is complete, run a multi-step close-out. This is highly formulaic and should be followed every time.
+
+### Trigger the Post-Implementation Review and Retrospective
+
+```
+ok lets do the post implementation review and retro
+```
+
+```
+can we do the post implementation review and the retro per the
+collab protocols
+```
+
+### The Full Close-Out Directive
+
+The most effective close-out combines everything in one message:
+
+```
+lets do the post implementation review and retro. add them to
+the plan appendix. add learnings from the retro to the learnings
+tracker. add any backlog items to the backlog. update workflow
+state and plan completion log.
+```
+
+### State Management Checklist
+
+After the retro, verify all state files are updated:
+
+```
+please update the status of this plan in the workflow state,
+plan completion log, and changelog if necessary
+```
+
+```
+did you move completed backlog items to the backlog archive?
+```
+
+```
+is all the documentation updated?
+```
+
+---
+
+## Phase 9: Commit and Housekeeping
+
+Short, directive commit requests:
+
+```
+lets commit all this work
+```
+
+```
+commit all changes
+```
+
+```
+please commit your changes if you haven't already
+```
+
+Combine with housekeeping:
+
+```
+move completed backlog items to the backlog archive, and commit changes
+```
+
+---
+
+## Additional Patterns
+
+### Deep Questioning
+
+Don't hesitate to ask the agent to explain concepts or design decisions:
+
+```
+what will this plan provide us in terms of data? also what is CUSIP?
+```
+
+```
+doesn't the RL agent use the strategies? Am I not understanding
+the way the system works?
+```
+
+```
+what does a best in class trading system architecture look like
+and how does it compare to what we currently have?
+```
+
+**When to use:** Whenever you don't fully understand a design choice or domain concept. The agent should explain, not just build.
+
+### Error and Incident Handling
+
+Report errors with specific output and challenge assumptions:
+
+```
+I ran [command] and am seeing many failures in the terminal.
+is that ok?
+```
+
+```
+that command you gave me doesn't work. can you investigate?
+```
+
+```
+hold on... when the pipeline runs daily, it can't be pulling
+90 days because that would violate the 1 month historical limit
+```
+
+### Side Quests and Returns
+
+Sometimes you need to investigate something tangential. Be explicit about diverging and returning:
+
+```
+sure lets check the training code to see what triggers promotion
+to the model registry. but don't take action.
+```
+
+Then later:
+
+```
+excellent. thank you. now lets return to the plan and run our
+post implementation review and retro
+```
+
+### Process Improvement
+
+When you notice the framework itself could be better, capture it immediately:
+
+```
+why didn't you catch these gaps when implementing the plan? what
+didn't we do well? is there something we can change in our
+planning process to mitigate these issues on future plans?
+```
+
+```
+can we update the collab protocol to make sure before we begin
+implementing a new plan we review the system architecture doc
+```
+
+```
+lets review the learnings tracker to see what hasn't been
+evaluated for continuous process improvement
+```
+
+### Backlog Management
+
+Actively manage backlog items during and between sessions:
+
+```
+tell me about these backlog items. are any of them blocked?
+which ones can be done now?
+```
+
+```
+can we do B-049-9, B-049-10, B-049-11, and B-049-12 right now
+and update the status for them in the backlog
+```
+
+```
+great. lets do B-139-2 and B-141-M7 now. And mark B-139-3 complete.
+```
+
+### Study and Experiment Management
+
+When implementation reveals the need for empirical validation:
+
+```
+once you're done implementing this plan, lets discuss the
+functionality enhancements and whether or not we need to set up a study
+```
+
+```
+lets also create another study to explore this approach
+```
+
+```
+the flow has completed. lets review the findings
+```
+
+---
+
+## Anti-Patterns to Avoid
+
+Based on observed sessions, these patterns lead to poor outcomes:
+
+**Letting the agent skip pre-reviews.** The agent sometimes tries to jump straight to implementation. Always enforce: "pre reviews first."
+
+**Accepting reviews without reading them.** The reviews exist to catch problems. Probe the findings, ask about alternatives, challenge assumptions.
+
+**Skipping the gaps sweep.** Individual reviews catch most issues. The gaps sweep catches the rest. It consistently finds 3-5 additional items per plan.
+
+**Not verifying wiring.** Ask "is everything wired up?" before moving to tests. Stubs and incomplete integrations are the most common source of post-implementation bugs.
+
+**Not providing git context.** Always tell the agent which branch you are on and whether it is up to date. The agent cannot safely create branches without this information.
+
+**Skipping the close-out.** The retrospective and state updates are not optional. They are how the framework learns and improves. Every session that skips the retro loses learnings.
+
+---
+
+## Quick Reference: Key Phrases
+
+| Phase | Phrase | What It Does |
+|-------|--------|-------------|
+| Open | "lets review plan X following the collab protocols" | Starts full review sequence |
+| Branch | "create a new branch. we are on staging and its up to date" | Sets git context |
+| Enforce | "pre reviews first" | Stops agent from skipping reviews |
+| Gaps | "make sure we have ALL gaps, mitigations, future regrets... EVERYTHING" | Triggers comprehensive second pass |
+| Execute | "proceed" / "begin implementation" / "build!" | Green-lights coding |
+| Validate | "is everything wired up?" | Catches stubs and missing integrations |
+| Test | "did you run integration tests? with real data?" | Catches untested code |
+| Boundary | "you cant push without my permission" | Enforces safety boundaries |
+| Close-out | "post implementation review and retro" | Triggers full close-out |
+| State | "update workflow state, plan completion log, and changelog" | Ensures all state files are current |
+| Commit | "commit all changes" | Triggers git commit |
+| Housekeep | "move completed backlog items to the backlog archive" | Keeps backlog clean |

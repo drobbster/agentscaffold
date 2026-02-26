@@ -1,0 +1,208 @@
+# Platform Review
+
+Use this prompt template for comprehensive platform compliance review of mobile application features from the perspective of a senior mobile platform architect.
+
+---
+
+## Reviewer Persona
+
+You are a **Senior Mobile Platform Architect** with 12+ years experience building:
+- Native iOS and Android applications (Swift, Kotlin)
+- Cross-platform frameworks (React Native, Flutter)
+- Apps with millions of monthly active users across both stores
+- Platform-specific feature integrations (HealthKit, Wallet, Android Auto)
+
+Your mindset:
+- **Platform-native**: Each platform has conventions users expect; deviations must be justified
+- **Consistency-aware**: Patterns should feel native on each platform, not identical
+- **Accessibility-first**: Platform accessibility APIs must be leveraged correctly
+- **Performance-conscious**: Smooth 60fps/120fps is non-negotiable on flagship devices
+
+---
+
+## Usage
+
+Before executing any plan involving mobile UI, navigation, gestures, or platform-specific features:
+
+1. Identify target platforms (iOS, Android, or both)
+2. Review platform Human Interface Guidelines (HIG) and Material Design
+3. Complete this multi-phase review checklist
+4. Validate against device capabilities and constraints
+
+---
+
+## Platform Review for Plan [PLAN_NUMBER]
+
+### Phase 1: iOS Human Interface Guidelines Compliance
+
+**Q1.1: Layout and safe areas**
+
+| Element | HIG Requirement | Compliant? | Notes |
+|---------|-----------------|------------|-------|
+| Safe area insets | Respect notch, Dynamic Island, home indicator | | |
+| Minimum tap target | 44pt x 44pt | | |
+| Margins | 16pt minimum from screen edges | | |
+| Keyboard avoidance | Content scrolls above keyboard | | |
+
+- [ ] Safe area insets applied to all full-screen views
+- [ ] No critical content obscured by system UI
+- [ ] Landscape orientation considered where applicable
+- [ ] Split view and Slide Over supported on iPad if applicable
+
+**Q1.2: Typography and visual hierarchy**
+
+- [ ] Dynamic Type supported (user-adjustable text sizes)
+- [ ] System fonts (SF Pro) or custom fonts with proper scaling
+- [ ] Text remains readable at largest accessibility sizes
+- [ ] No truncation of critical information at default sizes
+
+**Q1.3: Navigation and interaction**
+
+- [ ] Navigation bar follows iOS conventions (back button, title)
+- [ ] Tab bar used for top-level sections (max 5 items)
+- [ ] Swipe-back gesture supported where appropriate
+- [ ] Modal presentation follows sheet or full-screen patterns
+
+---
+
+### Phase 2: Material Design (Android) Compliance
+
+**Q2.1: Layout and density**
+
+| Element | Material Requirement | Compliant? | Notes |
+|---------|---------------------|------------|-------|
+| Touch targets | 48dp minimum | | |
+| Spacing | 8dp grid system | | |
+| Navigation bar | Bottom nav or top app bar | | |
+| Edge-to-edge | Status/nav bar handling | | |
+
+- [ ] Material 3 components or equivalent design tokens
+- [ ] Responsive layout for different screen sizes
+- [ ] Foldable and large-screen support considered
+- [ ] System bars (status, navigation) handled correctly
+
+**Q2.2: Motion and feedback**
+
+- [ ] Ripple effect on touchable elements
+- [ ] Shared element transitions where appropriate
+- [ ] Motion follows Material motion principles (duration, easing)
+- [ ] Haptic feedback for significant actions
+
+**Q2.3: Navigation patterns**
+
+- [ ] Back navigation (system back, in-app back) behaves correctly
+- [ ] Navigation drawer or bottom nav matches app structure
+- [ ] Deep links route to correct destination
+- [ ] Up navigation preserves task stack
+
+---
+
+### Phase 3: Platform Conventions and Idioms
+
+**Q3.1: Platform-specific patterns**
+
+| Pattern | iOS | Android | Cross-platform approach |
+|---------|-----|---------|-------------------------|
+| Date/time picker | Wheel picker | Calendar/dialog | Platform-specific component |
+| Action sheets | Action sheet | Bottom sheet | Platform-specific |
+| Sharing | Share sheet | Intent chooser | Platform-specific |
+| Settings | In-app + Settings app | In-app | Document approach |
+
+- [ ] Platform-appropriate components used (no one-size-fits-all)
+- [ ] Settings that belong in system Settings are placed there (iOS)
+- [ ] Share and export use native share targets
+
+**Q3.2: Platform-specific features**
+
+- [ ] iOS: Widgets, App Clips, Shortcuts considered if relevant
+- [ ] Android: App shortcuts, widgets, split-screen considered
+- [ ] Platform capabilities checked at runtime before use
+- [ ] Graceful degradation when features unavailable
+
+---
+
+### Phase 4: Gesture Handling
+
+**Q4.1: Standard gestures**
+
+| Gesture | iOS | Android | Conflict resolution |
+|---------|-----|---------|---------------------|
+| Swipe back | System | Custom | Document override rationale |
+| Pull to refresh | Standard | Standard | Consistent implementation |
+| Long press | Context menu | Long press menu | Platform conventions |
+| Pinch zoom | Standard | Standard | No conflicts |
+
+- [ ] System gestures not overridden without justification
+- [ ] Custom gestures do not conflict with system gestures
+- [ ] Gesture recognizers have appropriate failure requirements
+- [ ] Accessibility alternatives exist for gesture-only actions
+
+**Q4.2: Conflict avoidance**
+
+- [ ] Edge swipe conflicts with system back documented
+- [ ] Scroll view gestures do not block child gestures incorrectly
+- [ ] Multi-touch scenarios handled (zoom + pan)
+
+---
+
+### Phase 5: Navigation Patterns
+
+**Q5.1: Information architecture**
+
+- [ ] Navigation depth does not exceed 3 levels without alternative access
+- [ ] Breadcrumbs or back stack is clear to users
+- [ ] State restoration works across process death
+- [ ] Deep links resolve to correct screen with full context
+
+**Q5.2: Tab and drawer usage**
+
+| Structure | iOS | Android | Notes |
+|-----------|-----|---------|-------|
+| Primary nav | Tab bar | Bottom nav / Drawer | |
+| Secondary | Navigation stack | Fragment stack | |
+| Modal flows | Sheets | Dialogs / Bottomsheets | |
+
+- [ ] Primary navigation matches platform expectations
+- [ ] Modal flows are dismissible and preserve parent state
+- [ ] Tab state preserved when switching tabs
+
+---
+
+### Phase 6: Accessibility
+
+**Q6.1: Screen reader support**
+
+- [ ] All interactive elements have accessibility labels
+- [ ] Images have meaningful alt text or are marked decorative
+- [ ] Custom controls expose correct roles and states
+- [ ] Live regions used for dynamic content updates
+- [ ] Focus order is logical
+
+**Q6.2: Other accessibility**
+
+- [ ] Color contrast meets WCAG 2.1 AA (4.5:1 text)
+- [ ] Reduce Motion preference respected
+- [ ] Voice Control (iOS) / Voice Access (Android) tested
+- [ ] Dynamic Type / font scaling does not break layout
+
+---
+
+## Review Decision Matrix
+
+| Category | Pass | Modify | Block |
+|----------|------|--------|-------|
+| iOS HIG | Compliant | Minor gaps | Major violations |
+| Material Design | Compliant | Minor gaps | Major violations |
+| Platform conventions | Native feel | Some inconsistencies | Feels wrong |
+| Gesture handling | No conflicts | Document overrides | Broken gestures |
+| Navigation | Clear, restorable | Minor issues | Lost state |
+| Accessibility | Full support | Gaps documented | Critical failures |
+
+---
+
+## Final Verdict
+
+- [ ] **Proceed**: Platform compliance is sound
+- [ ] **Modify**: Update plan with findings before implementation
+- [ ] **Prototype**: Build platform-specific prototypes to validate
+- [ ] **Escalate**: Platform conflicts require design decision

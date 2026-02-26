@@ -1,0 +1,246 @@
+# Random Seed Management Standards
+
+This document defines standards for seed management across libraries, reproducibility verification, and multi-library consistency in computational research.
+
+---
+
+## Core Principle: All Randomness Must Be Controllable
+
+Every source of randomness in the pipeline -- from data shuffling to weight initialization to dropout -- must be seeded from a single, recorded master seed. Running the same code with the same seed must produce the same results (within documented tolerance).
+
+---
+
+## Master Seed Protocol
+
+### Single Entry Point
+
+```python
+import os
+import random
+
+import numpy as np
+
+MASTER_SEED = int(os.environ.get("EXPERIMENT_SEED", "42"))
+
+
+def seed_everything(seed: int = MASTER_SEED) -> None:
+    """Seed all random number generators from a single master seed."""
+    random.seed(seed)
+    np.random.seed(seed)
+
+    try:
+        import torch
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    except ImportError:
+        pass
+
+    try:
+        import tensorflow as tf
+        tf.random.set_seed(seed)
+    except ImportError:
+        pass
+
+    os.environ["PYTHONHASHSEED"] = str(seed)
+```
+
+### Seed Rules
+
+- [ ] Master seed is set once at program start, before any random operation
+- [ ] Master seed is recorded in experiment metadata and results
+- [ ] Derived seeds (for different components) are computed deterministically from master seed
+- [ ] Seed is passed via environment variable or config file (not hard-coded)
+
+---
+
+## Per-Library Seeding
+
+### Library Coverage Matrix
+
+| Library | Seeding Method | Deterministic? | Notes |
+|---------|---------------|----------------|-------|
+| Python `random` | `random.seed(s)` | Yes | Also seeds `os.urandom` via `PYTHONHASHSEED` |
+| NumPy (legacy) | `np.random.seed(s)` | Yes | Global state, not recommended for new code |
+| NumPy (new) | `np.random.default_rng(s)` | Yes | Preferred: explicit Generator instances |
+| PyTorch CPU | `torch.manual_seed(s)` | Yes | |
+| PyTorch CUDA | `torch.cuda.manual_seed_all(s)` | Partial | Some ops are non-deterministic |
+| cuDNN | `torch.backends.cudnn.deterministic = True` | Yes | Performance penalty (10-20%) |
+| TensorFlow | `tf.random.set_seed(s)` | Partial | Op-level seeds may be needed |
+| JAX | `jax.random.PRNGKey(s)` | Yes | Functional design, no global state |
+| Scikit-learn | `random_state=s` parameter | Yes | Must pass to every estimator |
+| Python hash | `PYTHONHASHSEED=s` | Yes | Affects dict/set ordering |
+
+### Library-Specific Notes
+
+**NumPy**: Prefer `np.random.default_rng(seed)` over `np.random.seed()`. The Generator API avoids global state and is thread-safe.
+
+```python
+rng = np.random.default_rng(seed=MASTER_SEED)
+shuffled = rng.permutation(data)
+sample = rng.normal(0, 1, size=(100,))
+```
+
+**PyTorch CUDA**: Some operations (e.g., atomicAdd in scatter/gather) are inherently non-deterministic on GPU. Enable the deterministic flag and use `torch.use_deterministic_algorithms(True)` for maximum reproducibility.
+
+```python
+torch.use_deterministic_algorithms(True)
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+```
+
+**Scikit-learn**: Pass `random_state` to every estimator and splitter.
+
+```python
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+
+X_train, X_test = train_test_split(X, random_state=MASTER_SEED)
+model = RandomForestClassifier(random_state=MASTER_SEED)
+```
+
+---
+
+## Derived Seed Generation
+
+When different components need independent but reproducible random streams, derive seeds deterministically from the master seed.
+
+### Method: Hash-Based Derivation
+
+```python
+import hashlib
+import struct
+
+
+def derive_seed(master_seed: int, component: str) -> int:
+    """Derive a component-specific seed from the master seed."""
+    payload = f"{master_seed}:{component}".encode()
+    digest = hashlib.sha256(payload).digest()
+    return struct.unpack(">I", digest[:4])[0]
+
+
+data_seed = derive_seed(MASTER_SEED, "data_split")
+model_seed = derive_seed(MASTER_SEED, "model_init")
+augmentation_seed = derive_seed(MASTER_SEED, "augmentation")
+```
+
+### Derivation Rules
+
+- [ ] Each component (data loading, model init, augmentation) gets a unique derived seed
+- [ ] Derivation function is deterministic and documented
+- [ ] Derived seeds are logged alongside the master seed
+- [ ] Adding a new component does not change existing components' seeds
+
+---
+
+## Multi-Run Experiments
+
+### Seed Strategy for Multiple Runs
+
+| Strategy | Implementation | Trade-off |
+|----------|---------------|-----------|
+| Sequential | Seeds: 0, 1, 2, ..., N-1 | Simple but correlated for small N |
+| Hash-derived | `derive_seed(master, f"run_{i}")` | Independent, deterministic |
+| Pre-generated | Fixed list in config file | Most transparent |
+
+### Reporting Requirements
+
+For experiments with multiple runs:
+
+```yaml
+experiment:
+  master_seed: 42
+  num_runs: 30
+  seed_strategy: "hash_derived"
+  seeds_used: [42, 1847293, 9182736, ...]  # or derivation formula
+results:
+  metric_mean: 0.847
+  metric_std: 0.012
+  metric_min: 0.821
+  metric_max: 0.869
+```
+
+- [ ] Number of runs is justified (power analysis or convention)
+- [ ] All seeds are recorded (not just the master seed)
+- [ ] Mean, std, min, max, and median are reported
+- [ ] Individual run results are available (not just aggregates)
+
+---
+
+## Non-Determinism Documentation
+
+### Known Sources of Non-Determinism
+
+| Source | Controllable? | Mitigation |
+|--------|--------------|------------|
+| GPU atomicAdd (scatter, gather) | Partial | `torch.use_deterministic_algorithms(True)` |
+| cuDNN autotuner | Yes | `cudnn.benchmark = False` |
+| Multi-threaded data loading | Yes | `num_workers=0` or worker seeds |
+| Hash table ordering (Python < 3.7) | Yes | `PYTHONHASHSEED` |
+| Floating-point reduction order | Partial | Fixed reduction order, double precision |
+| OS-level thread scheduling | No | Document, accept small variance |
+| Network non-determinism (distributed) | Partial | Deterministic collectives |
+
+### Tolerance Documentation
+
+When perfect determinism is not achievable:
+
+```yaml
+reproducibility:
+  deterministic: false
+  tolerance:
+    metric: "accuracy"
+    max_deviation: 0.001  # 0.1%
+    observed_deviation: 0.0003
+  non_deterministic_sources:
+    - "GPU atomicAdd in attention layer"
+    - "cuBLAS workspace randomness"
+  mitigation: "Results averaged over 30 runs"
+```
+
+---
+
+## Verification Protocol
+
+### Reproducibility Test
+
+Run this verification before claiming reproducibility:
+
+1. Run experiment with seed S on machine A, record result R1
+2. Run experiment with seed S on machine A again, record result R2
+3. Verify R1 == R2 (bitwise or within tolerance)
+4. If possible: run on machine B with seed S, record R3
+5. Document R1 vs R3 deviation (cross-machine reproducibility)
+
+### Automated Verification
+
+```python
+def verify_reproducibility(run_fn, seed, n_checks=3, tolerance=1e-6):
+    """Verify that a function produces consistent results with the same seed."""
+    results = []
+    for _ in range(n_checks):
+        seed_everything(seed)
+        result = run_fn()
+        results.append(result)
+
+    for i in range(1, len(results)):
+        deviation = abs(results[i] - results[0])
+        assert deviation <= tolerance, (
+            f"Non-deterministic: run 0 = {results[0]}, "
+            f"run {i} = {results[i]}, deviation = {deviation}"
+        )
+    return results[0]
+```
+
+---
+
+## Checklist
+
+- [ ] Master seed is configurable (env var or config file)
+- [ ] All libraries are seeded from master seed
+- [ ] `PYTHONHASHSEED` is set
+- [ ] GPU determinism flags are enabled (if using GPU)
+- [ ] Derived seeds are used for component independence
+- [ ] Seeds are recorded in experiment output
+- [ ] Reproducibility verification has been run
+- [ ] Non-deterministic sources are documented with tolerance

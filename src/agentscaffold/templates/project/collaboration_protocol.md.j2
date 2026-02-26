@@ -1,0 +1,48 @@
+# Collaboration Protocol
+
+This document defines the structured approach for human-AI collaboration.
+
+---
+
+## Session Types
+
+| Type | Trigger | Process | Outputs |
+|------|---------|---------|---------|
+| Plan Review | Plan file created with all sections | Critique and expand plan; identify gaps | Updated plan, identified gaps |
+| Spike Session | High uncertainty or unvalidated assumptions | Time-boxed prototype (2-4 hrs); document findings | Spike findings, decision |
+| Execution Session | Plan approved and ready | Implement plan steps; check off as completed | Code, tests, updated checklist |
+| Retrospective | Plan execution complete | What worked, what was harder, discoveries, follow-ups | Retrospective notes, backlog items |
+
+### Plan Review
+
+- **Trigger**: Plan file created with all required sections
+- **Process**: Devil's advocate review, expansion review, dependency verification
+- **Outputs**: Updated plan, interface contracts for exports
+
+### Spike Session
+
+- **Trigger**: Plan has high uncertainty; critical assumptions unvalidated
+- **Process**: Time-box to 2-4 hours; prototype; document findings and decision
+- **Outputs**: Spike document, decision (proceed/pivot/defer)
+
+### Execution Session
+
+- **Trigger**: Plan approved; dependencies ready; no blockers
+- **Process**: Follow execution steps in order; run validation; update checklist
+- **Outputs**: Code, tests, updated plan, runbook if user-facing
+
+### Retrospective
+
+- **Trigger**: Plan execution complete
+- **Process**: What worked, what was harder, discoveries, actionable follow-ups
+- **Outputs**: Retrospective notes, learnings to tracker, backlog items
+
+---
+
+## Prompt Templates
+
+Reference prompt templates for each session type:
+
+- Plan critique: `docs/ai/prompts/plan_critique.md`
+- Plan expansion: `docs/ai/prompts/plan_expansion.md`
+- Retrospective: `docs/ai/prompts/retrospective.md`

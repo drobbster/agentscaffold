@@ -1,0 +1,164 @@
+# Versioning Strategy Standards
+
+This document defines standards for API versioning. Choose a strategy and apply it consistently across all endpoints.
+
+---
+
+## URL Path Versioning
+
+Version in the path: `/v1/orders`, `/v2/orders`
+
+### Pros
+
+- Explicit and visible
+- Easy to route at load balancer or gateway
+- Cache keys naturally include version
+- Simple for clients to understand
+
+### Cons
+
+- URL changes on version bump
+- Can lead to path proliferation if many versions
+
+### Example
+
+```
+GET /v1/orders
+GET /v1/orders/{id}
+GET /v2/orders          # New version, different contract
+GET /v2/orders/{id}
+```
+
+### When to Use
+
+- Public APIs with multiple consumer segments
+- When you need clear routing and caching by version
+- When URL stability is less critical than clarity
+
+---
+
+## Header Versioning
+
+Version in Accept or custom header: `Accept: application/vnd.api+json;version=2`
+
+### Pros
+
+- URL stays stable
+- Content negotiation aligns with HTTP
+- Multiple versions can share same path
+
+### Cons
+
+- Clients must set header (easy to forget)
+- Caching is trickier (Vary: Accept)
+- Less visible in logs and debugging
+
+### Example
+
+```http
+GET /orders
+Accept: application/vnd.example.orders+json;version=2
+```
+
+### Custom Version Header
+
+```http
+GET /orders
+X-API-Version: 2
+```
+
+- Document default when header omitted (e.g., latest or v1)
+- Use consistent header name across all endpoints
+
+---
+
+## Content Negotiation (Accept Header)
+
+Use media type for version and format:
+
+```
+Accept: application/vnd.example.v1+json
+Accept: application/vnd.example.v2+json
+```
+
+### Format
+
+```
+application/vnd.{vendor}.{resource}.v{version}+{format}
+```
+
+### Example
+
+```
+application/vnd.example.orders.v1+json
+application/vnd.example.orders.v2+json
+```
+
+---
+
+## Version Lifecycle
+
+### Stages
+
+| Stage | Description |
+|-------|-------------|
+| Current | Actively maintained, recommended for new integrations |
+| Supported | Maintained for compatibility, no new features |
+| Deprecated | Sunset date set, migration encouraged |
+| Retired | No longer available, returns 410 Gone |
+
+### Transitions
+
+```
+Current -> Supported (when newer version released)
+Supported -> Deprecated (when sunset planned)
+Deprecated -> Retired (at sunset date)
+```
+
+### Deprecation Timeline
+
+| API Type | Minimum Deprecation Window |
+|----------|----------------------------|
+| External, public | 12 months |
+| External, partner | 6 months |
+| Internal | 3 months |
+
+---
+
+## Default Version Behavior
+
+When client does not specify version:
+
+| Strategy | Behavior |
+|----------|----------|
+| Latest | Use newest stable version (can break clients on deploy) |
+| Oldest | Use oldest supported version (safe, may miss features) |
+| Explicit required | Return 400 if no version (forces client to choose) |
+
+**Recommendation**: Default to oldest supported (e.g., v1) for stability. Document that clients should explicitly request newer versions.
+
+---
+
+## Implementation Checklist
+
+When implementing versioning:
+
+- [ ] Choose strategy (URL path, header, or content negotiation)
+- [ ] Apply consistently to all endpoints
+- [ ] Document default version behavior
+- [ ] Define deprecation and sunset process
+- [ ] Include version in OpenAPI spec (e.g., path or servers)
+- [ ] Add Sunset/Deprecation headers for deprecated versions
+- [ ] Maintain changelog with version history
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|--------------|--------------|-------------------|
+| No versioning | Breaking changes break all clients | Version from day one |
+| Mixed strategies | Confusing for consumers | Pick one, use everywhere |
+| Version in query only | Cache fragmentation, easy to omit | Prefer path or header |
+| Too many versions | Maintenance burden | Deprecate and retire old versions |
+| Default to latest | Deploy can break clients | Default to stable, require opt-in |

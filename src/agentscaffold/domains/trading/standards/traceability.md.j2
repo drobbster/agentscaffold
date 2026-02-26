@@ -1,0 +1,222 @@
+# Traceability Standards
+
+## Purpose
+
+This standard ensures all trading decisions can be traced from signal generation through execution to outcome. This enables:
+1. **Educational Explanations**: Participants understand WHY trades were made
+2. **Debugging**: Trace issues across module boundaries
+3. **Compliance**: Audit trail for regulatory requirements
+4. **Analysis**: Query historical decisions for pattern analysis
+
+---
+
+## Decision Lifecycle
+
+Every trading decision flows through these stages:
+
+```
+SIGNAL          RISK            ORDER           FILL            OUTCOME
+  |               |               |               |               |
+  v               v               v               v               v
++--------+    +--------+    +--------+    +--------+    +--------+
+| Signal |    | Risk   |    | Order  |    | Fill   |    | Outcome|
+| Event  |--->| Event  |--->| Event  |--->| Event  |--->| Event  |
++--------+    +--------+    +--------+    +--------+    +--------+
+     |             |             |             |             |
+     +-------------+-------------+-------------+-------------+
+                              |
+                        decision_id
+                    (correlation identifier)
+```
+
+---
+
+## Decision ID
+
+### Format
+
+```
+dec_{timestamp}_{uuid8}
+
+Example: dec_20250101143052_a1b2c3d4
+```
+
+### Generation
+
+```python
+import uuid
+from datetime import datetime
+
+def generate_decision_id() -> str:
+    """Generate unique decision correlation ID."""
+    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    short_uuid = uuid.uuid4().hex[:8]
+    return f"dec_{timestamp}_{short_uuid}"
+```
+
+### Propagation Rules
+
+| Stage | Responsibility |
+|-------|---------------|
+| Signal Generation | CREATE decision_id |
+| Risk Evaluation | RECEIVE and PROPAGATE decision_id |
+| Order Submission | RECEIVE and PROPAGATE decision_id |
+| Order Fill | RECEIVE and PROPAGATE decision_id |
+| Outcome Recording | RECEIVE and CLOSE decision_id |
+
+**Rule**: Once created, decision_id must be passed to ALL downstream operations.
+
+---
+
+## Required Events
+
+### 1. Signal Event (REQUIRED)
+
+Emitted when a strategy generates a trading signal.
+
+```python
+decision_id: str        # Generated here
+event_type: "signal"
+timestamp: datetime     # UTC
+symbol: str
+strategy: str
+signal_value: int       # -1, 0, 1
+signal_strength: float  # 0.0 - 1.0
+rationale: str          # Human-readable explanation
+indicators: dict        # Key indicator values
+parameters: dict        # Strategy parameters used
+```
+
+### 2. Risk Event (REQUIRED if signal != 0)
+
+Emitted when risk management evaluates a signal.
+
+```python
+decision_id: str        # Received from signal
+event_type: "risk"
+timestamp: datetime
+symbol: str
+approved: bool
+requested_size: float
+approved_size: float
+risk_checks: dict       # Individual rule results
+sizing_rationale: str   # Why this size
+```
+
+### 3. Order Event (REQUIRED if approved)
+
+Emitted when an order is submitted to broker.
+
+```python
+decision_id: str        # Received from risk
+event_type: "order"
+timestamp: datetime
+symbol: str
+order_id: str           # Broker order ID
+side: str               # "buy" or "sell"
+quantity: float
+order_type: str         # "market", "limit", etc.
+expected_price: float   # Price at submission
+```
+
+### 4. Fill Event (REQUIRED if order fills)
+
+Emitted when an order is filled (partial or complete).
+
+```python
+decision_id: str        # Received from order
+event_type: "fill"
+timestamp: datetime
+symbol: str
+order_id: str
+fill_price: float
+fill_quantity: float
+slippage_bps: float     # Basis points vs expected
+latency_ms: int         # Submit to fill
+```
+
+### 5. Outcome Event (REQUIRED when position closed)
+
+Emitted when a position is closed and outcome is known.
+
+```python
+decision_id: str        # Original decision
+event_type: "outcome"
+timestamp: datetime
+symbol: str
+entry_price: float
+exit_price: float
+return_pct: float
+holding_days: int
+lesson: str             # Key takeaway
+exit_reason: str        # Why position was closed
+```
+
+---
+
+## Module Requirements
+
+### Strategies Module
+
+**MUST:**
+- Generate decision_id for every signal != 0
+- Include rationale explaining why signal was generated
+- Include indicator values that influenced the decision
+- Include strategy parameters used
+
+### Risk Module
+
+**MUST:**
+- Accept decision_id from strategy
+- Pass decision_id to execution
+- Include all risk checks evaluated
+- Explain sizing rationale
+
+### Execution Module
+
+**MUST:**
+- Accept decision_id from risk
+- Include decision_id in order metadata
+- Capture slippage and latency
+- Link fills back to decision_id
+
+### Backtesting Module
+
+**MUST:**
+- Generate decision_id for simulated trades
+- Emit same events as live trading
+- Include backtest_id as additional context
+
+---
+
+## Implementation Checklist
+
+When implementing a module that participates in trading decisions:
+
+- [ ] Accept `decision_id` parameter where applicable
+- [ ] Propagate `decision_id` to downstream calls
+- [ ] Emit appropriate decision events with required fields
+- [ ] Include educational fields (rationale, lesson)
+- [ ] Follow logging standards for structured output
+- [ ] Test that decision_id flows through correctly
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|--------------|--------------|------------------|
+| Creating new decision_id mid-chain | Breaks traceability | Always propagate original |
+| Omitting decision_id in logs | Can't correlate events | Always include decision_id |
+| Missing rationale field | Not educational | Always explain WHY |
+| Hardcoding decision_id | Not unique | Always generate fresh |
+| Logging decision_id as debug only | Lost in production | Always log at INFO |
+
+---
+
+## Compliance Notes
+
+- Decision events with financial details must follow PII/masking rules in logging standards
+- Decision chains must be retained per compliance requirements
+- Immutable audit logging required for all decision events
+- decision_id must be included in broker order metadata where supported

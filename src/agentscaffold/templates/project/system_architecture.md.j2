@@ -1,0 +1,61 @@
+# System Architecture -- {{ project_name }}
+
+**Version**: 1.0
+**Last Updated**: {{ date }}
+
+---
+
+## Purpose
+
+This document defines the canonical system architecture. Every future plan, feature, and refactor MUST align with this {{ architecture_layers }}-layer framework.
+
+---
+
+## Design Principles
+
+1. Each layer consumes the output of the layer above and adds value, not noise.
+2. Clear separation of concerns between layers.
+3. Dependencies flow downward; no circular dependencies.
+4. Interfaces between layers are explicitly defined and versioned.
+5. Cross-cutting concerns (logging, config, security) are addressed consistently.
+6. Architecture supports incremental evolution without breaking existing functionality.
+
+---
+
+## Layer Framework
+
+{% for i in range(1, architecture_layers + 1) %}
+## Layer {{ i }}: [Name]
+
+### Current State
+
+[Describe current implementation status]
+
+### Components
+
+| Component | Status | Plan(s) | Notes |
+|-----------|--------|---------|-------|
+|           |        |         |       |
+
+### Plan Mappings
+
+| Plan | Description | Status |
+|------|-------------|--------|
+|      |             |        |
+
+### Gaps
+
+[Document known gaps or future work]
+
+{% endfor %}
+
+---
+
+## Cross-Cutting Concerns
+
+| Concern | Approach |
+|---------|----------|
+| Logging | [Define logging standards] |
+| Configuration | [Define config approach] |
+| Error Handling | [Define error handling] |
+| Security | [Define security approach] |

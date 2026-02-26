@@ -1,0 +1,121 @@
+# Experiment Tracking Standards
+
+This document defines standards for tracking ML experiments to ensure reproducibility and comparability.
+
+---
+
+## Experiment Naming Convention
+
+```
+{project}/{model_type}/{experiment_name}_{YYYYMMDD}
+
+Example: fraud-detection/xgboost/feature_ablation_20260215
+```
+
+---
+
+## Required Metadata Per Run
+
+### Mandatory Fields
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| run_name | Human-readable name | "baseline_xgb_v2" |
+| experiment_name | Parent experiment | "fraud_detection_q1" |
+| model_type | Algorithm family | "xgboost", "lstm", "random_forest" |
+| data_version | Hash or version of training data | "v2.3" or "sha256:abc123" |
+| code_version | Git commit SHA | "a1b2c3d4" |
+| author | Who ran the experiment | "team-ml" |
+| hypothesis | What you expect to learn | "Adding feature X improves recall" |
+
+### Hyperparameters
+
+- [ ] All hyperparameters logged (including defaults)
+- [ ] Search space documented if HPO was used
+- [ ] Best hyperparameters highlighted
+- [ ] Random seed logged
+
+### Metrics
+
+- [ ] Primary metric logged at each epoch/iteration
+- [ ] Validation metrics logged separately from training metrics
+- [ ] Final test set metrics logged once (not used for selection)
+- [ ] Confusion matrix or classification report logged as artifact
+
+```python
+import mlflow
+
+with mlflow.start_run(run_name="baseline_xgb_v2"):
+    mlflow.log_params({
+        "model_type": "xgboost",
+        "learning_rate": 0.1,
+        "max_depth": 6,
+        "n_estimators": 100,
+        "data_version": data_hash,
+        "random_seed": 42,
+    })
+
+    mlflow.log_metrics({
+        "train_auc": train_auc,
+        "val_auc": val_auc,
+        "val_precision": val_precision,
+        "val_recall": val_recall,
+    })
+
+    mlflow.log_artifact("confusion_matrix.png")
+    mlflow.log_artifact("feature_importance.json")
+```
+
+---
+
+## Artifact Management
+
+### Required Artifacts
+
+| Artifact | Format | When to Log |
+|----------|--------|-------------|
+| Model binary | pickle, ONNX, SavedModel | Every run |
+| Feature importance | JSON or CSV | Every run |
+| Confusion matrix | PNG or JSON | Classification tasks |
+| Learning curves | PNG | Training runs |
+| Data sample | Parquet (100 rows) | Feature engineering experiments |
+| Config file | YAML | Every run |
+
+### Artifact Naming
+
+```
+{run_id}/
+  model/           # Serialized model
+  metrics/          # Metric plots and CSVs
+  artifacts/        # Additional artifacts
+  config.yaml       # Full configuration
+```
+
+---
+
+## Comparison and Analysis
+
+### Before Starting a New Experiment
+
+1. Query existing runs for the same experiment name
+2. Identify the current best run
+3. Document why a new approach is needed
+
+### After Completing an Experiment
+
+1. Compare against baseline run
+2. Log comparison metrics (delta from baseline)
+3. Document whether the hypothesis was supported or refuted
+4. Update the experiment README with findings
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|--------------|--------------|------------------|
+| No run name | Can't find results later | Always name runs descriptively |
+| Missing data version | Can't reproduce | Hash or version all datasets |
+| Test set used for selection | Overfitting to test set | Use validation set for selection |
+| No hypothesis documented | Aimless experimentation | State hypothesis before running |
+| Logging only final metrics | Can't debug training | Log per-epoch metrics |

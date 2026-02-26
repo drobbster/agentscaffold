@@ -1,0 +1,173 @@
+# Experiment Protocol Standards
+
+This document defines standards for designing and executing experiments: pre-registration, blinding, randomization, outcome measures, and reporting.
+
+---
+
+## Core Principle: Design Before You Measure
+
+Every experiment must have a written protocol before data collection begins. Post-hoc analysis is permitted only when clearly labeled as exploratory.
+
+---
+
+## Pre-Registration
+
+### What to Pre-Register
+
+| Element | Required? | Example |
+|---------|-----------|---------|
+| Primary hypothesis | Yes | "Method A outperforms baseline on metric X" |
+| Primary outcome metric | Yes | "F1 score on held-out test set" |
+| Sample size / number of runs | Yes | "30 runs with different random seeds" |
+| Statistical test | Yes | "Paired t-test, alpha = 0.05" |
+| Exclusion criteria | Yes | "Runs that fail to converge within 100 epochs" |
+| Secondary hypotheses | Recommended | "Method A also improves metric Y" |
+| Analysis pipeline | Recommended | "Link to analysis script in repo" |
+
+### Pre-Registration Process
+
+1. Write the protocol document before running experiments
+2. Commit the protocol to version control with a dated tag
+3. Do not modify the protocol after data collection begins
+4. If protocol changes are necessary: document amendments with dates and rationale
+5. Analysis that deviates from protocol is labeled "exploratory" in results
+
+---
+
+## Experimental Design
+
+### Randomization
+
+| Design | When to Use | Implementation |
+|--------|-------------|---------------|
+| Simple random | Independent observations | `random.shuffle` with fixed seed |
+| Stratified random | Ensure balance across groups | Group by stratum, then randomize within |
+| Block random | Small sample sizes | Assign in blocks of size 2k |
+| Cross-validation | Limited data | k-fold with fixed seed |
+| Time-series split | Temporal data | Walk-forward, no future leakage |
+
+### Randomization Checklist
+
+- [ ] Randomization method is documented
+- [ ] Random seed is recorded
+- [ ] Balance across groups is verified post-randomization
+- [ ] No peeking at results before randomization is complete
+
+### Control Conditions
+
+Every experiment must include at least one control:
+
+| Control Type | Purpose | Example |
+|-------------|---------|---------|
+| Baseline (no treatment) | Establish expected performance | Random predictor, majority class |
+| Ablation (remove component) | Isolate contribution of each part | Model without feature X |
+| Oracle (upper bound) | Understand ceiling performance | Human performance, perfect information |
+| Prior work (reproduction) | Validate experimental setup | Re-implement published result |
+
+---
+
+## Blinding
+
+### Blinding Levels
+
+| Level | Description | When Required |
+|-------|-------------|---------------|
+| No blinding | Analyst knows conditions | Exploratory analysis |
+| Single blind | Analyst does not know which condition is "new" | Confirmatory results |
+| Double blind | Neither analyst nor data collector knows | Clinical / high-stakes |
+
+### Blinding in Computational Experiments
+
+- [ ] Analysis scripts process all conditions identically (no condition-specific code paths)
+- [ ] Results are reported for all conditions, not just favorable ones
+- [ ] Condition labels can be shuffled without changing the analysis pipeline
+- [ ] Hyperparameter tuning is applied equally to all conditions
+
+---
+
+## Outcome Measures
+
+### Primary vs. Secondary
+
+| Type | Definition | Handling |
+|------|-----------|----------|
+| Primary | The one metric that answers the hypothesis | Powers the study, corrected for multiplicity |
+| Secondary | Supporting metrics | Reported but not used for primary claim |
+| Exploratory | Interesting observations | Clearly labeled, no p-value claims |
+
+### Metric Selection Criteria
+
+- [ ] Metric is well-defined (unambiguous computation from data)
+- [ ] Metric is relevant to the real-world objective
+- [ ] Metric is sensitive to the expected effect (can detect the difference)
+- [ ] Metric is robust to outliers (or outlier handling is defined)
+- [ ] Metric has known behavior under the null hypothesis
+
+### Metric Reporting
+
+| Metric | Mean | Std Dev | Median | IQR | Min | Max | N |
+|--------|------|---------|--------|-----|-----|-----|---|
+| | | | | | | | |
+
+Always report: central tendency, dispersion, and sample size.
+
+---
+
+## Experiment Execution
+
+### Run Management
+
+| Requirement | Implementation |
+|-------------|---------------|
+| Each run has a unique ID | UUID or sequential with timestamp |
+| Run configuration is logged | Config file hash + seed |
+| Run environment is captured | `pip freeze`, hostname, GPU model |
+| Run is recoverable from logs | Can reconstruct exact execution |
+| Failed runs are documented | Reason for failure, not silently dropped |
+
+### Execution Checklist
+
+- [ ] Protocol document is committed and tagged before first run
+- [ ] All runs use the same code version (git SHA recorded)
+- [ ] Runs are independent (no shared state between runs)
+- [ ] Failed runs are counted and reported (not silently excluded)
+- [ ] Wall-clock time is recorded for each run (for cost estimation)
+
+---
+
+## Reporting Standards
+
+### Minimum Reporting Requirements
+
+For every claimed result:
+
+1. **What**: Exact metric value with uncertainty (mean +/- std, or CI)
+2. **How**: Statistical test used, test statistic, p-value, effect size
+3. **Why**: Interpretation in context of the hypothesis
+4. **With what**: Exact code version, data version, environment
+5. **How many**: Sample size, number of runs, exclusions
+
+### Negative Results
+
+- [ ] Negative results (hypothesis not supported) are reported
+- [ ] Non-significant differences are reported with effect size and CI
+- [ ] Power analysis for non-significant results (was the study powered to detect the expected effect?)
+
+### Figures and Tables
+
+- [ ] Every figure is generated from a script (not manually created)
+- [ ] Error bars or shaded regions show uncertainty (not just mean)
+- [ ] Axes are labeled with units
+- [ ] Legends are clear and complete
+- [ ] Significance annotations use exact p-values (not just asterisks)
+
+---
+
+## Verification Checklist
+
+- [ ] Protocol was written before data collection
+- [ ] All pre-registered analyses were performed
+- [ ] Exploratory analyses are clearly labeled
+- [ ] All runs (including failures) are accounted for
+- [ ] Results include effect size and confidence intervals
+- [ ] Code and data are available for independent reproduction

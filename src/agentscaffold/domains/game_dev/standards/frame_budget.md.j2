@@ -1,0 +1,149 @@
+# Frame Budget Standards
+
+This document defines frame time budgets, profiling methodology, and optimization priorities for real-time games.
+
+---
+
+## Budget Definition
+
+### 60 FPS Target
+
+| Platform | Target FPS | Budget (ms) | Notes |
+|----------|------------|-------------|-------|
+| PC (high) | 60 | 16.67 | Primary target |
+| PC (low) | 30 | 33.33 | Minimum spec |
+| Console | 60 | 16.67 | Locked or variable |
+| Mobile | 30 | 33.33 | Battery, thermal |
+
+### Budget Allocation (16.67ms @ 60fps)
+
+| Category | Allocation | Notes |
+|----------|------------|-------|
+| Game logic | 4-6 ms | AI, physics, input |
+| Rendering (CPU) | 2-4 ms | Culling, batching, submit |
+| Rendering (GPU) | 6-10 ms | Draw, post-process |
+| Audio | 0.5-1 ms | Mixing, spatial |
+| Overhead | 1-2 ms | OS, driver, buffer swap |
+
+---
+
+## Profiling Methodology
+
+### Tools
+
+| Tool | Use For | Platform |
+|------|---------|----------|
+| RenderDoc | GPU capture, draw calls | PC |
+| PIX | Full frame analysis | Xbox, PC |
+| Xcode Instruments | CPU, GPU, memory | iOS, Mac |
+| Android GPU Inspector | GPU, memory | Android |
+| Custom in-game | Real-time overlay | All |
+
+### Profiling Process
+
+1. **Establish baseline**: Profile representative scene at target settings
+2. **Identify bottleneck**: CPU vs GPU, which system
+3. **Measure before/after**: Every optimization must show numbers
+4. **Profile on target hardware**: Dev machines often faster than min spec
+
+### Key Metrics
+
+| Metric | What to Measure | Target |
+|--------|-----------------|--------|
+| Frame time | P50, P95, P99 | P99 under budget |
+| Frame variance | Std dev of frame time | Low (consistent) |
+| GPU utilization | % of frame in GPU | Match CPU (balanced) |
+| Draw calls | Per frame | Platform-dependent |
+| Triangles | Per frame | Platform-dependent |
+
+---
+
+## Optimization Priorities
+
+### When Over Budget
+
+1. **Identify**: Is it CPU or GPU bound?
+2. **Locate**: Which system or draw call?
+3. **Quantify**: How much over? (e.g., 22ms = 6ms over)
+4. **Prioritize**: Biggest impact, lowest effort first
+
+### Priority Matrix
+
+| Impact | Effort | Do First |
+|--------|--------|----------|
+| High | Low | Yes |
+| High | High | Plan |
+| Low | Low | Quick wins |
+| Low | High | Defer |
+
+### Common Optimizations
+
+| Bottleneck | Optimization | Typical Gain |
+|------------|--------------|--------------|
+| Draw calls | Batching, instancing | 20-50% |
+| Overdraw | Culling, LOD | 10-30% |
+| CPU logic | Cache, parallelize | 10-40% |
+| Allocations | Pooling, avoid in loop | Eliminate GC spikes |
+| Shader cost | Simplify, LOD | 10-30% |
+
+---
+
+## GPU vs CPU Bound
+
+### Identification
+
+- **CPU bound**: GPU idle while CPU works; GPU utilization low
+- **GPU bound**: CPU waits for GPU; GPU utilization high
+- **Balanced**: Both finish near same time
+
+### Actions by Bottleneck
+
+| Bound | Actions |
+|-------|---------|
+| CPU | Reduce draw calls, simplify logic, parallelize systems, reduce allocations |
+| GPU | Reduce pixel cost, simplify shaders, lower resolution, reduce overdraw |
+| Balanced | Optimize both; maintain balance |
+
+### Measurement
+
+```
+Frame timeline:
+[====CPU====][==GPU==]     -> CPU bound (GPU waits)
+[==CPU==][========GPU========] -> GPU bound (CPU waits)
+[===CPU===][===GPU===]    -> Balanced
+```
+
+---
+
+## Frame Pacing
+
+### V-Sync
+
+- [ ] V-sync on for shipping (no tearing)
+- [ ] Triple buffering if double-buffer causes stutter
+- [ ] Allow disable for benchmarking (uncapped)
+
+### Variable Refresh (G-Sync, FreeSync)
+
+- [ ] Support when available
+- [ ] Frame rate can vary; budget still applies to average
+- [ ] Avoid sudden large frame time jumps
+
+### Frame Pacing Checklist
+
+- [ ] No frame time spikes from loading or GC
+- [ ] Consistent frame times preferred over high average
+- [ ] Input latency considered (vsync adds ~1 frame)
+- [ ] Frame rate limiter option for power saving (e.g., 30fps cap on mobile)
+
+---
+
+## Checklist
+
+- [ ] Frame budget defined per platform
+- [ ] Budget allocation documented
+- [ ] Profiling tools and process established
+- [ ] CPU vs GPU bound identified
+- [ ] Optimization priorities by impact/effort
+- [ ] Frame pacing and vsync strategy defined
+- [ ] P99 frame time under budget

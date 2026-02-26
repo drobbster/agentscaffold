@@ -1,0 +1,149 @@
+# {{ plan_title | default('<PLAN_TITLE>') }}
+
+## 0. Metadata
+- Plan: {{ plan_number | default('TBD') }}
+- Issue: #TBD (issue tracker reference, if applicable)
+- Branch: feature/TBD or bugfix/TBD
+- Author: TBD
+- Reviewers: TBD (for critical changes)
+- Approval Required: No | Yes (see Approval Gates)
+{% if config.gates.review_to_ready.security_review %}- Security Review: None | Partial | Full (see Security Review criteria below)
+{% endif %}- Architecture Layer(s): TBD ({{ architecture_layers | default('Define layers in scaffold.yaml') }})
+- Superseded By: None | Plan XXX (if this plan's work was done elsewhere)
+
+<!-- SUPERSESSION NOTE:
+If this plan has been superseded by another plan, add "## STATUS: SUPERSEDED" header
+at the top of the file and update the "Superseded By" field above.
+Include a disposition table showing where each component moved.
+-->
+
+{% if architecture_layers %}<!-- ARCHITECTURE LAYER GUIDANCE (see {{ config.paths.architecture_doc | default('docs/ai/system_architecture.md') }}):
+{% for layer in config.architecture.layers %}- {{ layer.id }}-{{ layer.name }}: {{ layer.description }}
+{% endfor %}
+CRITICAL: Components MUST consume output from their upstream layer, not bypass
+intermediate layers. This is a hard architectural constraint.
+-->
+{% endif %}
+{% if config.gates.review_to_ready.security_review %}<!-- SECURITY REVIEW GUIDANCE:
+- Full: Required for {{ config.security.full_review_triggers | default('external API integrations, authentication, secrets handling') }}
+- Partial: Required for {{ config.security.partial_review_triggers | default('data storage, new persistence layers, internal service boundaries') }}
+- None: Internal refactors, documentation, UI-only changes
+
+If Full or Partial, create/update threat model in {{ config.paths.security_dir | default('docs/security/') }}
+-->
+{% endif %}
+
+## 1. Objective
+What does success mean? Be specific and testable.
+
+## 2. Non-Goals
+What is explicitly out of scope?
+
+## 3. Constraints / Invariants
+- Must not break:
+- Backward compatibility:
+- Performance constraints:
+- Security constraints:
+- Data integrity constraints:
+- Breaking change: No | Yes (if yes, see Breaking Changes protocol)
+
+{% if config.guidance_sections is defined %}{% for section in config.guidance_sections %}<!-- {{ section.name | upper }} GUIDANCE (delete if not applicable):
+{{ section.description }}
+-->
+
+{% endfor %}{% endif %}
+## 4. Current State
+Brief, factual description of how things work today.
+
+{% if config.plan.require_data_source_analysis %}<!-- DATA SOURCE ANALYSIS (Required when plan consumes upstream data):
+
+If this plan reads data produced by another module, verify the data contract BEFORE
+writing implementation code. Plans that skip this step risk mid-implementation
+pivots when fields are missing or at the wrong granularity.
+
+For each upstream data source this plan consumes:
+1. **Source**: What module/function produces this data?
+2. **Fields available**: List actual fields. Which are Optional/nullable? Which are always populated?
+3. **Granularity**: Is the data at the right level for your use case?
+4. **Sample validation**: Run a real data sample early (not just mocks). Verify:
+   - Data exists in the expected location
+   - Field types match expectations
+   - Row counts are reasonable for the intended analysis
+5. **Gaps identified**: Document any missing fields, format mismatches, or
+   granularity issues. These become plan constraints or prerequisites.
+-->
+{% endif %}
+
+## 5. Target State
+Description of desired behavior after changes.
+
+## 6. File Impact Map
+| File | Change Type | Notes |
+|-----|------------|-------|
+| TBD | TBD | TBD |
+
+{% if config.plan.require_consumer_audit %}<!-- CONSUMER AUDIT (Mandatory when adding/modifying config classes or interfaces):
+Run `{{ config.search_command | default('rg "ClassName(" --type py') }}` for EVERY config class
+or interface being modified. Add ALL instantiation points to the table above -- not
+just the files you plan to change.
+
+Trace each new parameter from entry point to every consumer. If any consumer is
+missing from this map, the plan has a wiring gap that will cause a silent bug.
+-->
+{% endif %}
+
+## 7. Tests
+| Test File | Coverage Target | Notes |
+|-----------|-----------------|-------|
+| {{ config.paths.test_dir | default('tests') }}/test_TBD.py | TBD | TBD |
+
+Test approach:
+- [ ] Unit tests for core logic
+- [ ] Integration tests (if applicable)
+- [ ] Edge cases: TBD
+
+## 8. Execution Steps
+
+**Note**: If this plan creates a new interface contract, follow contract-first development:
+1. Create the interface contract FIRST ({{ config.paths.contracts_dir | default('docs/ai/contracts/') }})
+2. Run integration verification to validate contract structure
+3. THEN implement code to match the contract
+
+{% if config.plan.require_consumer_audit %}**Note**: If this plan modifies config classes or interfaces, the Consumer Audit
+step below is mandatory.
+
+- [ ] Step 0: Consumer Audit (if modifying config/interfaces)
+  - Run `{{ config.search_command | default('rg "ClassName(" --type py') }}` for each modified class
+  - Verify ALL instantiation points are in the File Impact Map
+  - Trace each new parameter from entry point through every consumer
+  - Add missing files to File Impact Map before proceeding
+{% endif %}- [ ] Step 1: Create interface contract (if applicable)
+- [ ] Step 2: Write tests for TBD
+- [ ] Step 3: Implement TBD
+- [ ] Step 4: Verify tests pass
+
+## 9. Validation
+```bash
+{{ config.validation.format_command | default('ruff format .') }}
+{{ config.validation.lint_command | default('ruff check .') }}
+{{ config.validation.test_command | default('pytest -q') }}
+```
+
+Expected results:
+- Lint: no errors
+- Tests: all tests pass
+
+## 10. Rollback Plan
+How to safely revert if validation fails (e.g., git revert).
+
+## 11. Risks & Mitigations
+Known risks and how they are mitigated.
+
+## 12. Completion Checklist
+- [ ] All execution steps checked off
+- [ ] Tests written and passing
+- [ ] No linter errors
+- [ ] {{ config.paths.workflow_state | default('workflow_state.md') }} updated
+- [ ] Session log entry added (if multi-session)
+- [ ] Code reviewed (self or peer)
+- [ ] Approval obtained (if required)

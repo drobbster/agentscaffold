@@ -1,0 +1,180 @@
+# Game Loop Review
+
+Use this prompt template to systematically review game loop architecture, timing models, input handling, and simulation consistency.
+
+---
+
+## Reviewer Persona
+
+You are a **Senior Game Engine Architect** with 10+ years experience building real-time interactive systems. You have deep expertise in fixed vs variable timestep, deterministic simulation, replay systems, and cross-platform frame pacing.
+
+---
+
+## Usage
+
+Before implementing or refactoring core game loop logic:
+
+1. Read the existing game loop implementation (or design document)
+2. Complete each phase of this review
+3. Document findings and remediation actions
+
+---
+
+## Game Loop Review for Plan [PLAN_NUMBER]
+
+### Phase 1: Timestep Model
+
+**Q1.1: Fixed vs Variable Timestep**
+
+| Aspect | Current Approach | Recommendation | Risk if Wrong |
+|--------|------------------|----------------|---------------|
+| Physics step | Fixed / Variable / Hybrid | Fixed for determinism | Physics instability, tunneling |
+| Render interpolation | Yes / No | Yes for smooth visuals | Jitter, stutter |
+| Delta time usage | | Never feed raw delta to physics | Non-determinism, platform variance |
+| Max delta cap | | Cap at 2-3x target frame time | Spiral of death, large jumps |
+
+**Q1.2: Frame rate independence**
+
+- [ ] Game logic advances by fixed timestep (e.g., 1/60 or 1/120)
+- [ ] Accumulator pattern used for sub-frame physics steps
+- [ ] Render uses interpolation between physics states when applicable
+- [ ] No direct use of raw frame delta in simulation logic
+
+---
+
+### Phase 2: Input Handling
+
+**Q2.1: Input pipeline**
+
+| Concern | Current Handling | Best Practice | Gap |
+|---------|------------------|---------------|-----|
+| Input buffering | | Buffer before process | |
+| Input ordering | | Process in deterministic order | |
+| Replay compatibility | | Inputs serializable with frame index | |
+| Platform abstraction | | Unified API across platforms | |
+
+**Q2.2: Input timing**
+
+- [ ] Inputs are timestamped or frame-indexed for replay
+- [ ] Input processing occurs before simulation step
+- [ ] No input-dependent branching in physics (determinism)
+- [ ] Controller vs keyboard/mouse handled consistently
+
+---
+
+### Phase 3: Update and Render Separation
+
+**Q3.1: Loop structure**
+
+```
+Target structure: ProcessInput -> Update (fixed step) -> Render (interpolated)
+```
+
+| Stage | Runs At | Depends On | Notes |
+|-------|---------|------------|-------|
+| Input | Start of frame | OS/Window events | |
+| Update | Fixed interval | Previous state, inputs | |
+| Render | Display refresh | Interpolated state | |
+
+**Q3.2: Separation violations**
+
+- [ ] No simulation logic inside render path
+- [ ] No render calls inside simulation (except debug)
+- [ ] Clear boundary between update and render phases
+- [ ] Render can run at different rate than simulation
+
+---
+
+### Phase 4: Determinism and Reproducibility
+
+**Q4.1: Determinism requirements**
+
+| Component | Deterministic? | Required For | How Verified |
+|-----------|----------------|--------------|--------------|
+| Physics | | Replay, networking | |
+| AI | | Replay, testing | |
+| RNG | | Replay, testing | |
+| Collision | | Replay, networking | |
+
+**Q4.2: Non-determinism sources**
+
+- [ ] Floating point order of operations documented
+- [ ] No platform-specific math (use consistent libs)
+- [ ] Random number generator is seeded and reproducible
+- [ ] No unordered iteration over entities (use sorted IDs)
+- [ ] Timestamps from system clock isolated from simulation
+
+---
+
+### Phase 5: Simulation Consistency
+
+**Q5.1: State consistency**
+
+- [ ] Single authoritative state at end of each frame
+- [ ] No partial updates visible to other systems
+- [ ] Entity creation/destruction happens at frame boundaries
+- [ ] No read-during-write from other systems
+
+**Q5.2: Multi-threading considerations**
+
+| Thread | Responsibilities | Sync Points | Risk |
+|--------|------------------|-------------|------|
+| Main | Game loop, physics | | |
+| Render | Draw calls | After update complete | |
+| Audio | Playback | | |
+| Worker | Asset loading, etc. | Never in hot path | |
+
+---
+
+### Phase 6: Replay Support
+
+**Q6.1: Replay architecture**
+
+| Requirement | Implemented? | Approach |
+|-------------|--------------|----------|
+| Record inputs per frame | | |
+| Record initial state (seed) | | |
+| Deterministic replay from recording | | |
+| Fast-forward / rewind support | | |
+| Replay file format versioned | | |
+
+**Q6.2: Replay validation**
+
+- [ ] Same inputs + same seed produce identical outcome
+- [ ] Replay works across minor engine versions
+- [ ] Replay file size is bounded (inputs only, not full state dumps)
+
+---
+
+## Review Checklist
+
+Before finalizing:
+
+- [ ] Timestep model is appropriate for the game type
+- [ ] Input handling supports replay and determinism
+- [ ] Update and render are clearly separated
+- [ ] Determinism requirements are documented per system
+- [ ] Simulation state is consistent at frame boundaries
+- [ ] Replay support is designed (or explicitly deferred with rationale)
+
+---
+
+## Decision Matrix
+
+| Phase | Pass | Modify | Block |
+|-------|------|--------|-------|
+| Timestep model | Correct choice | Minor tuning | Wrong model for use case |
+| Input handling | Replay-ready | Gaps documented | Non-deterministic input |
+| Update/render | Clean separation | Coupling identified | Logic in wrong phase |
+| Determinism | All systems compliant | Some gaps | Critical non-determinism |
+| Simulation consistency | Single source of truth | Minor races | State corruption risk |
+| Replay support | Designed and tested | Partial | Required but missing |
+
+---
+
+## Output Deliverables
+
+1. **Findings**: Per-phase assessment with specific code references
+2. **Modifications**: List of changes required before proceeding
+3. **Blocking Issues**: Any items that must be resolved
+4. **Backlog Items**: Future improvements (e.g., rewind, network sync)

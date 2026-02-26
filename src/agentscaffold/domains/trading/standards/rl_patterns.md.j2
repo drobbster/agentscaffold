@@ -1,0 +1,209 @@
+# RL Patterns
+
+This document captures reinforcement learning-specific patterns and gotchas for trading systems. These patterns are critical for training/production parity.
+
+---
+
+## Environment Design
+
+### Observation Timing: Step END, Not START
+
+Observations are fetched at the END of `step()`, not the START. This means the agent makes decisions based on the previous step's state.
+
+```python
+# In step():
+# 1. Execute action based on PREVIOUS observation
+# 2. Update environment state
+# 3. Fetch NEW observation (this is what agent sees next)
+```
+
+**Risk**: If not understood, agents may seem to "lag" behind market conditions.
+
+### Safety Guardrails with allow_short=True
+
+When `allow_short=True`, a "force flat" action via SELL goes to SHORT, not FLAT. Consider explicit "force to cash" semantics for true risk-off.
+
+```python
+# If position is LONG and you want to force flat:
+# - SELL with allow_short=False -> FLAT (correct)
+# - SELL with allow_short=True -> SHORT (incorrect for risk-off)
+
+# For true risk-off behavior:
+if force_flat and allow_short:
+    target_position = 0  # Not just "sell"
+```
+
+### Fixed Observation Shape Computed at Init
+
+Fixed-shape observations require computing the dimension at initialization, not per-step. This prevents shape mismatch errors during training.
+
+```python
+# WRONG: Compute dimension per step
+def step(self, action):
+    obs = self._get_observation()  # Shape may vary
+    return obs, reward, done, truncated, info
+
+# RIGHT: Compute dimension at init, enforce at step
+def __init__(self, config):
+    self._obs_dim = self._compute_obs_dimension(config)
+    self.observation_space = spaces.Box(
+        low=-np.inf, high=np.inf, shape=(self._obs_dim,)
+    )
+```
+
+---
+
+## Exit Visibility Pattern
+
+Use a property (`last_exit_records`) to expose exit information to RL reward shaping, rather than changing the return type of `step()`.
+
+```python
+# WRONG: Change step() return type (breaks compatibility)
+def step(self, action):
+    return obs, reward, done, truncated, info, exit_records
+
+# RIGHT: Property for exit visibility
+def step(self, action):
+    self._last_exit_records = self._check_exits()
+    return obs, reward, done, truncated, info
+
+@property
+def last_exit_records(self):
+    return self._last_exit_records
+```
+
+---
+
+## Parity Tests
+
+Parity tests between backtester exit rules and the exit engine are critical for RL training. Agents must see identical behavior in training vs live execution.
+
+```python
+@pytest.mark.parametrize("scenario", PARITY_TEST_CASES)
+def test_backtester_matches_exit_engine(scenario):
+    bt_result = backtester.run(scenario)
+    engine_result = exit_engine.evaluate(scenario)
+    assert bt_result.exits == engine_result.exits
+```
+
+---
+
+## Package Dependencies
+
+### gymnasium (not gym)
+
+The `gymnasium` package is the maintained fork of OpenAI Gym. Always import from `gymnasium`.
+
+```python
+# WRONG: Legacy package
+import gym
+
+# RIGHT: Maintained fork
+import gymnasium as gym
+```
+
+### MaskablePPO Requires sb3-contrib
+
+`MaskablePPO` is in `sb3-contrib`, not `stable-baselines3`.
+
+```python
+from sb3_contrib import MaskablePPO
+from sb3_contrib.common.maskable.policies import MaskableActorCriticPolicy
+```
+
+---
+
+## NumPy Boolean Comparison
+
+NumPy boolean values (`np.True_`, `np.False_`) are not Python `True`/`False`. Use explicit comparison.
+
+```python
+# WRONG: Identity comparison fails
+done = np.array([True])[0]
+if done is True:  # False! np.True_ is not True
+    ...
+
+# RIGHT: Equality comparison or cast
+if bool(done):
+    ...
+```
+
+---
+
+## Observation Lookback Memory Impact
+
+Large observation lookbacks significantly impact memory. Calculate before setting.
+
+```python
+# Memory calculation:
+# obs_size = lookback_days * num_symbols * features_per_symbol * dtype_size
+# With 8 parallel environments and 2048 steps buffer:
+# Total = obs_size * num_envs * buffer_steps
+```
+
+---
+
+## SB3 Compatibility Testing
+
+Test SB3 compatibility early in development.
+
+```python
+def test_sb3_compatibility():
+    env = YourTradingEnv(config)
+    try:
+        model = MaskablePPO("MlpPolicy", env)
+        model.learn(total_timesteps=100)
+    except Exception as e:
+        pytest.fail(f"SB3 incompatible: {e}")
+```
+
+---
+
+## Reward Function Extension Pattern
+
+When creating new reward subclasses:
+
+1. Copy the signature exactly from the base class
+2. Add a corresponding config dataclass with `frozen=True`
+3. Register in the reward registry and config registry
+4. Add a dedicated test file with edge cases (NaN, Inf, zero inputs)
+
+---
+
+## Training-Inference Parity
+
+Normalization statistics must be stored in model metadata for live inference. Train and live inference must use the same normalization if the model was trained with normalized observations.
+
+---
+
+## RL vs Rule-Based Risk Gates
+
+RL agents and rule-based strategies require **different** risk gate handling. Applying the same external risk scaling to both causes subtle bugs.
+
+**The core distinction:**
+- **Rule-based strategies** do not observe risk state. External risk gates must be applied because the strategy has no other way to incorporate this information.
+- **RL agents** observe risk state in their observation space. The policy learns to respond to these signals. Applying external risk scaling on top **double-counts** the risk reduction.
+
+**Rule for new risk gates:**
+1. Ask: "Does the RL observation space include this risk signal?"
+2. If yes: do NOT apply the gate to RL position sizes
+3. If no: apply to both, AND add the signal to the observation space
+4. Document the decision in code
+
+---
+
+## Frozen Dataclass Collection Fields
+
+When using `@dataclass(frozen=True)`, collection fields cannot use `set` (unhashable). Use `tuple` instead:
+
+```python
+# WRONG: sets are unhashable, breaks frozen=True
+@dataclass(frozen=True)
+class Decision:
+    tags: set[str]
+
+# CORRECT: tuples are hashable
+@dataclass(frozen=True)
+class Decision:
+    tags: tuple[str, ...]
+```

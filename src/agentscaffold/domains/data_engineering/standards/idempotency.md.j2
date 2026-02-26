@@ -1,0 +1,150 @@
+# Idempotency Standards
+
+This document defines standards for building idempotent data pipelines that produce correct results on retry.
+
+---
+
+## Core Principle
+
+An operation is idempotent if executing it multiple times with the same input produces the same result as executing it once. For data pipelines, this means:
+
+- Re-running a pipeline for the same date produces identical output
+- Retrying a failed step does not create duplicate records
+- Partial failures can be recovered by re-running from the beginning
+
+---
+
+## Write Patterns
+
+### Idempotent Write Strategies
+
+| Strategy | Description | Use When |
+|----------|-------------|----------|
+| Overwrite partition | Replace entire partition | Batch pipelines with date partitions |
+| Upsert (MERGE) | Insert or update by key | Record-level updates |
+| Delete + Insert | Remove then rewrite | When MERGE is not available |
+| Staging table | Write to temp, swap atomically | Critical tables needing zero downtime |
+
+### Overwrite Partition (Preferred for Batch)
+
+```python
+def write_partition(df, table: str, partition_date: str):
+    """Overwrite a single partition -- idempotent by design."""
+    target_path = f"{table}/date={partition_date}"
+
+    # Delete existing partition
+    delete_partition(target_path)
+
+    # Write new data
+    df.to_parquet(target_path)
+```
+
+### Upsert Pattern
+
+```sql
+MERGE INTO target_table AS target
+USING staging_table AS source
+ON target.id = source.id
+WHEN MATCHED THEN UPDATE SET
+    target.value = source.value,
+    target.updated_at = source.updated_at
+WHEN NOT MATCHED THEN INSERT (id, value, updated_at)
+    VALUES (source.id, source.value, source.updated_at);
+```
+
+---
+
+## Deduplication
+
+### At-Least-Once to Exactly-Once
+
+When the source delivers at-least-once (e.g., Kafka without exactly-once), deduplicate in the pipeline:
+
+```python
+def deduplicate(df, key_columns: list[str], timestamp_column: str):
+    """Keep the latest record for each key."""
+    return (
+        df.sort_values(timestamp_column)
+        .drop_duplicates(subset=key_columns, keep="last")
+    )
+```
+
+### Deduplication Key Requirements
+
+- [ ] Every record has a natural or surrogate unique key
+- [ ] Key is stable across retries (not based on processing time)
+- [ ] Key is documented in the data contract
+
+---
+
+## Checkpoint and Recovery
+
+### Checkpoint Pattern
+
+```python
+import json
+from pathlib import Path
+
+class CheckpointManager:
+    def __init__(self, path: str):
+        self._path = Path(path)
+
+    def save(self, state: dict) -> None:
+        tmp = self._path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state))
+        tmp.rename(self._path)  # Atomic on most filesystems
+
+    def load(self) -> dict | None:
+        if not self._path.exists():
+            return None
+        return json.loads(self._path.read_text())
+```
+
+### Recovery Flow
+
+```
+Start -> Load checkpoint -> Resume from last successful step
+                              |
+                              v (no checkpoint)
+                         Start from beginning
+```
+
+---
+
+## Testing Idempotency
+
+### Required Tests
+
+```python
+def test_pipeline_is_idempotent():
+    """Running pipeline twice produces same result."""
+    run_pipeline(date="2026-01-15")
+    result_1 = read_output(date="2026-01-15")
+
+    run_pipeline(date="2026-01-15")
+    result_2 = read_output(date="2026-01-15")
+
+    assert_dataframes_equal(result_1, result_2)
+
+
+def test_no_duplicates_on_retry():
+    """Retrying after partial failure does not duplicate."""
+    run_pipeline(date="2026-01-15")
+    count_1 = count_records(date="2026-01-15")
+
+    run_pipeline(date="2026-01-15")  # Retry
+    count_2 = count_records(date="2026-01-15")
+
+    assert count_1 == count_2
+```
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|--------------|--------------|------------------|
+| Append-only writes without dedup | Duplicates on retry | Overwrite partition or upsert |
+| Using processing timestamp as key | Key changes on retry | Use source event timestamp |
+| No checkpoint for multi-step | Must restart from scratch | Checkpoint after each step |
+| INSERT without ON CONFLICT | Duplicate key errors | Use UPSERT or MERGE |

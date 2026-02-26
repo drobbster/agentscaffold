@@ -1,0 +1,129 @@
+# Spike Template
+
+Use this template for time-boxed exploration when a plan has high uncertainty.
+
+---
+
+## When to Use
+
+Create a spike when:
+- A plan has "Uncertainty: High" in metadata
+- A review identifies unvalidated critical assumptions
+- Implementation approach is unclear
+- External dependency behavior is unknown
+- Performance characteristics need validation
+
+---
+
+## Spike: [Brief Description]
+
+### Metadata
+
+| Field | Value |
+|-------|-------|
+| Parent Plan | [Plan Number and Name] |
+| Time-box | [2-4 hours recommended] |
+| Created | {{ date | default('YYYY-MM-DD') }} |
+| Author | [Name] |
+| Status | Draft / In Progress / Complete / Abandoned |
+
+### Goal
+
+**One-sentence goal:**
+> Validate [assumption/approach/performance] by [method] to determine [decision].
+
+### Questions to Answer
+
+| # | Question | Success Criteria |
+|---|----------|------------------|
+| 1 | | |
+| 2 | | |
+| 3 | | |
+
+### Constraints
+
+- Time-box: Do not exceed [X hours]
+- Scope: Only validate the specific questions above
+- Output: Working prototype OR clear findings, not production code
+
+### Approach
+
+**Steps:**
+1. [ ] 
+2. [ ] 
+3. [ ] 
+
+### Minimal Prototype
+
+**Location:** `spikes/[spike-name]/` (gitignored or temporary)
+
+```{{ config.primary_language | default('python') }}
+# Minimal code that proves/disproves the assumption
+# This is NOT production code - prioritize speed over quality
+```
+
+### Findings
+
+#### Question 1: [Restate question]
+**Finding:** 
+**Evidence:** 
+**Confidence:** High / Medium / Low
+
+#### Question 2: [Restate question]
+**Finding:** 
+**Evidence:** 
+**Confidence:** High / Medium / Low
+
+#### Question 3: [Restate question]
+**Finding:** 
+**Evidence:** 
+**Confidence:** High / Medium / Low
+
+### Unexpected Discoveries
+
+| Discovery | Impact on Parent Plan |
+|-----------|----------------------|
+| | |
+
+### Blockers Discovered
+
+| Blocker | Severity | Resolution Path |
+|---------|----------|-----------------|
+| | Critical / Major / Minor | |
+
+### Decision
+
+Based on spike findings:
+
+- [ ] **Proceed with original plan** - Assumptions validated
+- [ ] **Modify plan** - Update based on findings (document changes below)
+- [ ] **Escalate as blocker** - Critical issue discovered
+- [ ] **Abandon plan** - Approach not viable
+- [ ] **Additional spike needed** - New questions emerged
+
+### Plan Modifications Required
+
+If "Modify plan" selected, document required changes:
+
+| Section | Change Required |
+|---------|-----------------|
+| | |
+
+### Time Tracking
+
+| Activity | Planned | Actual |
+|----------|---------|--------|
+| Setup | | |
+| Exploration | | |
+| Documentation | | |
+| **Total** | | |
+
+---
+
+## Spike Cleanup
+
+After spike completion:
+- [ ] Delete or archive prototype code
+- [ ] Update parent plan with findings
+- [ ] Update {{ config.paths.workflow_state | default('workflow_state.md') }} if blockers found
+- [ ] Add backlog items for discovered work

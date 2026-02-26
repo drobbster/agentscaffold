@@ -1,0 +1,172 @@
+# Study Template
+
+Use this template to document A/B tests, ablation studies, experiments, and other empirical investigations.
+
+## File Organization Rules
+
+**One file per study** - Keep all attempts, iterations, and learnings in a single file until the study is complete.
+
+- If an attempt fails or is invalidated, add an "Attempt N (INVALIDATED)" section explaining what happened
+- If you need to re-run, add "Attempt N+1" section below, don't create a new file
+- Only create a new study file if the hypothesis or methodology fundamentally changes
+
+**Why**: All context stays together, failed attempts become learning documentation, less file clutter.
+
+**Example structure for multi-attempt study**:
+```
+## Attempt 1: {{ date | default('YYYY-MM-DD') }} (INVALIDATED)
+### What Happened
+[Results and why it was invalidated]
+
+### Root Cause
+[Bug or issue discovered]
+
+---
+
+## Attempt 2: {{ date | default('YYYY-MM-DD') }} (IN PROGRESS)
+### Run Details
+[Current attempt]
+```
+
+---
+
+```yaml
+---
+# Required metadata
+study_id: STU-YYYY-MM-DD-short-description
+title: "Descriptive Title of the Study"
+study_type: a_b_comparison  # a_b_comparison | ablation | hyperparameter | infrastructure | regression | exploratory
+status: draft  # draft | in_progress | complete | abandoned
+started: YYYY-MM-DD
+completed: null  # YYYY-MM-DD when complete
+
+# Categorization
+tags: []  # e.g., [{{ config.study.example_tags | default('ml, optimization, feature-engineering') }}]
+related_plans: []  # e.g., [102, 120] - plan numbers this relates to
+related_studies: []  # e.g., [STU-2026-01-15-prior-study] - prior studies
+
+# Variants being compared (minimum 2 for comparisons)
+variants:
+  - name: baseline
+    description: "Description of baseline/control variant"
+    config_ref: null  # optional: path to config file
+{% if config.study.tracking_tool %}    {{ config.study.tracking_tool }}_run_ids: []  # optional: tracking run IDs for this variant
+{% endif %}  - name: treatment
+    description: "Description of treatment/experimental variant"
+    config_ref: null
+{% if config.study.tracking_tool %}    {{ config.study.tracking_tool }}_run_ids: []
+{% endif %}
+# Key metrics (flexible - add what's relevant)
+# direction: higher_better | lower_better | target_value | neutral
+metrics:
+  - name: metric_name
+    baseline: null
+    treatment: null
+    direction: higher_better
+    unit: ""  # optional: e.g., "percent", "seconds", "score"
+
+# Artifacts (links to evidence - all optional)
+artifacts: []
+# Example entries:
+#   - type: state_file | log_file | config | notebook | experiment
+#     path: relative/path/to/file
+#     variant: baseline | treatment | both
+#     description: "Optional description"
+
+# Outcome (fill when complete)
+outcome: null  # baseline_preferred | treatment_preferred | inconclusive | needs_followup
+confidence: null  # low | medium | high
+recommendation: null  # Brief recommendation statement
+---
+```
+
+# Study: [Title]
+
+## Overview
+
+**Hypothesis**: [What you expected to happen and why]
+
+**Background**: [Context - why this study was needed, what prompted it]
+
+## Methodology
+
+### Experimental Setup
+
+[Describe the experimental conditions, environment, data used]
+
+### Variant Descriptions
+
+#### Baseline: [Name]
+[Detailed description of the baseline configuration]
+
+#### Treatment: [Name]
+[Detailed description of the treatment configuration]
+
+### Evaluation Criteria
+
+[How success/failure was measured, what metrics matter and why]
+
+## Results
+
+### Summary Table
+
+| Metric | Baseline | Treatment | Delta | Winner |
+|--------|----------|-----------|-------|--------|
+| [metric] | [value] | [value] | [diff] | [B/T] |
+
+### Detailed Findings
+
+[Narrative description of results, including any unexpected observations]
+
+### Statistical Significance
+
+[If applicable, note sample sizes, confidence intervals, p-values]
+
+## Analysis
+
+### Key Observations
+
+1. [Observation 1]
+2. [Observation 2]
+
+### Unexpected Findings
+
+[Anything surprising that emerged from the study]
+
+### Limitations
+
+[Caveats, confounding factors, things that could affect interpretation]
+
+## Conclusions
+
+[Summary of what was learned]
+
+## Recommendations
+
+### Immediate Actions
+
+- [ ] [Action item 1]
+- [ ] [Action item 2]
+
+### Follow-up Studies
+
+- [ ] [Potential follow-up study 1]
+- [ ] [Potential follow-up study 2]
+
+## Appendix
+
+### Raw Data
+
+[Links to or excerpts of raw data, logs, etc.]
+
+### Configuration Details
+
+[Full config dumps if relevant]
+
+### Timeline
+
+| Date | Event |
+|------|-------|
+| YYYY-MM-DD | Study started |
+| YYYY-MM-DD | [Milestone] |
+| YYYY-MM-DD | Study completed |
