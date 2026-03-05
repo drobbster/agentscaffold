@@ -11,7 +11,22 @@ Copy this checklist into a conversation and replace `[PLAN_NUMBER]` with the tar
 ---
 
 ## Expansion Review for Plan [PLAN_NUMBER]
+{% if review_brief_md %}
 
+---
+
+## Graph-Generated Review Brief
+
+{{ review_brief_md }}
+{% endif %}{% if gap_analysis_md %}
+
+---
+
+{{ gap_analysis_md }}
+
+Use these graph-derived gaps as starting points for your analysis below.
+
+{% endif %}
 ### 1. Edge Case Analysis
 
 **Identify missing edge cases in the test plan:**

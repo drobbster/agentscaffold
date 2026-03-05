@@ -15,7 +15,15 @@ Complete this retrospective within 24 hours of plan completion while context is 
 **Execution Date**: {{ date }}
 **Planned Effort**: [X hours/days]
 **Actual Effort**: [Y hours/days]
+{% if retro_enrichment_md %}
 
+---
+
+{{ retro_enrichment_md }}
+
+Use the insights above to inform your retrospective answers below.
+
+{% endif %}
 ---
 
 ### 1. What Worked Well
@@ -93,7 +101,13 @@ Complete this retrospective within 24 hours of plan completion while context is 
 
 **If any unchecked, what would improve it?**
 
-{% if domain_retro_sections %}
+{% if verification_md %}
+
+---
+
+{{ verification_md }}
+
+{% endif %}{% if domain_retro_sections %}
 {{ domain_retro_sections }}
 {% endif %}
 

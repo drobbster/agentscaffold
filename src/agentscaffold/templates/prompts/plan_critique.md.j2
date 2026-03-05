@@ -27,6 +27,25 @@ Before any other analysis, verify the plan actually needs implementation:
 
 ---
 
+{% if review_brief_md %}
+---
+
+## Graph-Generated Review Brief
+
+The following brief was generated automatically from the knowledge graph.
+Use this evidence when answering the review questions below.
+
+{{ review_brief_md }}
+{% endif %}{% if adversarial_challenges_md %}
+---
+
+{{ adversarial_challenges_md }}
+
+Use these graph-backed challenges as starting points for your analysis below.
+Each challenge is grounded in actual codebase data, not speculation.
+
+{% endif %}---
+
 Before executing this plan, answer the following questions:
 
 ### 1. Assumption Analysis

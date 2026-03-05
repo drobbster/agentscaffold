@@ -303,7 +303,7 @@ and its up to date. then proceed
 ```
 
 ```
-can we change the name of the branch to 119-dirichlet-policy-optimization
+can we change the name of the branch to 105-rl-policy-optimization
 since it was improperly named
 ```
 
@@ -450,7 +450,7 @@ Execution is not hands-off. Actively steer the agent with domain knowledge, qual
 Provide context the agent cannot know from the codebase alone:
 
 ```
-we have data already backfilled from databento
+we have data already backfilled from vendor X
 ```
 
 ```
@@ -458,7 +458,7 @@ All production data should be coming from the feast feature store
 ```
 
 ```
-we are only paying for options data from polygon
+we are only paying for X data from Y provider
 ```
 
 ```
@@ -721,6 +721,134 @@ lets also create another study to explore this approach
 ```
 the flow has completed. lets review the findings
 ```
+
+---
+
+## Knowledge Graph: Codebase Intelligence
+
+AgentScaffold can build a knowledge graph of your codebase using `scaffold index`. This graph powers several features: auto-enriched templates, graph-backed reviews, MCP tool integration, and a living Codebase Intelligence section in AGENTS.md.
+
+### Building the Graph
+
+```bash
+scaffold index                 # Index from current directory
+scaffold index /path/to/repo   # Index a specific path
+scaffold index --incremental   # Only re-index changed files
+scaffold index --audit         # Log all resolution decisions
+```
+
+The graph is stored at `.scaffold/graph.db` by default (configurable in `scaffold.yaml` under `graph.db_path`). It requires the `[graph]` optional dependency:
+
+```bash
+pip install agentscaffold[graph]
+```
+
+### What Gets Indexed
+
+The graph captures four layers of information:
+
+| Phase | What It Captures |
+|-------|-----------------|
+| Structure | Files, folders, CONTAINS edges, content hashes, languages |
+| Parsing | Functions, classes, methods, interfaces, DEFINES edges (via Tree-sitter) |
+| Resolution | Import edges (IMPORTS), call edges (CALLS) with confidence scores |
+| Governance | Plans, contracts, learnings, review findings, IMPACTS/REFERENCES edges |
+
+### Querying the Graph
+
+```bash
+scaffold graph stats                        # Health dashboard
+scaffold graph query "MATCH (f:File) RETURN count(f)"  # Raw Cypher
+scaffold graph verify                       # Spot-check accuracy
+scaffold graph verify --deep                # Re-parse sample files
+```
+
+### Auto-Enriched Templates
+
+When the graph is available, two commands auto-inject graph context:
+
+**`scaffold plan create`** -- New plans include HTML comments showing:
+- Hot spots (most-modified files) that might be affected
+- Volatile modules (3+ plans) that warrant stability review
+
+**`scaffold agents generate`** -- AGENTS.md includes a Codebase Intelligence section with:
+- File/function/class/edge counts
+- Architecture layer map
+- Hot spots and volatile modules
+- Active contracts and versions
+- Graph command reference
+
+Both degrade gracefully -- without a graph, output is identical to before.
+
+### Dialectic Engine: Graph-Powered Reviews
+
+The Dialectic Engine generates evidence-based review context from the knowledge graph. Instead of relying on an LLM to speculate about risks, it queries actual codebase data.
+
+**Review commands:**
+
+```bash
+scaffold review brief 42         # Pre-review brief: plan summary, impacted files,
+                                 # related plans, learnings, contracts
+scaffold review challenges 42    # Adversarial challenges grounded in graph evidence
+scaffold review gaps 42          # Gap analysis: missing consumers, integration points,
+                                 # test coverage holes
+scaffold review verify 42        # Post-implementation compliance check
+scaffold review retro 42         # Retrospective enrichment: volatility, patterns,
+                                 # complexity changes
+scaffold review history src/foo  # All findings and plan history for a file
+```
+
+**Template mode** -- generates the full review prompt pre-populated with evidence:
+
+```bash
+scaffold review challenges 42 --template   # Full devil's advocate prompt + evidence
+scaffold review gaps 42 --template         # Full expansion prompt + evidence
+scaffold review retro 42 --template        # Full retrospective prompt + evidence
+```
+
+This is particularly useful for agents: instead of running the review tool and then composing the prompt manually, `--template` gives a ready-to-use prompt.
+
+### Using Reviews in Sessions
+
+Integrate graph-powered reviews into your session flow:
+
+```
+lets bring up plan 042. run the graph review brief and challenges
+before we do the devil's advocate review
+```
+
+```
+generate the expansion review for plan 042 with graph evidence
+```
+
+```
+we just finished plan 042. run the retro enrichment and use it
+in our retrospective discussion
+```
+
+The graph evidence makes reviews more concrete. Instead of "this plan might affect downstream consumers," the challenges say "src/data/router.py has 5 direct importers that are not in your File Impact Map."
+
+### MCP Integration
+
+When running the MCP server (`scaffold mcp`), two graph-powered tools are available to AI agents:
+
+| Tool | What It Does |
+|------|-------------|
+| `scaffold_graph_query` | Execute Cypher queries against the knowledge graph |
+| `scaffold_review_context` | Get review context (brief, challenges, gaps, verify, retro) for a plan |
+
+The MCP tools return both structured JSON and formatted markdown, so agents can parse the data programmatically or display it directly.
+
+### Graph Quality
+
+The graph includes verification mechanisms:
+
+- **Content hashing**: Each file node stores a SHA-256 hash. `scaffold graph verify` compares these against current files to detect staleness.
+- **Staleness detection**: Files modified since last index are flagged.
+- **Missing file detection**: Files deleted since last index are reported.
+- **Deep verification**: `--deep` re-parses a sample of files and compares function/class counts against stored data.
+
+Run `scaffold graph verify` periodically or after significant codebase changes. Re-index with `scaffold index` to refresh.
 
 ---
 

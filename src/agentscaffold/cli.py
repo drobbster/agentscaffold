@@ -35,6 +35,12 @@ app.add_typer(domain_app, name="domain")
 agents_app = typer.Typer(help="Agent integration file generation.")
 app.add_typer(agents_app, name="agents")
 
+graph_app = typer.Typer(help="Knowledge graph operations.")
+app.add_typer(graph_app, name="graph")
+
+review_app = typer.Typer(help="Graph-powered review generation.")
+app.add_typer(review_app, name="review")
+
 
 # ---------------------------------------------------------------------------
 # Top-level commands
@@ -299,3 +305,309 @@ def notify(
     from agentscaffold.notify.sender import send_notification
 
     send_notification(event=event, message=message)
+
+
+# ---------------------------------------------------------------------------
+# Knowledge graph commands
+# ---------------------------------------------------------------------------
+
+
+@app.command(name="index")
+def index_cmd(
+    path: Path = typer.Argument(Path("."), help="Root directory to index."),
+    incremental: bool = typer.Option(False, "--incremental", help="Only re-index changed files."),
+    with_embeddings: bool = typer.Option(False, "--embeddings", help="Generate code embeddings."),
+    audit: bool = typer.Option(False, "--audit", help="Log all resolution decisions."),
+) -> None:
+    """Build or rebuild the knowledge graph."""
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import index
+
+    config = load_config()
+    index(
+        path=path,
+        config=config,
+        incremental=incremental,
+        embeddings=with_embeddings,
+        audit=audit,
+    )
+
+
+@graph_app.command("stats")
+def graph_stats() -> None:
+    """Show codebase statistics and health dashboard."""
+    from rich.table import Table
+
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+
+    config = load_config()
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found. Run 'scaffold index' first.[/red]")
+        raise SystemExit(1)
+
+    store = open_graph(config)
+    stats = store.get_stats()
+    store.close()
+
+    table = Table(title="Graph Statistics", show_header=True)
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green", justify="right")
+
+    table.add_row("Schema version", str(stats["schema_version"]))
+    table.add_row("Last indexed", stats.get("last_indexed", "never") or "never")
+    table.add_row("Pipeline state", stats.get("pipeline_state", "unknown"))
+    table.add_row("Files", str(stats["files"]))
+    table.add_row("Folders", str(stats["folders"]))
+    table.add_row("Functions", str(stats["functions"]))
+    table.add_row("Classes", str(stats["classes"]))
+    table.add_row("Methods", str(stats["methods"]))
+    table.add_row("Interfaces", str(stats["interfaces"]))
+    table.add_row("Import edges", str(stats["imports_edges"]))
+    table.add_row("Call edges", str(stats["calls_edges"]))
+    table.add_row("Communities", str(stats["communities"]))
+    table.add_row("Plans", str(stats["plans"]))
+    table.add_row("Contracts", str(stats["contracts"]))
+    table.add_row("Learnings", str(stats["learnings"]))
+    table.add_row("Review findings", str(stats["review_findings"]))
+    table.add_row("Parsing warnings", str(stats["parsing_warnings"]))
+
+    console.print(table)
+
+
+@graph_app.command("query")
+def graph_query(
+    cypher: str = typer.Argument(..., help="Cypher query to execute."),
+) -> None:
+    """Execute a raw Cypher query against the graph."""
+    import json
+
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+
+    config = load_config()
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found. Run 'scaffold index' first.[/red]")
+        raise SystemExit(1)
+
+    store = open_graph(config)
+    try:
+        results = store.query(cypher)
+        console.print(json.dumps(results, indent=2, default=str))
+    except Exception as exc:
+        console.print(f"[red]Query error: {exc}[/red]")
+        raise SystemExit(1) from exc
+    finally:
+        store.close()
+
+
+@graph_app.command("verify")
+def graph_verify(
+    deep: bool = typer.Option(False, "--deep", help="Re-parse a sample of files for deep check."),
+) -> None:
+    """Spot-check graph accuracy against the filesystem."""
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+    from agentscaffold.graph.verify import print_verification_report, verify_graph
+
+    config = load_config()
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found. Run 'scaffold index' first.[/red]")
+        raise SystemExit(1)
+
+    store = open_graph(config)
+    report = verify_graph(store, Path.cwd(), deep=deep)
+    store.close()
+    print_verification_report(report)
+
+
+# ---------------------------------------------------------------------------
+# Review sub-commands (Dialectic Engine)
+# ---------------------------------------------------------------------------
+
+
+def _require_graph():
+    """Load config, verify graph exists, return (config, store)."""
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+
+    config = load_config()
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found. Run 'scaffold index' first.[/red]")
+        raise SystemExit(1)
+    return config, open_graph(config)
+
+
+@review_app.command("brief")
+def review_brief(
+    plan: int = typer.Argument(..., help="Plan number to generate brief for."),
+) -> None:
+    """Generate a pre-review brief from the knowledge graph."""
+    from agentscaffold.review.brief import format_brief_markdown, generate_brief
+
+    _config, store = _require_graph()
+    brief = generate_brief(store, plan)
+    store.close()
+    console.print(format_brief_markdown(brief))
+
+
+@review_app.command("challenges")
+def review_challenges(
+    plan: int = typer.Argument(..., help="Plan number to generate challenges for."),
+    template: bool = typer.Option(
+        False, "--template", help="Output full devil's advocate prompt with evidence."
+    ),
+) -> None:
+    """Generate graph-evidence adversarial challenges for devil's advocate review."""
+    config, store = _require_graph()
+
+    if template:
+        from agentscaffold.rendering import (
+            get_default_context,
+            get_review_context,
+            render_template,
+        )
+
+        store.close()
+        ctx = get_default_context(config)
+        ctx.update(get_review_context(config, plan, review_type="challenges"))
+        console.print(render_template("prompts/plan_critique.md.j2", ctx))
+    else:
+        from agentscaffold.review.challenges import (
+            format_challenges_markdown,
+            generate_challenges,
+        )
+
+        challenges = generate_challenges(store, plan)
+        store.close()
+        console.print(format_challenges_markdown(challenges))
+
+
+@review_app.command("gaps")
+def review_gaps(
+    plan: int = typer.Argument(..., help="Plan number to analyze for gaps."),
+    template: bool = typer.Option(
+        False, "--template", help="Output full expansion prompt with evidence."
+    ),
+) -> None:
+    """Generate graph-derived gap analysis for expansion review."""
+    config, store = _require_graph()
+
+    if template:
+        from agentscaffold.rendering import (
+            get_default_context,
+            get_review_context,
+            render_template,
+        )
+
+        store.close()
+        ctx = get_default_context(config)
+        ctx.update(get_review_context(config, plan, review_type="gaps"))
+        console.print(render_template("prompts/plan_expansion.md.j2", ctx))
+    else:
+        from agentscaffold.review.gaps import format_gaps_markdown, generate_gaps
+
+        gaps = generate_gaps(store, plan)
+        store.close()
+        console.print(format_gaps_markdown(gaps))
+
+
+@review_app.command("verify")
+def review_verify_impl(
+    plan: int = typer.Argument(..., help="Plan number to verify implementation for."),
+) -> None:
+    """Verify post-implementation compliance against a plan."""
+    from agentscaffold.review.verify import (
+        format_verification_markdown,
+        verify_implementation,
+    )
+
+    _config, store = _require_graph()
+    items = verify_implementation(store, plan)
+    store.close()
+    console.print(format_verification_markdown(items))
+
+
+@review_app.command("retro")
+def review_retro(
+    plan: int = typer.Argument(..., help="Plan number to enrich retrospective for."),
+    template: bool = typer.Option(
+        False, "--template", help="Output full retrospective prompt with evidence."
+    ),
+) -> None:
+    """Generate graph-enriched retrospective context."""
+    config, store = _require_graph()
+
+    if template:
+        from agentscaffold.rendering import (
+            get_default_context,
+            get_review_context,
+            render_template,
+        )
+
+        store.close()
+        ctx = get_default_context(config)
+        ctx.update(get_review_context(config, plan, review_type="retro"))
+        console.print(render_template("prompts/retrospective.md.j2", ctx))
+    else:
+        from agentscaffold.review.feedback import (
+            format_retro_markdown,
+            generate_retro_enrichment,
+        )
+
+        insights = generate_retro_enrichment(store, plan)
+        store.close()
+        console.print(format_retro_markdown(insights))
+
+
+@review_app.command("history")
+def review_history(
+    target: str = typer.Argument(..., help="File path or module name."),
+) -> None:
+    """Show all review findings and plan history for a file or module."""
+    import json
+
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+    from agentscaffold.review.queries import (
+        get_findings_for_file,
+        get_learnings_for_file,
+        get_plans_impacting_file,
+    )
+
+    config = load_config()
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found. Run 'scaffold index' first.[/red]")
+        raise SystemExit(1)
+
+    store = open_graph(config)
+    plans = get_plans_impacting_file(store, target)
+    learnings = get_learnings_for_file(store, target)
+    findings = get_findings_for_file(store, target)
+    store.close()
+
+    console.print(
+        json.dumps(
+            {
+                "file": target,
+                "plans": plans,
+                "learnings": learnings,
+                "findings": findings,
+            },
+            indent=2,
+            default=str,
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# MCP server command
+# ---------------------------------------------------------------------------
+
+
+@app.command(name="mcp")
+def mcp_cmd() -> None:
+    """Start MCP server (stdio mode for Cursor/Claude)."""
+    from agentscaffold.mcp.server import run_mcp_server
+
+    run_mcp_server()

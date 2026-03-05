@@ -8,7 +8,7 @@ from pathlib import Path
 from rich.console import Console
 
 from agentscaffold.config import load_config
-from agentscaffold.rendering import get_default_context, render_template
+from agentscaffold.rendering import get_default_context, get_graph_context, render_template
 
 console = Console()
 
@@ -65,6 +65,11 @@ def run_plan_create(name: str, plan_type: str) -> None:
         plan_name=name,
         plan_title=name,
     )
+
+    graph_ctx = get_graph_context(config)
+    if graph_ctx:
+        ctx.update(graph_ctx)
+        console.print("[dim]Graph context injected into plan template.[/dim]")
 
     content = render_template(PLAN_TYPE_TEMPLATES[plan_type], ctx)
     dest.write_text(content)

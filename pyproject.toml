@@ -43,11 +43,32 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+graph = [
+    "kuzu>=0.4.0",
+    "tree-sitter>=0.23.0",
+    "tree-sitter-python>=0.23.0",
+    "tree-sitter-javascript>=0.23.0",
+    "tree-sitter-typescript>=0.23.0",
+]
+search = [
+    "sentence-transformers>=3.0.0",
+    "rank-bm25>=0.2.2",
+]
+communities = [
+    "graspologic>=3.4.0",
+]
+mcp = [
+    "mcp>=1.0.0",
+]
+all = [
+    "agentscaffold[graph,search,communities,mcp]",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "ruff>=0.4.0",
     "mypy>=1.0.0",
+    "agentscaffold[graph,mcp]",
 ]
 
 [project.scripts]
@@ -72,6 +93,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+norecursedirs = ["tests/fixtures"]
 
 [tool.mypy]
 python_version = "3.10"

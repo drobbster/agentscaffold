@@ -170,6 +170,28 @@ class ImportConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Graph (knowledge graph) configuration
+# ---------------------------------------------------------------------------
+
+
+class LayerMapping(BaseModel):
+    pattern: str
+    layer: int
+
+
+class GraphConfig(BaseModel):
+    db_path: str = ".scaffold/graph.db"
+    languages: list[str] | None = None
+    ignore: list[str] = Field(default_factory=list)
+    layer_mapping: list[LayerMapping] = Field(default_factory=list)
+    plans_dir: str = "docs/ai/plans/"
+    contracts_dir: str = "docs/ai/contracts/"
+    learnings_file: str = "docs/ai/state/learnings_tracker.md"
+    embeddings: bool = False
+    communities: bool = True
+
+
+# ---------------------------------------------------------------------------
 # Framework (top-level) configuration
 # ---------------------------------------------------------------------------
 
@@ -203,6 +225,7 @@ class ScaffoldConfig(BaseModel):
     semi_autonomous: SemiAutonomousConfig = Field(default_factory=SemiAutonomousConfig)
     task_runner: TaskRunnerConfig = Field(default_factory=TaskRunnerConfig)
     ci: CIConfig = Field(default_factory=CIConfig)
+    graph: GraphConfig = Field(default_factory=GraphConfig)
     import_config: ImportConfig = Field(default_factory=ImportConfig, alias="import")
 
     model_config = {"populate_by_name": True}

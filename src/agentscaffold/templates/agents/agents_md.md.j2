@@ -598,7 +598,64 @@ The backlog is split into two files:
 - Periodically prune items that are stale, superseded, or no longer relevant
 - Include "Last Updated" timestamps in both files
 
-## Collaboration Protocol
+{% if graph_stats %}## Codebase Intelligence (Graph-Generated)
+
+This section is auto-generated from the knowledge graph. Run `scaffold index`
+to update.
+
+### Overview
+
+| Metric | Count |
+|--------|-------|
+| Files | {{ graph_stats.files }} |
+| Functions | {{ graph_stats.functions }} |
+| Classes | {{ graph_stats.classes }} |
+| Import edges | {{ graph_stats.imports_edges }} |
+| Call edges | {{ graph_stats.calls_edges }} |
+| Plans | {{ graph_stats.plans }} |
+| Learnings | {{ graph_stats.learnings }} |
+{% if graph_layers %}
+### Architecture Layer Map
+
+| Layer | Name | Description |
+|-------|------|-------------|
+{% for la in graph_layers %}| {{ la.number }} | {{ la.name }} | {{ la.description }} |
+{% endfor %}{% endif %}{% if graph_hot_files %}
+### Hot Spots (Most-Modified Files)
+
+These files have been touched by the most plans. Changes here have high
+blast radius and should receive extra review scrutiny.
+
+{% for f in graph_hot_files %}- `{{ f.path }}` ({{ f.plan_count }} plans)
+{% endfor %}{% endif %}{% if graph_volatile_modules %}
+### Volatile Modules
+
+Modules modified by 3+ plans. High volatility may signal architectural
+instability worth reviewing.
+
+{% for v in graph_volatile_modules %}- `{{ v.path }}` ({{ v.plan_count }} plans)
+{% endfor %}{% endif %}{% if graph_contracts %}
+### Active Contracts
+
+| Contract | Version |
+|----------|---------|
+{% for c in graph_contracts %}| {{ c.name }} | v{{ c.version }} |
+{% endfor %}{% endif %}
+### Graph Commands
+
+```bash
+scaffold index              # Build/rebuild knowledge graph
+scaffold graph stats        # Show codebase statistics
+scaffold graph verify       # Spot-check graph accuracy
+scaffold review brief N     # Pre-review brief for Plan N
+scaffold review challenges N # Adversarial challenges for Plan N
+scaffold review gaps N      # Gap analysis for Plan N
+scaffold review verify N    # Post-implementation verification
+scaffold review retro N     # Retrospective enrichment
+scaffold review history F   # All findings for file F
+```
+
+{% endif %}## Collaboration Protocol
 
 For detailed guidance on human-AI collaboration, see docs/ai/collaboration_protocol.md.
 
