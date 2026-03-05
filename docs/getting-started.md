@@ -165,7 +165,19 @@ scaffold validate --check-safety-boundaries
 scaffold validate --check-session-summary
 ```
 
-## 9. Next Steps
+## 9. Build the Knowledge Graph
+
+After scaffolding, build the knowledge graph to enable search, reviews, and session memory:
+
+```bash
+scaffold index
+```
+
+This indexes your codebase into a local graph database (`.scaffold/graph.db`). For semantic search, add `--embeddings`. For subsequent updates, use `--incremental` (only re-indexes changed files).
+
+See the [Knowledge Graph section of the User Guide](user-guide.md#knowledge-graph-codebase-intelligence) for details on querying, MCP tools, and review integration.
+
+## 10. Next Steps
 
 - **Domain packs**: Add specialized reviews and standards. See [Domain Packs](domain-packs.md).
 - **Semi-autonomous mode**: Enable for CLI-triggered agents. See [Semi-Autonomous Guide](semi-autonomous-guide.md).

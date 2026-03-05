@@ -833,7 +833,7 @@ scaffold graph verify --deep                # Re-parse sample files
 
 When the graph is available, two commands auto-inject graph context:
 
-**`scaffold plan create`** -- New plans include HTML comments showing:
+**`scaffold plan create`** -- New plans include a "Codebase Context" section showing:
 - Hot spots (most-modified files) that might be affected
 - Volatile modules (3+ plans) that warrant stability review
 

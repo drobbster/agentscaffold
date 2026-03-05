@@ -1,16 +1,61 @@
 # AgentScaffold
 
-Structured AI-assisted development framework with plan lifecycle, review gates, and continuous improvement.
+**Stop paying for your AI agent to rediscover your codebase every session.**
 
-## What Is This?
+AgentScaffold is a governance framework and persistent knowledge graph for AI coding agents. It replaces the expensive pattern of agents reading dozens of files, grepping for symbols, and tracing dependencies from scratch -- with a single tool call that returns exactly what the agent needs.
 
-AgentScaffold gives your AI coding agent (Cursor, Claude Code, Codex, aider, etc.) a structured development workflow. It generates an `AGENTS.md` file that teaches your agent to:
+## The Problem
 
-- Follow a **plan lifecycle** (Draft -> Review -> Ready -> In Progress -> Complete) with configurable gates
-- Run **devil's advocate** and **expansion reviews** before execution
-- Maintain **interface contracts** between modules
-- Complete **retrospectives** after every plan, feeding learnings back into the process
-- Track state across sessions via **workflow state**, **learnings tracker**, and **plan completion log**
+Every time you start a new session with Cursor, Claude Code, Codex, or any AI coding agent, it starts from zero. It reads your files. It greps for imports. It traces call chains. It burns through your token budget and subscription quota just to understand what it already understood yesterday.
+
+On a moderately complex codebase, a single "understand this module" task can cost **12 file reads + 2 grep searches** before the agent even starts working. A full plan review pulls in **10+ files**. Getting oriented in a new codebase means reading **38+ files**.
+
+This is the hidden cost of agentic development: not the coding, but the *context building*.
+
+## The Solution
+
+AgentScaffold builds a knowledge graph of your codebase -- code structure, dependencies, governance artifacts, session history -- and exposes it through MCP tools that your agent calls instead of reading raw files.
+
+**Measured results from our evaluation harness (64 scenarios, 100% pass rate):**
+
+| Task | Without AgentScaffold | With AgentScaffold | Savings |
+|------|----------------------|-------------------|---------|
+| Understand a module and its dependents | 12 reads + 2 greps | 1 tool call | **97% fewer tokens, 93% fewer calls** |
+| Codebase orientation | 38 file reads | 2 tool calls | **77% fewer tokens, 95% fewer calls** |
+| Impact analysis (blast radius) | 12 file reads | 1 tool call | **88% fewer tokens, 92% fewer calls** |
+| Find all code matching a concept | 8 file reads | 1 tool call | **44% fewer tokens, 88% fewer calls** |
+| Full plan review with evidence | 10 file reads | 1 tool call | **90% fewer calls** (richer output) |
+
+**Aggregate: 91% average call reduction. 58% average token reduction. 2.9x overall compression.**
+
+Every tool call your agent doesn't make is money you don't spend on API tokens or subscription overages.
+
+## What It Does
+
+AgentScaffold combines two capabilities that don't exist together in any other tool:
+
+### 1. Agent Governance Framework
+
+A structured development workflow that teaches your AI agent to follow a plan lifecycle with quality gates:
+
+- **Plan lifecycle**: Draft -> Review -> Ready -> In Progress -> Complete
+- **Adversarial reviews**: Devil's advocate, expansion analysis, domain-specific reviews -- all run before a single line of code is written
+- **Interface contracts**: Formal declarations of module boundaries, versioned and tracked
+- **Retrospectives**: Post-execution learning that feeds back into the process
+- **Session tracking**: State files that persist context across chat sessions
+
+### 2. Persistent Knowledge Graph
+
+A KuzuDB-backed graph that indexes your codebase once and serves it to agents instantly:
+
+- **Code structure**: Functions, classes, methods, interfaces, import chains, call graphs -- across Python, TypeScript, Go, Rust, Java, C, and C++
+- **Governance artifacts**: Plans, contracts, learnings, review findings linked to the code they reference
+- **Community detection**: Leiden algorithm clustering identifies tightly coupled modules
+- **Semantic search**: Hybrid search combining structural graph queries with vector embeddings
+- **Incremental indexing**: SHA-256 content hashing means only changed files are re-processed
+- **Contract drift detection**: Automatically surfaces methods declared in contracts but missing from code
+
+The graph is exposed via **MCP tools** that any compatible agent can call, or through the CLI for direct use.
 
 ## Quick Start
 
@@ -18,6 +63,7 @@ AgentScaffold gives your AI coding agent (Cursor, Claude Code, Codex, aider, etc
 pip install agentscaffold
 cd my-project
 scaffold init
+scaffold index          # Build the knowledge graph
 ```
 
 The `init` command scaffolds your project with:
@@ -28,6 +74,52 @@ The `init` command scaffolds your project with:
 - `scaffold.yaml` -- your project's framework configuration
 - `justfile` + `Makefile` -- task runner shortcuts
 - `.github/workflows/` -- CI with security scanning
+
+The `index` command builds the knowledge graph at `.scaffold/graph.db`, enabling search, reviews, impact analysis, and session memory.
+
+### Install with language support
+
+```bash
+pip install agentscaffold[graph]              # Python, JS, TS
+pip install agentscaffold[graph-all-languages] # + Go, Rust, Java, C, C++
+pip install agentscaffold[all]                # Everything
+```
+
+## How Agents Use It
+
+### MCP Tools (for AI agents)
+
+When you run `scaffold mcp`, these tools become available to your agent:
+
+| Tool | What It Replaces |
+|------|-----------------|
+| `scaffold_context` | Reading 12+ files to understand a symbol, its callers, and its layer |
+| `scaffold_impact` | Manually tracing imports and grep-searching for consumers |
+| `scaffold_search` | Multiple grep passes to find code by concept |
+| `scaffold_review_context` | Reading plan files, contracts, learnings, and source to prepare a review |
+| `scaffold_stats` | Scanning the entire directory tree to understand codebase shape |
+| `scaffold_validate` | Running separate staleness checks and contract verification |
+| `scaffold_query` | Writing ad-hoc Cypher queries against the knowledge graph |
+
+### CLI (for humans)
+
+```bash
+scaffold plan create my-feature        # Create a plan from template
+scaffold plan lint --plan 001          # Validate plan structure
+scaffold plan status                   # Dashboard of all plans
+scaffold validate                      # Run all enforcement checks
+scaffold retro check                   # Find missing retrospectives
+scaffold agents generate               # Regenerate AGENTS.md
+scaffold agents cursor                 # Regenerate .cursor/rules.md
+scaffold import chat.json --format chatgpt  # Import conversation
+scaffold ci setup                      # Generate CI workflows
+scaffold metrics                       # Plan analytics
+scaffold graph search "data routing"   # Hybrid search
+scaffold graph verify                  # Graph accuracy check
+scaffold review brief 42               # Pre-review brief for plan 42
+scaffold review challenges 42          # Adversarial challenges with evidence
+scaffold session start --plan 42       # Start a tracked coding session
+```
 
 ## Execution Profiles
 
@@ -65,33 +157,16 @@ scaffold domain add trading
 scaffold domain add webapp
 ```
 
-## CLI Commands
-
-```bash
-scaffold init                          # Set up framework
-scaffold plan create my-feature        # Create a plan
-scaffold plan lint --plan 001          # Validate a plan
-scaffold plan status                   # Dashboard of all plans
-scaffold validate                      # Run all checks
-scaffold retro check                   # Find missing retrospectives
-scaffold agents generate               # Regenerate AGENTS.md
-scaffold agents cursor                 # Regenerate .cursor/rules.md
-scaffold import chat.json --format chatgpt  # Import conversation
-scaffold ci setup                      # Generate CI workflows
-scaffold taskrunner setup              # Generate justfile + Makefile
-scaffold metrics                       # Plan analytics
-```
-
 ## Documentation
 
 Full documentation is in [docs/](docs/):
 
-- [User Guide](docs/user-guide.md) -- interaction patterns and session workflow
-- [Getting Started](docs/getting-started.md)
-- [Configuration Reference](docs/configuration.md)
-- [Domain Packs](docs/domain-packs.md)
-- [Semi-Autonomous Guide](docs/semi-autonomous-guide.md)
-- [CI Integration](docs/ci-integration.md)
+- [Getting Started](docs/getting-started.md) -- installation, init, first plan
+- [User Guide](docs/user-guide.md) -- session workflow, knowledge graph, review patterns
+- [Configuration Reference](docs/configuration.md) -- full scaffold.yaml reference
+- [Domain Packs](docs/domain-packs.md) -- available packs and installation
+- [Semi-Autonomous Guide](docs/semi-autonomous-guide.md) -- CLI/CI agent mode
+- [CI Integration](docs/ci-integration.md) -- GitHub Actions workflows
 
 ## License
 
