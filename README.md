@@ -163,6 +163,7 @@ Full documentation is in [docs/](docs/):
 
 - [Getting Started](docs/getting-started.md) -- installation, init, first plan
 - [User Guide](docs/user-guide.md) -- session workflow, knowledge graph, review patterns
+- [Platform Integration](docs/platform-integration.md) -- Cursor, Claude Code, Windsurf, Cline, aider, Codex, MCP setup
 - [Configuration Reference](docs/configuration.md) -- full scaffold.yaml reference
 - [Domain Packs](docs/domain-packs.md) -- available packs and installation
 - [Semi-Autonomous Guide](docs/semi-autonomous-guide.md) -- CLI/CI agent mode

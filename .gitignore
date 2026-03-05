@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+
+# Dev tools
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Knowledge graph (generated at runtime)
+.scaffold/
+
+# Eval reports (generated, re-run with pytest to regenerate)
+eval/reports/
+
+# Dev-only docs (not shipped to PyPI)
+dev_docs/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
