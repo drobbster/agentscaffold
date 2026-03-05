@@ -21,7 +21,7 @@ try:
 except ImportError:
     _MCP_AVAILABLE = False
 
-_MCP_EXTRAS_MSG = "MCP server requires extra dependencies: " "pip install agentscaffold[mcp]"
+_MCP_EXTRAS_MSG = "MCP server requires extra dependencies: pip install agentscaffold[mcp]"
 
 
 def run_mcp_server() -> None:
@@ -331,7 +331,7 @@ def _tool_impact(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str,
 
     # Find direct importers
     importers = store.query(
-        f"MATCH (a:File)-[:IMPORTS]->(b:File) WHERE b.id = '{file_id}' " "RETURN a.path, a.language"
+        f"MATCH (a:File)-[:IMPORTS]->(b:File) WHERE b.id = '{file_id}' RETURN a.path, a.language"
     )
 
     # Find functions in this file and their callers
@@ -387,6 +387,12 @@ def _tool_validate(store: Any, arguments: dict[str, Any], meta: dict) -> dict[st
         from agentscaffold.graph.verify import verify_graph
 
         report = verify_graph(store, Path.cwd())
+        return {"report": report, "meta": meta}
+
+    if check == "contracts":
+        from agentscaffold.graph.verify import check_contract_drift
+
+        report = check_contract_drift(store)
         return {"report": report, "meta": meta}
 
     return {"error": f"Check '{check}' not yet implemented.", "meta": meta}

@@ -144,7 +144,7 @@ def run_pipeline(
     # Phase 3: Resolution (imports + calls)
     if "resolution" not in phases_completed:
         console.print(
-            f"[bold]Phase 3/{total_phases}: Resolution[/bold] " "-- resolving imports and calls..."
+            f"[bold]Phase 3/{total_phases}: Resolution[/bold] -- resolving imports and calls..."
         )
         try:
             from agentscaffold.graph.calls import process_calls

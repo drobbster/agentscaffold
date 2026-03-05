@@ -125,6 +125,48 @@ def _parse_plan(filepath: Path) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 _CONTRACT_VERSION_RE = re.compile(r"version\s*\|?\s*v?(\d+\.\d+)", re.IGNORECASE)
+_CONTRACT_METHOD_RE = re.compile(
+    r"^\s+def\s+(?P<name>\w+)\s*\(",
+    re.MULTILINE,
+)
+_CONTRACT_CLASS_RE = re.compile(
+    r"^class\s+(?P<name>\w+)",
+    re.MULTILINE,
+)
+
+
+def _extract_contract_declarations(text: str) -> dict[str, list[str]]:
+    """Extract class and method declarations from code blocks in contract markdown.
+
+    Returns {"classes": [...], "methods": [...]} with unique names.
+    """
+    classes: list[str] = []
+    methods: list[str] = []
+
+    # Find fenced code blocks (```python ... ```)
+    in_code = False
+    code_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```") and not in_code:
+            in_code = True
+            code_lines = []
+            continue
+        elif stripped.startswith("```") and in_code:
+            in_code = False
+            code_block = "\n".join(code_lines)
+            for m in _CONTRACT_CLASS_RE.finditer(code_block):
+                classes.append(m.group("name"))
+            for m in _CONTRACT_METHOD_RE.finditer(code_block):
+                methods.append(m.group("name"))
+            continue
+        if in_code:
+            code_lines.append(line)
+
+    return {
+        "classes": sorted(set(classes)),
+        "methods": sorted(set(methods)),
+    }
 
 
 def _parse_contract(filepath: Path) -> dict[str, Any] | None:
@@ -141,12 +183,15 @@ def _parse_contract(filepath: Path) -> dict[str, Any] | None:
 
     meta = _extract_metadata(text)
     last_updated = meta.get("last_updated", meta.get("version_date", ""))
+    declarations = _extract_contract_declarations(text)
 
     return {
         "name": name,
         "version": version,
         "filepath": str(filepath),
         "last_updated": last_updated,
+        "declared_classes": declarations["classes"],
+        "declared_methods": declarations["methods"],
     }
 
 
@@ -289,6 +334,7 @@ def process_governance(
                     impact_edge_count += 1
 
     # --- Contracts ---
+    declares_edge_count = 0
     if contracts_dir.is_dir():
         for contract_file in sorted(contracts_dir.glob("*.md")):
             if contract_file.name in ("README.md", "contract_template.md"):
@@ -306,9 +352,40 @@ def process_governance(
                     "version": data["version"],
                     "filePath": data["filepath"],
                     "lastUpdated": data["last_updated"],
+                    "declaredMethods": ",".join(data.get("declared_methods", [])),
+                    "declaredClasses": ",".join(data.get("declared_classes", [])),
                 },
             )
             contract_count += 1
+
+            # Link contract to code definitions it declares
+            for method_name in data.get("declared_methods", []):
+                fn_rows = store.query(
+                    f"MATCH (fn:Function) WHERE fn.name = '{method_name}' RETURN fn.id LIMIT 1"
+                )
+                if fn_rows:
+                    store.create_edge(
+                        "CONTRACT_DECLARES_FUNC",
+                        "Contract",
+                        contract_id,
+                        "Function",
+                        fn_rows[0]["fn.id"],
+                    )
+                    declares_edge_count += 1
+
+            for class_name in data.get("declared_classes", []):
+                cls_rows = store.query(
+                    f"MATCH (c:Class) WHERE c.name = '{class_name}' RETURN c.id LIMIT 1"
+                )
+                if cls_rows:
+                    store.create_edge(
+                        "CONTRACT_DECLARES_CLASS",
+                        "Contract",
+                        contract_id,
+                        "Class",
+                        cls_rows[0]["c.id"],
+                    )
+                    declares_edge_count += 1
 
     # --- Learnings ---
     if learnings_file.is_file():

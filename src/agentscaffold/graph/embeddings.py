@@ -147,7 +147,7 @@ def generate_embeddings(
                 vec_json = json.dumps(vec_list)
                 escaped = vec_json.replace("\\", "\\\\").replace("'", "\\'")
                 store.execute(
-                    f"MATCH (n:{table}) WHERE n.id = '{node_id}' " f"SET n.embedding = '{escaped}'"
+                    f"MATCH (n:{table}) WHERE n.id = '{node_id}' SET n.embedding = '{escaped}'"
                 )
                 count += 1
 
@@ -171,7 +171,7 @@ def search_similar(
     """
     if not _st_available:
         raise ImportError(
-            "Semantic search requires sentence-transformers: " "pip install agentscaffold[search]"
+            "Semantic search requires sentence-transformers: pip install agentscaffold[search]"
         )
 
     model = SentenceTransformer(model_name)
@@ -183,7 +183,7 @@ def search_similar(
 
     _builder_fn, fields = _TEXT_BUILDERS[table]
     rows = store.query(
-        f"MATCH (n:{table}) WHERE n.embedding <> '' " f"RETURN n.id, n.embedding, {fields}"
+        f"MATCH (n:{table}) WHERE n.embedding <> '' RETURN n.id, n.embedding, {fields}"
     )
 
     if not rows:

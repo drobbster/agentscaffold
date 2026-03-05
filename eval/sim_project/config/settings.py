@@ -1,0 +1,8 @@
+"""Application configuration."""
+
+DEFAULT_PROVIDER = "alpaca"
+DEFAULT_UNIVERSE = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"]
+MAX_POSITION_PCT = 0.1
+MAX_DRAWDOWN = 0.2
+CACHE_TTL = 300
+API_RATE_LIMIT = 100

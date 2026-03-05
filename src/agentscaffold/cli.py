@@ -702,6 +702,7 @@ def session_start(
     session_id = start_session(store, plan_numbers=plan, summary=summary)
     store.close()
     console.print(f"[green]Session started:[/green] {session_id}")
+    console.print(f"  To end this session: [bold]scaffold session end {session_id}[/bold]")
 
 
 @session_app.command("end")

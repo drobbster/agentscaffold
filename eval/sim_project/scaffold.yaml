@@ -1,0 +1,34 @@
+framework:
+  version: "1.0"
+  project_name: "SimTrader"
+  architecture_layers: 6
+
+profile: interactive
+rigor: standard
+
+graph:
+  db_path: ".scaffold/graph.db"
+  languages:
+    - python
+    - go
+    - rust
+  plans_dir: "docs/ai/plans/"
+  contracts_dir: "docs/ai/contracts/"
+  learnings_file: "docs/ai/state/learnings_tracker.md"
+  embeddings: false
+  communities: true
+
+domains:
+  - trading
+
+standards:
+  core:
+    - errors
+    - logging
+    - config
+    - testing
+  domain:
+    - traceability
+
+prohibitions:
+  emojis: true

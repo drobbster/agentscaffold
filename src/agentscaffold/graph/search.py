@@ -86,8 +86,7 @@ def _cypher_search(
     for table in tables:
         if table == "Function":
             rows = store.query(
-                f"MATCH (n:Function) RETURN n.id, n.name, n.filePath, n.signature "
-                f"LIMIT {limit * 2}"
+                f"MATCH (n:Function) RETURN n.id, n.name, n.filePath, n.signature LIMIT {limit * 2}"
             )
             for row in rows:
                 score = _text_match_score(
@@ -288,7 +287,7 @@ def format_search_results(results: list[SearchResult]) -> str:
 
     for i, r in enumerate(results, 1):
         lines.append(
-            f"| {i} | {r.node_type} | `{r.name}` | `{r.path}` " f"| {r.score:.4f} | {r.source} |"
+            f"| {i} | {r.node_type} | `{r.name}` | `{r.path}` | {r.score:.4f} | {r.source} |"
         )
 
     return "\n".join(lines)

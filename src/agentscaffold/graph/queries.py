@@ -27,13 +27,14 @@ PYTHON_CLASS_QUERY = """
 PYTHON_METHOD_QUERY = """
 (class_definition
   name: (identifier) @class_name
-  body: (block
-    (function_definition
-      name: (identifier) @method_name
-      parameters: (parameters) @params
-    ) @method
-  )
-)
+) @class_def
+"""
+
+PYTHON_INNER_METHOD_QUERY = """
+(function_definition
+  name: (identifier) @method_name
+  parameters: (parameters) @params
+) @method
 """
 
 PYTHON_IMPORT_QUERY = """
@@ -121,13 +122,14 @@ TS_CLASS_QUERY = """
 TS_METHOD_QUERY = """
 (class_declaration
   name: (type_identifier) @class_name
-  body: (class_body
-    (method_definition
-      name: (property_identifier) @method_name
-      parameters: (formal_parameters) @params
-    ) @method
-  )
-)
+) @class_def
+"""
+
+TS_INNER_METHOD_QUERY = """
+(method_definition
+  name: (property_identifier) @method_name
+  parameters: (formal_parameters) @params
+) @method
 """
 
 TS_INTERFACE_QUERY = """
@@ -257,13 +259,14 @@ RUST_STRUCT_QUERY = """
 RUST_IMPL_METHOD_QUERY = """
 (impl_item
   type: (type_identifier) @class_name
-  body: (declaration_list
-    (function_item
-      name: (identifier) @method_name
-      parameters: (parameters) @params
-    ) @method
-  )
-)
+) @class_def
+"""
+
+RUST_INNER_METHOD_QUERY = """
+(function_item
+  name: (identifier) @method_name
+  parameters: (parameters) @params
+) @method
 """
 
 RUST_TRAIT_QUERY = """
@@ -295,13 +298,14 @@ RUST_CALL_QUERY = """
 JAVA_METHOD_QUERY = """
 (class_declaration
   name: (identifier) @class_name
-  body: (class_body
-    (method_declaration
-      name: (identifier) @method_name
-      parameters: (formal_parameters) @params
-    ) @method
-  )
-)
+) @class_def
+"""
+
+JAVA_INNER_METHOD_QUERY = """
+(method_declaration
+  name: (identifier) @method_name
+  parameters: (formal_parameters) @params
+) @method
 """
 
 JAVA_CLASS_QUERY = """
@@ -370,15 +374,16 @@ CPP_CLASS_QUERY = """
 CPP_METHOD_QUERY = """
 (class_specifier
   name: (type_identifier) @class_name
-  body: (field_declaration_list
-    (function_definition
-      declarator: (function_declarator
-        declarator: (field_identifier) @method_name
-        parameters: (parameter_list) @params
-      )
-    ) @method
+) @class_def
+"""
+
+CPP_INNER_METHOD_QUERY = """
+(function_definition
+  declarator: (function_declarator
+    declarator: (field_identifier) @method_name
+    parameters: (parameter_list) @params
   )
-)
+) @method
 """
 
 CPP_STRUCT_QUERY = C_STRUCT_QUERY
@@ -443,6 +448,16 @@ QUERIES: dict[str, dict[str, str]] = {
         "methods": CPP_METHOD_QUERY,
         "calls": C_CALL_QUERY,
     },
+}
+
+
+INNER_METHOD_QUERIES: dict[str, str] = {
+    "python": PYTHON_INNER_METHOD_QUERY,
+    "typescript": TS_INNER_METHOD_QUERY,
+    "javascript": TS_INNER_METHOD_QUERY,
+    "rust": RUST_INNER_METHOD_QUERY,
+    "java": JAVA_INNER_METHOD_QUERY,
+    "cpp": CPP_INNER_METHOD_QUERY,
 }
 
 

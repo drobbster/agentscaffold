@@ -96,9 +96,7 @@ def get_graph_context(config: ScaffoldConfig) -> dict[str, Any]:
 
         # Architecture layers
         layers = store.query(
-            "MATCH (l:ArchitectureLayer) "
-            "RETURN l.number, l.name, l.description "
-            "ORDER BY l.number"
+            "MATCH (l:ArchitectureLayer) RETURN l.number, l.name, l.description ORDER BY l.number"
         )
 
         # Active contracts

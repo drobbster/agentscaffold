@@ -21,7 +21,7 @@ def run_agents_generate() -> None:
     """
     config_path = find_config()
     if config_path is None:
-        console.print("[red]No scaffold.yaml found. " "Run 'scaffold init' first.[/red]")
+        console.print("[red]No scaffold.yaml found. Run 'scaffold init' first.[/red]")
         raise SystemExit(1)
 
     project_root = config_path.parent

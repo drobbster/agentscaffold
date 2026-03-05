@@ -118,9 +118,9 @@ def _check_signatures(
             continue
         escaped = fpath.replace("\\", "\\\\").replace("'", "\\'")
         funcs = store.query(
-            f"MATCH (fn:Function) WHERE fn.filePath = '{escaped}' " "RETURN fn.name, fn.signature"
+            f"MATCH (fn:Function) WHERE fn.filePath = '{escaped}' RETURN fn.name, fn.signature"
         )
-        classes = store.query(f"MATCH (c:Class) WHERE c.filePath = '{escaped}' " "RETURN c.name")
+        classes = store.query(f"MATCH (c:Class) WHERE c.filePath = '{escaped}' RETURN c.name")
         total_defs += len(funcs) + len(classes)
 
     out.append(

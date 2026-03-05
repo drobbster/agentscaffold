@@ -449,24 +449,62 @@ def _extract_methods(
     symbol_table: SymbolTable,
     root: Path,
 ) -> int:
-    """Extract method definitions within classes."""
-    captures = _query_captures(lang, query_str, tree.root_node)
-    if captures is None:
+    """Extract method definitions within classes.
+
+    Uses a two-pass approach: first captures class ranges, then captures all
+    function definitions and assigns each to its enclosing class by line range.
+    This avoids tree-sitter's sibling capture limitation where only the first
+    function_definition per block is returned in nested patterns.
+    """
+    # Pass 1: get class ranges
+    class_captures = _query_captures(lang, query_str, tree.root_node)
+    if class_captures is None:
         return 0
 
-    count = 0
-    class_names = captures.get("class_name", [])
-    method_names = captures.get("method_name", [])
-    params = captures.get("params", [])
-    methods = captures.get("method", [])
+    class_name_nodes = class_captures.get("class_name", [])
+    class_def_nodes = class_captures.get("class_def", [])
 
-    for i, method_name_node in enumerate(method_names):
-        method_name = _extract_text(method_name_node, source)
-        class_name = _extract_text(class_names[i], source) if i < len(class_names) else "Unknown"
-        start_line = method_name_node.start_point[0] + 1
-        method_node = methods[i] if i < len(methods) else method_name_node
-        end_line = method_node.end_point[0] + 1
-        params_node = params[i] if i < len(params) else None
+    class_ranges: list[tuple[str, int, int]] = []
+    for i, cn_node in enumerate(class_name_nodes):
+        cname = _extract_text(cn_node, source)
+        cd_node = class_def_nodes[i] if i < len(class_def_nodes) else cn_node
+        class_ranges.append((cname, cd_node.start_point[0], cd_node.end_point[0]))
+
+    if not class_ranges:
+        return 0
+
+    # Pass 2: get all function definitions in the file
+    from agentscaffold.graph.queries import INNER_METHOD_QUERIES
+
+    inner_query = INNER_METHOD_QUERIES.get(language)
+    if inner_query is None:
+        return 0
+    func_captures = _query_captures(lang, inner_query, tree.root_node)
+    if func_captures is None:
+        return 0
+
+    method_name_nodes = func_captures.get("method_name", [])
+    params_nodes = func_captures.get("params", [])
+    method_def_nodes = func_captures.get("method", [])
+
+    count = 0
+    for i, mn_node in enumerate(method_name_nodes):
+        method_name = _extract_text(mn_node, source)
+        start_line = mn_node.start_point[0] + 1
+        m_node = method_def_nodes[i] if i < len(method_def_nodes) else mn_node
+        end_line = m_node.end_point[0] + 1
+        params_node = params_nodes[i] if i < len(params_nodes) else None
+
+        # Assign to enclosing class by line range
+        func_line = mn_node.start_point[0]
+        class_name = "Unknown"
+        for cname, cstart, cend in class_ranges:
+            if cstart <= func_line <= cend:
+                class_name = cname
+                break
+
+        if class_name == "Unknown":
+            continue
 
         is_exported = not method_name.startswith("_") if language == "python" else True
         if language == "python":

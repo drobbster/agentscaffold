@@ -21,9 +21,7 @@ try:
 except ImportError:
     kuzu = None  # type: ignore[assignment]
 
-_GRAPH_EXTRAS_MSG = (
-    "Knowledge graph requires extra dependencies: " "pip install agentscaffold[graph]"
-)
+_GRAPH_EXTRAS_MSG = "Knowledge graph requires extra dependencies: pip install agentscaffold[graph]"
 
 
 class GraphStore:

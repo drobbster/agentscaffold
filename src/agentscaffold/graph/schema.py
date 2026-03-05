@@ -137,6 +137,8 @@ GOVERNANCE_NODE_TABLES: list[str] = [
         version STRING,
         filePath STRING,
         lastUpdated STRING,
+        declaredMethods STRING,
+        declaredClasses STRING,
         PRIMARY KEY (id)
     )
     """,

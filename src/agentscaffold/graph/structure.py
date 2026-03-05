@@ -61,10 +61,11 @@ DEFAULT_IGNORE = [
     "**/.mypy_cache/**",
     "**/.pytest_cache/**",
     "**/.ruff_cache/**",
+    "**/.scaffold/**",
+    ".scaffold/*",
     "**/dist/**",
     "**/build/**",
     "**/*.egg-info/**",
-    "**/.scaffold/**",
 ]
 
 

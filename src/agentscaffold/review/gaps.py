@@ -53,6 +53,7 @@ def generate_gaps(store: GraphStore, plan_number: int) -> list[GapFinding]:
     _integration_points(store, impacted_files, gaps)
     _similar_plan_patterns(store, plan_number, impacted_paths, gaps)
     _test_coverage_gaps(store, impacted_files, gaps)
+    _dependency_completeness(store, impacted_files, impacted_paths, gaps)
 
     return gaps
 
@@ -230,6 +231,51 @@ def _test_coverage_gaps(
                     "Verify test coverage exists or is planned."
                 ),
                 evidence={"missing_test_files": missing_tests[:10]},
+            )
+        )
+
+
+def _dependency_completeness(
+    store: GraphStore,
+    impacted_files: list[dict[str, Any]],
+    impacted_paths: set[str],
+    out: list[GapFinding],
+) -> None:
+    """Check if impacted files import modules not covered by the plan.
+
+    Useful for early-stage (Draft) plans with small impact maps -- surfaces
+    upstream dependencies the plan author may not have considered.
+    """
+    upstream_deps: dict[str, list[str]] = {}
+
+    for frow in impacted_files:
+        fpath = frow.get("f.path", "")
+        if not fpath or "/test" in fpath:
+            continue
+
+        escaped = fpath.replace("\\", "\\\\").replace("'", "\\'")
+        imports = store.query(
+            f"MATCH (a:File)-[:IMPORTS]->(b:File) WHERE a.path = '{escaped}' RETURN b.path"
+        )
+
+        for imp in imports:
+            dep_path = imp.get("b.path", "")
+            if dep_path and dep_path not in impacted_paths:
+                upstream_deps.setdefault(dep_path, []).append(fpath)
+
+    if upstream_deps:
+        out.append(
+            GapFinding(
+                category="DEPENDENCY_COMPLETENESS",
+                severity="medium",
+                text=(
+                    f"{len(upstream_deps)} upstream dependencies imported by plan "
+                    "files are not in the File Impact Map. Verify they do not need "
+                    "modification: " + ", ".join(f"`{p}`" for p in sorted(upstream_deps)[:5])
+                ),
+                evidence={
+                    "upstream_deps": {k: v for k, v in list(upstream_deps.items())[:10]},
+                },
             )
         )
 

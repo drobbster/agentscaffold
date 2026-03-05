@@ -81,17 +81,23 @@ Description of desired behavior after changes.
 | File | Change Type | Notes |
 |-----|------------|-------|
 | TBD | TBD | TBD |
+{% if graph_hot_files or graph_volatile_modules %}
+
+### Codebase Context (Graph-Generated)
 {% if graph_hot_files %}
-<!-- GRAPH CONTEXT: The following files are the most frequently modified in the
-codebase (by plan count). If your plan touches any of these, pay extra attention
-to backward compatibility and consumer notification.
-{% for f in graph_hot_files %}  - {{ f.path }} ({{ f.plan_count }} plans)
-{% endfor %}-->
-{% endif %}{% if graph_volatile_modules %}
-<!-- GRAPH CONTEXT: High-volatility modules (3+ plans in recent history).
-Consider whether changes here warrant an architectural stability review.
-{% for v in graph_volatile_modules %}  - {{ v.path }} ({{ v.plan_count }} plans)
-{% endfor %}-->
+**Hot Spots** -- Files most frequently modified across plans. If this plan touches any of
+these, pay extra attention to backward compatibility and consumer notification.
+{% for f in graph_hot_files %}
+- `{{ f.path }}` ({{ f.plan_count }} plans)
+{%- endfor %}
+{% endif %}
+{% if graph_volatile_modules %}
+**Volatile Modules** -- High-volatility modules (3+ plans in recent history). Consider
+whether changes here warrant an architectural stability review.
+{% for v in graph_volatile_modules %}
+- `{{ v.path }}` ({{ v.plan_count }} plans)
+{%- endfor %}
+{% endif %}
 {% endif %}
 
 {% if config.plan.require_consumer_audit %}<!-- CONSUMER AUDIT (Mandatory when adding/modifying config classes or interfaces):

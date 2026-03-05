@@ -126,7 +126,7 @@ def process_calls(
 def _build_import_map(store: GraphStore) -> dict[str, dict[str, str]]:
     """Build a map of file_path -> {imported_name: source_file_path}."""
     import_edges = store.query(
-        "MATCH (a:File)-[r:IMPORTS]->(b:File) " "RETURN a.path, b.path, r.importedNames"
+        "MATCH (a:File)-[r:IMPORTS]->(b:File) RETURN a.path, b.path, r.importedNames"
     )
     result: dict[str, dict[str, str]] = {}
     for row in import_edges:

@@ -288,6 +288,10 @@ def _print_summary(
     console.print("  2. Edit docs/ai/system_architecture.md to define your layers")
     console.print("  3. Run [bold]scaffold agents generate[/bold] to regenerate AGENTS.md")
     console.print("  4. Run [bold]scaffold agents cursor[/bold] to regenerate .cursor/rules.md")
+    console.print(
+        "  5. Run [bold]scaffold index[/bold] to build the knowledge graph"
+        " (enables search, reviews, and session memory)"
+    )
 
 
 def run_init(directory: Path, non_interactive: bool = False) -> None:

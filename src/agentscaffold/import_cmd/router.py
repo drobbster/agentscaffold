@@ -97,7 +97,7 @@ def run_import(
             return
 
         console.print(
-            "\n[bold]Enter conversation numbers to import " "(comma-separated, e.g. 1,3,5):[/bold]"
+            "\n[bold]Enter conversation numbers to import (comma-separated, e.g. 1,3,5):[/bold]"
         )
         try:
             selection = input("> ").strip()

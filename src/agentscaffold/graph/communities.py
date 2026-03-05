@@ -38,7 +38,7 @@ def detect_communities(
     """
     if not _leiden_available:
         raise ImportError(
-            "Community detection requires graspologic: " "pip install agentscaffold[communities]"
+            "Community detection requires graspologic: pip install agentscaffold[communities]"
         )
 
     # Build adjacency from import and call edges

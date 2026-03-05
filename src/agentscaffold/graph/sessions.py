@@ -77,7 +77,7 @@ def record_modification(
     store.create_edge("SESSION_MODIFIED", "Session", session_id, "File", file_id)
 
     # Update the filesModified list on the session node
-    rows = store.query(f"MATCH (s:Session) WHERE s.id = '{session_id}' " f"RETURN s.filesModified")
+    rows = store.query(f"MATCH (s:Session) WHERE s.id = '{session_id}' RETURN s.filesModified")
     if rows:
         try:
             current = json.loads(rows[0].get("s.filesModified", "[]"))
@@ -89,8 +89,7 @@ def record_modification(
             updated = json.dumps(current)
             escaped = updated.replace("\\", "\\\\").replace("'", "\\'")
             store.execute(
-                f"MATCH (s:Session) WHERE s.id = '{session_id}' "
-                f"SET s.filesModified = '{escaped}'"
+                f"MATCH (s:Session) WHERE s.id = '{session_id}' SET s.filesModified = '{escaped}'"
             )
 
 
@@ -106,9 +105,7 @@ def end_session(
     """
     if summary:
         escaped = summary.replace("\\", "\\\\").replace("'", "\\'")
-        store.execute(
-            f"MATCH (s:Session) WHERE s.id = '{session_id}' " f"SET s.summary = '{escaped}'"
-        )
+        store.execute(f"MATCH (s:Session) WHERE s.id = '{session_id}' SET s.summary = '{escaped}'")
 
     return get_session(store, session_id)
 

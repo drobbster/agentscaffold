@@ -22,6 +22,6 @@ def parse_markdown(file: Path) -> str:
         return ""
 
     now = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    header = f"<!-- Imported from: {file.name} -->\n" f"<!-- Import date: {now} -->\n" "\n"
+    header = f"<!-- Imported from: {file.name} -->\n<!-- Import date: {now} -->\n\n"
 
     return header + content

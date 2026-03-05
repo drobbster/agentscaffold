@@ -138,8 +138,7 @@ def remove_file_nodes(store: GraphStore, file_paths: list[str]) -> int:
         )
         # Remove classes defined in this file
         store.execute(
-            f"MATCH (f:File)-[:DEFINES_CLASS]->(c:Class) "
-            f"WHERE f.id = '{file_id}' DETACH DELETE c"
+            f"MATCH (f:File)-[:DEFINES_CLASS]->(c:Class) WHERE f.id = '{file_id}' DETACH DELETE c"
         )
         # Remove interfaces defined in this file
         store.execute(

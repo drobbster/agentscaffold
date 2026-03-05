@@ -182,6 +182,79 @@ def _deep_verify(
     }
 
 
+def check_contract_drift(store: GraphStore) -> dict[str, Any]:
+    """Check for drift between contract declarations and actual code.
+
+    Returns a report with:
+    - declared_only: methods in contracts but not found in code
+    - undocumented: methods in code linked to a contract but not declared
+    - summary counts
+    """
+    contracts = store.query(
+        "MATCH (c:Contract) RETURN c.id, c.name, c.declaredMethods, c.declaredClasses"
+    )
+
+    declared_only: list[dict[str, str]] = []
+    linked_ok = 0
+    total_declared = 0
+
+    for c in contracts:
+        contract_id = c["c.id"]
+        contract_name = c["c.name"]
+        raw_methods = c.get("c.declaredMethods", "") or ""
+        raw_classes = c.get("c.declaredClasses", "") or ""
+
+        declared_methods = [m for m in raw_methods.split(",") if m]
+        declared_classes = [cl for cl in raw_classes.split(",") if cl]
+        total_declared += len(declared_methods) + len(declared_classes)
+
+        for method_name in declared_methods:
+            # Check both Function and Method nodes
+            fn_match = store.query(
+                f"MATCH (fn:Function) WHERE fn.name = '{method_name}' RETURN fn.id LIMIT 1"
+            )
+            m_match = (
+                store.query(f"MATCH (m:Method) WHERE m.name = '{method_name}' RETURN m.id LIMIT 1")
+                if not fn_match
+                else []
+            )
+            if fn_match or m_match:
+                linked_ok += 1
+            else:
+                declared_only.append(
+                    {
+                        "contract": contract_name,
+                        "type": "method",
+                        "name": method_name,
+                    }
+                )
+
+        for class_name in declared_classes:
+            edges = store.query(
+                f"MATCH (c:Contract)-[:CONTRACT_DECLARES_CLASS]->(n) "
+                f"WHERE c.id = '{contract_id}' AND n.name = '{class_name}' "
+                "RETURN n.id LIMIT 1"
+            )
+            if edges:
+                linked_ok += 1
+            else:
+                declared_only.append(
+                    {
+                        "contract": contract_name,
+                        "type": "class",
+                        "name": class_name,
+                    }
+                )
+
+    return {
+        "total_declared": total_declared,
+        "linked": linked_ok,
+        "drift_items": declared_only,
+        "drift_count": len(declared_only),
+        "health": "CLEAN" if not declared_only else "DRIFT_DETECTED",
+    }
+
+
 def check_staleness(
     store: GraphStore,
     root: Path,
@@ -221,7 +294,7 @@ def print_verification_report(report: dict[str, Any]) -> None:
     table.add_row(
         "File existence",
         (
-            f"{fe['exists']}/{fe['total']} ({fe['exists']/fe['total']*100:.0f}%)"
+            f"{fe['exists']}/{fe['total']} ({fe['exists'] / fe['total'] * 100:.0f}%)"
             if fe["total"]
             else "0/0"
         ),
@@ -231,7 +304,7 @@ def print_verification_report(report: dict[str, Any]) -> None:
     table.add_row(
         "Hash freshness",
         (
-            f"{hf['fresh']}/{hf['total']} ({hf['fresh']/hf['total']*100:.1f}%)"
+            f"{hf['fresh']}/{hf['total']} ({hf['fresh'] / hf['total'] * 100:.1f}%)"
             if hf["total"]
             else "0/0"
         ),

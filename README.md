@@ -75,7 +75,7 @@ scaffold plan status                   # Dashboard of all plans
 scaffold validate                      # Run all checks
 scaffold retro check                   # Find missing retrospectives
 scaffold agents generate               # Regenerate AGENTS.md
-scaffold cursor setup                  # Regenerate .cursor/rules.md
+scaffold agents cursor                 # Regenerate .cursor/rules.md
 scaffold import chat.json --format chatgpt  # Import conversation
 scaffold ci setup                      # Generate CI workflows
 scaffold taskrunner setup              # Generate justfile + Makefile
