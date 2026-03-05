@@ -731,21 +731,85 @@ AgentScaffold can build a knowledge graph of your codebase using `scaffold index
 ### Building the Graph
 
 ```bash
-scaffold index                 # Index from current directory
+scaffold index                 # Full index from current directory
 scaffold index /path/to/repo   # Index a specific path
-scaffold index --incremental   # Only re-index changed files
+scaffold index --incremental   # Only re-index changed files (fast)
+scaffold index --embeddings    # Generate code embeddings for semantic search
 scaffold index --audit         # Log all resolution decisions
 ```
 
 The graph is stored at `.scaffold/graph.db` by default (configurable in `scaffold.yaml` under `graph.db_path`). It requires the `[graph]` optional dependency:
 
 ```bash
-pip install agentscaffold[graph]
+pip install agentscaffold[graph]          # Python, JS, TS grammars
+pip install agentscaffold[graph-go]       # Add Go support
+pip install agentscaffold[graph-rust]     # Add Rust support
+pip install agentscaffold[graph-java]     # Add Java support
+pip install agentscaffold[graph-c]        # Add C support
+pip install agentscaffold[graph-cpp]      # Add C++ support
+pip install agentscaffold[graph-all-languages]  # All language grammars
+pip install agentscaffold[all]            # Everything
 ```
+
+### Incremental Indexing
+
+After the first full index, use `--incremental` for fast re-indexing:
+
+```bash
+scaffold index --incremental
+```
+
+Incremental mode compares SHA-256 content hashes of files on disk against those stored in the graph. Only files that were added, modified, or deleted since the last index are processed. On a large codebase where only a handful of files changed, this is dramatically faster than a full re-index.
+
+The changeset output shows exactly what changed:
+```
+Incremental index -- computing changeset...
+  3 added, 2 modified, 1 deleted, 847 unchanged
+```
+
+### Supported Languages
+
+Tree-sitter grammars are used for parsing. The following languages extract functions, classes, methods, and interfaces:
+
+| Language | Functions | Classes | Methods | Interfaces | Import/Call Resolution |
+|----------|-----------|---------|---------|------------|----------------------|
+| Python | Yes | Yes | Yes | - | Yes |
+| TypeScript | Yes | Yes | Yes | Yes | Yes |
+| JavaScript | Yes | Yes | Yes | - | Yes |
+| Go | Yes | Structs | Yes | Yes | Partial |
+| Rust | Yes | Structs | Impl methods | Traits | - |
+| Java | - | Yes | Yes | Yes | Partial |
+| C | Yes | Structs | - | - | - |
+| C++ | Yes | Yes | Yes | - | - |
+
+Languages without import/call resolution still get full structural indexing (definitions, edges to files, embeddings, community membership).
+
+### Cross-Session Memory
+
+AgentScaffold tracks coding sessions to provide context continuity:
+
+```bash
+# Start a session (associate with plan numbers)
+scaffold session start --plan 42 --summary "Implementing data pipeline"
+
+# Record which files you modified (usually done automatically)
+# The session tracks modifications via SESSION_MODIFIED edges
+
+# End the session with a summary
+scaffold session end <session-id> --summary "Completed phase 1"
+
+# List recent sessions
+scaffold session list
+
+# View cross-session context (hot files, recent plans)
+scaffold session context
+```
+
+Session context is automatically injected into templates when available, showing agents which files have been frequently modified across sessions and which plans are actively being worked on.
 
 ### What Gets Indexed
 
-The graph captures four layers of information:
+The graph captures six layers of information:
 
 | Phase | What It Captures |
 |-------|-----------------|
@@ -753,6 +817,8 @@ The graph captures four layers of information:
 | Parsing | Functions, classes, methods, interfaces, DEFINES edges (via Tree-sitter) |
 | Resolution | Import edges (IMPORTS), call edges (CALLS) with confidence scores |
 | Governance | Plans, contracts, learnings, review findings, IMPACTS/REFERENCES edges |
+| Communities | Leiden algorithm clusters of tightly coupled files |
+| Embeddings | Vector embeddings for semantic similarity search (optional) |
 
 ### Querying the Graph
 
@@ -828,14 +894,66 @@ in our retrospective discussion
 
 The graph evidence makes reviews more concrete. Instead of "this plan might affect downstream consumers," the challenges say "src/data/router.py has 5 direct importers that are not in your File Impact Map."
 
+### Hybrid Search
+
+Search across code definitions using natural language. Three modes are available:
+
+```bash
+# Hybrid search (Cypher + semantic -- default)
+scaffold graph search "data routing strategy"
+
+# Pure structural search (name/path matching)
+scaffold graph search "router" --mode cypher
+
+# Pure semantic search (vector similarity)
+scaffold graph search "how is data loaded" --mode semantic
+
+# Limit results
+scaffold graph search "risk" --top 5
+
+# Restrict to a single table
+scaffold graph search "base class" --table Class
+```
+
+Hybrid mode uses **reciprocal rank fusion** (RRF) to merge structural and semantic results, giving the best of both worlds: exact name matches from graph traversal and conceptual matches from embeddings.
+
+Embeddings are generated automatically during indexing when `--embeddings` is passed:
+
+```bash
+scaffold index --embeddings
+```
+
+This uses `all-MiniLM-L6-v2` (384-dim) from sentence-transformers. Each function, class, method, and file node gets an embedding vector stored in the graph.
+
+### Module Communities
+
+Community detection uses the **Leiden algorithm** to cluster tightly coupled files based on import and call edges:
+
+```bash
+# View detected communities
+scaffold graph communities
+```
+
+Communities are detected automatically during indexing. The output shows:
+- Community label (derived from common path prefixes)
+- File count and function count per community
+- Member files (preview)
+
+This helps identify natural module boundaries, tightly coupled clusters that should be refactored together, and architectural groupings.
+
 ### MCP Integration
 
-When running the MCP server (`scaffold mcp`), two graph-powered tools are available to AI agents:
+When running the MCP server (`scaffold mcp`), graph-powered tools are available to AI agents:
 
 | Tool | What It Does |
 |------|-------------|
-| `scaffold_graph_query` | Execute Cypher queries against the knowledge graph |
-| `scaffold_review_context` | Get review context (brief, challenges, gaps, verify, retro) for a plan |
+| `scaffold_stats` | Codebase health dashboard (files, functions, edges, governance) |
+| `scaffold_query` | Execute raw Cypher queries against the knowledge graph |
+| `scaffold_search` | Hybrid search (cypher, semantic, or hybrid mode) |
+| `scaffold_context` | Full context for a symbol (definition, callers, layer, plan history) |
+| `scaffold_impact` | Blast radius analysis for a file or symbol |
+| `scaffold_validate` | Validation checks (layers, contracts, staleness) |
+| `scaffold_review_context` | Review context (brief, challenges, gaps, verify, retro) for a plan |
 
 The MCP tools return both structured JSON and formatted markdown, so agents can parse the data programmatically or display it directly.
 

@@ -28,11 +28,23 @@ _GRAMMAR_MODULES: dict[str, str] = {
     "python": "tree_sitter_python",
     "javascript": "tree_sitter_javascript",
     "typescript": "tree_sitter_typescript",
+    "go": "tree_sitter_go",
+    "rust": "tree_sitter_rust",
+    "java": "tree_sitter_java",
+    "c": "tree_sitter_c",
+    "cpp": "tree_sitter_cpp",
 }
 
 
-def _get_parser(language: str) -> Parser | None:
-    """Create a tree-sitter parser for the given language."""
+_LANGUAGE_FUNC_MAP: dict[str, str] = {
+    "typescript": "language_typescript",
+    "c": "language_c",
+    "cpp": "language_cpp",
+}
+
+
+def _load_language(language: str) -> Language | None:
+    """Load a tree-sitter Language object for the given language."""
     if ts is None:
         return None
 
@@ -44,31 +56,28 @@ def _get_parser(language: str) -> Parser | None:
         import importlib
 
         mod = importlib.import_module(mod_name)
-        if language == "typescript":
-            lang = Language(mod.language_typescript())
-        else:
-            lang = Language(mod.language())
-        parser = Parser(lang)
-        return parser
+        func_name = _LANGUAGE_FUNC_MAP.get(language, "language")
+        lang_func = getattr(mod, func_name, None)
+        if lang_func is None:
+            logger.warning("No %s() in %s", func_name, mod_name)
+            return None
+        return Language(lang_func())
     except Exception as exc:
         logger.warning("Failed to load tree-sitter grammar for %s: %s", language, exc)
         return None
 
 
+def _get_parser(language: str) -> Parser | None:
+    """Create a tree-sitter parser for the given language."""
+    lang = _load_language(language)
+    if lang is None:
+        return None
+    return Parser(lang)
+
+
 def _get_ts_language(language: str) -> Language | None:
     """Get the tree-sitter Language object for query compilation."""
-    mod_name = _GRAMMAR_MODULES.get(language)
-    if mod_name is None:
-        return None
-    try:
-        import importlib
-
-        mod = importlib.import_module(mod_name)
-        if language == "typescript":
-            return Language(mod.language_typescript())
-        return Language(mod.language())
-    except Exception:
-        return None
+    return _load_language(language)
 
 
 def _file_to_module(file_path: str) -> str:
@@ -142,12 +151,21 @@ def process_parsing(
     store: GraphStore,
     root: Path,
     symbol_table: SymbolTable,
+    *,
+    file_paths: set[str] | None = None,
 ) -> dict:
-    """Parse all indexed files and extract definitions.
+    """Parse indexed files and extract definitions.
+
+    Args:
+        file_paths: If provided, only parse these relative paths.
+                    If None, parse all files in the graph.
 
     Returns a summary dict with counts.
     """
     file_rows = store.query("MATCH (f:File) RETURN f.id, f.path, f.language")
+
+    if file_paths is not None:
+        file_rows = [r for r in file_rows if r["f.path"] in file_paths]
 
     func_count = 0
     class_count = 0

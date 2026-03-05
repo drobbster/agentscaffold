@@ -61,6 +61,10 @@ def run_pipeline(
     phases_completed: list[str] = []
     summary: dict[str, Any] = {}
 
+    # Incremental mode: compute changeset and only process changed files
+    if incremental and store.schema_current():
+        return _run_incremental(store, root, graph_config, t0, embeddings)
+
     # Check for resumable state
     if not incremental:
         pipeline_state = store.get_pipeline_state()
@@ -75,6 +79,17 @@ def run_pipeline(
 
     # Compute total phases
     total_phases = 4  # structure, parsing, resolution, governance
+    if embeddings:
+        total_phases += 1
+    has_communities = False
+    try:
+        from agentscaffold.graph.communities import _leiden_available
+
+        has_communities = _leiden_available
+    except ImportError:
+        pass
+    if has_communities:
+        total_phases += 1
 
     # Phase 1: Structure
     if "structure" not in phases_completed:
@@ -207,6 +222,60 @@ def run_pipeline(
             )
             # Governance failure is non-fatal; code graph is still usable
 
+    # Phase 5 (optional): Community detection
+    if has_communities and "communities" not in phases_completed:
+        phase_num = len(phases_completed) + 1
+        console.print(
+            f"[bold]Phase {phase_num}/{total_phases}: Communities[/bold] "
+            "-- detecting module clusters..."
+        )
+        try:
+            from agentscaffold.graph.communities import detect_communities
+
+            comm_result = detect_communities(store)
+            summary["communities"] = comm_result
+            phases_completed.append("communities")
+            console.print(
+                f"  {comm_result['communities']} communities detected, "
+                f"{comm_result['files_assigned']} files assigned"
+            )
+        except Exception as exc:
+            logger.error("Community detection failed: %s", exc)
+            store.add_parsing_warning(
+                "pw::pipeline::communities",
+                "",
+                "communities",
+                str(exc),
+                "warning",
+            )
+
+    # Phase 6 (optional): Embeddings
+    if embeddings and "embeddings" not in phases_completed:
+        phase_num = len(phases_completed) + 1
+        console.print(
+            f"[bold]Phase {phase_num}/{total_phases}: Embeddings[/bold] "
+            "-- generating code vectors..."
+        )
+        try:
+            from agentscaffold.graph.embeddings import generate_embeddings
+
+            emb_result = generate_embeddings(store)
+            summary["embeddings"] = emb_result
+            phases_completed.append("embeddings")
+            total = sum(emb_result.values())
+            console.print(f"  {total} nodes embedded across {len(emb_result)} tables")
+        except Exception as exc:
+            logger.error("Embedding generation failed: %s", exc)
+            store.add_parsing_warning(
+                "pw::pipeline::embeddings",
+                "",
+                "embeddings",
+                str(exc),
+                "warning",
+            )
+
+    store.update_pipeline_state("complete", phases_completed)
+
     elapsed = time.monotonic() - t0
     summary["elapsed_seconds"] = round(elapsed, 1)
     summary["phases_completed"] = phases_completed
@@ -214,6 +283,115 @@ def run_pipeline(
     # Print final summary
     _print_summary(summary, store)
 
+    store.close()
+    return summary
+
+
+def _run_incremental(
+    store: GraphStore,
+    root: Path,
+    graph_config: Any,
+    t0: float,
+    embeddings: bool = False,
+) -> dict[str, Any]:
+    """Run incremental index: only process changed files."""
+    from agentscaffold.graph.incremental import (
+        add_file_node,
+        compute_changeset,
+        remove_file_nodes,
+    )
+
+    console.print("[bold]Incremental index[/bold] -- computing changeset...")
+
+    changeset = compute_changeset(store, root, graph_config)
+    added = changeset["added"]
+    modified = changeset["modified"]
+    deleted = changeset["deleted"]
+    unchanged = changeset["unchanged"]
+
+    console.print(
+        f"  {len(added)} added, {len(modified)} modified, "
+        f"{len(deleted)} deleted, {unchanged} unchanged"
+    )
+
+    summary: dict[str, Any] = {"changeset": changeset}
+
+    if not added and not modified and not deleted:
+        console.print("[green]Graph is up to date. Nothing to do.[/green]")
+        elapsed = time.monotonic() - t0
+        summary["elapsed_seconds"] = round(elapsed, 1)
+        summary["phases_completed"] = ["incremental"]
+        store.close()
+        return summary
+
+    # Remove deleted files
+    if deleted:
+        removed = remove_file_nodes(store, deleted)
+        console.print(f"  Removed {removed} deleted file(s)")
+
+    # Remove and re-add modified files (to refresh definitions)
+    if modified:
+        remove_file_nodes(store, modified)
+        for path in modified:
+            add_file_node(store, root, path)
+        console.print(f"  Refreshed {len(modified)} modified file(s)")
+
+    # Add new files
+    if added:
+        for path in added:
+            add_file_node(store, root, path)
+        console.print(f"  Added {len(added)} new file(s)")
+
+    # Re-parse only changed files
+    changed_files = set(added) | set(modified)
+    if changed_files:
+        console.print(f"  Re-parsing {len(changed_files)} file(s)...")
+        symbol_table = SymbolTable()
+        _rebuild_symbol_table(store, symbol_table)
+
+        from agentscaffold.graph.parsing import process_parsing
+
+        parse_result = process_parsing(store, root, symbol_table, file_paths=changed_files)
+        summary["parsing"] = parse_result
+
+        from agentscaffold.graph.calls import process_calls
+        from agentscaffold.graph.imports import process_imports
+
+        import_result = process_imports(store, root, symbol_table)
+        summary["imports"] = import_result
+
+        call_result = process_calls(store, root, symbol_table)
+        summary["calls"] = call_result
+
+    # Re-run communities if available
+    try:
+        from agentscaffold.graph.communities import _leiden_available
+
+        if _leiden_available:
+            from agentscaffold.graph.communities import detect_communities
+
+            comm_result = detect_communities(store)
+            summary["communities"] = comm_result
+    except ImportError:
+        pass
+
+    # Re-run embeddings if requested
+    if embeddings:
+        try:
+            from agentscaffold.graph.embeddings import generate_embeddings
+
+            emb_result = generate_embeddings(store)
+            summary["embeddings"] = emb_result
+        except ImportError:
+            pass
+
+    store.update_pipeline_state("complete", ["incremental"])
+
+    elapsed = time.monotonic() - t0
+    summary["elapsed_seconds"] = round(elapsed, 1)
+    summary["phases_completed"] = ["incremental"]
+
+    _print_summary(summary, store)
     store.close()
     return summary
 
@@ -337,6 +515,19 @@ def _print_summary(summary: dict[str, Any], store: GraphStore) -> None:
         table.add_row("Contracts ingested", str(gov.get("contracts", 0)))
         table.add_row("Learnings ingested", str(gov.get("learnings", 0)))
         table.add_row("Impact edges", str(gov.get("impact_edges", 0)))
+
+    comm = summary.get("communities", {})
+    if comm:
+        table.add_row("Communities", str(comm.get("communities", 0)))
+        table.add_row("Files in communities", str(comm.get("files_assigned", 0)))
+        sizes = comm.get("sizes", [])
+        if sizes:
+            table.add_row("Largest community", str(sizes[0]))
+
+    emb = summary.get("embeddings", {})
+    if emb:
+        total_emb = sum(emb.values())
+        table.add_row("Nodes embedded", str(total_emb))
 
     warnings = store.node_count("ParsingWarning")
     table.add_row("Parsing warnings", str(warnings))

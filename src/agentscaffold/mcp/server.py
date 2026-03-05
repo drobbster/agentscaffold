@@ -105,16 +105,25 @@ def _get_tool_definitions() -> list:
         ),
         Tool(
             name="scaffold_search",
-            description="Search across code and governance artifacts in the knowledge graph.",
+            description=(
+                "Search across code definitions using hybrid search "
+                "(structural graph + semantic similarity). Supports cypher, "
+                "semantic, or hybrid modes."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Search query"},
-                    "scope": {
+                    "query": {"type": "string", "description": "Natural language search query"},
+                    "mode": {
                         "type": "string",
-                        "enum": ["code", "governance", "all"],
-                        "description": "Search scope (default: all)",
-                        "default": "all",
+                        "enum": ["cypher", "semantic", "hybrid"],
+                        "description": "Search mode (default: hybrid)",
+                        "default": "hybrid",
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "description": "Number of results (default: 10)",
+                        "default": 10,
                     },
                 },
                 "required": ["query"],
@@ -343,36 +352,31 @@ def _tool_impact(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str,
 
 
 def _tool_search(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
-    """Handle scaffold_search tool call (basic keyword search)."""
+    """Handle scaffold_search tool call (hybrid search)."""
+    from agentscaffold.graph.search import format_search_results, hybrid_search
+
     query_text = arguments.get("query", "")
-    scope = arguments.get("scope", "all")
+    mode = arguments.get("mode", "hybrid")
+    top_k = arguments.get("top_k", 10)
 
-    results = []
+    results = hybrid_search(store, query_text, mode=mode, top_k=top_k)
 
-    if scope in ("code", "all"):
-        funcs = store.query(
-            f"MATCH (fn:Function) WHERE fn.name CONTAINS '{query_text}' "
-            "RETURN fn.id, fn.name, fn.filePath, fn.startLine LIMIT 20"
-        )
-        for f in funcs:
-            results.append({"type": "function", **f})
-
-        classes = store.query(
-            f"MATCH (c:Class) WHERE c.name CONTAINS '{query_text}' "
-            "RETURN c.id, c.name, c.filePath, c.startLine LIMIT 20"
-        )
-        for c in classes:
-            results.append({"type": "class", **c})
-
-    if scope in ("governance", "all"):
-        plans = store.query(
-            f"MATCH (p:Plan) WHERE p.title CONTAINS '{query_text}' "
-            "RETURN p.id, p.title, p.status, p.number LIMIT 10"
-        )
-        for p in plans:
-            results.append({"type": "plan", **p})
-
-    return {"results": results, "count": len(results), "meta": meta}
+    return {
+        "results": [
+            {
+                "node_id": r.node_id,
+                "name": r.name,
+                "path": r.path,
+                "type": r.node_type,
+                "score": r.score,
+                "source": r.source,
+            }
+            for r in results
+        ],
+        "count": len(results),
+        "markdown": format_search_results(results),
+        "meta": meta,
+    }
 
 
 def _tool_validate(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:

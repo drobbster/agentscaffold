@@ -50,6 +50,14 @@ graph = [
     "tree-sitter-javascript>=0.23.0",
     "tree-sitter-typescript>=0.23.0",
 ]
+graph-go = ["tree-sitter-go>=0.23.0"]
+graph-rust = ["tree-sitter-rust>=0.23.0"]
+graph-java = ["tree-sitter-java>=0.23.0"]
+graph-c = ["tree-sitter-c>=0.23.0"]
+graph-cpp = ["tree-sitter-cpp>=0.23.0"]
+graph-all-languages = [
+    "agentscaffold[graph,graph-go,graph-rust,graph-java,graph-c,graph-cpp]",
+]
 search = [
     "sentence-transformers>=3.0.0",
     "rank-bm25>=0.2.2",
@@ -61,7 +69,7 @@ mcp = [
     "mcp>=1.0.0",
 ]
 all = [
-    "agentscaffold[graph,search,communities,mcp]",
+    "agentscaffold[graph,graph-all-languages,search,communities,mcp]",
 ]
 dev = [
     "pytest>=7.0.0",

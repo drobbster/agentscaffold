@@ -41,6 +41,9 @@ app.add_typer(graph_app, name="graph")
 review_app = typer.Typer(help="Graph-powered review generation.")
 app.add_typer(review_app, name="review")
 
+session_app = typer.Typer(help="Cross-session memory management.")
+app.add_typer(session_app, name="session")
+
 
 # ---------------------------------------------------------------------------
 # Top-level commands
@@ -401,6 +404,79 @@ def graph_query(
         store.close()
 
 
+@graph_app.command("search")
+def graph_search(
+    query: str = typer.Argument(..., help="Natural language search query."),
+    mode: str = typer.Option(
+        "hybrid", "--mode", "-m", help="Search mode: cypher, semantic, hybrid."
+    ),
+    top_k: int = typer.Option(10, "--top", "-k", help="Number of results."),
+    table: str = typer.Option(
+        "", "--table", "-t", help="Limit to specific table (Function, Class, Method, File)."
+    ),
+) -> None:
+    """Search the knowledge graph using natural language."""
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+    from agentscaffold.graph.search import format_search_results, hybrid_search
+
+    config = load_config()
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found. Run 'scaffold index' first.[/red]")
+        raise SystemExit(1)
+
+    store = open_graph(config)
+    tables = [table] if table else None
+    results = hybrid_search(store, query, mode=mode, top_k=top_k, tables=tables)
+    store.close()
+    console.print(format_search_results(results))
+
+
+@graph_app.command("communities")
+def graph_communities() -> None:
+    """Show detected module communities."""
+    from rich.table import Table
+
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+    from agentscaffold.graph.communities import get_communities
+
+    config = load_config()
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found. Run 'scaffold index' first.[/red]")
+        raise SystemExit(1)
+
+    store = open_graph(config)
+    communities = get_communities(store)
+    store.close()
+
+    if not communities:
+        console.print("No communities detected. Run 'scaffold index' to detect them.")
+        return
+
+    tbl = Table(title="Module Communities", show_header=True)
+    tbl.add_column("ID", style="cyan")
+    tbl.add_column("Label", style="green")
+    tbl.add_column("Files", justify="right")
+    tbl.add_column("Functions", justify="right")
+    tbl.add_column("Members")
+
+    for c in communities:
+        files = c.get("files", [])
+        preview = ", ".join(files[:3])
+        if len(files) > 3:
+            preview += f" (+{len(files) - 3} more)"
+        tbl.add_row(
+            str(c.get("c.id", "")),
+            str(c.get("c.label", "")),
+            str(c.get("c.fileCount", 0)),
+            str(c.get("c.functionCount", 0)),
+            preview,
+        )
+
+    console.print(tbl)
+
+
 @graph_app.command("verify")
 def graph_verify(
     deep: bool = typer.Option(False, "--deep", help="Re-parse a sample of files for deep check."),
@@ -598,6 +674,128 @@ def review_history(
             default=str,
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Session commands
+# ---------------------------------------------------------------------------
+
+
+@session_app.command("start")
+def session_start(
+    plan: list[int] = typer.Option(
+        [], "--plan", "-p", help="Plan number(s) to associate with this session."
+    ),
+    summary: str = typer.Option("", "--summary", "-s", help="Session description."),
+) -> None:
+    """Start a new coding session for cross-session memory."""
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+    from agentscaffold.graph.sessions import start_session
+
+    config = load_config()
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found. Run 'scaffold index' first.[/red]")
+        raise SystemExit(1)
+
+    store = open_graph(config)
+    session_id = start_session(store, plan_numbers=plan, summary=summary)
+    store.close()
+    console.print(f"[green]Session started:[/green] {session_id}")
+
+
+@session_app.command("end")
+def session_end(
+    session_id: str = typer.Argument(..., help="Session ID to finalize."),
+    summary: str = typer.Option("", "--summary", "-s", help="Final session summary."),
+) -> None:
+    """Finalize a coding session."""
+    import json
+
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+    from agentscaffold.graph.sessions import end_session
+
+    config = load_config()
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found.[/red]")
+        raise SystemExit(1)
+
+    store = open_graph(config)
+    result = end_session(store, session_id, summary=summary)
+    store.close()
+    console.print(json.dumps(result, indent=2, default=str))
+
+
+@session_app.command("list")
+def session_list(
+    limit: int = typer.Option(10, "--limit", "-n", help="Number of sessions to show."),
+) -> None:
+    """List recent coding sessions."""
+    from rich.table import Table
+
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+    from agentscaffold.graph.sessions import list_sessions
+
+    config = load_config()
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found.[/red]")
+        raise SystemExit(1)
+
+    store = open_graph(config)
+    sessions = list_sessions(store, limit=limit)
+    store.close()
+
+    if not sessions:
+        console.print("No sessions recorded.")
+        return
+
+    tbl = Table(title="Recent Sessions", show_header=True)
+    tbl.add_column("ID", style="cyan")
+    tbl.add_column("Date", style="green")
+    tbl.add_column("Plans")
+    tbl.add_column("Files", justify="right")
+    tbl.add_column("Summary")
+
+    for s in sessions:
+        plans = ", ".join(str(p) for p in s.get("plan_numbers", []))
+        files = s.get("files_modified", [])
+        tbl.add_row(
+            s.get("id", ""),
+            s.get("date", "")[:19],
+            plans or "-",
+            str(len(files)),
+            (s.get("summary", "") or "-")[:50],
+        )
+
+    console.print(tbl)
+
+
+@session_app.command("context")
+def session_context() -> None:
+    """Show cross-session context for template injection."""
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+    from agentscaffold.graph.sessions import (
+        format_session_context_markdown,
+        get_session_context,
+    )
+
+    config = load_config()
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found.[/red]")
+        raise SystemExit(1)
+
+    store = open_graph(config)
+    ctx = get_session_context(store)
+    store.close()
+
+    if not ctx:
+        console.print("No session history available.")
+        return
+
+    console.print(format_session_context_markdown(ctx))
 
 
 # ---------------------------------------------------------------------------

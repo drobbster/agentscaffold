@@ -164,6 +164,226 @@ TS_CALL_QUERY = """
 """
 
 # ---------------------------------------------------------------------------
+# Go queries
+# ---------------------------------------------------------------------------
+
+GO_FUNCTION_QUERY = """
+(function_declaration
+  name: (identifier) @name
+  parameters: (parameter_list) @params
+) @definition
+"""
+
+GO_METHOD_QUERY = """
+(method_declaration
+  receiver: (parameter_list
+    (parameter_declaration
+      type: [
+        (pointer_type (type_identifier) @class_name)
+        (type_identifier) @class_name
+      ]
+    )
+  )
+  name: (field_identifier) @method_name
+  parameters: (parameter_list) @params
+) @method
+"""
+
+GO_STRUCT_QUERY = """
+(type_declaration
+  (type_spec
+    name: (type_identifier) @name
+    type: (struct_type)
+  )
+) @definition
+"""
+
+GO_INTERFACE_QUERY = """
+(type_declaration
+  (type_spec
+    name: (type_identifier) @name
+    type: (interface_type)
+  )
+) @definition
+"""
+
+GO_IMPORT_QUERY = """
+[
+  (import_declaration
+    (import_spec
+      path: (interpreted_string_literal) @source
+    )
+  )
+  (import_declaration
+    (import_spec_list
+      (import_spec
+        path: (interpreted_string_literal) @source
+      )
+    )
+  )
+] @import
+"""
+
+GO_CALL_QUERY = """
+(call_expression
+  function: [
+    (identifier) @func_name
+    (selector_expression
+      operand: (_) @object
+      field: (field_identifier) @method_name
+    )
+  ]
+  arguments: (argument_list) @args
+) @call
+"""
+
+# ---------------------------------------------------------------------------
+# Rust queries
+# ---------------------------------------------------------------------------
+
+RUST_FUNCTION_QUERY = """
+(function_item
+  name: (identifier) @name
+  parameters: (parameters) @params
+) @definition
+"""
+
+RUST_STRUCT_QUERY = """
+(struct_item
+  name: (type_identifier) @name
+) @definition
+"""
+
+RUST_IMPL_METHOD_QUERY = """
+(impl_item
+  type: (type_identifier) @class_name
+  body: (declaration_list
+    (function_item
+      name: (identifier) @method_name
+      parameters: (parameters) @params
+    ) @method
+  )
+)
+"""
+
+RUST_TRAIT_QUERY = """
+(trait_item
+  name: (type_identifier) @name
+) @definition
+"""
+
+RUST_CALL_QUERY = """
+(call_expression
+  function: [
+    (identifier) @func_name
+    (field_expression
+      value: (_) @object
+      field: (field_identifier) @method_name
+    )
+    (scoped_identifier
+      name: (identifier) @func_name
+    )
+  ]
+  arguments: (arguments) @args
+) @call
+"""
+
+# ---------------------------------------------------------------------------
+# Java queries
+# ---------------------------------------------------------------------------
+
+JAVA_METHOD_QUERY = """
+(class_declaration
+  name: (identifier) @class_name
+  body: (class_body
+    (method_declaration
+      name: (identifier) @method_name
+      parameters: (formal_parameters) @params
+    ) @method
+  )
+)
+"""
+
+JAVA_CLASS_QUERY = """
+(class_declaration
+  name: (identifier) @name
+) @definition
+"""
+
+JAVA_INTERFACE_QUERY = """
+(interface_declaration
+  name: (identifier) @name
+) @definition
+"""
+
+JAVA_IMPORT_QUERY = """
+(import_declaration
+  (scoped_identifier) @source
+) @import
+"""
+
+JAVA_CALL_QUERY = """
+(method_invocation
+  name: (identifier) @func_name
+  arguments: (argument_list) @args
+) @call
+"""
+
+# ---------------------------------------------------------------------------
+# C queries
+# ---------------------------------------------------------------------------
+
+C_FUNCTION_QUERY = """
+(function_definition
+  declarator: (function_declarator
+    declarator: (identifier) @name
+    parameters: (parameter_list) @params
+  )
+) @definition
+"""
+
+C_STRUCT_QUERY = """
+(struct_specifier
+  name: (type_identifier) @name
+) @definition
+"""
+
+C_CALL_QUERY = """
+(call_expression
+  function: (identifier) @func_name
+  arguments: (argument_list) @args
+) @call
+"""
+
+# ---------------------------------------------------------------------------
+# C++ queries (extends C with classes/methods)
+# ---------------------------------------------------------------------------
+
+CPP_FUNCTION_QUERY = C_FUNCTION_QUERY
+
+CPP_CLASS_QUERY = """
+(class_specifier
+  name: (type_identifier) @name
+) @definition
+"""
+
+CPP_METHOD_QUERY = """
+(class_specifier
+  name: (type_identifier) @class_name
+  body: (field_declaration_list
+    (function_definition
+      declarator: (function_declarator
+        declarator: (field_identifier) @method_name
+        parameters: (parameter_list) @params
+      )
+    ) @method
+  )
+)
+"""
+
+CPP_STRUCT_QUERY = C_STRUCT_QUERY
+
+# ---------------------------------------------------------------------------
 # Query registry
 # ---------------------------------------------------------------------------
 
@@ -189,6 +409,39 @@ QUERIES: dict[str, dict[str, str]] = {
         "methods": TS_METHOD_QUERY,
         "imports": TS_IMPORT_QUERY,
         "calls": TS_CALL_QUERY,
+    },
+    "go": {
+        "functions": GO_FUNCTION_QUERY,
+        "classes": GO_STRUCT_QUERY,
+        "methods": GO_METHOD_QUERY,
+        "interfaces": GO_INTERFACE_QUERY,
+        "imports": GO_IMPORT_QUERY,
+        "calls": GO_CALL_QUERY,
+    },
+    "rust": {
+        "functions": RUST_FUNCTION_QUERY,
+        "classes": RUST_STRUCT_QUERY,
+        "methods": RUST_IMPL_METHOD_QUERY,
+        "interfaces": RUST_TRAIT_QUERY,
+        "calls": RUST_CALL_QUERY,
+    },
+    "java": {
+        "classes": JAVA_CLASS_QUERY,
+        "methods": JAVA_METHOD_QUERY,
+        "interfaces": JAVA_INTERFACE_QUERY,
+        "imports": JAVA_IMPORT_QUERY,
+        "calls": JAVA_CALL_QUERY,
+    },
+    "c": {
+        "functions": C_FUNCTION_QUERY,
+        "classes": C_STRUCT_QUERY,
+        "calls": C_CALL_QUERY,
+    },
+    "cpp": {
+        "functions": CPP_FUNCTION_QUERY,
+        "classes": CPP_CLASS_QUERY,
+        "methods": CPP_METHOD_QUERY,
+        "calls": C_CALL_QUERY,
     },
 }
 
