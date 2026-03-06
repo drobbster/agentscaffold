@@ -65,10 +65,17 @@ def run_pipeline(
     if incremental and store.schema_current():
         return _run_incremental(store, root, graph_config, t0, embeddings)
 
-    # Check for resumable state
+    # Check for resumable state or failed prior run
     if not incremental:
         pipeline_state = store.get_pipeline_state()
-        if pipeline_state["state"] == "partial":
+        if pipeline_state["state"].startswith("failed"):
+            failed_phase = pipeline_state["state"].split(":", 1)[-1]
+            console.print(
+                f"[yellow]Previous index failed during '{failed_phase}'. "
+                "Clearing graph and starting fresh...[/yellow]"
+            )
+            store.clear_all()
+        elif pipeline_state["state"] == "partial":
             phases_completed = pipeline_state["phases_completed"]
             console.print(
                 f"[yellow]Resuming from partial index. "
@@ -196,16 +203,16 @@ def run_pipeline(
             )
             return _build_summary(summary, phases_completed, t0, store)
 
-    # Phase 4: Governance (plans, contracts, learnings)
+    # Phase 4: Governance (plans, contracts, learnings, studies, ADRs, spikes)
     if "governance" not in phases_completed:
         console.print(
             f"[bold]Phase 4/{total_phases}: Governance[/bold] "
-            "-- ingesting plans, contracts, learnings..."
+            "-- ingesting plans, contracts, learnings, studies, ADRs, spikes..."
         )
         try:
             from agentscaffold.graph.governance import process_governance
 
-            gov_result = process_governance(store, root)
+            gov_result = process_governance(store, root, config=config)
             summary["governance"] = gov_result
             phases_completed.append("governance")
             store.update_pipeline_state("complete", phases_completed)
@@ -213,7 +220,11 @@ def run_pipeline(
                 f"  {gov_result['plans']} plans, "
                 f"{gov_result['contracts']} contracts, "
                 f"{gov_result['learnings']} learnings, "
-                f"{gov_result['impact_edges']} impact edges"
+                f"{gov_result.get('studies', 0)} studies, "
+                f"{gov_result.get('adrs', 0)} ADRs, "
+                f"{gov_result.get('spikes', 0)} spikes, "
+                f"{gov_result['impact_edges']} impact edges, "
+                f"{gov_result.get('dependency_edges', 0)} dep edges"
             )
         except Exception as exc:
             logger.error("Phase 4 (governance) failed: %s", exc)

@@ -426,6 +426,25 @@ def graph_search(
         raise SystemExit(1)
 
     store = open_graph(config)
+
+    if mode in ("semantic", "hybrid"):
+        from agentscaffold.graph.embeddings import _st_available, embeddings_available
+
+        if not _st_available:
+            console.print(
+                "[yellow]Warning: sentence-transformers not installed. "
+                "Falling back to keyword search only.[/yellow]\n"
+                "[dim]Install with: pip install agentscaffold[search][/dim]\n"
+            )
+            mode = "cypher"
+        elif not embeddings_available(store):
+            console.print(
+                "[yellow]Warning: No embeddings found in graph. "
+                "Falling back to keyword search only.[/yellow]\n"
+                "[dim]Generate embeddings with: scaffold index --embeddings[/dim]\n"
+            )
+            mode = "cypher"
+
     tables = [table] if table else None
     results = hybrid_search(store, query, mode=mode, top_k=top_k, tables=tables)
     store.close()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import sys
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
     from agentscaffold.graph.store import GraphStore
 
 logger = logging.getLogger(__name__)
+
+_PROGRESS_INTERVAL = 5000
 
 LANGUAGE_MAP: dict[str, str] = {
     ".py": "python",
@@ -58,6 +61,7 @@ DEFAULT_IGNORE = [
     "**/node_modules/**",
     "**/.venv/**",
     "**/venv/**",
+    "**/.direnv/**",
     "**/.mypy_cache/**",
     "**/.pytest_cache/**",
     "**/.ruff_cache/**",
@@ -66,6 +70,7 @@ DEFAULT_IGNORE = [
     "**/dist/**",
     "**/build/**",
     "**/*.egg-info/**",
+    "**/outputs/**",
 ]
 
 
@@ -146,6 +151,7 @@ def process_structure(
     store.create_node("Folder", {"id": root_id, "path": ".", "name": root.name, "depth": 0})
     folder_count += 1
     folder_ids: dict[str, str] = {"": root_id}
+    items_seen = 0
 
     for item in sorted(root.rglob("*")):
         try:
@@ -157,6 +163,14 @@ def process_structure(
 
         if _should_ignore(rel_str, ignore_patterns):
             continue
+
+        items_seen += 1
+        if items_seen % _PROGRESS_INTERVAL == 0:
+            sys.stdout.write(
+                f"\r  scanning... {file_count:,} files, "
+                f"{folder_count:,} folders ({items_seen:,} entries processed)"
+            )
+            sys.stdout.flush()
 
         if item.is_dir():
             folder_id = f"folder::{rel_str}"
@@ -210,6 +224,10 @@ def process_structure(
             parent_rel = str(rel.parent) if str(rel.parent) != "." else ""
             parent_id = folder_ids.get(parent_rel, root_id)
             store.create_edge("CONTAINS", "Folder", parent_id, "File", file_id)
+
+    if items_seen >= _PROGRESS_INTERVAL:
+        sys.stdout.write("\r" + " " * 80 + "\r")
+        sys.stdout.flush()
 
     return {
         "files": file_count,

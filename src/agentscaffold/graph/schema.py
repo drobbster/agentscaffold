@@ -6,7 +6,7 @@ The schema is versioned; bumps require a full re-index.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 # ---------------------------------------------------------------------------
 # Code node tables
@@ -176,6 +176,49 @@ GOVERNANCE_NODE_TABLES: list[str] = [
         PRIMARY KEY (id)
     )
     """,
+    """
+    CREATE NODE TABLE IF NOT EXISTS Study (
+        id STRING,
+        studyId STRING,
+        title STRING,
+        studyType STRING,
+        status STRING,
+        outcome STRING,
+        confidence STRING,
+        tags STRING,
+        relatedPlans STRING,
+        filePath STRING,
+        started STRING,
+        completed STRING,
+        PRIMARY KEY (id)
+    )
+    """,
+    """
+    CREATE NODE TABLE IF NOT EXISTS ADR (
+        id STRING,
+        number INT64,
+        title STRING,
+        status STRING,
+        date STRING,
+        filePath STRING,
+        relatedPlans STRING,
+        relatedADRs STRING,
+        supersededBy STRING,
+        PRIMARY KEY (id)
+    )
+    """,
+    """
+    CREATE NODE TABLE IF NOT EXISTS Spike (
+        id STRING,
+        title STRING,
+        parentPlan STRING,
+        status STRING,
+        created STRING,
+        filePath STRING,
+        timeBox STRING,
+        PRIMARY KEY (id)
+    )
+    """,
 ]
 
 # ---------------------------------------------------------------------------
@@ -291,6 +334,13 @@ GOVERNANCE_EDGE_TABLES: list[str] = [
     "CREATE REL TABLE IF NOT EXISTS FINDING_ADDRESSED_BY (FROM ReviewFinding TO Plan, MANY_MANY)",
     "CREATE REL TABLE IF NOT EXISTS SESSION_MODIFIED (FROM Session TO File, MANY_MANY)",
     "CREATE REL TABLE IF NOT EXISTS DEPENDS_ON_PLAN (FROM Plan TO Plan, MANY_MANY)",
+    "CREATE REL TABLE IF NOT EXISTS STUDY_REFERENCES_PLAN (FROM Study TO Plan, MANY_MANY)",
+    "CREATE REL TABLE IF NOT EXISTS STUDY_REFERENCES_FILE (FROM Study TO File, MANY_MANY)",
+    "CREATE REL TABLE IF NOT EXISTS ADR_GOVERNS (FROM ADR TO Plan, MANY_MANY)",
+    "CREATE REL TABLE IF NOT EXISTS ADR_SUPERSEDES (FROM ADR TO ADR, MANY_MANY)",
+    "CREATE REL TABLE IF NOT EXISTS ADR_CITES_STUDY (FROM ADR TO Study, MANY_MANY)",
+    "CREATE REL TABLE IF NOT EXISTS ADR_CITES_SPIKE (FROM ADR TO Spike, MANY_MANY)",
+    "CREATE REL TABLE IF NOT EXISTS SPIKE_FOR_PLAN (FROM Spike TO Plan, MANY_MANY)",
 ]
 
 

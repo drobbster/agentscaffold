@@ -23,9 +23,18 @@ try:
 except ImportError:
     pass
 
-# Pre-compiled patterns for Python import extraction (fallback when tree-sitter unavailable)
-_PY_IMPORT_RE = re.compile(
-    r"^\s*(?:from\s+([\w.]+)\s+import\s+([\w,\s*]+)|import\s+([\w.,\s]+))",
+# Pre-compiled patterns for Python import extraction
+# Three patterns to handle: single-line from-import, multi-line parenthesized, direct import
+_PY_FROM_PAREN_RE = re.compile(
+    r"^\s*from\s+([\w.]+)\s+import\s+\(([^)]+)\)",
+    re.MULTILINE | re.DOTALL,
+)
+_PY_FROM_INLINE_RE = re.compile(
+    r"^\s*from\s+([\w.]+)\s+import\s+([^\n(]+)",
+    re.MULTILINE,
+)
+_PY_DIRECT_IMPORT_RE = re.compile(
+    r"^\s*import\s+([\w.]+(?:\s*,\s*[\w.]+)*)",
     re.MULTILINE,
 )
 
@@ -95,36 +104,59 @@ def _resolve_python_imports(
     file_id_map: dict[str, str],
     root: Path,
 ) -> tuple[int, int]:
-    """Resolve Python import statements."""
+    """Resolve Python import statements.
+
+    Handles three patterns:
+    - from X import (A, B, C)  (multi-line parenthesized)
+    - from X import A, B, C    (single-line)
+    - import X, Y              (direct)
+    """
     resolved = 0
     unresolved = 0
+    seen_edges: set[tuple[str, str]] = set()
 
-    for match in _PY_IMPORT_RE.finditer(source):
-        from_module = match.group(1)
-        import_names = match.group(2)
-        direct_import = match.group(3)
+    def _resolve_from(module: str, names: str) -> None:
+        nonlocal resolved, unresolved
+        target_path = _python_module_to_path(module, file_path, root)
+        if target_path and target_path in file_id_map:
+            target_id = file_id_map[target_path]
+            edge_key = (file_id, target_id)
+            if edge_key not in seen_edges:
+                seen_edges.add(edge_key)
+                _create_import_edge(store, file_id, target_id, names.strip())
+            resolved += 1
+        else:
+            unresolved += 1
 
-        if from_module:
-            target_path = _python_module_to_path(from_module, file_path, root)
+    # Multi-line parenthesized: from X import (\n  A,\n  B\n)
+    for match in _PY_FROM_PAREN_RE.finditer(source):
+        module = match.group(1)
+        names_raw = match.group(2)
+        names = ", ".join(n.strip() for n in names_raw.replace("\n", ",").split(",") if n.strip())
+        _resolve_from(module, names)
+
+    # Single-line: from X import A, B, C
+    for match in _PY_FROM_INLINE_RE.finditer(source):
+        module = match.group(1)
+        names = match.group(2).strip().rstrip("\\")
+        _resolve_from(module, names)
+
+    # Direct: import X, import X, Y
+    for match in _PY_DIRECT_IMPORT_RE.finditer(source):
+        for mod in match.group(1).split(","):
+            mod = mod.strip()
+            if not mod:
+                continue
+            target_path = _python_module_to_path(mod, file_path, root)
             if target_path and target_path in file_id_map:
                 target_id = file_id_map[target_path]
-                names = import_names.strip() if import_names else "*"
-                _create_import_edge(store, file_id, target_id, names)
+                edge_key = (file_id, target_id)
+                if edge_key not in seen_edges:
+                    seen_edges.add(edge_key)
+                    _create_import_edge(store, file_id, target_id, mod.split(".")[-1])
                 resolved += 1
             else:
                 unresolved += 1
-        elif direct_import:
-            for mod in direct_import.split(","):
-                mod = mod.strip()
-                if not mod:
-                    continue
-                target_path = _python_module_to_path(mod, file_path, root)
-                if target_path and target_path in file_id_map:
-                    target_id = file_id_map[target_path]
-                    _create_import_edge(store, file_id, target_id, mod.split(".")[-1])
-                    resolved += 1
-                else:
-                    unresolved += 1
 
     return resolved, unresolved
 

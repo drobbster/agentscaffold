@@ -187,6 +187,10 @@ class GraphConfig(BaseModel):
     plans_dir: str = "docs/ai/plans/"
     contracts_dir: str = "docs/ai/contracts/"
     learnings_file: str = "docs/ai/state/learnings_tracker.md"
+    studies_dir: str = "docs/studies/"
+    adrs_dir: str = "docs/ai/adrs/"
+    spikes_dir: str = "docs/ai/spikes/"
+    workflow_state_file: str = "docs/ai/state/workflow_state.md"
     embeddings: bool = False
     communities: bool = True
 

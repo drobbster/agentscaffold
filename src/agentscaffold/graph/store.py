@@ -184,8 +184,11 @@ class GraphStore:
         import shutil
 
         if self._db_path.exists():
-            shutil.rmtree(self._db_path)
-        self._db_path.mkdir(parents=True, exist_ok=True)
+            if self._db_path.is_dir():
+                shutil.rmtree(self._db_path)
+            else:
+                self._db_path.unlink()
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db = kuzu.Database(str(self._db_path))
         self._conn = kuzu.Connection(self._db)
         self.init_schema()

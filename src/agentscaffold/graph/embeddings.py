@@ -23,7 +23,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 try:
-    from sentence_transformers import SentenceTransformer
+    import os as _os
+    import warnings as _warnings
+
+    _os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    _os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore")
+        _hf_logger = logging.getLogger("sentence_transformers")
+        _hf_logger.setLevel(logging.WARNING)
+        logging.getLogger("transformers").setLevel(logging.WARNING)
+        from sentence_transformers import SentenceTransformer
 
     _st_available = True
 except ImportError:
@@ -31,6 +41,28 @@ except ImportError:
 
 DEFAULT_MODEL = "all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384
+_model_cache: dict[str, Any] = {}
+
+
+def _get_model(model_name: str = DEFAULT_MODEL) -> Any:
+    """Load and cache a SentenceTransformer model, suppressing noisy output."""
+    if model_name in _model_cache:
+        return _model_cache[model_name]
+
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        _prev_level = logging.root.level
+        logging.disable(logging.WARNING)
+        try:
+            model = SentenceTransformer(model_name)
+        finally:
+            logging.disable(logging.NOTSET)
+            logging.root.setLevel(_prev_level)
+
+    _model_cache[model_name] = model
+    return model
 
 
 def _ensure_embedding_column(store: GraphStore, table: str) -> None:
@@ -115,7 +147,7 @@ def generate_embeddings(
             "Embeddings require sentence-transformers: pip install agentscaffold[search]"
         )
 
-    model = SentenceTransformer(model_name)
+    model = _get_model(model_name)
     target_tables = tables or list(_TEXT_BUILDERS.keys())
     result: dict[str, int] = {}
 
@@ -174,7 +206,7 @@ def search_similar(
             "Semantic search requires sentence-transformers: pip install agentscaffold[search]"
         )
 
-    model = SentenceTransformer(model_name)
+    model = _get_model(model_name)
     query_vec = model.encode([query], show_progress_bar=False)[0]
     query_np = np.array(query_vec, dtype=np.float32)
 

@@ -7,6 +7,7 @@ definitions. Populates the symbol table for later resolution.
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
     from agentscaffold.graph.store import GraphStore
 
 logger = logging.getLogger(__name__)
+
+_PROGRESS_INTERVAL = 50
 
 try:
     import tree_sitter as ts
@@ -147,6 +150,32 @@ def _query_captures(lang: Any, query_str: str, root_node: Any) -> dict[str, list
         return None
 
 
+def _query_matches(lang: Any, query_str: str, root_node: Any) -> list[dict[str, Any]] | None:
+    """Run a tree-sitter query and return properly paired matches.
+
+    Returns a list of dicts, one per match. Each dict maps capture names
+    to the first captured Node for that match. This avoids the alignment
+    issues of captures() where parallel lists can become misaligned.
+    """
+    if ts is None:
+        return None
+    try:
+        q = Query(lang, query_str)
+        cursor = QueryCursor(q)
+        results = []
+        for _pattern_idx, captures in cursor.matches(root_node):
+            match: dict[str, Any] = {}
+            for name, nodes in captures.items():
+                if nodes:
+                    match[name] = nodes[0]
+            if match:
+                results.append(match)
+        return results
+    except Exception as exc:
+        logger.debug("Tree-sitter query failed: %s", exc)
+        return None
+
+
 def process_parsing(
     store: GraphStore,
     root: Path,
@@ -175,14 +204,18 @@ def process_parsing(
     files_skipped = 0
 
     parsers: dict[str, Any] = {}
+    parseable_rows = [r for r in file_rows if r["f.language"] in supported_languages()]
+    total_files = len(parseable_rows)
 
-    for row in file_rows:
+    for idx, row in enumerate(parseable_rows):
         file_id = row["f.id"]
         file_path = row["f.path"]
         language = row["f.language"]
 
-        if language not in supported_languages():
-            continue
+        if total_files > _PROGRESS_INTERVAL and (idx + 1) % _PROGRESS_INTERVAL == 0:
+            pct = (idx + 1) / total_files * 100
+            sys.stdout.write(f"\r  parsing {idx + 1}/{total_files} ({pct:.0f}%)")
+            sys.stdout.flush()
 
         if language not in parsers:
             parser = _get_parser(language)
@@ -291,6 +324,10 @@ def process_parsing(
             )
             interface_count += ic
 
+    if total_files > _PROGRESS_INTERVAL:
+        sys.stdout.write("\r" + " " * 60 + "\r")
+        sys.stdout.flush()
+
     return {
         "files_parsed": files_parsed,
         "files_skipped": files_skipped,
@@ -314,21 +351,28 @@ def _extract_functions(
     root: Path,
 ) -> int:
     """Extract function definitions and create nodes."""
-    captures = _query_captures(lang, query_str, tree.root_node)
-    if captures is None:
+    matches = _query_matches(lang, query_str, tree.root_node)
+    if not matches:
         return 0
 
     count = 0
-    names = captures.get("name", [])
-    params = captures.get("params", [])
-    defs = captures.get("definition", [])
+    seen: set[str] = set()
+    for match in matches:
+        name_node = match.get("name")
+        if name_node is None:
+            continue
 
-    for i, name_node in enumerate(names):
         name = _extract_text(name_node, source)
         start_line = name_node.start_point[0] + 1
-        def_node = defs[i] if i < len(defs) else name_node
+        func_id = f"func::{file_path}::{name}::{start_line}"
+
+        if func_id in seen:
+            continue
+        seen.add(func_id)
+
+        def_node = match.get("definition", name_node)
         end_line = def_node.end_point[0] + 1
-        params_node = params[i] if i < len(params) else None
+        params_node = match.get("params")
         param_count = _count_params(params_node)
 
         is_exported = not name.startswith("_") if language == "python" else True
@@ -336,8 +380,6 @@ def _extract_functions(
             signature = _build_signature_python(name, params_node, source)
         else:
             signature = name
-
-        func_id = f"func::{file_path}::{name}::{start_line}"
 
         store.create_node(
             "Function",
@@ -387,22 +429,28 @@ def _extract_classes(
     root: Path,
 ) -> int:
     """Extract class definitions and create nodes."""
-    captures = _query_captures(lang, query_str, tree.root_node)
-    if captures is None:
+    matches = _query_matches(lang, query_str, tree.root_node)
+    if not matches:
         return 0
 
     count = 0
-    names = captures.get("name", [])
-    defs = captures.get("definition", [])
+    seen: set[str] = set()
+    for match in matches:
+        name_node = match.get("name")
+        if name_node is None:
+            continue
 
-    for i, name_node in enumerate(names):
         name = _extract_text(name_node, source)
         start_line = name_node.start_point[0] + 1
-        def_node = defs[i] if i < len(defs) else name_node
+        class_id = f"class::{file_path}::{name}::{start_line}"
+
+        if class_id in seen:
+            continue
+        seen.add(class_id)
+
+        def_node = match.get("definition", name_node)
         end_line = def_node.end_point[0] + 1
         is_exported = not name.startswith("_") if language == "python" else True
-
-        class_id = f"class::{file_path}::{name}"
 
         store.create_node(
             "Class",
@@ -456,52 +504,55 @@ def _extract_methods(
     This avoids tree-sitter's sibling capture limitation where only the first
     function_definition per block is returned in nested patterns.
     """
-    # Pass 1: get class ranges
-    class_captures = _query_captures(lang, query_str, tree.root_node)
-    if class_captures is None:
+    # Pass 1: get class ranges using matches() for proper pairing
+    class_matches = _query_matches(lang, query_str, tree.root_node)
+    if not class_matches:
         return 0
 
-    class_name_nodes = class_captures.get("class_name", [])
-    class_def_nodes = class_captures.get("class_def", [])
-
-    class_ranges: list[tuple[str, int, int]] = []
-    for i, cn_node in enumerate(class_name_nodes):
+    # (name, name_start_line_1indexed, body_start_0indexed, body_end_0indexed)
+    class_ranges: list[tuple[str, int, int, int]] = []
+    for match in class_matches:
+        cn_node = match.get("class_name")
+        cd_node = match.get("class_def", cn_node)
+        if cn_node is None:
+            continue
         cname = _extract_text(cn_node, source)
-        cd_node = class_def_nodes[i] if i < len(class_def_nodes) else cn_node
-        class_ranges.append((cname, cd_node.start_point[0], cd_node.end_point[0]))
+        name_line = cn_node.start_point[0] + 1
+        class_ranges.append((cname, name_line, cd_node.start_point[0], cd_node.end_point[0]))
 
     if not class_ranges:
         return 0
 
-    # Pass 2: get all function definitions in the file
+    # Pass 2: get all function definitions using matches()
     from agentscaffold.graph.queries import INNER_METHOD_QUERIES
 
     inner_query = INNER_METHOD_QUERIES.get(language)
     if inner_query is None:
         return 0
-    func_captures = _query_captures(lang, inner_query, tree.root_node)
-    if func_captures is None:
+    func_matches = _query_matches(lang, inner_query, tree.root_node)
+    if not func_matches:
         return 0
 
-    method_name_nodes = func_captures.get("method_name", [])
-    params_nodes = func_captures.get("params", [])
-    method_def_nodes = func_captures.get("method", [])
-
     count = 0
-    for i, mn_node in enumerate(method_name_nodes):
+    for match in func_matches:
+        mn_node = match.get("method_name")
+        if mn_node is None:
+            continue
+
         method_name = _extract_text(mn_node, source)
         start_line = mn_node.start_point[0] + 1
-        m_node = method_def_nodes[i] if i < len(method_def_nodes) else mn_node
+        m_node = match.get("method", mn_node)
         end_line = m_node.end_point[0] + 1
-        params_node = params_nodes[i] if i < len(params_nodes) else None
+        params_node = match.get("params")
 
-        # Assign to enclosing class by line range
+        # Assign to the innermost enclosing class by line range
         func_line = mn_node.start_point[0]
         class_name = "Unknown"
-        for cname, cstart, cend in class_ranges:
+        class_start_line = 0
+        for cname, cname_line, cstart, cend in class_ranges:
             if cstart <= func_line <= cend:
                 class_name = cname
-                break
+                class_start_line = cname_line
 
         if class_name == "Unknown":
             continue
@@ -528,7 +579,7 @@ def _extract_methods(
             },
         )
 
-        class_id = f"class::{file_path}::{class_name}"
+        class_id = f"class::{file_path}::{class_name}::{class_start_line}"
         store.create_edge("HAS_METHOD", "Class", class_id, "Method", method_id)
 
         module_path = _file_to_module(file_path)
@@ -564,21 +615,27 @@ def _extract_interfaces(
     root: Path,
 ) -> int:
     """Extract TypeScript interface definitions."""
-    captures = _query_captures(lang, query_str, tree.root_node)
-    if captures is None:
+    matches = _query_matches(lang, query_str, tree.root_node)
+    if not matches:
         return 0
 
     count = 0
-    names = captures.get("name", [])
-    defs = captures.get("definition", [])
+    seen: set[str] = set()
+    for match in matches:
+        name_node = match.get("name")
+        if name_node is None:
+            continue
 
-    for i, name_node in enumerate(names):
         name = _extract_text(name_node, source)
         start_line = name_node.start_point[0] + 1
-        def_node = defs[i] if i < len(defs) else name_node
-        end_line = def_node.end_point[0] + 1
+        iface_id = f"interface::{file_path}::{name}::{start_line}"
 
-        iface_id = f"interface::{file_path}::{name}"
+        if iface_id in seen:
+            continue
+        seen.add(iface_id)
+
+        def_node = match.get("definition", name_node)
+        end_line = def_node.end_point[0] + 1
 
         store.create_node(
             "Interface",
