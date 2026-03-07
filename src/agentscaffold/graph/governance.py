@@ -808,6 +808,7 @@ def process_governance(
 
     # --- ADRs ---
     adr_id_map: dict[int, str] = {}
+    seen_adr_ids: set[str] = set()
     adr_edges_deferred: list[dict[str, Any]] = []
     if adrs_dir.is_dir():
         for adr_file in sorted(adrs_dir.glob("*.md")):
@@ -818,7 +819,10 @@ def process_governance(
                 continue
 
             aid = f"adr::{data['number']}"
-            adr_id_map[data["number"]] = aid
+            if aid in seen_adr_ids:
+                aid = f"adr::{data['number']}::{adr_file.stem}"
+            seen_adr_ids.add(aid)
+            adr_id_map.setdefault(data["number"], aid)
             store.create_node(
                 "ADR",
                 {

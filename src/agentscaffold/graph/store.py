@@ -275,6 +275,9 @@ class GraphStore:
             "plans": self.node_count("Plan"),
             "contracts": self.node_count("Contract"),
             "learnings": self.node_count("Learning"),
+            "studies": self.node_count("Study"),
+            "adrs": self.node_count("ADR"),
+            "spikes": self.node_count("Spike"),
             "review_findings": self.node_count("ReviewFinding"),
             "parsing_warnings": self.node_count("ParsingWarning"),
         }

@@ -525,7 +525,11 @@ def _print_summary(summary: dict[str, Any], store: GraphStore) -> None:
         table.add_row("Plans ingested", str(gov.get("plans", 0)))
         table.add_row("Contracts ingested", str(gov.get("contracts", 0)))
         table.add_row("Learnings ingested", str(gov.get("learnings", 0)))
+        table.add_row("Studies ingested", str(gov.get("studies", 0)))
+        table.add_row("ADRs ingested", str(gov.get("adrs", 0)))
+        table.add_row("Spikes ingested", str(gov.get("spikes", 0)))
         table.add_row("Impact edges", str(gov.get("impact_edges", 0)))
+        table.add_row("Dependency edges", str(gov.get("dependency_edges", 0)))
 
     comm = summary.get("communities", {})
     if comm:

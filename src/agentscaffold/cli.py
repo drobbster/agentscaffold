@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -230,6 +231,119 @@ def study_list() -> None:
     run_study_list()
 
 
+@study_app.command("search")
+def study_search(
+    topic: str = typer.Argument(..., help="Keyword to search in study tags/titles."),
+    outcome: str | None = typer.Option(None, "--outcome", "-o", help="Filter by outcome."),
+) -> None:
+    """Search studies in the knowledge graph by topic or outcome."""
+    import json
+
+    from agentscaffold.mcp.server import _tool_find_studies
+
+    _config, store = _require_graph()
+    meta = {"source": "cli"}
+    args = {"topic": topic}
+    if outcome:
+        args["outcome"] = outcome
+    result = _tool_find_studies(store, args, meta)
+    store.close()
+    console.print(json.dumps(result, indent=2, default=str))
+
+
+@study_app.command("experiments")
+def study_experiments(
+    plan: int = typer.Argument(..., help="Plan number to find related experiments for."),
+) -> None:
+    """Find prior experiments related to a plan."""
+    import json
+
+    from agentscaffold.mcp.server import _tool_prior_experiments
+
+    _config, store = _require_graph()
+    meta = {"source": "cli"}
+    result = _tool_prior_experiments(store, {"plan_number": plan}, meta)
+    store.close()
+    console.print(json.dumps(result, indent=2, default=str))
+
+
+# ---------------------------------------------------------------------------
+# ADR sub-commands
+# ---------------------------------------------------------------------------
+
+adr_app = typer.Typer(help="Architecture Decision Record management.")
+app.add_typer(adr_app, name="adr")
+
+
+@adr_app.command("list")
+def adr_list() -> None:
+    """List all ADRs from the knowledge graph."""
+    from rich.table import Table as RichTable
+
+    from agentscaffold.review.queries import get_all_adrs
+
+    _config, store = _require_graph()
+    adrs = get_all_adrs(store)
+    store.close()
+
+    if not adrs:
+        console.print("No ADRs found in the graph.")
+        return
+
+    tbl = RichTable(title="Architecture Decision Records", show_header=True)
+    tbl.add_column("Number", style="cyan", justify="right")
+    tbl.add_column("Title", style="green")
+    tbl.add_column("Status")
+    tbl.add_column("Date")
+    tbl.add_column("Superseded By")
+
+    for a in adrs:
+        tbl.add_row(
+            str(a.get("a.number", "")),
+            a.get("a.title", ""),
+            a.get("a.status", ""),
+            a.get("a.date", ""),
+            a.get("a.supersededBy", "") or "-",
+        )
+    console.print(tbl)
+
+
+@adr_app.command("search")
+def adr_search(
+    topic: str = typer.Argument(..., help="Keyword to search in ADR titles."),
+    status: str | None = typer.Option(None, "--status", "-s", help="Filter by status."),
+) -> None:
+    """Search ADRs by topic keyword."""
+    import json
+
+    from agentscaffold.mcp.server import _tool_find_adrs
+
+    _config, store = _require_graph()
+    meta = {"source": "cli"}
+    args: dict[str, Any] = {"topic": topic}
+    if status:
+        args["status"] = status
+    result = _tool_find_adrs(store, args, meta)
+    store.close()
+    console.print(json.dumps(result, indent=2, default=str))
+
+
+@adr_app.command("decision")
+def adr_decision(
+    plan: int = typer.Argument(..., help="Plan number to get decision context for."),
+) -> None:
+    """Show full decision chain for a plan (ADRs, spikes, studies)."""
+    import json
+
+    from agentscaffold.mcp.server import _tool_decision_context
+
+    _config, store = _require_graph()
+    meta = {"source": "cli"}
+    result = _tool_decision_context(store, {"plan_number": plan}, meta)
+    store.close()
+    console.print(json.dumps(result, indent=2, default=str))
+
+
 # ---------------------------------------------------------------------------
 # Domain sub-commands
 # ---------------------------------------------------------------------------
@@ -268,10 +382,34 @@ def agents_generate() -> None:
 
 @agents_app.command("cursor")
 def agents_cursor() -> None:
-    """Generate .cursor/rules.md from config."""
+    """Generate .cursor/rules.md and intent mapping from config."""
     from agentscaffold.agents.cursor import run_cursor_setup
 
     run_cursor_setup()
+
+
+@agents_app.command("windsurf")
+def agents_windsurf() -> None:
+    """Generate .windsurfrules from TOOL_INTENTS."""
+    from agentscaffold.agents.windsurf import run_windsurf_setup
+
+    run_windsurf_setup()
+
+
+@agents_app.command("claude")
+def agents_claude() -> None:
+    """Generate CLAUDE.md from TOOL_INTENTS."""
+    from agentscaffold.agents.claude import run_claude_setup
+
+    run_claude_setup()
+
+
+@agents_app.command("prompt")
+def agents_prompt() -> None:
+    """Export generic system-prompt snippet for any LLM platform."""
+    from agentscaffold.agents.prompt import run_prompt_export
+
+    run_prompt_export()
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +459,9 @@ def index_cmd(
     incremental: bool = typer.Option(False, "--incremental", help="Only re-index changed files."),
     with_embeddings: bool = typer.Option(False, "--embeddings", help="Generate code embeddings."),
     audit: bool = typer.Option(False, "--audit", help="Log all resolution decisions."),
+    update_rules: bool = typer.Option(
+        False, "--update-rules", help="Regenerate agent rule files after indexing."
+    ),
 ) -> None:
     """Build or rebuild the knowledge graph."""
     from agentscaffold.config import load_config
@@ -334,6 +475,15 @@ def index_cmd(
         embeddings=with_embeddings,
         audit=audit,
     )
+
+    if update_rules:
+        console.print("\n[bold]Regenerating agent rule files...[/bold]")
+        from agentscaffold.agents.cursor import run_cursor_setup
+
+        try:
+            run_cursor_setup()
+        except SystemExit:
+            console.print("[yellow]Skipped cursor rules (no scaffold.yaml).[/yellow]")
 
 
 @graph_app.command("stats")
@@ -372,6 +522,9 @@ def graph_stats() -> None:
     table.add_row("Plans", str(stats["plans"]))
     table.add_row("Contracts", str(stats["contracts"]))
     table.add_row("Learnings", str(stats["learnings"]))
+    table.add_row("Studies", str(stats.get("studies", 0)))
+    table.add_row("ADRs", str(stats.get("adrs", 0)))
+    table.add_row("Spikes", str(stats.get("spikes", 0)))
     table.add_row("Review findings", str(stats["review_findings"]))
     table.add_row("Parsing warnings", str(stats["parsing_warnings"]))
 
@@ -494,6 +647,53 @@ def graph_communities() -> None:
         )
 
     console.print(tbl)
+
+
+@graph_app.command("orient")
+def graph_orient() -> None:
+    """Composite: session orientation with stats, workflow state, and recent activity."""
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+    from agentscaffold.mcp.server import _build_meta, _tool_orient
+
+    config = load_config()
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found. Run 'scaffold index' first.[/red]")
+        raise SystemExit(1)
+
+    store = open_graph(config)
+    root = Path.cwd()
+    meta = _build_meta(store, root)
+    result = _tool_orient(store, meta, root, config)
+    store.close()
+
+    ws = result.get("workflow_state", {})
+    console.print("[bold]Workflow State[/bold]")
+    console.print(f"  Blockers: {ws.get('blockers', 'None')}")
+    console.print(f"  Next Steps: {ws.get('next_steps', 'None')}")
+    console.print(f"  In-Progress Plans: {ws.get('in_progress_plans', [])}")
+
+    console.print("\n[bold]Recent Plans:[/bold]")
+    for p in result.get("recent_plans", [])[:5]:
+        console.print(f"  Plan {p.get('p.number')}: {p.get('p.title')} [{p.get('p.status')}]")
+
+    hot = result.get("hot_files", [])
+    if hot:
+        console.print("\n[bold]Hot Files:[/bold]")
+        for h in hot:
+            console.print(f"  {h.get('f.path')} ({h.get('plan_count')} plans)")
+
+    studies = result.get("recent_studies", [])
+    if studies:
+        console.print("\n[bold]Recent Studies:[/bold]")
+        for s in studies:
+            console.print(f"  {s.get('s.studyId')}: {s.get('s.title')}")
+
+    adrs = result.get("active_adrs", [])
+    if adrs:
+        console.print("\n[bold]Active ADRs:[/bold]")
+        for a in adrs:
+            console.print(f"  ADR-{a.get('a.number')}: {a.get('a.title')} [{a.get('a.status')}]")
 
 
 @graph_app.command("verify")
@@ -653,6 +853,111 @@ def review_retro(
         insights = generate_retro_enrichment(store, plan)
         store.close()
         console.print(format_retro_markdown(insights))
+
+
+@review_app.command("prepare")
+def review_prepare(
+    plan: int = typer.Argument(..., help="Plan number to prepare review for."),
+) -> None:
+    """Composite: full review context (brief + challenges + gaps + ADRs + studies)."""
+    from agentscaffold.mcp.server import _tool_prepare_review
+
+    config, store = _require_graph()
+    root = Path.cwd()
+    meta = {"source": "cli"}
+    result = _tool_prepare_review(store, {"plan_number": plan}, meta, root, config)
+    store.close()
+
+    if "brief_markdown" in result:
+        console.print(result["brief_markdown"])
+    if "challenges_markdown" in result:
+        console.print("\n" + result["challenges_markdown"])
+    if "gaps_markdown" in result:
+        console.print("\n" + result["gaps_markdown"])
+
+    adrs = result.get("governing_adrs", [])
+    if adrs:
+        console.print("\n[bold]Governing ADRs:[/bold]")
+        for a in adrs:
+            console.print(f"  ADR-{a.get('a.number')}: {a.get('a.title')} ({a.get('a.status')})")
+
+    spikes = result.get("validation_spikes", [])
+    if spikes:
+        console.print("\n[bold]Validation Spikes:[/bold]")
+        for s in spikes:
+            console.print(f"  {s.get('sp.title')} ({s.get('sp.status')})")
+
+    studies = result.get("related_studies", [])
+    if studies:
+        console.print("\n[bold]Related Studies:[/bold]")
+        for s in studies:
+            console.print(f"  {s.get('s.studyId')}: {s.get('s.title')} -> {s.get('s.outcome')}")
+
+
+@review_app.command("implement")
+def review_implement(
+    plan: int = typer.Argument(..., help="Plan number to prepare implementation for."),
+) -> None:
+    """Composite: implementation context (brief + blast radius + contracts + deps)."""
+    import json
+
+    from agentscaffold.mcp.server import _tool_prepare_implementation
+
+    config, store = _require_graph()
+    root = Path.cwd()
+    meta = {"source": "cli"}
+    result = _tool_prepare_implementation(store, {"plan_number": plan}, meta, root)
+    store.close()
+    console.print(json.dumps(result, indent=2, default=str))
+
+
+@review_app.command("compare")
+def review_compare(
+    plan_a: int = typer.Argument(..., help="First plan number."),
+    plan_b: int = typer.Argument(..., help="Second plan number."),
+) -> None:
+    """Composite: compare two plans for overlap and conflicts."""
+    import json
+
+    from agentscaffold.mcp.server import _tool_compare_plans
+
+    _config, store = _require_graph()
+    meta = {"source": "cli"}
+    result = _tool_compare_plans(store, {"plan_a": plan_a, "plan_b": plan_b}, meta)
+    store.close()
+    console.print(json.dumps(result, indent=2, default=str))
+
+
+@review_app.command("staleness")
+def review_staleness(
+    plan: int = typer.Argument(..., help="Plan number to check for staleness."),
+) -> None:
+    """Composite: check if a plan is stale."""
+    import json
+
+    from agentscaffold.mcp.server import _tool_staleness_check
+
+    _config, store = _require_graph()
+    meta = {"source": "cli"}
+    result = _tool_staleness_check(store, {"plan_number": plan}, meta)
+    store.close()
+    console.print(json.dumps(result, indent=2, default=str))
+
+
+@review_app.command("rewrite")
+def review_rewrite(
+    plan: int = typer.Argument(..., help="Plan number to prepare rewrite for."),
+) -> None:
+    """Composite: staleness check plus rewrite context."""
+    import json
+
+    from agentscaffold.mcp.server import _tool_prepare_rewrite
+
+    _config, store = _require_graph()
+    meta = {"source": "cli"}
+    result = _tool_prepare_rewrite(store, {"plan_number": plan}, meta)
+    store.close()
+    console.print(json.dumps(result, indent=2, default=str))
 
 
 @review_app.command("history")

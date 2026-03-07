@@ -226,3 +226,145 @@ def get_recurring_finding_patterns(
         f"HAVING occurrences >= {min_occurrences} "
         "ORDER BY occurrences DESC"
     )
+
+
+def get_plan_dependencies(store: GraphStore, plan_number: int) -> list[dict[str, Any]]:
+    """Return plans that the given plan depends on."""
+    return store.query(
+        f"MATCH (p:Plan)-[:DEPENDS_ON_PLAN]->(dep:Plan) WHERE p.number = {plan_number} "
+        "RETURN dep.number, dep.title, dep.status"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Study queries
+# ---------------------------------------------------------------------------
+
+
+def get_studies_for_plan(store: GraphStore, plan_number: int) -> list[dict[str, Any]]:
+    """Return studies that reference the given plan."""
+    return store.query(
+        f"MATCH (s:Study)-[:STUDY_REFERENCES_PLAN]->(p:Plan) WHERE p.number = {plan_number} "
+        "RETURN s.studyId, s.title, s.status, s.outcome, s.confidence, s.tags"
+    )
+
+
+def get_studies_by_tags(store: GraphStore, tags: list[str]) -> list[dict[str, Any]]:
+    """Return studies matching any of the given tags (substring match on tags field)."""
+    conditions = " OR ".join(f"s.tags CONTAINS '{t}'" for t in tags)
+    return store.query(
+        f"MATCH (s:Study) WHERE {conditions} "
+        "RETURN s.studyId, s.title, s.status, s.outcome, s.confidence, s.tags "
+        "ORDER BY s.started DESC"
+    )
+
+
+def get_studies_by_outcome(store: GraphStore, outcome: str) -> list[dict[str, Any]]:
+    """Return studies with a specific outcome."""
+    escaped = outcome.replace("'", "\\'")
+    return store.query(
+        f"MATCH (s:Study) WHERE s.outcome = '{escaped}' "
+        "RETURN s.studyId, s.title, s.status, s.outcome, s.confidence, s.tags "
+        "ORDER BY s.started DESC"
+    )
+
+
+def get_studies_for_file(store: GraphStore, file_path: str) -> list[dict[str, Any]]:
+    """Return studies that reference the given file via artifact paths."""
+    escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    return store.query(
+        "MATCH (s:Study)-[:STUDY_REFERENCES_FILE]->(f:File) "
+        f"WHERE f.path = '{escaped}' "
+        "RETURN s.studyId, s.title, s.status, s.outcome, s.tags"
+    )
+
+
+def get_all_studies(store: GraphStore) -> list[dict[str, Any]]:
+    """Return all studies ordered by start date descending."""
+    return store.query(
+        "MATCH (s:Study) "
+        "RETURN s.studyId, s.title, s.studyType, s.status, s.outcome, "
+        "s.confidence, s.tags, s.started, s.completed "
+        "ORDER BY s.started DESC"
+    )
+
+
+# ---------------------------------------------------------------------------
+# ADR queries
+# ---------------------------------------------------------------------------
+
+
+def get_adrs_for_plan(store: GraphStore, plan_number: int) -> list[dict[str, Any]]:
+    """Return ADRs that govern the given plan."""
+    return store.query(
+        f"MATCH (a:ADR)-[:ADR_GOVERNS]->(p:Plan) WHERE p.number = {plan_number} "
+        "RETURN a.number, a.title, a.status, a.date"
+    )
+
+
+def get_adr_by_number(store: GraphStore, number: int) -> dict[str, Any] | None:
+    """Return a single ADR by number."""
+    rows = store.query(
+        f"MATCH (a:ADR) WHERE a.number = {number} "
+        "RETURN a.id, a.number, a.title, a.status, a.date, a.filePath, "
+        "a.relatedPlans, a.relatedADRs, a.supersededBy"
+    )
+    return rows[0] if rows else None
+
+
+def get_all_adrs(store: GraphStore) -> list[dict[str, Any]]:
+    """Return all ADRs ordered by number."""
+    return store.query(
+        "MATCH (a:ADR) "
+        "RETURN a.number, a.title, a.status, a.date, a.supersededBy "
+        "ORDER BY a.number"
+    )
+
+
+def get_superseded_adrs(store: GraphStore) -> list[dict[str, Any]]:
+    """Return ADRs that have been superseded."""
+    return store.query(
+        "MATCH (a:ADR) WHERE a.status CONTAINS 'Superseded' "
+        "RETURN a.number, a.title, a.status, a.supersededBy"
+    )
+
+
+def get_adrs_for_file(store: GraphStore, file_path: str) -> list[dict[str, Any]]:
+    """Return ADRs governing plans that impact this file (2-hop traversal)."""
+    escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    return store.query(
+        "MATCH (a:ADR)-[:ADR_GOVERNS]->(p:Plan)-[:PLAN_IMPACTS]->(f:File) "
+        f"WHERE f.path = '{escaped}' "
+        "RETURN DISTINCT a.number, a.title, a.status, p.number AS plan_number"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Spike queries
+# ---------------------------------------------------------------------------
+
+
+def get_spikes_for_plan(store: GraphStore, plan_number: int) -> list[dict[str, Any]]:
+    """Return spikes that validated the given plan."""
+    return store.query(
+        f"MATCH (sp:Spike)-[:SPIKE_FOR_PLAN]->(p:Plan) WHERE p.number = {plan_number} "
+        "RETURN sp.title, sp.status, sp.created, sp.timeBox, sp.filePath"
+    )
+
+
+def get_all_spikes(store: GraphStore) -> list[dict[str, Any]]:
+    """Return all spikes ordered by created date descending."""
+    return store.query(
+        "MATCH (sp:Spike) "
+        "RETURN sp.title, sp.parentPlan, sp.status, sp.created, sp.timeBox "
+        "ORDER BY sp.created DESC"
+    )
+
+
+def get_spike_by_title(store: GraphStore, title_fragment: str) -> list[dict[str, Any]]:
+    """Return spikes matching a title keyword."""
+    escaped = title_fragment.replace("'", "\\'")
+    return store.query(
+        f"MATCH (sp:Spike) WHERE sp.title CONTAINS '{escaped}' "
+        "RETURN sp.title, sp.parentPlan, sp.status, sp.created, sp.filePath"
+    )
