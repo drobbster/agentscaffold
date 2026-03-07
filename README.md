@@ -2,7 +2,7 @@
 
 **Stop paying for your AI agent to rediscover your codebase every session.**
 
-AgentScaffold is a governance framework and persistent knowledge graph for AI coding agents. It replaces the expensive pattern of agents reading dozens of files, grepping for symbols, and tracing dependencies from scratch -- with a single tool call that returns exactly what the agent needs.
+AgentScaffold is a governance framework and persistent knowledge graph for AI coding agents. It replaces the expensive pattern of agents re-reading files, re-grepping symbols, and re-tracing dependencies from scratch -- with a single tool call that returns exactly what the agent needs.
 
 ## The Problem
 
@@ -11,10 +11,11 @@ Every time you start a new session with Cursor, Claude Code, Codex, or any AI co
 On a moderately complex codebase, a single "understand this module" task can cost **12 file reads + 2 grep searches** before the agent even starts working. A full plan review pulls in **10+ files**. Getting oriented in a new codebase means reading **38+ files**.
 
 This is the hidden cost of agentic development: not the coding, but the *context building*.
+AgentScaffold addresses this by separating one-time indexing from repeated reasoning work.
 
 ## The Solution
 
-AgentScaffold builds a knowledge graph of your codebase -- code structure, dependencies, governance artifacts, session history -- and exposes it through MCP tools that your agent calls instead of reading raw files.
+AgentScaffold builds a knowledge graph of your codebase -- code structure, dependencies, governance artifacts, and session history -- and exposes it through MCP tools that your agent calls instead of reading raw files. Instead of rebuilding context from scratch in every session, the agent retrieves scoped context in one call and moves directly into analysis or implementation.
 
 **Measured results from our latest evaluation harness run (79 scenarios, 100% pass rate):**
 
@@ -35,6 +36,8 @@ We now report two views so results are not sugar-coated:
 - **Capability efficiency (raw):** what the tools can do when selected (58% token and 91% call reduction average).
 - **Behavior-adjusted efficiency:** capability gains multiplied by tool-routing adherence proxy.
 
+In real usage, adjusted values are lower because agents do not always choose tools consistently; replay-based evaluation captures that behavior directly.
+
 Current harness outputs:
 
 | View | Token Reduction | Call Reduction |
@@ -49,7 +52,7 @@ Every tool call your agent doesn't make is money you don't spend on API tokens o
 
 ## What It Does
 
-AgentScaffold combines two capabilities that don't exist together in any other tool:
+AgentScaffold combines two capabilities that are rarely integrated together in a single tool:
 
 ### 1. Agent Governance Framework
 
@@ -61,7 +64,8 @@ A structured development workflow that teaches your AI agent to follow a plan li
 - **Retrospectives**: Post-execution learning that feeds back into the process
 - **Session tracking**: State files that persist context across chat sessions
 
-**Think of it as a virtual sprint team.** Most AI agents work alone -- they take instructions and start coding. AgentScaffold puts your agent on a team. Before it writes a single line of code, the plan faces a devil's advocate who asks "what if this breaks?", an expansion reviewer who asks "what did you miss?", and a domain expert -- a quant architect, a UX designer, a security engineer -- who pressure-tests the approach through the lens of your specific domain. These adversarial reviews catch flawed assumptions, missing edge cases, and architectural blind spots *before* they become bugs in production.
+**Think of it as a virtual sprint team.** Most AI agents work alone -- they take instructions and start coding. AgentScaffold puts your agent on a team.
+Before it writes a single line of code, the plan faces a devil's advocate who asks "what if this breaks?", an expansion reviewer who asks "what did you miss?", and a domain expert -- a quant architect, a UX designer, a security engineer -- who pressure-tests the approach through the lens of your specific domain. These adversarial reviews catch flawed assumptions, missing edge cases, and architectural blind spots *before* they become bugs in production.
 
 After implementation, the sprint continues. A post-implementation review verifies what was built against what was planned. A retrospective captures what worked, what didn't, and what to do differently. Those findings flow into the learnings tracker, which feeds back into the agent's rules and templates -- so the next sprint starts sharper than the last. This is the same continuous improvement loop that makes experienced engineering teams get better over time, applied to your AI agent.
 
@@ -114,7 +118,7 @@ pip install agentscaffold[all]                # Everything
 
 When you run `scaffold mcp`, these tools become available to your agent.
 
-You don't need to memorize tool names. AgentScaffold ships with **intent descriptions** and an **MCP-first routing policy** -- natural language trigger phrases plus fallback rules that push the agent to use MCP tools first, then allow direct reads/search if output is insufficient. Say "let's review plan 42" and the agent calls `scaffold_prepare_review`. Say "where did we leave off?" and it calls `scaffold_orient`. Run `scaffold agents cursor` (or `windsurf`, `claude`) to generate platform-specific rules that wire this up for your IDE.
+You don't need to memorize tool names. AgentScaffold teaches the agent how to interpret user intent in natural conversation, map that intent to the right MCP workflow, and only fall back to direct reads/search when tool output is insufficient. Say "let's review plan 42" and the agent routes to `scaffold_prepare_review`. Say "where did we leave off?" and it routes to `scaffold_orient`. Run `scaffold agents cursor` (or `windsurf`, `claude`) to generate platform-specific rules that wire this behavior into your IDE.
 
 **Composite tools** -- single calls that replace entire multi-step workflows:
 
@@ -129,6 +133,8 @@ You don't need to memorize tool names. AgentScaffold ships with **intent descrip
 | `scaffold_prepare_retro` | Gathering verification results, study outcomes, and retro insights |
 | `scaffold_find_studies` | Searching study files by topic, tags, or outcome |
 | `scaffold_find_adrs` | Searching architecture decision records by topic or status |
+
+Use composite tools by default for common workflows; use granular tools when you need targeted control.
 
 **Granular tools** -- building blocks for custom queries:
 
@@ -193,9 +199,11 @@ The governance framework is domain-aware. Domain packs teach the adversarial rev
 | embedded | Memory constraints, real-time deadlines, OTA safety |
 | research | Reproducibility, statistical rigor, experiment protocol |
 
+This keeps governance strict where risk is high and lightweight where speed matters, without rewriting the core framework.
+
 ```bash
-scaffold domain add trading
-scaffold domain add webapp
+scaffold domains add trading
+scaffold domains add webapp
 ```
 
 ## Documentation

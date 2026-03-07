@@ -33,7 +33,7 @@ When you install a domain pack, its files are copied into your project and its s
 From your project root:
 
 ```bash
-scaffold domain add trading
+scaffold domains add trading
 ```
 
 This will:
@@ -46,7 +46,7 @@ This will:
 List available and installed packs:
 
 ```bash
-scaffold domain list
+scaffold domains list
 ```
 
 ## What Gets Added to Your Project
@@ -75,8 +75,8 @@ The agent reads AGENTS.md and applies these rules during plan review and executi
 You can install multiple packs. For example, a trading web app might use:
 
 ```bash
-scaffold domain add trading
-scaffold domain add webapp
+scaffold domains add trading
+scaffold domains add webapp
 ```
 
 Both packs' prompts and standards are merged. When a plan touches trading and UI:

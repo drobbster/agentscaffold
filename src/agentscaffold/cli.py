@@ -30,8 +30,10 @@ app.add_typer(study_app, name="study")
 spike_app = typer.Typer(help="Time-boxed research spike management.")
 app.add_typer(spike_app, name="spike")
 
-domain_app = typer.Typer(help="Domain pack management.")
-app.add_typer(domain_app, name="domain")
+domains_app = typer.Typer(help="Domain pack management.")
+app.add_typer(domains_app, name="domains")
+# Backward-compatible alias for older usage.
+app.add_typer(domains_app, name="domain", hidden=True)
 
 agents_app = typer.Typer(help="Agent integration file generation.")
 app.add_typer(agents_app, name="agents")
@@ -349,20 +351,20 @@ def adr_decision(
 # ---------------------------------------------------------------------------
 
 
-@domain_app.command("add")
+@domains_app.command("add")
 def domain_add(
     pack: str = typer.Argument(..., help="Domain pack name (e.g., trading, webapp, mlops)."),
 ) -> None:
     """Install a domain pack's templates and standards."""
-    from agentscaffold.domain.loader import run_domain_add
+    from agentscaffold.domain_packs.loader import run_domain_add
 
     run_domain_add(pack=pack)
 
 
-@domain_app.command("list")
+@domains_app.command("list")
 def domain_list() -> None:
     """List available and installed domain packs."""
-    from agentscaffold.domain.registry import run_domain_list
+    from agentscaffold.domain_packs.registry import run_domain_list
 
     run_domain_list()
 
