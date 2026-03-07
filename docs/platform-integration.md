@@ -26,16 +26,19 @@ After this, your project has `AGENTS.md` at the root and `.scaffold/graph.db` wi
 
 ## Cursor
 
-Cursor has first-class support. AgentScaffold generates both `AGENTS.md` (read by Cursor's agent mode) and `.cursor/rules.md` (read by Cursor's rules system).
+Cursor has first-class support. AgentScaffold generates:
+- `AGENTS.md` (full governance rules),
+- `.cursor/rules.md` (Cursor governance summary),
+- `.cursor/rules/agentscaffold.md` (MCP-first tool routing policy + intent map).
 
 ### Rules Setup
 
 ```bash
 scaffold agents generate    # Generate AGENTS.md
-scaffold agents cursor      # Generate .cursor/rules.md
+scaffold agents cursor      # Generate .cursor/rules.md and .cursor/rules/agentscaffold.md
 ```
 
-Cursor reads `.cursor/rules.md` automatically when you open the project. The agent also reads `AGENTS.md` when working in agent mode.
+Cursor reads `.cursor/rules.md` and `.cursor/rules/` files automatically when you open the project. The agent also reads `AGENTS.md` when working in agent mode.
 
 ### MCP Setup
 
@@ -96,7 +99,13 @@ claude mcp add agentscaffold -- scaffold mcp
 
 ### CLAUDE.md
 
-If your project uses `CLAUDE.md` for Claude-specific instructions, you can reference AGENTS.md from it:
+Generate a Claude-specific routing file from AgentScaffold:
+
+```bash
+scaffold agents claude
+```
+
+If your project already has `CLAUDE.md` content, merge or append this generated policy and keep a reference to AGENTS.md:
 
 ```markdown
 Read and follow AGENTS.md at the project root before every task.
@@ -112,18 +121,8 @@ Windsurf reads `.windsurfrules` at the project root for agent instructions.
 
 ### Rules Setup
 
-AgentScaffold does not generate `.windsurfrules` natively yet. Create one that references AGENTS.md:
-
-```markdown
-Read and follow AGENTS.md at the project root before every task.
-It contains the full plan lifecycle, review gates, and collaboration protocol.
-```
-
-Or copy the content from the generated `.cursor/rules.md` (which is a condensed version of AGENTS.md):
-
 ```bash
-scaffold agents cursor
-cp .cursor/rules.md .windsurfrules
+scaffold agents windsurf    # Generate .windsurfrules
 ```
 
 ### MCP Setup

@@ -16,7 +16,7 @@ This is the hidden cost of agentic development: not the coding, but the *context
 
 AgentScaffold builds a knowledge graph of your codebase -- code structure, dependencies, governance artifacts, session history -- and exposes it through MCP tools that your agent calls instead of reading raw files.
 
-**Measured results from our evaluation harness (64 scenarios, 100% pass rate):**
+**Measured results from our latest evaluation harness run (79 scenarios, 100% pass rate):**
 
 | Task | Without AgentScaffold | With AgentScaffold | Savings |
 |------|----------------------|-------------------|---------|
@@ -26,7 +26,24 @@ AgentScaffold builds a knowledge graph of your codebase -- code structure, depen
 | Find all code matching a concept | 8 file reads | 1 tool call | **44% fewer tokens, 88% fewer calls** |
 | Full plan review with evidence | 10 file reads | 1 tool call | **90% fewer calls** (richer output) |
 
-**Aggregate: 91% average call reduction. 58% average token reduction. 2.9x overall compression.**
+**Capability aggregate: 91% average call reduction. 58% average token reduction. 2.8x overall compression.**
+
+### Capability vs behavioral reality
+
+We now report two views so results are not sugar-coated:
+
+- **Capability efficiency (raw):** what the tools can do when selected (58% token and 91% call reduction average).
+- **Behavior-adjusted efficiency:** capability gains multiplied by tool-routing adherence proxy.
+
+Current harness outputs:
+
+| View | Token Reduction | Call Reduction |
+|------|-----------------|----------------|
+| Raw capability | 58.3% | 91.4% |
+| Behavioral (replay-adjusted) | 43.7% | 68.5% |
+| Quality-adjusted behavioral | 39.4% | 61.7% |
+
+Behavioral and quality-adjusted values come from replay traces (observed tool-call sequences + quality parity checks), not just phrase-level intent matching.
 
 Every tool call your agent doesn't make is money you don't spend on API tokens or subscription overages. And because the governance framework catches flawed assumptions and missing edge cases *before* implementation, you also spend less time fixing bugs that should never have been written.
 
@@ -97,7 +114,7 @@ pip install agentscaffold[all]                # Everything
 
 When you run `scaffold mcp`, these tools become available to your agent.
 
-You don't need to memorize tool names. AgentScaffold ships with **intent descriptions** -- natural language trigger phrases that teach your agent to select the right tool automatically. Say "let's review plan 42" and the agent calls `scaffold_prepare_review`. Say "where did we leave off?" and it calls `scaffold_orient`. Run `scaffold agents cursor` (or `windsurf`, `claude`) to generate platform-specific rules that wire this up for your IDE.
+You don't need to memorize tool names. AgentScaffold ships with **intent descriptions** and an **MCP-first routing policy** -- natural language trigger phrases plus fallback rules that push the agent to use MCP tools first, then allow direct reads/search if output is insufficient. Say "let's review plan 42" and the agent calls `scaffold_prepare_review`. Say "where did we leave off?" and it calls `scaffold_orient`. Run `scaffold agents cursor` (or `windsurf`, `claude`) to generate platform-specific rules that wire this up for your IDE.
 
 **Composite tools** -- single calls that replace entire multi-step workflows:
 
