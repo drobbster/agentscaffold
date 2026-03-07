@@ -65,4 +65,4 @@ def run_domain_list() -> None:
     console.print()
     console.print(table)
     console.print()
-    console.print("Install a pack with: [bold]scaffold domain add <pack>[/bold]")
+    console.print("Install a pack with: [bold]scaffold domains add <pack>[/bold]")

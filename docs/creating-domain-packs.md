@@ -17,7 +17,7 @@ my_domain/
     threat_model_my_domain.md.j2
 ```
 
-The pack directory name (e.g. `my_domain`) is the pack identifier used with `scaffold domain add my_domain`.
+The pack directory name (e.g. `my_domain`) is the pack identifier used with `scaffold domains add my_domain`.
 
 ## manifest.yaml Format
 
@@ -146,7 +146,7 @@ For static content that works in any project, avoid template variables. If you n
 
    ```bash
    cd /path/to/test-project
-   scaffold domain add my_domain
+   scaffold domains add my_domain
    ```
 
 3. **Verify installation**: Check that files appear in `docs/ai/prompts/`, `docs/ai/standards/`, and `scaffold.yaml` was updated.
