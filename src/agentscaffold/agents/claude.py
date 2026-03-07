@@ -6,33 +6,31 @@ from pathlib import Path
 
 from rich.console import Console
 
-from agentscaffold.config import find_config
+from agentscaffold.agents.rule_policy import generate_rule_policy_document
+from agentscaffold.config import find_config, load_config
 
 console = Console()
 
 
 def generate_claude_rules() -> str:
-    """Build CLAUDE.md content from TOOL_INTENTS."""
-    from agentscaffold.mcp.server import TOOL_INTENTS
-
-    lines: list[str] = [
-        "# AgentScaffold Tool Routing",
-        "",
-        "This project uses AgentScaffold MCP tools. When the user makes",
-        "a request matching the patterns below, call the corresponding tool.",
-        "",
-    ]
-
-    for tool_name, intents in TOOL_INTENTS.items():
-        examples = ", ".join(f'"{i}"' for i in intents[:3])
-        lines.append(f"- **{tool_name}**: {examples}")
-
-    lines.append("")
-    return "\n".join(lines)
+    """Build CLAUDE.md content from MCP-first policy + intents."""
+    config_path = find_config()
+    if config_path is None:
+        raise RuntimeError("No scaffold.yaml found")
+    config = load_config(config_path)
+    return generate_rule_policy_document(
+        config=config,
+        title="AgentScaffold Tool Routing",
+        intro_lines=[
+            "This project uses AgentScaffold MCP tools for planning and code intelligence.",
+            "Attempt mapped MCP tools first when intent matches; fall back with a short reason.",
+        ],
+        quote_intents=True,
+    )
 
 
 def run_claude_setup() -> None:
-    """Generate CLAUDE.md from TOOL_INTENTS."""
+    """Generate CLAUDE.md from scaffold.yaml config."""
     config_path = find_config()
     if config_path is None:
         console.print("[red]No scaffold.yaml found. Run 'scaffold init' first.[/red]")

@@ -41,6 +41,9 @@ TOOL_INTENTS: dict[str, list[str]] = {
         "following the collab protocol for plan X",
         "pre-reviews for plan X",
         "all three reviews for plan X",
+        "pressure-test plan X",
+        "stress test plan X",
+        "challenge this plan before coding",
     ],
     "scaffold_prepare_implementation": [
         "implement plan X",
@@ -51,6 +54,9 @@ TOOL_INTENTS: dict[str, list[str]] = {
         "prep for implementing plan X",
         "approved to go on plan X",
         "begin implementation per collab protocol",
+        "start building plan X",
+        "begin building plan X",
+        "ready to build plan X",
     ],
     "scaffold_compare_plans": [
         "does plan X conflict with plan Y",
@@ -60,6 +66,8 @@ TOOL_INTENTS: dict[str, list[str]] = {
         "any overlapping concerns between plan X and Y",
         "do plans X and Y overlap",
         "check for conflicts between X and Y",
+        "do these plans step on each other",
+        "are these plans stepping on each other",
     ],
     "scaffold_staleness_check": [
         "is plan X stale",
@@ -69,6 +77,8 @@ TOOL_INTENTS: dict[str, list[str]] = {
         "has anything changed since plan X",
         "does plan X need updating",
         "check if plan X needs refactoring",
+        "has this plan gone out of date",
+        "is this plan out of date",
     ],
     "scaffold_prepare_rewrite": [
         "rewrite plan X",
@@ -85,6 +95,8 @@ TOOL_INTENTS: dict[str, list[str]] = {
         "quant architect review on plan X",
         "post implementation review and retro for plan X",
         "share the review and retro",
+        "post implementation retrospective",
+        "let's do the post-implementation retrospective",
     ],
     "scaffold_orient": [
         "where did we leave off",
@@ -95,12 +107,16 @@ TOOL_INTENTS: dict[str, list[str]] = {
         "where are we",
         "what should I work on now",
         "what are the next priorities",
+        "latest blockers and what's next",
+        "current blockers and next steps",
     ],
     "scaffold_find_studies": [
         "any studies on X",
         "experiments related to X",
         "what did we test for X",
         "show me studies about X",
+        "prior experiments about X",
+        "any prior experiments about X",
     ],
     "scaffold_prior_experiments": [
         "has this been tested",
@@ -115,6 +131,8 @@ TOOL_INTENTS: dict[str, list[str]] = {
         "which ADR governs X",
         "what ADR blocks plan X",
         "the ADR blocking them",
+        "which architecture decision governs X",
+        "what architecture decision governs X",
     ],
     "scaffold_decision_context": [
         "what's the decision history for plan X",
@@ -123,8 +141,127 @@ TOOL_INTENTS: dict[str, list[str]] = {
         "show me the full decision chain for plan X",
         "what was the original intent for plan X",
         "trace the decisions for plan X",
+        "trace the rationale chain for plan X",
+        "why was this plan decided this way",
     ],
 }
+
+_ROUTING_STOPWORDS = {
+    "a",
+    "an",
+    "the",
+    "for",
+    "to",
+    "of",
+    "on",
+    "and",
+    "or",
+    "is",
+    "are",
+    "was",
+    "were",
+    "with",
+    "this",
+    "that",
+    "these",
+    "those",
+    "what",
+    "how",
+    "can",
+    "do",
+    "does",
+    "did",
+    "let",
+    "lets",
+    "we",
+    "i",
+    "x",
+    "plan",
+}
+
+_ROUTING_NORMALIZERS: list[tuple[str, str]] = [
+    (r"\bpressure[\s-]*test\b", "critique"),
+    (r"\bstress[\s-]*test\b", "critique"),
+    (r"\bstart building\b", "implement"),
+    (r"\bbegin building\b", "implement"),
+    (r"\bpost[\s-]*implementation\b", "post implementation"),
+    (r"\bout of date\b", "stale"),
+    (r"\brationale chain\b", "decision chain"),
+    (r"\barchitecture decision\b", "adr"),
+    (r"\bprior experiments\b", "studies"),
+    (r"\bstep on each other\b", "conflict"),
+    (r"\bblockers\b", "blocked"),
+    (r"\bcollisions?\b", "conflict"),
+    (r"\blineage\b", "decision chain"),
+    (r"\bhas .* changed enough\b", "stale"),
+]
+
+_TOOL_SIGNAL_TOKENS: dict[str, set[str]] = {
+    "scaffold_prepare_review": {"review", "critique", "challenge", "assumption", "pre", "coding"},
+    "scaffold_prepare_implementation": {"implement", "build", "start", "begin", "execute"},
+    "scaffold_compare_plans": {"compare", "conflict", "overlap", "against", "versus"},
+    "scaffold_staleness_check": {"stale", "valid", "changed", "refresh", "update"},
+    "scaffold_prepare_rewrite": {"rewrite", "revise", "update", "expand", "refresh"},
+    "scaffold_prepare_retro": {"retro", "retrospective", "post", "implementation", "review"},
+    "scaffold_orient": {"state", "blocked", "next", "priorities", "where"},
+    "scaffold_find_studies": {"study", "studies", "experiment", "experiments", "tested"},
+    "scaffold_prior_experiments": {"prior", "experiments", "evidence", "tested"},
+    "scaffold_find_adrs": {"adr", "architecture", "decision", "governs"},
+    "scaffold_decision_context": {"decision", "history", "chain", "spike", "intent", "adr"},
+}
+
+
+def _normalize_intent_text(text: str) -> str:
+    """Normalize free text for robust intent matching."""
+    normalized = text.lower()
+    for pattern, replacement in _ROUTING_NORMALIZERS:
+        normalized = re.sub(pattern, replacement, normalized)
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def _intent_content_tokens(text: str) -> set[str]:
+    tokens = _normalize_intent_text(text).split()
+    return {t for t in tokens if t not in _ROUTING_STOPWORDS and len(t) > 2}
+
+
+def route_tool_from_prompt(prompt: str) -> str | None:
+    """Route a user prompt to the best matching tool intent."""
+    prompt_norm = _normalize_intent_text(prompt)
+    prompt_tokens = _intent_content_tokens(prompt)
+
+    best_tool: str | None = None
+    best_score = 0.0
+
+    for tool, intents in TOOL_INTENTS.items():
+        tool_signal = _TOOL_SIGNAL_TOKENS.get(tool, set())
+        signal_overlap = 0.0
+        if tool_signal:
+            signal_overlap = len(prompt_tokens & tool_signal) / len(tool_signal)
+
+        for intent in intents:
+            intent_norm = _normalize_intent_text(intent)
+            if intent_norm and intent_norm in prompt_norm:
+                return tool
+
+            intent_tokens = _intent_content_tokens(intent)
+            if not intent_tokens:
+                continue
+
+            overlap = len(intent_tokens & prompt_tokens)
+            if overlap == 0:
+                continue
+            phrase_score = overlap / len(intent_tokens)
+            # Weighted score favors direct intent phrase overlap, then tool-level signal overlap.
+            score = 0.75 * phrase_score + 0.25 * signal_overlap
+
+            if score > best_score:
+                best_score = score
+                best_tool = tool
+
+    # Confidence band tuned to preserve precision while improving paraphrase recall.
+    return best_tool if best_score >= 0.5 else None
 
 
 def run_mcp_server() -> None:
