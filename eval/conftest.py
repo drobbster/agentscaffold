@@ -36,6 +36,10 @@ def indexed_sim(sim_project_path) -> tuple:
         plans_dir="docs/ai/plans/",
         contracts_dir="docs/ai/contracts/",
         learnings_file="docs/ai/state/learnings_tracker.md",
+        studies_dir="docs/studies/",
+        adrs_dir="docs/ai/adrs/",
+        spikes_dir="docs/ai/spikes/",
+        workflow_state_file="docs/ai/state/workflow_state.md",
     )
 
     # Pipeline opens and closes its own store

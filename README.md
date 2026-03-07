@@ -28,7 +28,7 @@ AgentScaffold builds a knowledge graph of your codebase -- code structure, depen
 
 **Aggregate: 91% average call reduction. 58% average token reduction. 2.9x overall compression.**
 
-Every tool call your agent doesn't make is money you don't spend on API tokens or subscription overages.
+Every tool call your agent doesn't make is money you don't spend on API tokens or subscription overages. And because the governance framework catches flawed assumptions and missing edge cases *before* implementation, you also spend less time fixing bugs that should never have been written.
 
 ## What It Does
 
@@ -43,6 +43,12 @@ A structured development workflow that teaches your AI agent to follow a plan li
 - **Interface contracts**: Formal declarations of module boundaries, versioned and tracked
 - **Retrospectives**: Post-execution learning that feeds back into the process
 - **Session tracking**: State files that persist context across chat sessions
+
+**Think of it as a virtual sprint team.** Most AI agents work alone -- they take instructions and start coding. AgentScaffold puts your agent on a team. Before it writes a single line of code, the plan faces a devil's advocate who asks "what if this breaks?", an expansion reviewer who asks "what did you miss?", and a domain expert -- a quant architect, a UX designer, a security engineer -- who pressure-tests the approach through the lens of your specific domain. These adversarial reviews catch flawed assumptions, missing edge cases, and architectural blind spots *before* they become bugs in production.
+
+After implementation, the sprint continues. A post-implementation review verifies what was built against what was planned. A retrospective captures what worked, what didn't, and what to do differently. Those findings flow into the learnings tracker, which feeds back into the agent's rules and templates -- so the next sprint starts sharper than the last. This is the same continuous improvement loop that makes experienced engineering teams get better over time, applied to your AI agent.
+
+The result: tighter plans that survive expert scrutiny, more robust implementations with edge cases identified up front, and a codebase that accumulates institutional knowledge rather than losing it between sessions.
 
 ### 2. Persistent Knowledge Graph
 
@@ -89,14 +95,32 @@ pip install agentscaffold[all]                # Everything
 
 ### MCP Tools (for AI agents)
 
-When you run `scaffold mcp`, these tools become available to your agent:
+When you run `scaffold mcp`, these tools become available to your agent.
+
+You don't need to memorize tool names. AgentScaffold ships with **intent descriptions** -- natural language trigger phrases that teach your agent to select the right tool automatically. Say "let's review plan 42" and the agent calls `scaffold_prepare_review`. Say "where did we leave off?" and it calls `scaffold_orient`. Run `scaffold agents cursor` (or `windsurf`, `claude`) to generate platform-specific rules that wire this up for your IDE.
+
+**Composite tools** -- single calls that replace entire multi-step workflows:
+
+| Tool | What It Replaces |
+|------|-----------------|
+| `scaffold_prepare_review` | Reading plan, contracts, learnings, and source to prepare a full adversarial review |
+| `scaffold_prepare_implementation` | Tracing dependencies, checking contracts, and verifying readiness before coding |
+| `scaffold_orient` | Reading 38+ files to understand project state, blockers, and next steps |
+| `scaffold_decision_context` | Tracing the full decision chain (ADRs, spikes, studies) behind a plan |
+| `scaffold_staleness_check` | Manually comparing plan dates, file changes, and overlapping completed work |
+| `scaffold_compare_plans` | Reading two plans and their file impacts to identify conflicts |
+| `scaffold_prepare_retro` | Gathering verification results, study outcomes, and retro insights |
+| `scaffold_find_studies` | Searching study files by topic, tags, or outcome |
+| `scaffold_find_adrs` | Searching architecture decision records by topic or status |
+
+**Granular tools** -- building blocks for custom queries:
 
 | Tool | What It Replaces |
 |------|-----------------|
 | `scaffold_context` | Reading 12+ files to understand a symbol, its callers, and its layer |
 | `scaffold_impact` | Manually tracing imports and grep-searching for consumers |
 | `scaffold_search` | Multiple grep passes to find code by concept |
-| `scaffold_review_context` | Reading plan files, contracts, learnings, and source to prepare a review |
+| `scaffold_review_context` | Reading plan files, contracts, and source to prepare a single review type |
 | `scaffold_stats` | Scanning the entire directory tree to understand codebase shape |
 | `scaffold_validate` | Running separate staleness checks and contract verification |
 | `scaffold_query` | Writing ad-hoc Cypher queries against the knowledge graph |
@@ -137,7 +161,7 @@ Both profiles coexist in the same AGENTS.md. The agent self-selects based on inv
 
 ## Domain Packs
 
-Domain packs add specialized review prompts, standards, and approval gates:
+The governance framework is domain-aware. Domain packs teach the adversarial reviewers to think like specialists in your field -- a trading pack adds a quant architect who challenges risk assumptions and position sizing logic, a webapp pack adds a UX reviewer who flags accessibility gaps and performance regressions. Each pack includes tailored review prompts, implementation standards, and approval gates specific to the domain:
 
 | Pack | Focus |
 |------|-------|
