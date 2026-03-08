@@ -118,6 +118,22 @@ pip install agentscaffold[all]                # Everything
 
 When you run `scaffold mcp`, these tools become available to your agent.
 
+#### Interaction Modes
+
+AgentScaffold supports two complementary ways of working:
+
+- **Natural-language + MCP (interactive)**: describe intent conversationally and let the
+  agent route to the right governance/graph workflow.
+- **Structural CLI commands (explicit/automation)**: use direct `scaffold` commands for
+  deterministic setup, verification, CI, and fallback.
+
+Teams usually get best UX with NL+MCP for day-to-day flow, then use explicit CLI commands
+for verification (`scaffold validate`, `scaffold graph verify`, `scaffold index --incremental`).
+
+If you used the governance framework before knowledge graph integration, see
+[`docs/migrating-governance-to-nl-mcp.md`](docs/migrating-governance-to-nl-mcp.md)
+for a command-first -> hybrid -> NL-first transition path.
+
 You don't need to memorize tool names. AgentScaffold teaches the agent how to interpret user intent in natural conversation, map that intent to the right MCP workflow, and only fall back to direct reads/search when tool output is insufficient. Say "let's review plan 42" and the agent routes to `scaffold_prepare_review`. Say "where did we leave off?" and it routes to `scaffold_orient`. Run `scaffold agents cursor` (or `windsurf`, `claude`) to generate platform-specific rules that wire this behavior into your IDE.
 
 **Composite tools** -- single calls that replace entire multi-step workflows:

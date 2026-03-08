@@ -152,5 +152,11 @@ ci:
   semi_autonomous_pr_checks: false
 {% endif %}
 
+freshness:
+  async_enabled: false
+  debounce_seconds: 120
+  gate_strict: false
+  background_queue_enabled: true
+
 import:
   conversation_dir: "data/conversations"

@@ -14,6 +14,23 @@ Each phase has specific trigger phrases and expectations. The sections below det
 
 But first -- if you don't have any plans yet because you're starting a brand new project, read the Greenfield Onboarding section below.
 
+### Canonical Session Flow (NL + MCP Variant)
+
+If MCP is configured and indexed, you can run the same lifecycle with less command
+choreography. Instead of naming each tool, describe the outcome:
+
+| Phase | Command-Heavy Directive | NL + MCP Directive |
+|-------|-------------------------|--------------------|
+| Open | "Run review brief for plan 042" | "Let's prepare to review plan 042 with evidence." |
+| Assess | "Run staleness check" | "Is this plan stale after recent architecture changes?" |
+| Review | "Run critique + expansion + domain review" | "Pressure-test this plan and surface edge cases before implementation." |
+| Gaps Sweep | "Re-run all review outputs and list gaps" | "Do a full second-pass gap sweep across all review findings." |
+| Execute | "Proceed with step-by-step implementation" | "Begin implementation and follow plan steps in order." |
+| Close Out | "Run retro and update state files" | "Prepare retro context and complete close-out updates." |
+
+Use explicit commands when you need deterministic verification, reproducible outputs, or
+platform fallback.
+
 ---
 
 ## Greenfield Onboarding: Starting from Scratch
@@ -721,6 +738,35 @@ lets also create another study to explore this approach
 ```
 the flow has completed. lets review the findings
 ```
+
+---
+
+## Migration Guide for Governance-First Users
+
+If you used AgentScaffold before knowledge graph/MCP integration, the safest shift is:
+
+1. **Hybrid first**: use NL prompts for orchestration, keep CLI verification explicit.
+2. **Verify behavior**: confirm the agent is routing to MCP context/review tools first.
+3. **Keep rigor fixed**: pre-reviews, gap sweep, validation, retro, and state updates stay mandatory.
+
+Phase-by-phase translation:
+
+| Old Structural Pattern | NL Prompt Pattern | Expected Tool Family |
+|------------------------|-------------------|----------------------|
+| "run review brief/challenges for plan X" | "prepare to review plan X with evidence" | composite review tools |
+| "run staleness check on plan X" | "is plan X stale after recent changes?" | staleness/validation tools |
+| "run impact on file/symbol Y" | "what is the blast radius of Y?" | impact/context tools |
+| "gather ADR/spike/study history" | "show the decision chain behind this plan" | decision context tools |
+| "run retro prep and findings pull" | "prepare retro context for this plan" | retro/studies tools |
+
+Fallback and override guardrails:
+
+- If MCP is unavailable, fall back to direct read/search and keep governance sequence intact.
+- If graph might be stale, run `scaffold index --incremental` before continuing.
+- Keep explicit validation commands (`scaffold validate`, `scaffold graph verify`) before completion.
+
+For a focused migration path, see
+[Migrating Governance to NL + MCP](migrating-governance-to-nl-mcp.md).
 
 ---
 

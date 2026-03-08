@@ -36,6 +36,10 @@ From your project root:
 scaffold domains add trading
 ```
 
+Use `scaffold domains ...` commands for setup and configuration. For day-to-day usage in
+chat sessions, use natural-language prompts so the agent applies domain prompts through
+its governance/review flow.
+
 This will:
 
 1. Copy prompts to `docs/ai/prompts/`
@@ -70,6 +74,18 @@ When you run `scaffold agents generate`, the generated AGENTS.md includes:
 
 The agent reads AGENTS.md and applies these rules during plan review and execution.
 
+## NL Prompt Patterns After Installation
+
+After installing packs, trigger domain behavior conversationally:
+
+- "Review plan 042 like a quant architect and challenge risk assumptions."
+- "Before implementation, run product design and accessibility scrutiny for this plan."
+- "Do a full adversarial review with both trading and webapp perspectives."
+- "Re-check the plan for domain-specific failure modes before we proceed."
+
+These prompts should route the agent into the same governance gates as explicit command
+flows while reducing interaction friction.
+
 ## Using Multiple Domain Packs
 
 You can install multiple packs. For example, a trading web app might use:
@@ -84,6 +100,10 @@ Both packs' prompts and standards are merged. When a plan touches trading and UI
 - The agent runs quant_architect review (trading) and product_design review (webapp)
 - Both domains' standards apply
 - Approval gates from both packs are enforced
+
+Prompt example for dual-domain plans:
+
+> "Let's review this plan with quant architect and product design lenses before implementation."
 
 If prompts or standards from different packs conflict, the agent uses the most specific one for the plan's scope. For overlapping concerns, document your preference in the plan or in `docs/ai/standards/`.
 
