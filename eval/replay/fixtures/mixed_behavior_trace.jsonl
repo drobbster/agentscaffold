@@ -1,0 +1,11 @@
+{"session_id":"s1","turn_id":1,"user_text":"review plan 42 before coding","tool_calls":["scaffold_prepare_review"],"quality":{"baseline_ok":true,"mcp_ok":true}}
+{"session_id":"s1","turn_id":2,"user_text":"can we pressure-test plan 42 first","tool_calls":["scaffold_prepare_review"],"quality":{"baseline_ok":true,"mcp_ok":true}}
+{"session_id":"s1","turn_id":3,"user_text":"where did we leave off","tool_calls":["read_file"],"fallback_reason":"insufficient_output","quality":{"baseline_ok":true,"mcp_ok":true}}
+{"session_id":"s1","turn_id":4,"user_text":"trace the rationale chain behind plan 42","tool_calls":["scaffold_decision_context"],"quality":{"baseline_ok":true,"mcp_ok":true}}
+{"session_id":"s1","turn_id":5,"user_text":"do these two plans step on each other","tool_calls":["rg"],"fallback_reason":"index_stale","quality":{"baseline_ok":true,"mcp_ok":true}}
+{"session_id":"s1","turn_id":6,"user_text":"show me studies about caching","tool_calls":["scaffold_find_studies"],"quality":{"baseline_ok":true,"mcp_ok":false}}
+{"session_id":"s1","turn_id":7,"user_text":"has this plan gone out of date","tool_calls":["scaffold_staleness_check"],"quality":{"baseline_ok":true,"mcp_ok":true}}
+{"session_id":"s1","turn_id":8,"user_text":"start building plan 42","tool_calls":["scaffold_prepare_implementation"],"quality":{"baseline_ok":true,"mcp_ok":true}}
+{"session_id":"s1","turn_id":9,"user_text":"let's do the post-implementation retrospective","tool_calls":["scaffold_prepare_retro"],"quality":{"baseline_ok":true,"mcp_ok":true}}
+{"session_id":"s1","turn_id":10,"user_text":"what's blocked and what's next","tool_calls":["scaffold_orient"],"fallback_reason":"bad_reason","quality":{"baseline_ok":true,"mcp_ok":true}}
+not-json

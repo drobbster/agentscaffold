@@ -14,6 +14,23 @@ Each phase has specific trigger phrases and expectations. The sections below det
 
 But first -- if you don't have any plans yet because you're starting a brand new project, read the Greenfield Onboarding section below.
 
+### Canonical Session Flow (NL + MCP Variant)
+
+If MCP is configured and indexed, you can run the same lifecycle with less command
+choreography. Instead of naming each tool, describe the outcome:
+
+| Phase | Command-Heavy Directive | NL + MCP Directive |
+|-------|-------------------------|--------------------|
+| Open | "Run review brief for plan 042" | "Let's prepare to review plan 042 with evidence." |
+| Assess | "Run staleness check" | "Is this plan stale after recent architecture changes?" |
+| Review | "Run critique + expansion + domain review" | "Pressure-test this plan and surface edge cases before implementation." |
+| Gaps Sweep | "Re-run all review outputs and list gaps" | "Do a full second-pass gap sweep across all review findings." |
+| Execute | "Proceed with step-by-step implementation" | "Begin implementation and follow plan steps in order." |
+| Close Out | "Run retro and update state files" | "Prepare retro context and complete close-out updates." |
+
+Use explicit commands when you need deterministic verification, reproducible outputs, or
+platform fallback.
+
 ---
 
 ## Greenfield Onboarding: Starting from Scratch
@@ -724,6 +741,35 @@ the flow has completed. lets review the findings
 
 ---
 
+## Migration Guide for Governance-First Users
+
+If you used AgentScaffold before knowledge graph/MCP integration, the safest shift is:
+
+1. **Hybrid first**: use NL prompts for orchestration, keep CLI verification explicit.
+2. **Verify behavior**: confirm the agent is routing to MCP context/review tools first.
+3. **Keep rigor fixed**: pre-reviews, gap sweep, validation, retro, and state updates stay mandatory.
+
+Phase-by-phase translation:
+
+| Old Structural Pattern | NL Prompt Pattern | Expected Tool Family |
+|------------------------|-------------------|----------------------|
+| "run review brief/challenges for plan X" | "prepare to review plan X with evidence" | composite review tools |
+| "run staleness check on plan X" | "is plan X stale after recent changes?" | staleness/validation tools |
+| "run impact on file/symbol Y" | "what is the blast radius of Y?" | impact/context tools |
+| "gather ADR/spike/study history" | "show the decision chain behind this plan" | decision context tools |
+| "run retro prep and findings pull" | "prepare retro context for this plan" | retro/studies tools |
+
+Fallback and override guardrails:
+
+- If MCP is unavailable, fall back to direct read/search and keep governance sequence intact.
+- If graph might be stale, run `scaffold index --incremental` before continuing.
+- Keep explicit validation commands (`scaffold validate`, `scaffold graph verify`) before completion.
+
+For a focused migration path, see
+[Migrating Governance to NL + MCP](migrating-governance-to-nl-mcp.md).
+
+---
+
 ## Knowledge Graph: Codebase Intelligence
 
 AgentScaffold can build a knowledge graph of your codebase using `scaffold index`. This graph powers several features: auto-enriched templates, graph-backed reviews, MCP tool integration, and a living Codebase Intelligence section in AGENTS.md.
@@ -760,6 +806,29 @@ scaffold index --incremental
 ```
 
 Incremental mode compares SHA-256 content hashes of files on disk against those stored in the graph. Only files that were added, modified, or deleted since the last index are processed. On a large codebase where only a handful of files changed, this is dramatically faster than a full re-index.
+
+### Async Freshness for MCP (Large-Repo UX)
+
+For large repositories, even incremental re-indexing can still take too long to run
+inline with tool calls. Async freshness mode separates freshness checks from refresh work:
+
+- Request path performs a cheap freshness oracle check.
+- Eligible composite tools schedule background incremental refreshes.
+- Debounce and single-flight locking avoid refresh storms.
+- Responses include freshness state so the agent can communicate confidence.
+
+Enable in `scaffold.yaml`:
+
+```yaml
+freshness:
+  async_enabled: true
+  debounce_seconds: 120
+  gate_strict: false
+  background_queue_enabled: true
+```
+
+If you need strict lifecycle control, set `gate_strict: true` so gate transitions defer
+when graph freshness is stale or unknown.
 
 The changeset output shows exactly what changed:
 ```

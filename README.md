@@ -2,7 +2,7 @@
 
 **Stop paying for your AI agent to rediscover your codebase every session.**
 
-AgentScaffold is a governance framework and persistent knowledge graph for AI coding agents. It replaces the expensive pattern of agents reading dozens of files, grepping for symbols, and tracing dependencies from scratch -- with a single tool call that returns exactly what the agent needs.
+AgentScaffold is a governance framework and persistent knowledge graph for AI coding agents. It replaces the expensive pattern of agents re-reading files, re-grepping symbols, and re-tracing dependencies from scratch -- with a single tool call that returns exactly what the agent needs.
 
 ## The Problem
 
@@ -11,12 +11,13 @@ Every time you start a new session with Cursor, Claude Code, Codex, or any AI co
 On a moderately complex codebase, a single "understand this module" task can cost **12 file reads + 2 grep searches** before the agent even starts working. A full plan review pulls in **10+ files**. Getting oriented in a new codebase means reading **38+ files**.
 
 This is the hidden cost of agentic development: not the coding, but the *context building*.
+AgentScaffold addresses this by separating one-time indexing from repeated reasoning work.
 
 ## The Solution
 
-AgentScaffold builds a knowledge graph of your codebase -- code structure, dependencies, governance artifacts, session history -- and exposes it through MCP tools that your agent calls instead of reading raw files.
+AgentScaffold builds a knowledge graph of your codebase -- code structure, dependencies, governance artifacts, and session history -- and exposes it through MCP tools that your agent calls instead of reading raw files. Instead of rebuilding context from scratch in every session, the agent retrieves scoped context in one call and moves directly into analysis or implementation.
 
-**Measured results from our evaluation harness (64 scenarios, 100% pass rate):**
+**Measured results from our latest evaluation harness run (79 scenarios, 100% pass rate):**
 
 | Task | Without AgentScaffold | With AgentScaffold | Savings |
 |------|----------------------|-------------------|---------|
@@ -26,13 +27,32 @@ AgentScaffold builds a knowledge graph of your codebase -- code structure, depen
 | Find all code matching a concept | 8 file reads | 1 tool call | **44% fewer tokens, 88% fewer calls** |
 | Full plan review with evidence | 10 file reads | 1 tool call | **90% fewer calls** (richer output) |
 
-**Aggregate: 91% average call reduction. 58% average token reduction. 2.9x overall compression.**
+**Capability aggregate: 91% average call reduction. 58% average token reduction. 2.8x overall compression.**
+
+### Capability vs behavioral reality
+
+We now report two views so results are not sugar-coated:
+
+- **Capability efficiency (raw):** what the tools can do when selected (58% token and 91% call reduction average).
+- **Behavior-adjusted efficiency:** capability gains multiplied by tool-routing adherence proxy.
+
+In real usage, adjusted values are lower because agents do not always choose tools consistently; replay-based evaluation captures that behavior directly.
+
+Current harness outputs:
+
+| View | Token Reduction | Call Reduction |
+|------|-----------------|----------------|
+| Raw capability | 58.3% | 91.4% |
+| Behavioral (replay-adjusted) | 43.7% | 68.5% |
+| Quality-adjusted behavioral | 39.4% | 61.7% |
+
+Behavioral and quality-adjusted values come from replay traces (observed tool-call sequences + quality parity checks), not just phrase-level intent matching.
 
 Every tool call your agent doesn't make is money you don't spend on API tokens or subscription overages. And because the governance framework catches flawed assumptions and missing edge cases *before* implementation, you also spend less time fixing bugs that should never have been written.
 
 ## What It Does
 
-AgentScaffold combines two capabilities that don't exist together in any other tool:
+AgentScaffold combines two capabilities that are rarely integrated together in a single tool:
 
 ### 1. Agent Governance Framework
 
@@ -44,7 +64,8 @@ A structured development workflow that teaches your AI agent to follow a plan li
 - **Retrospectives**: Post-execution learning that feeds back into the process
 - **Session tracking**: State files that persist context across chat sessions
 
-**Think of it as a virtual sprint team.** Most AI agents work alone -- they take instructions and start coding. AgentScaffold puts your agent on a team. Before it writes a single line of code, the plan faces a devil's advocate who asks "what if this breaks?", an expansion reviewer who asks "what did you miss?", and a domain expert -- a quant architect, a UX designer, a security engineer -- who pressure-tests the approach through the lens of your specific domain. These adversarial reviews catch flawed assumptions, missing edge cases, and architectural blind spots *before* they become bugs in production.
+**Think of it as a virtual sprint team.** Most AI agents work alone -- they take instructions and start coding. AgentScaffold puts your agent on a team.
+Before it writes a single line of code, the plan faces a devil's advocate who asks "what if this breaks?", an expansion reviewer who asks "what did you miss?", and a domain expert -- a quant architect, a UX designer, a security engineer -- who pressure-tests the approach through the lens of your specific domain. These adversarial reviews catch flawed assumptions, missing edge cases, and architectural blind spots *before* they become bugs in production.
 
 After implementation, the sprint continues. A post-implementation review verifies what was built against what was planned. A retrospective captures what worked, what didn't, and what to do differently. Those findings flow into the learnings tracker, which feeds back into the agent's rules and templates -- so the next sprint starts sharper than the last. This is the same continuous improvement loop that makes experienced engineering teams get better over time, applied to your AI agent.
 
@@ -83,6 +104,32 @@ The `init` command scaffolds your project with:
 
 The `index` command builds the knowledge graph at `.scaffold/graph.db`, enabling search, reviews, impact analysis, and session memory.
 
+### Async freshness (low-latency graph updates for MCP)
+
+AgentScaffold supports an async freshness mode for MCP usage. Instead of blocking a tool
+call to re-index, the request path runs a cheap freshness check and returns immediately.
+If the graph looks stale, a background incremental refresh is scheduled (with debounce and
+single-flight locking) while the agent continues working.
+
+Why this design matters:
+
+- Keeps MCP interactions in milliseconds/seconds instead of minutes on large repos
+- Avoids duplicate refresh jobs under parallel tool usage
+- Surfaces explicit freshness metadata (`fresh`, `stale`, `unknown`, `refreshing`) so
+  agents can reason about confidence
+- Preserves strict governance by allowing gate transitions to defer when freshness is
+  required and not yet restored
+
+Configure in `scaffold.yaml`:
+
+```yaml
+freshness:
+  async_enabled: true
+  debounce_seconds: 120
+  gate_strict: false
+  background_queue_enabled: true
+```
+
 ### Install with language support
 
 ```bash
@@ -97,7 +144,23 @@ pip install agentscaffold[all]                # Everything
 
 When you run `scaffold mcp`, these tools become available to your agent.
 
-You don't need to memorize tool names. AgentScaffold ships with **intent descriptions** -- natural language trigger phrases that teach your agent to select the right tool automatically. Say "let's review plan 42" and the agent calls `scaffold_prepare_review`. Say "where did we leave off?" and it calls `scaffold_orient`. Run `scaffold agents cursor` (or `windsurf`, `claude`) to generate platform-specific rules that wire this up for your IDE.
+#### Interaction Modes
+
+AgentScaffold supports two complementary ways of working:
+
+- **Natural-language + MCP (interactive)**: describe intent conversationally and let the
+  agent route to the right governance/graph workflow.
+- **Structural CLI commands (explicit/automation)**: use direct `scaffold` commands for
+  deterministic setup, verification, CI, and fallback.
+
+Teams usually get best UX with NL+MCP for day-to-day flow, then use explicit CLI commands
+for verification (`scaffold validate`, `scaffold graph verify`, `scaffold index --incremental`).
+
+If you used the governance framework before knowledge graph integration, see
+[`docs/migrating-governance-to-nl-mcp.md`](docs/migrating-governance-to-nl-mcp.md)
+for a command-first -> hybrid -> NL-first transition path.
+
+You don't need to memorize tool names. AgentScaffold teaches the agent how to interpret user intent in natural conversation, map that intent to the right MCP workflow, and only fall back to direct reads/search when tool output is insufficient. Say "let's review plan 42" and the agent routes to `scaffold_prepare_review`. Say "where did we leave off?" and it routes to `scaffold_orient`. Run `scaffold agents cursor` (or `windsurf`, `claude`) to generate platform-specific rules that wire this behavior into your IDE.
 
 **Composite tools** -- single calls that replace entire multi-step workflows:
 
@@ -112,6 +175,8 @@ You don't need to memorize tool names. AgentScaffold ships with **intent descrip
 | `scaffold_prepare_retro` | Gathering verification results, study outcomes, and retro insights |
 | `scaffold_find_studies` | Searching study files by topic, tags, or outcome |
 | `scaffold_find_adrs` | Searching architecture decision records by topic or status |
+
+Use composite tools by default for common workflows; use granular tools when you need targeted control.
 
 **Granular tools** -- building blocks for custom queries:
 
@@ -176,9 +241,11 @@ The governance framework is domain-aware. Domain packs teach the adversarial rev
 | embedded | Memory constraints, real-time deadlines, OTA safety |
 | research | Reproducibility, statistical rigor, experiment protocol |
 
+This keeps governance strict where risk is high and lightweight where speed matters, without rewriting the core framework.
+
 ```bash
-scaffold domain add trading
-scaffold domain add webapp
+scaffold domains add trading
+scaffold domains add webapp
 ```
 
 ## Documentation

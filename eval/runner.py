@@ -65,6 +65,31 @@ class EfficiencyResult:
             )
 
 
+@dataclass
+class AdoptionResult:
+    """Behavioral routing adoption result (tool-first adherence proxy)."""
+
+    suite: str
+    total_prompts: int
+    matched_prompts: int
+    adherence_pct: float
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ReplayResult:
+    """Observed behavior metrics from replay traces."""
+
+    suite: str
+    total_turns: int
+    intent_eligible_turns: int
+    tool_first_adherence_pct: float
+    bypass_rate_pct: float
+    fallback_validity_pct: float
+    quality_noninferior_pct: float
+    notes: list[str] = field(default_factory=list)
+
+
 def estimate_tokens(text: str) -> int:
     """Rough token estimate: chars / 4 (standard GPT approximation for code)."""
     return max(len(text) // 4, 1)
@@ -74,6 +99,8 @@ def estimate_tokens(text: str) -> int:
 _results: list[EvalResult] = []
 _benchmarks: list[BenchmarkResult] = []
 _efficiency: list[EfficiencyResult] = []
+_adoption: list[AdoptionResult] = []
+_replay: list[ReplayResult] = []
 
 
 def collect_result(result: EvalResult) -> None:
@@ -91,6 +118,16 @@ def collect_efficiency(result: EfficiencyResult) -> None:
     _efficiency.append(result)
 
 
+def collect_adoption(result: AdoptionResult) -> None:
+    """Add an adoption result to the global collector."""
+    _adoption.append(result)
+
+
+def collect_replay(result: ReplayResult) -> None:
+    """Add a replay result to the global collector."""
+    _replay.append(result)
+
+
 def get_all_results() -> list[EvalResult]:
     return list(_results)
 
@@ -103,10 +140,20 @@ def get_all_efficiency() -> list[EfficiencyResult]:
     return list(_efficiency)
 
 
+def get_all_adoption() -> list[AdoptionResult]:
+    return list(_adoption)
+
+
+def get_all_replay() -> list[ReplayResult]:
+    return list(_replay)
+
+
 def clear_results() -> None:
     _results.clear()
     _benchmarks.clear()
     _efficiency.clear()
+    _adoption.clear()
+    _replay.clear()
 
 
 def timed(func):

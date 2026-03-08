@@ -9,7 +9,7 @@ import yaml
 from typer.testing import CliRunner
 
 from agentscaffold.cli import app
-from agentscaffold.domain.loader import _get_available_packs
+from agentscaffold.domain_packs.loader import _get_available_packs
 
 EXPECTED_PACKS = [
     "api_services",
@@ -26,8 +26,8 @@ EXPECTED_PACKS = [
 
 
 def test_domain_list(cli_runner: CliRunner) -> None:
-    """domain list shows all 10 available packs."""
-    result = cli_runner.invoke(app, ["domain", "list"])
+    """domains list shows all 10 available packs."""
+    result = cli_runner.invoke(app, ["domains", "list"])
     assert result.exit_code == 0
     for pack in EXPECTED_PACKS:
         assert pack in result.output, f"Missing pack in list: {pack}"
@@ -45,7 +45,7 @@ def test_domain_add_trading(tmp_project: Path, cli_runner: CliRunner) -> None:
     orig_cwd = os.getcwd()
     try:
         os.chdir(tmp_project)
-        result = cli_runner.invoke(app, ["domain", "add", "trading"])
+        result = cli_runner.invoke(app, ["domains", "add", "trading"])
         assert result.exit_code == 0
         assert "installed" in result.output.lower()
 
@@ -74,7 +74,7 @@ def test_domain_add_unknown_pack(tmp_project: Path, cli_runner: CliRunner) -> No
     orig_cwd = os.getcwd()
     try:
         os.chdir(tmp_project)
-        result = cli_runner.invoke(app, ["domain", "add", "nonexistent_pack"])
+        result = cli_runner.invoke(app, ["domains", "add", "nonexistent_pack"])
         assert result.exit_code == 0  # handled gracefully
         assert "Unknown" in result.output or "unknown" in result.output.lower()
     finally:
@@ -86,7 +86,7 @@ def test_domain_add_webapp(tmp_project: Path, cli_runner: CliRunner) -> None:
     orig_cwd = os.getcwd()
     try:
         os.chdir(tmp_project)
-        result = cli_runner.invoke(app, ["domain", "add", "webapp"])
+        result = cli_runner.invoke(app, ["domains", "add", "webapp"])
         assert result.exit_code == 0
 
         yaml_path = tmp_project / "scaffold.yaml"
@@ -94,3 +94,10 @@ def test_domain_add_webapp(tmp_project: Path, cli_runner: CliRunner) -> None:
         assert "webapp" in data.get("domains", [])
     finally:
         os.chdir(orig_cwd)
+
+
+def test_domain_alias_still_works(cli_runner: CliRunner) -> None:
+    """Legacy `domain` command alias remains supported."""
+    result = cli_runner.invoke(app, ["domain", "list"])
+    assert result.exit_code == 0
+    assert "Available Domain Packs" in result.output

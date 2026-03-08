@@ -17,7 +17,7 @@ my_domain/
     threat_model_my_domain.md.j2
 ```
 
-The pack directory name (e.g. `my_domain`) is the pack identifier used with `scaffold domain add my_domain`.
+The pack directory name (e.g. `my_domain`) is the pack identifier used with `scaffold domains add my_domain`.
 
 ## manifest.yaml Format
 
@@ -98,6 +98,25 @@ Use tables only for pass/fail checklists (short cell values).
 
 Reference the plan file, system architecture, and interface contracts. The agent will apply this prompt to the current plan.
 
+## Designing Prompts for Natural Invocation
+
+Most users will trigger your pack via conversational prompts, not explicit tool names.
+Write prompts so they are easy for an agent to route from natural language:
+
+- Use review titles and phrasing that match how humans ask (e.g., "quant architect review",
+  "product design review", "deployment safety review").
+- Include a short "When to use" phrase near the top that mirrors likely user requests.
+- Keep output instructions deterministic so routing confidence can stay high.
+
+Example natural invocations your prompt should support:
+
+- "Review this plan like a quant architect."
+- "Pressure-test this API plan for backward compatibility."
+- "Before implementation, run deployment safety checks."
+
+If the naming in `manifest.yaml` and the prompt header diverge too much from user language,
+agents are more likely to fall back to generic review behavior.
+
 ## Writing Standards
 
 Standards should be actionable with concrete examples:
@@ -146,7 +165,7 @@ For static content that works in any project, avoid template variables. If you n
 
    ```bash
    cd /path/to/test-project
-   scaffold domain add my_domain
+   scaffold domains add my_domain
    ```
 
 3. **Verify installation**: Check that files appear in `docs/ai/prompts/`, `docs/ai/standards/`, and `scaffold.yaml` was updated.

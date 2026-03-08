@@ -22,20 +22,65 @@ scaffold index                    # Build knowledge graph
 
 After this, your project has `AGENTS.md` at the root and `.scaffold/graph.db` with the indexed knowledge graph. The agent rules in `AGENTS.md` work immediately with any agent that reads project files.
 
+## Verify NL Intent Routing
+
+Before long sessions, run a quick smoke check in chat to confirm the agent is interpreting
+intent and routing to MCP workflows (or falling back cleanly when needed):
+
+1. "Let's prepare to review plan 042 with evidence."
+   - Expected behavior: review-prep/composite context workflow.
+2. "Where did we leave off and what are blockers?"
+   - Expected behavior: orientation/status workflow.
+3. "Show me the decision chain behind plan 042."
+   - Expected behavior: ADR/spike/study decision-context workflow.
+
+If routing is weak or MCP tools are unavailable:
+
+- Rebuild freshness: `scaffold index --incremental`
+- Regenerate rules: `scaffold agents generate` and platform-specific rules command
+- Continue in hybrid mode: explicit CLI commands for critical checks + NL orchestration
+
+This verification should take under two minutes and catches setup drift early.
+
+### Async Freshness (Recommended for Large Repos)
+
+If incremental indexing is heavy in your codebase, enable async freshness in `scaffold.yaml`.
+This keeps MCP request-path latency low by scheduling refresh in the background instead of
+blocking tool calls.
+
+```yaml
+freshness:
+  async_enabled: true
+  debounce_seconds: 120
+  gate_strict: false
+  background_queue_enabled: true
+```
+
+Operational notes:
+
+- Composite tools are eligible refresh triggers; refresh scheduling is debounced.
+- Single-flight locking prevents duplicate refresh jobs during parallel tool usage.
+- Tool responses include freshness metadata so the agent can disclose confidence.
+- For stricter governance, set `gate_strict: true` to defer gate transitions when freshness
+  is stale/unknown.
+
 ---
 
 ## Cursor
 
-Cursor has first-class support. AgentScaffold generates both `AGENTS.md` (read by Cursor's agent mode) and `.cursor/rules.md` (read by Cursor's rules system).
+Cursor has first-class support. AgentScaffold generates:
+- `AGENTS.md` (full governance rules),
+- `.cursor/rules.md` (Cursor governance summary),
+- `.cursor/rules/agentscaffold.md` (MCP-first tool routing policy + intent map).
 
 ### Rules Setup
 
 ```bash
 scaffold agents generate    # Generate AGENTS.md
-scaffold agents cursor      # Generate .cursor/rules.md
+scaffold agents cursor      # Generate .cursor/rules.md and .cursor/rules/agentscaffold.md
 ```
 
-Cursor reads `.cursor/rules.md` automatically when you open the project. The agent also reads `AGENTS.md` when working in agent mode.
+Cursor reads `.cursor/rules.md` and `.cursor/rules/` files automatically when you open the project. The agent also reads `AGENTS.md` when working in agent mode.
 
 ### MCP Setup
 
@@ -96,7 +141,13 @@ claude mcp add agentscaffold -- scaffold mcp
 
 ### CLAUDE.md
 
-If your project uses `CLAUDE.md` for Claude-specific instructions, you can reference AGENTS.md from it:
+Generate a Claude-specific routing file from AgentScaffold:
+
+```bash
+scaffold agents claude
+```
+
+If your project already has `CLAUDE.md` content, merge or append this generated policy and keep a reference to AGENTS.md:
 
 ```markdown
 Read and follow AGENTS.md at the project root before every task.
@@ -112,18 +163,8 @@ Windsurf reads `.windsurfrules` at the project root for agent instructions.
 
 ### Rules Setup
 
-AgentScaffold does not generate `.windsurfrules` natively yet. Create one that references AGENTS.md:
-
-```markdown
-Read and follow AGENTS.md at the project root before every task.
-It contains the full plan lifecycle, review gates, and collaboration protocol.
-```
-
-Or copy the content from the generated `.cursor/rules.md` (which is a condensed version of AGENTS.md):
-
 ```bash
-scaffold agents cursor
-cp .cursor/rules.md .windsurfrules
+scaffold agents windsurf    # Generate .windsurfrules
 ```
 
 ### MCP Setup
@@ -232,6 +273,9 @@ scaffold graph stats
 ```
 
 You can pipe CLI output into aider's context or use it to inform your prompts.
+
+For aider, the practical target mode is **hybrid**: conversational planning and governance
+prompts, with explicit CLI graph/review commands for context retrieval.
 
 ---
 

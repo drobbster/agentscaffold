@@ -64,7 +64,7 @@ my-project/
   .cursor/rules.md       # Cursor-specific rules
   docs/
     ai/
-      templates/         # Plan, spike, study templates
+      templates/         # Plan templates (feature/bugfix/refactor), plus spike and study
       prompts/           # Devil's advocate, expansion, retrospective
       standards/         # Error handling, logging, testing
       state/             # workflow_state, learnings_tracker, plan_completion_log
@@ -80,6 +80,9 @@ my-project/
 - **AGENTS.md**: The agent reads this file to learn the plan lifecycle, gates, and collaboration protocol.
 - **scaffold.yaml**: Edit this to change rigor, gates, domains, or semi-autonomous settings.
 - **docs/ai/**: Source of truth for templates, prompts, and state. The agent references these paths.
+- **Plan templates included**: `docs/ai/templates/plan_template.md`,
+  `docs/ai/templates/plan_template_bugfix.md`, and
+  `docs/ai/templates/plan_template_refactor.md`.
 
 ## 4. Creating Your First Plan
 
@@ -177,7 +180,61 @@ This indexes your codebase into a local graph database (`.scaffold/graph.db`). F
 
 See the [Knowledge Graph section of the User Guide](user-guide.md#knowledge-graph-codebase-intelligence) for details on querying, MCP tools, and review integration.
 
-## 10. Next Steps
+### Optional: Enable Async Freshness for MCP Sessions
+
+If your repository is large and incremental indexing is slow, enable async freshness so MCP
+tool calls stay fast while graph refresh happens in the background.
+
+In `scaffold.yaml`:
+
+```yaml
+freshness:
+  async_enabled: true
+  debounce_seconds: 120
+  gate_strict: false
+  background_queue_enabled: true
+```
+
+Behavior:
+
+- Request path runs a cheap freshness check and returns immediately.
+- Eligible composite workflows schedule background `index --incremental` refreshes.
+- Tool metadata includes freshness state (`fresh`, `stale`, `unknown`, `refreshing`).
+- With `gate_strict: true`, lifecycle-gate transitions can defer until freshness is restored.
+
+## 10. Switch from Command-Heavy to NL + MCP
+
+If you previously drove every step with explicit structural commands, this is the point to
+switch to conversational prompting while preserving the same governance rigor.
+
+Readiness checklist:
+
+- [ ] MCP is configured for your platform (see [Platform Integration](platform-integration.md)).
+- [ ] You ran `scaffold index` at least once.
+- [ ] You regenerated rules after config/domain changes:
+  - `scaffold agents generate`
+  - `scaffold agents cursor` (or `scaffold agents windsurf` / `scaffold agents claude`)
+
+First 5 prompts to replace command-heavy orchestration:
+
+1. "Let's prepare to review plan 001 with evidence and challenge assumptions."
+2. "Before implementation, check whether plan 001 is stale and dependency-complete."
+3. "Compare plan 001 and plan 002 for overlap before we proceed."
+4. "Where did we leave off on plan 001 and what are blockers?"
+5. "Prepare retro context for plan 001 with prior findings and studies."
+
+Keep explicit commands for verification/operations:
+
+```bash
+scaffold index --incremental
+scaffold graph verify
+scaffold validate
+```
+
+For a full migration guide, see
+[Migrating Governance to NL + MCP](migrating-governance-to-nl-mcp.md).
+
+## 11. Next Steps
 
 - **Domain packs**: Add specialized reviews and standards. See [Domain Packs](domain-packs.md).
 - **Semi-autonomous mode**: Enable for CLI-triggered agents. See [Semi-Autonomous Guide](semi-autonomous-guide.md).
