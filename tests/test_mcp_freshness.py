@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -148,3 +149,66 @@ def test_maybe_schedule_refresh_coalesces_while_running(tmp_path: Path) -> None:
     assert result["refresh_triggered"] is False
     assert result["refresh_schedule_reason"] == "coalesced_running"
     assert state.pending is True
+
+
+def test_single_flight_parallel_triggers(tmp_path: Path, monkeypatch) -> None:
+    """Parallel eligible triggers should schedule exactly one refresh."""
+    cfg = _config()
+    real_thread = threading.Thread
+
+    class _NoopThread:
+        def __init__(self, *, target, args, daemon, name):
+            self._target = target
+            self._args = args
+
+        def start(self) -> None:
+            # Keep state.running=True so parallel calls coalesce.
+            return None
+
+    monkeypatch.setattr(freshness.threading, "Thread", _NoopThread)
+
+    results: list[dict] = []
+    res_lock = threading.Lock()
+
+    def _call() -> None:
+        out = freshness.maybe_schedule_async_refresh(
+            tmp_path,
+            cfg,
+            tool_name="scaffold_prepare_review",
+            reason="parallel_test",
+        )
+        with res_lock:
+            results.append(out)
+
+    workers = [real_thread(target=_call) for _ in range(10)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+
+    triggered = sum(1 for r in results if r.get("refresh_triggered"))
+    coalesced = sum(1 for r in results if r.get("refresh_schedule_reason") == "coalesced_running")
+    assert triggered == 1
+    assert coalesced >= 1
+
+
+def test_running_no_queue_mode(tmp_path: Path) -> None:
+    """If queue is disabled, in-flight refresh should not set pending."""
+    cfg = _config()
+    cfg.freshness.background_queue_enabled = False
+
+    state = freshness._coordinator_state(tmp_path)
+    with state.lock:
+        state.running = True
+        state.pending = False
+        state.last_result = "running"
+
+    out = freshness.maybe_schedule_async_refresh(
+        tmp_path,
+        cfg,
+        tool_name="scaffold_prepare_review",
+        reason="running_no_queue",
+    )
+    assert out["refresh_triggered"] is False
+    assert out["refresh_schedule_reason"] == "running_no_queue"
+    assert state.pending is False

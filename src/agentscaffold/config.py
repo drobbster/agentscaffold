@@ -201,7 +201,7 @@ class GraphConfig(BaseModel):
 
 
 class FreshnessConfig(BaseModel):
-    async_enabled: bool = False
+    async_enabled: bool = True
     debounce_seconds: int = 120
     gate_strict: bool = False
     background_queue_enabled: bool = True

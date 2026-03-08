@@ -224,6 +224,22 @@ Only applies when `profile: semi_autonomous` or `semi_autonomous.enabled: true`.
 
 ---
 
+## freshness
+
+Controls optional async graph freshness behavior for MCP tool calls.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| async_enabled | bool | true | Enable cheap request-path freshness checks and background refresh scheduling |
+| debounce_seconds | int | 120 | Minimum interval between refresh trigger attempts |
+| gate_strict | bool | false | Defer gate-transition calls when freshness is stale/unknown/refreshing |
+| background_queue_enabled | bool | true | Coalesce in-flight refresh triggers by setting a pending rerun |
+
+When enabled, MCP request handlers avoid synchronous re-indexing. They return freshness
+metadata and schedule eligible refreshes asynchronously.
+
+---
+
 ## How Gates Interact with Lifecycle
 
 ```

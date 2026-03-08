@@ -807,6 +807,29 @@ scaffold index --incremental
 
 Incremental mode compares SHA-256 content hashes of files on disk against those stored in the graph. Only files that were added, modified, or deleted since the last index are processed. On a large codebase where only a handful of files changed, this is dramatically faster than a full re-index.
 
+### Async Freshness for MCP (Large-Repo UX)
+
+For large repositories, even incremental re-indexing can still take too long to run
+inline with tool calls. Async freshness mode separates freshness checks from refresh work:
+
+- Request path performs a cheap freshness oracle check.
+- Eligible composite tools schedule background incremental refreshes.
+- Debounce and single-flight locking avoid refresh storms.
+- Responses include freshness state so the agent can communicate confidence.
+
+Enable in `scaffold.yaml`:
+
+```yaml
+freshness:
+  async_enabled: true
+  debounce_seconds: 120
+  gate_strict: false
+  background_queue_enabled: true
+```
+
+If you need strict lifecycle control, set `gate_strict: true` so gate transitions defer
+when graph freshness is stale or unknown.
+
 The changeset output shows exactly what changed:
 ```
 Incremental index -- computing changeset...

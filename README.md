@@ -104,6 +104,32 @@ The `init` command scaffolds your project with:
 
 The `index` command builds the knowledge graph at `.scaffold/graph.db`, enabling search, reviews, impact analysis, and session memory.
 
+### Async freshness (low-latency graph updates for MCP)
+
+AgentScaffold supports an async freshness mode for MCP usage. Instead of blocking a tool
+call to re-index, the request path runs a cheap freshness check and returns immediately.
+If the graph looks stale, a background incremental refresh is scheduled (with debounce and
+single-flight locking) while the agent continues working.
+
+Why this design matters:
+
+- Keeps MCP interactions in milliseconds/seconds instead of minutes on large repos
+- Avoids duplicate refresh jobs under parallel tool usage
+- Surfaces explicit freshness metadata (`fresh`, `stale`, `unknown`, `refreshing`) so
+  agents can reason about confidence
+- Preserves strict governance by allowing gate transitions to defer when freshness is
+  required and not yet restored
+
+Configure in `scaffold.yaml`:
+
+```yaml
+freshness:
+  async_enabled: true
+  debounce_seconds: 120
+  gate_strict: false
+  background_queue_enabled: true
+```
+
 ### Install with language support
 
 ```bash

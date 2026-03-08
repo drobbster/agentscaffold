@@ -24,7 +24,7 @@ def test_default_config() -> None:
     assert cfg.rigor == "standard"
     assert cfg.gates.draft_to_review.plan_lint is True
     assert cfg.semi_autonomous.enabled is False
-    assert cfg.freshness.async_enabled is False
+    assert cfg.freshness.async_enabled is True
     assert cfg.freshness.debounce_seconds == 120
 
 

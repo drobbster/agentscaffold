@@ -180,6 +180,28 @@ This indexes your codebase into a local graph database (`.scaffold/graph.db`). F
 
 See the [Knowledge Graph section of the User Guide](user-guide.md#knowledge-graph-codebase-intelligence) for details on querying, MCP tools, and review integration.
 
+### Optional: Enable Async Freshness for MCP Sessions
+
+If your repository is large and incremental indexing is slow, enable async freshness so MCP
+tool calls stay fast while graph refresh happens in the background.
+
+In `scaffold.yaml`:
+
+```yaml
+freshness:
+  async_enabled: true
+  debounce_seconds: 120
+  gate_strict: false
+  background_queue_enabled: true
+```
+
+Behavior:
+
+- Request path runs a cheap freshness check and returns immediately.
+- Eligible composite workflows schedule background `index --incremental` refreshes.
+- Tool metadata includes freshness state (`fresh`, `stale`, `unknown`, `refreshing`).
+- With `gate_strict: true`, lifecycle-gate transitions can defer until freshness is restored.
+
 ## 10. Switch from Command-Heavy to NL + MCP
 
 If you previously drove every step with explicit structural commands, this is the point to

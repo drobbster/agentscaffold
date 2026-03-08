@@ -42,6 +42,28 @@ If routing is weak or MCP tools are unavailable:
 
 This verification should take under two minutes and catches setup drift early.
 
+### Async Freshness (Recommended for Large Repos)
+
+If incremental indexing is heavy in your codebase, enable async freshness in `scaffold.yaml`.
+This keeps MCP request-path latency low by scheduling refresh in the background instead of
+blocking tool calls.
+
+```yaml
+freshness:
+  async_enabled: true
+  debounce_seconds: 120
+  gate_strict: false
+  background_queue_enabled: true
+```
+
+Operational notes:
+
+- Composite tools are eligible refresh triggers; refresh scheduling is debounced.
+- Single-flight locking prevents duplicate refresh jobs during parallel tool usage.
+- Tool responses include freshness metadata so the agent can disclose confidence.
+- For stricter governance, set `gate_strict: true` to defer gate transitions when freshness
+  is stale/unknown.
+
 ---
 
 ## Cursor
