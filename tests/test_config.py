@@ -24,6 +24,8 @@ def test_default_config() -> None:
     assert cfg.rigor == "standard"
     assert cfg.gates.draft_to_review.plan_lint is True
     assert cfg.semi_autonomous.enabled is False
+    assert cfg.freshness.async_enabled is True
+    assert cfg.freshness.debounce_seconds == 120
 
 
 def test_load_config_missing(tmp_path: Path) -> None:
@@ -39,6 +41,7 @@ def test_load_config_from_yaml(tmp_path: Path) -> None:
         "framework": {"project_name": "TestProj", "architecture_layers": 4},
         "rigor": "strict",
         "domains": ["trading"],
+        "freshness": {"async_enabled": True, "debounce_seconds": 45},
     }
     yaml_path = tmp_path / "scaffold.yaml"
     yaml_path.write_text(yaml.dump(data))
@@ -48,6 +51,8 @@ def test_load_config_from_yaml(tmp_path: Path) -> None:
     assert cfg.framework.architecture_layers == 4
     assert cfg.rigor == "strict"
     assert cfg.domains == ["trading"]
+    assert cfg.freshness.async_enabled is True
+    assert cfg.freshness.debounce_seconds == 45
 
 
 def test_rigor_minimal_preset() -> None:

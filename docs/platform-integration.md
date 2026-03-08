@@ -22,6 +22,48 @@ scaffold index                    # Build knowledge graph
 
 After this, your project has `AGENTS.md` at the root and `.scaffold/graph.db` with the indexed knowledge graph. The agent rules in `AGENTS.md` work immediately with any agent that reads project files.
 
+## Verify NL Intent Routing
+
+Before long sessions, run a quick smoke check in chat to confirm the agent is interpreting
+intent and routing to MCP workflows (or falling back cleanly when needed):
+
+1. "Let's prepare to review plan 042 with evidence."
+   - Expected behavior: review-prep/composite context workflow.
+2. "Where did we leave off and what are blockers?"
+   - Expected behavior: orientation/status workflow.
+3. "Show me the decision chain behind plan 042."
+   - Expected behavior: ADR/spike/study decision-context workflow.
+
+If routing is weak or MCP tools are unavailable:
+
+- Rebuild freshness: `scaffold index --incremental`
+- Regenerate rules: `scaffold agents generate` and platform-specific rules command
+- Continue in hybrid mode: explicit CLI commands for critical checks + NL orchestration
+
+This verification should take under two minutes and catches setup drift early.
+
+### Async Freshness (Recommended for Large Repos)
+
+If incremental indexing is heavy in your codebase, enable async freshness in `scaffold.yaml`.
+This keeps MCP request-path latency low by scheduling refresh in the background instead of
+blocking tool calls.
+
+```yaml
+freshness:
+  async_enabled: true
+  debounce_seconds: 120
+  gate_strict: false
+  background_queue_enabled: true
+```
+
+Operational notes:
+
+- Composite tools are eligible refresh triggers; refresh scheduling is debounced.
+- Single-flight locking prevents duplicate refresh jobs during parallel tool usage.
+- Tool responses include freshness metadata so the agent can disclose confidence.
+- For stricter governance, set `gate_strict: true` to defer gate transitions when freshness
+  is stale/unknown.
+
 ---
 
 ## Cursor
@@ -231,6 +273,9 @@ scaffold graph stats
 ```
 
 You can pipe CLI output into aider's context or use it to inform your prompts.
+
+For aider, the practical target mode is **hybrid**: conversational planning and governance
+prompts, with explicit CLI graph/review commands for context retrieval.
 
 ---
 

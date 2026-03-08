@@ -104,6 +104,32 @@ The `init` command scaffolds your project with:
 
 The `index` command builds the knowledge graph at `.scaffold/graph.db`, enabling search, reviews, impact analysis, and session memory.
 
+### Async freshness (low-latency graph updates for MCP)
+
+AgentScaffold supports an async freshness mode for MCP usage. Instead of blocking a tool
+call to re-index, the request path runs a cheap freshness check and returns immediately.
+If the graph looks stale, a background incremental refresh is scheduled (with debounce and
+single-flight locking) while the agent continues working.
+
+Why this design matters:
+
+- Keeps MCP interactions in milliseconds/seconds instead of minutes on large repos
+- Avoids duplicate refresh jobs under parallel tool usage
+- Surfaces explicit freshness metadata (`fresh`, `stale`, `unknown`, `refreshing`) so
+  agents can reason about confidence
+- Preserves strict governance by allowing gate transitions to defer when freshness is
+  required and not yet restored
+
+Configure in `scaffold.yaml`:
+
+```yaml
+freshness:
+  async_enabled: true
+  debounce_seconds: 120
+  gate_strict: false
+  background_queue_enabled: true
+```
+
 ### Install with language support
 
 ```bash
@@ -117,6 +143,22 @@ pip install agentscaffold[all]                # Everything
 ### MCP Tools (for AI agents)
 
 When you run `scaffold mcp`, these tools become available to your agent.
+
+#### Interaction Modes
+
+AgentScaffold supports two complementary ways of working:
+
+- **Natural-language + MCP (interactive)**: describe intent conversationally and let the
+  agent route to the right governance/graph workflow.
+- **Structural CLI commands (explicit/automation)**: use direct `scaffold` commands for
+  deterministic setup, verification, CI, and fallback.
+
+Teams usually get best UX with NL+MCP for day-to-day flow, then use explicit CLI commands
+for verification (`scaffold validate`, `scaffold graph verify`, `scaffold index --incremental`).
+
+If you used the governance framework before knowledge graph integration, see
+[`docs/migrating-governance-to-nl-mcp.md`](docs/migrating-governance-to-nl-mcp.md)
+for a command-first -> hybrid -> NL-first transition path.
 
 You don't need to memorize tool names. AgentScaffold teaches the agent how to interpret user intent in natural conversation, map that intent to the right MCP workflow, and only fall back to direct reads/search when tool output is insufficient. Say "let's review plan 42" and the agent routes to `scaffold_prepare_review`. Say "where did we leave off?" and it routes to `scaffold_orient`. Run `scaffold agents cursor` (or `windsurf`, `claude`) to generate platform-specific rules that wire this behavior into your IDE.
 

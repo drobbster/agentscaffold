@@ -196,6 +196,18 @@ class GraphConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Freshness (MCP async refresh) configuration
+# ---------------------------------------------------------------------------
+
+
+class FreshnessConfig(BaseModel):
+    async_enabled: bool = True
+    debounce_seconds: int = 120
+    gate_strict: bool = False
+    background_queue_enabled: bool = True
+
+
+# ---------------------------------------------------------------------------
 # Framework (top-level) configuration
 # ---------------------------------------------------------------------------
 
@@ -230,6 +242,7 @@ class ScaffoldConfig(BaseModel):
     task_runner: TaskRunnerConfig = Field(default_factory=TaskRunnerConfig)
     ci: CIConfig = Field(default_factory=CIConfig)
     graph: GraphConfig = Field(default_factory=GraphConfig)
+    freshness: FreshnessConfig = Field(default_factory=FreshnessConfig)
     import_config: ImportConfig = Field(default_factory=ImportConfig, alias="import")
 
     model_config = {"populate_by_name": True}

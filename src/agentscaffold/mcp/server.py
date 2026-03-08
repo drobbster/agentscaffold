@@ -458,6 +458,14 @@ def _get_tool_definitions() -> list:
                 "type": "object",
                 "properties": {
                     "plan_number": {"type": "integer", "description": "Plan number"},
+                    "gate_transition": {
+                        "type": "boolean",
+                        "description": (
+                            "When true, treat call as a strict lifecycle gate transition. "
+                            "If freshness gate is enabled and graph is stale, "
+                            "transition is deferred."
+                        ),
+                    },
                 },
                 "required": ["plan_number"],
             },
@@ -647,7 +655,44 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
     store = open_graph(config)
     root = Path.cwd()
-    meta = _build_meta(store, root)
+    freshness_meta: dict[str, Any] = {}
+    try:
+        from agentscaffold.mcp.freshness import (
+            evaluate_freshness,
+            maybe_schedule_async_refresh,
+            refresh_runtime_state,
+        )
+
+        freshness_meta = evaluate_freshness(root, config)
+        freshness_meta.update(refresh_runtime_state(root, config))
+
+        if freshness_meta.get("freshness_status") in {"stale", "unknown"}:
+            schedule = maybe_schedule_async_refresh(
+                root,
+                config,
+                tool_name=name,
+                reason=str(freshness_meta.get("freshness_reason", "stale_or_unknown")),
+            )
+            freshness_meta.update(schedule)
+        else:
+            freshness_meta.setdefault("refresh_triggered", False)
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        freshness_meta = {
+            "freshness_status": "unknown",
+            "freshness_reason": f"freshness_oracle_error:{exc}",
+            "refresh_triggered": False,
+            "refresh_state": "failed",
+        }
+
+    meta = _build_meta(store, root, freshness_meta)
+
+    if config.freshness.gate_strict and bool(arguments.get("gate_transition")):
+        if freshness_meta.get("freshness_status") in {"stale", "unknown", "refreshing"}:
+            return {
+                "error": "Gate transition deferred until graph freshness is restored.",
+                "gate_deferred": True,
+                "meta": meta,
+            }
 
     try:
         if name == "scaffold_stats":
@@ -715,13 +760,20 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         store.close()
 
 
-def _build_meta(store: Any, root: Path) -> dict[str, Any]:
+def _build_meta(
+    store: Any,
+    root: Path,
+    freshness_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build metadata block for tool responses."""
     state = store.get_pipeline_state()
-    return {
+    meta = {
         "graph_indexed_at": state.get("last_indexed"),
         "pipeline_state": state.get("state", "unknown"),
     }
+    if freshness_meta:
+        meta.update(freshness_meta)
+    return meta
 
 
 def _tool_context(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
