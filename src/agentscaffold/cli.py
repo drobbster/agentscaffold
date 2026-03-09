@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any
 
@@ -143,7 +145,12 @@ def metrics() -> None:
 @app.command()
 def version() -> None:
     """Show AgentScaffold version."""
-    console.print(f"agentscaffold {__version__}")
+    try:
+        resolved_version = package_version("agentscaffold")
+    except PackageNotFoundError:
+        # Fallback for source-only execution without installed metadata.
+        resolved_version = __version__
+    console.print(f"agentscaffold {resolved_version}")
 
 
 # ---------------------------------------------------------------------------
