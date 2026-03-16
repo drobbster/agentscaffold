@@ -13,11 +13,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agentscaffold.graph.backend import GraphBackend
+from agentscaffold.graph.kuzu_backend import KuzuBackend
 
 if TYPE_CHECKING:
     from agentscaffold.config import ScaffoldConfig
 
-__all__ = ["GraphBackend", "open_graph", "graph_available", "index"]
+__all__ = ["GraphBackend", "KuzuBackend", "open_graph", "graph_available", "index"]
 
 
 def graph_available(config: ScaffoldConfig | None = None) -> bool:
@@ -42,8 +43,6 @@ def open_graph(config: ScaffoldConfig | None = None, *, backend: str | None = No
         FileNotFoundError: if no graph exists on disk.
         ValueError: if an unknown backend name is given.
     """
-    from agentscaffold.graph.store import GraphStore
-
     backend_name = backend or _resolve_backend(config)
     db_path = _resolve_db_path(config)
 
@@ -52,7 +51,7 @@ def open_graph(config: ScaffoldConfig | None = None, *, backend: str | None = No
             raise FileNotFoundError(
                 f"No knowledge graph found at {db_path}. Run 'scaffold index' first."
             )
-        return GraphStore(db_path)
+        return KuzuBackend(db_path)
 
     # DuckPGQBackend will be wired in Step A.4; raise clearly until then.
     raise ValueError(

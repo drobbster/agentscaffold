@@ -1,7 +1,10 @@
-"""KuzuDB adapter for the AgentScaffold knowledge graph.
+"""KuzuDB backend for the AgentScaffold knowledge graph.
 
 Handles database lifecycle, schema initialization, query execution,
 and metadata management.
+
+``KuzuBackend`` is the canonical class name as of Plan 149.
+``GraphStore`` is preserved as a deprecated alias for backward compatibility.
 """
 
 from __future__ import annotations
@@ -24,8 +27,13 @@ except ImportError:
 _GRAPH_EXTRAS_MSG = "Knowledge graph requires extra dependencies: pip install agentscaffold[graph]"
 
 
-class GraphStore:
-    """Wrapper around KuzuDB providing schema management and query helpers."""
+class KuzuBackend:
+    """KuzuDB implementation of the GraphBackend protocol.
+
+    Wraps KuzuDB providing schema management and query helpers.
+    Use ``open_graph()`` from ``agentscaffold.graph`` to obtain an instance
+    rather than instantiating this class directly.
+    """
 
     def __init__(self, db_path: Path | str, *, read_only: bool = False) -> None:
         if kuzu is None:
@@ -290,8 +298,16 @@ class GraphStore:
         """Close the database connection."""
         self._db.close()
 
-    def __enter__(self) -> GraphStore:
+    def __enter__(self) -> KuzuBackend:
         return self
 
     def __exit__(self, *args: object) -> None:
         self.close()
+
+
+# ---------------------------------------------------------------------------
+# Backward compatibility alias
+# ---------------------------------------------------------------------------
+
+GraphStore = KuzuBackend
+"""Deprecated alias for KuzuBackend. Use KuzuBackend or the GraphBackend protocol."""
