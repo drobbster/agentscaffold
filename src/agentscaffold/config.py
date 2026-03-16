@@ -181,6 +181,7 @@ class LayerMapping(BaseModel):
 
 class GraphConfig(BaseModel):
     db_path: str = ".scaffold/graph.db"
+    backend: str = "kuzu"
     languages: list[str] | None = None
     ignore: list[str] = Field(default_factory=list)
     layer_mapping: list[LayerMapping] = Field(default_factory=list)

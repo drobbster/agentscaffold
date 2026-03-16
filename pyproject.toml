@@ -50,6 +50,9 @@ graph = [
     "tree-sitter-javascript>=0.23.0",
     "tree-sitter-typescript>=0.23.0",
 ]
+graph-duckpgq = [
+    "duckdb>=0.10.0",
+]
 graph-go = ["tree-sitter-go>=0.23.0"]
 graph-rust = ["tree-sitter-rust>=0.23.0"]
 graph-java = ["tree-sitter-java>=0.23.0"]
@@ -69,7 +72,7 @@ mcp = [
     "mcp>=1.0.0",
 ]
 all = [
-    "agentscaffold[graph,graph-all-languages,search,communities,mcp]",
+    "agentscaffold[graph,graph-duckpgq,graph-all-languages,search,communities,mcp]",
 ]
 dev = [
     "pytest>=7.0.0",
