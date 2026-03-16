@@ -13,12 +13,20 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agentscaffold.graph.backend import GraphBackend
+from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
 from agentscaffold.graph.kuzu_backend import KuzuBackend
 
 if TYPE_CHECKING:
     from agentscaffold.config import ScaffoldConfig
 
-__all__ = ["GraphBackend", "KuzuBackend", "open_graph", "graph_available", "index"]
+__all__ = [
+    "DuckPGQBackend",
+    "GraphBackend",
+    "KuzuBackend",
+    "graph_available",
+    "index",
+    "open_graph",
+]
 
 
 def graph_available(config: ScaffoldConfig | None = None) -> bool:
@@ -53,11 +61,10 @@ def open_graph(config: ScaffoldConfig | None = None, *, backend: str | None = No
             )
         return KuzuBackend(db_path)
 
-    # DuckPGQBackend will be wired in Step A.4; raise clearly until then.
-    raise ValueError(
-        f"Unknown backend '{backend_name}'. "
-        "Supported backends: 'kuzu'. ('duckpgq' coming in Plan 149 Step A.4)"
-    )
+    if backend_name == "duckpgq":
+        return DuckPGQBackend(db_path)
+
+    raise ValueError(f"Unknown backend '{backend_name}'. Supported backends: 'kuzu', 'duckpgq'.")
 
 
 def index(
