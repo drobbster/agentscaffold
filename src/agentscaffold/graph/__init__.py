@@ -44,11 +44,12 @@ def open_graph(config: ScaffoldConfig | None = None, *, backend: str | None = No
 
     Args:
         config: Optional scaffold config. Used to resolve db_path and default backend.
-        backend: Override the backend. One of "kuzu" (default) or "duckpgq".
-                 If None, falls back to config.graph.backend, then "kuzu".
+        backend: Override the backend. One of "duckpgq" (default) or "kuzu".
+                 If None, falls back to config.graph.backend, then "duckpgq".
 
     Raises:
-        FileNotFoundError: if no graph exists on disk.
+        FileNotFoundError: if no graph exists on disk (kuzu backend only).
+        RuntimeError: if a KuzuDB directory is found where a DuckDB file is expected.
         ValueError: if an unknown backend name is given.
     """
     backend_name = backend or _resolve_backend(config)
@@ -62,6 +63,13 @@ def open_graph(config: ScaffoldConfig | None = None, *, backend: str | None = No
         return KuzuBackend(db_path)
 
     if backend_name == "duckpgq":
+        if db_path.is_dir():
+            raise RuntimeError(
+                f"Existing KuzuDB graph detected at {db_path}.\n"
+                "Run 'scaffold index' to rebuild on DuckDB. "
+                "Your graph data will be re-derived from source.\n"
+                "To keep using KuzuDB, set 'graph.backend: kuzu' in scaffold.yaml."
+            )
         return DuckPGQBackend(db_path)
 
     raise ValueError(f"Unknown backend '{backend_name}'. Supported backends: 'kuzu', 'duckpgq'.")
@@ -98,5 +106,5 @@ def _resolve_db_path(config: ScaffoldConfig | None) -> Path:
 
 def _resolve_backend(config: ScaffoldConfig | None) -> str:
     if config is not None and hasattr(config, "graph") and hasattr(config.graph, "backend"):
-        return config.graph.backend or "kuzu"
-    return "kuzu"
+        return config.graph.backend or "duckpgq"
+    return "duckpgq"
