@@ -4,6 +4,7 @@ Public API:
     index(path, config)  -- Build/rebuild the knowledge graph
     open_graph(config)   -- Open an existing graph for querying
     graph_available(config) -- Check if a graph exists
+    GraphBackend         -- Protocol class for backend-agnostic type annotations
 """
 
 from __future__ import annotations
@@ -11,9 +12,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agentscaffold.graph.backend import GraphBackend
+
 if TYPE_CHECKING:
     from agentscaffold.config import ScaffoldConfig
-    from agentscaffold.graph.store import GraphStore
+
+__all__ = ["GraphBackend", "open_graph", "graph_available", "index"]
 
 
 def graph_available(config: ScaffoldConfig | None = None) -> bool:
@@ -26,19 +30,35 @@ def graph_available(config: ScaffoldConfig | None = None) -> bool:
     return False
 
 
-def open_graph(config: ScaffoldConfig | None = None) -> GraphStore:
+def open_graph(config: ScaffoldConfig | None = None, *, backend: str | None = None) -> GraphBackend:
     """Open an existing graph database for querying.
 
-    Raises FileNotFoundError if no graph exists.
+    Args:
+        config: Optional scaffold config. Used to resolve db_path and default backend.
+        backend: Override the backend. One of "kuzu" (default) or "duckpgq".
+                 If None, falls back to config.graph.backend, then "kuzu".
+
+    Raises:
+        FileNotFoundError: if no graph exists on disk.
+        ValueError: if an unknown backend name is given.
     """
     from agentscaffold.graph.store import GraphStore
 
+    backend_name = backend or _resolve_backend(config)
     db_path = _resolve_db_path(config)
-    if not graph_available(config):
-        raise FileNotFoundError(
-            f"No knowledge graph found at {db_path}. Run 'scaffold index' first."
-        )
-    return GraphStore(db_path)
+
+    if backend_name in ("kuzu", None):
+        if not graph_available(config):
+            raise FileNotFoundError(
+                f"No knowledge graph found at {db_path}. Run 'scaffold index' first."
+            )
+        return GraphStore(db_path)
+
+    # DuckPGQBackend will be wired in Step A.4; raise clearly until then.
+    raise ValueError(
+        f"Unknown backend '{backend_name}'. "
+        "Supported backends: 'kuzu'. ('duckpgq' coming in Plan 149 Step A.4)"
+    )
 
 
 def index(
@@ -68,3 +88,9 @@ def _resolve_db_path(config: ScaffoldConfig | None) -> Path:
     if config is not None and hasattr(config, "graph"):
         return Path(config.graph.db_path)
     return Path(".scaffold/graph.db")
+
+
+def _resolve_backend(config: ScaffoldConfig | None) -> str:
+    if config is not None and hasattr(config, "graph") and hasattr(config.graph, "backend"):
+        return config.graph.backend or "kuzu"
+    return "kuzu"
