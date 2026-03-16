@@ -68,6 +68,43 @@ def graph_store(tmp_path: Path):
     store.close()
 
 
+@pytest.fixture(params=["kuzu", "duckpgq"])
+def any_store(request, tmp_path: Path):
+    """Parametrized fixture that yields a GraphBackend for each supported backend.
+
+    Kuzu variant is skipped when kuzu is not installed.
+    DuckPGQ variant is skipped when duckdb is not installed.
+    """
+    backend = request.param
+
+    if backend == "kuzu":
+        try:
+            from agentscaffold.graph.store import GraphStore  # noqa: PLC0415
+        except ImportError:
+            pytest.skip("kuzu not installed")
+        try:
+            store = GraphStore(tmp_path / "test.db")
+        except ImportError:
+            pytest.skip("kuzu not installed")
+        store.init_schema()
+        yield store
+        store.close()
+        return
+
+    # duckpgq
+    try:
+        import duckdb  # noqa: F401, PLC0415
+    except ImportError:
+        pytest.skip("duckdb not installed")
+
+    from agentscaffold.graph.duckpgq_backend import DuckPGQBackend  # noqa: PLC0415
+
+    store = DuckPGQBackend(":memory:")
+    store.init_schema()
+    yield store
+    store.close()
+
+
 @pytest.fixture()
 def indexed_repo(fixture_repo: Path, tmp_path: Path):
     """fixture_repo with graph already built. Returns (repo_path, store)."""
