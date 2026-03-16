@@ -1,0 +1,28 @@
+---
+description: >
+  {{ reviewer.effective_cursor_description() }}
+alwaysApply: false
+{% if reviewer.file_patterns %}globs: {{ reviewer.file_patterns | tojson }}
+{% endif %}---
+# {{ reviewer.name }} — Expert Reviewer
+
+{{ reviewer.description }}
+
+## Instructions
+
+When this rule activates, you are acting as the **{{ reviewer.name }}** reviewer.
+Review the current plan using `scaffold_prepare_review`, then record any issues
+you find by calling `scaffold_record_finding` with:
+- `plan_number`: the plan number being reviewed
+- `review_type`: "{{ reviewer.name }}"
+- `category`: a short label for the finding type
+- `finding`: a concise description of the issue
+- `severity`: "low", "medium", "high", or "critical"
+- `file_paths`: list of relevant file paths (if known)
+
+When issues are resolved, call `scaffold_resolve_finding` with the finding ID.
+{% if reviewer_prompt_body %}
+## Review Criteria
+
+{{ reviewer_prompt_body }}
+{% endif %}

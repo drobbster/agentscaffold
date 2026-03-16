@@ -8,7 +8,7 @@ from pathlib import Path
 from rich.console import Console
 
 from agentscaffold.agents.rule_policy import generate_rule_policy_document
-from agentscaffold.config import find_config, load_config
+from agentscaffold.config import ReviewerConfig, ScaffoldConfig, find_config, load_config
 from agentscaffold.rendering import get_default_context, render_template
 
 console = Console()
@@ -87,3 +87,54 @@ def run_cursor_setup() -> None:
     console.print(f"[green]Wrote[/green] {intent_dest.relative_to(Path.cwd())}")
 
     write_cursor_mcp_json(cursor_dir)
+
+    write_cursor_reviewer_rules(config, cursor_dir)
+
+
+def generate_cursor_reviewer_rule(reviewer: ReviewerConfig, prompt_body: str = "") -> str:
+    """Render a Cursor agent-requested rule file for a reviewer."""
+    return render_template(
+        "agents/cursor_agent.md.j2",
+        {"reviewer": reviewer, "reviewer_prompt_body": prompt_body},
+    )
+
+
+def write_cursor_reviewer_rules(
+    config: ScaffoldConfig,
+    cursor_dir: Path,
+    dry_run: bool = False,
+) -> list[Path]:
+    """Generate .cursor/rules/<reviewer>.md for each expert reviewer.
+
+    Returns list of paths written (or that would be written in dry-run mode).
+    """
+    reviewers = config.reviews.expert_reviewers
+    if not reviewers:
+        return []
+
+    rules_dir = cursor_dir / "rules"
+    written: list[Path] = []
+
+    for reviewer in reviewers:
+        prompt_body = _load_prompt_body_for_cursor(reviewer, cursor_dir.parent)
+        content = generate_cursor_reviewer_rule(reviewer, prompt_body)
+        dest = rules_dir / f"{reviewer.name}.md"
+        written.append(dest)
+        if dry_run:
+            console.print(f"[dim]dry-run[/dim] would write {dest}")
+        else:
+            rules_dir.mkdir(parents=True, exist_ok=True)
+            dest.write_text(content)
+            console.print(f"[green]Wrote[/green] .cursor/rules/{reviewer.name}.md")
+
+    return written
+
+
+def _load_prompt_body_for_cursor(reviewer: ReviewerConfig, project_root: Path) -> str:
+    """Load the reviewer's prompt body from prompt_file if specified."""
+    if not reviewer.prompt_file:
+        return ""
+    prompt_path = project_root / reviewer.prompt_file
+    if prompt_path.is_file():
+        return prompt_path.read_text()
+    return ""

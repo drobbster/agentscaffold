@@ -84,6 +84,33 @@ class ProhibitionsConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Reviewer / expert-agent configuration
+# ---------------------------------------------------------------------------
+
+
+class ReviewerConfig(BaseModel):
+    """A single expert reviewer definition for agent generation."""
+
+    name: str
+    description: str = ""
+    cursor_description: str | None = None
+    prompt_file: str | None = None
+    file_patterns: list[str] = Field(default_factory=list)
+    model: str | None = None
+    tools: list[str] = Field(default_factory=list)
+
+    def effective_cursor_description(self) -> str:
+        """Return cursor_description or a generated fallback."""
+        if self.cursor_description:
+            return self.cursor_description
+        return f"Load when reviewing plans tagged with {self.name} domain."
+
+
+class ReviewsConfig(BaseModel):
+    expert_reviewers: list[ReviewerConfig] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Agent integration configuration
 # ---------------------------------------------------------------------------
 
@@ -237,6 +264,7 @@ class ScaffoldConfig(BaseModel):
     approval_required: ApprovalConfig = Field(default_factory=ApprovalConfig)
     standards: StandardsConfig = Field(default_factory=StandardsConfig)
     domains: list[str] = Field(default_factory=list)
+    reviews: ReviewsConfig = Field(default_factory=ReviewsConfig)
     prohibitions: ProhibitionsConfig = Field(default_factory=ProhibitionsConfig)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     semi_autonomous: SemiAutonomousConfig = Field(default_factory=SemiAutonomousConfig)

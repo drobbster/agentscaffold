@@ -610,6 +610,81 @@ def _get_tool_definitions() -> list:
                 "required": ["plan_number"],
             },
         ),
+        Tool(
+            name="scaffold_record_finding",
+            description=(
+                "Record a review finding in the knowledge graph. Creates a ReviewFinding "
+                "node linked to the relevant plan, files, and functions. Use this when "
+                "you identify an issue, concern, or improvement during a code review. "
+                "Findings persist across sessions and surface in future reviews."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "plan_number": {
+                        "type": "integer",
+                        "description": "Plan number this finding relates to",
+                    },
+                    "review_type": {
+                        "type": "string",
+                        "description": (
+                            "Review type (e.g. 'quant_architect', 'security', 'devils_advocate')"
+                        ),
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": (
+                            "Finding category (e.g. 'correctness', 'performance', 'risk')"
+                        ),
+                    },
+                    "finding": {
+                        "type": "string",
+                        "description": "Human-readable description of the finding",
+                    },
+                    "severity": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high", "critical"],
+                        "description": "Severity level (default: medium)",
+                        "default": "medium",
+                    },
+                    "file_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "File paths related to this finding",
+                    },
+                    "function_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Function node IDs related to this finding",
+                    },
+                },
+                "required": ["plan_number", "review_type", "category", "finding"],
+            },
+        ),
+        Tool(
+            name="scaffold_resolve_finding",
+            description=(
+                "Mark a ReviewFinding as resolved. Use this when an issue identified "
+                "during a prior review has been addressed. The finding remains in the "
+                "graph with status='resolved' for audit trail purposes."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "finding_id": {
+                        "type": "string",
+                        "description": (
+                            "The ID of the finding to resolve (from scaffold_record_finding)"
+                        ),
+                    },
+                    "resolution": {
+                        "type": "string",
+                        "description": "Description of how the finding was resolved",
+                    },
+                },
+                "required": ["finding_id", "resolution"],
+            },
+        ),
     ]
 
 
@@ -752,6 +827,12 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
         elif name == "scaffold_decision_context":
             return _tool_decision_context(store, arguments, meta)
+
+        elif name == "scaffold_record_finding":
+            return _tool_record_finding(store, arguments, meta)
+
+        elif name == "scaffold_resolve_finding":
+            return _tool_resolve_finding(store, arguments, meta)
 
         else:
             return {"error": f"Unknown tool: {name}"}
@@ -962,11 +1043,67 @@ def _tool_review_context(store: Any, arguments: dict[str, Any], meta: dict) -> d
 # Composite tool handlers
 # ---------------------------------------------------------------------------
 
+_SEVERITY_ORDER: tuple[str, ...] = ("critical", "high", "medium", "low")
+
+
+def _sev_key(row: dict) -> int:
+    sev = (row.get("rf.severity") or "medium").lower()
+    try:
+        return _SEVERITY_ORDER.index(sev)
+    except ValueError:
+        return len(_SEVERITY_ORDER)
+
+
+def _file_matches_domain_pattern(fpath: str, pattern: str) -> bool:
+    """Check if a file path matches a domain file_patterns glob entry."""
+    import fnmatch  # noqa: PLC0415
+
+    if pattern.endswith("/**"):
+        prefix = pattern[:-3]
+        return fpath.startswith(prefix + "/") or fpath == prefix
+    return fnmatch.fnmatch(fpath, pattern)
+
+
+def _build_reviewer_hints(root: Path, impacted_paths: list[str]) -> list[str]:
+    """Derive rule file hints from impacted files and domain manifests."""
+    from agentscaffold.domain_packs.loader import (  # noqa: PLC0415
+        _get_available_packs,
+        _load_manifest,
+    )
+
+    hints: list[str] = []
+
+    agentscaffold_rule = root / ".cursor" / "rules" / "agentscaffold.md"
+    if agentscaffold_rule.is_file():
+        hints.append(".cursor/rules/agentscaffold.md")
+
+    matched_standards: set[str] = set()
+    for pack in _get_available_packs():
+        try:
+            manifest = _load_manifest(pack)
+        except FileNotFoundError:
+            continue
+        patterns = manifest.get("file_patterns", [])
+        if not patterns:
+            continue
+        for fpath in impacted_paths:
+            if any(_file_matches_domain_pattern(fpath, p) for p in patterns):
+                matched_standards.update(manifest.get("standards", []))
+                break
+
+    for std in sorted(matched_standards):
+        std_path = root / "docs" / "ai" / "standards" / f"{std}.md"
+        if std_path.is_file():
+            hints.append(f"docs/ai/standards/{std}.md")
+
+    return hints
+
 
 def _tool_prepare_review(
     store: Any, arguments: dict[str, Any], meta: dict, root: Path, config: Any
 ) -> dict[str, Any]:
     """Composite: full review context for a plan."""
+    from agentscaffold.graph.findings import get_open_findings  # noqa: PLC0415
     from agentscaffold.review.brief import format_brief_markdown, generate_brief
     from agentscaffold.review.challenges import format_challenges_markdown, generate_challenges
     from agentscaffold.review.gaps import format_gaps_markdown, generate_gaps
@@ -985,6 +1122,23 @@ def _tool_prepare_review(
     challenges = generate_challenges(store, pn)
     gaps = generate_gaps(store, pn)
 
+    # Collect impacted paths from the brief (avoids a redundant graph query)
+    impacted_paths = [fp["path"] for fp in brief.get("file_profiles", []) if fp.get("path")]
+
+    # Open findings: plan-scoped first, then file-scoped (deduplicated)
+    plan_findings = get_open_findings(store, plan_number=pn, limit=20)
+    seen_ids: set[str] = {r.get("rf.id", "") for r in plan_findings}
+    file_findings: list[dict] = []
+    for fpath in impacted_paths[:10]:
+        for row in get_open_findings(store, file_path=fpath, limit=5):
+            fid = row.get("rf.id", "")
+            if fid not in seen_ids:
+                seen_ids.add(fid)
+                file_findings.append(row)
+    all_findings = sorted(plan_findings + file_findings, key=_sev_key)[:20]
+
+    reviewer_hints = _build_reviewer_hints(root, impacted_paths)
+
     return {
         "plan_number": pn,
         "brief": brief,
@@ -999,6 +1153,8 @@ def _tool_prepare_review(
         "validation_spikes": get_spikes_for_plan(store, pn),
         "related_studies": get_studies_for_plan(store, pn),
         "dependencies": get_plan_dependencies(store, pn),
+        "open_findings": all_findings,
+        "reviewer_hints": reviewer_hints,
         "meta": meta,
     }
 
@@ -1396,6 +1552,50 @@ def _tool_decision_context(store: Any, arguments: dict[str, Any], meta: dict) ->
         "has_full_decision_chain": bool(adrs or spikes or studies),
         "meta": meta,
     }
+
+
+def _tool_record_finding(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+    """Record a review finding in the knowledge graph."""
+    from agentscaffold.graph.findings import record_finding  # noqa: PLC0415
+
+    plan_number = arguments.get("plan_number")
+    review_type = arguments.get("review_type", "")
+    category = arguments.get("category", "")
+    finding = arguments.get("finding", "")
+
+    if not all([plan_number is not None, review_type, category, finding]):
+        return {
+            "error": "plan_number, review_type, category, and finding are required.",
+            "meta": meta,
+        }
+
+    result = record_finding(
+        store,
+        plan_number=int(plan_number),
+        review_type=review_type,
+        category=category,
+        finding=finding,
+        severity=arguments.get("severity", "medium"),
+        file_paths=arguments.get("file_paths") or [],
+        function_ids=arguments.get("function_ids") or [],
+    )
+    result["meta"] = meta
+    return result
+
+
+def _tool_resolve_finding(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+    """Mark a ReviewFinding as resolved."""
+    from agentscaffold.graph.findings import resolve_finding  # noqa: PLC0415
+
+    finding_id = arguments.get("finding_id", "")
+    resolution = arguments.get("resolution", "")
+
+    if not finding_id or not resolution:
+        return {"error": "finding_id and resolution are required.", "meta": meta}
+
+    result = resolve_finding(store, finding_id, resolution=resolution)
+    result["meta"] = meta
+    return result
 
 
 # ---------------------------------------------------------------------------

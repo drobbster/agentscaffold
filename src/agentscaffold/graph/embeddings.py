@@ -145,13 +145,13 @@ _DUCKPGQ_SELECT: dict[str, str] = {
         ' signature AS "n.signature", filePath AS "n.filePath"'
         " FROM Function"
     ),
-    "Class": ('SELECT id AS "n.id", name AS "n.name", filePath AS "n.filePath"' " FROM Class"),
+    "Class": ('SELECT id AS "n.id", name AS "n.name", filePath AS "n.filePath" FROM Class'),
     "Method": (
         'SELECT id AS "n.id", name AS "n.name", className AS "n.className",'
         ' signature AS "n.signature", filePath AS "n.filePath"'
         " FROM Method"
     ),
-    "File": ('SELECT id AS "n.id", path AS "n.path", language AS "n.language"' " FROM File"),
+    "File": ('SELECT id AS "n.id", path AS "n.path", language AS "n.language" FROM File'),
 }
 
 # DuckPGQ similarity search SQL — JOIN EmbeddingStore with the node table and
@@ -252,8 +252,7 @@ def generate_embeddings(
                     vec_json = json.dumps(vec_list)
                     escaped = vec_json.replace("\\", "\\\\").replace("'", "\\'")
                     store.execute(
-                        f"MATCH (n:{table}) WHERE n.id = '{node_id}'"
-                        f" SET n.embedding = '{escaped}'"
+                        f"MATCH (n:{table}) WHERE n.id = '{node_id}' SET n.embedding = '{escaped}'"
                     )
                 count += 1
 

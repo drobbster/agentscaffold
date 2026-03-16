@@ -160,7 +160,7 @@ class DuckPGQBackend:
             )
         else:
             self._conn.execute(
-                "UPDATE GraphMeta SET schemaVersion = ?, lastIndexed = ?" " WHERE id = 'singleton'",
+                "UPDATE GraphMeta SET schemaVersion = ?, lastIndexed = ? WHERE id = 'singleton'",
                 [SCHEMA_VERSION, now],
             )
 
@@ -345,8 +345,7 @@ class DuckPGQBackend:
     def get_parsing_warnings(self) -> list[dict[str, Any]]:
         """Return all parsing warnings ordered by severity descending."""
         return self.query(
-            "SELECT filePath, phase, message, severity"
-            " FROM ParsingWarning ORDER BY severity DESC"
+            "SELECT filePath, phase, message, severity FROM ParsingWarning ORDER BY severity DESC"
         )
 
     # ------------------------------------------------------------------
