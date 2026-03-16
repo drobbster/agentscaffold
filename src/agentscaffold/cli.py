@@ -40,6 +40,9 @@ app.add_typer(domains_app, name="domain", hidden=True)
 agents_app = typer.Typer(help="Agent integration file generation.")
 app.add_typer(agents_app, name="agents")
 
+plugins_app = typer.Typer(help="Plugin packaging and distribution.")
+app.add_typer(plugins_app, name="plugins")
+
 graph_app = typer.Typer(help="Knowledge graph operations.")
 app.add_typer(graph_app, name="graph")
 
@@ -465,6 +468,80 @@ def agents_hooks(
             console.print(f"[green]{label}[/green] {path.relative_to(root)}")
         else:
             console.print(f"[red]Unknown platform: {plat}[/red]")
+
+
+@agents_app.command("skills")
+def agents_skills(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print paths without writing files."),
+) -> None:
+    """Generate SKILL.md files into .claude/skills/ and .cursor/skills/."""
+    from agentscaffold.skills.catalog import write_catalog
+    from agentscaffold.skills.generator import generate_skills_from_standards_dir
+
+    root = Path.cwd()
+    standards_dir = root / "docs" / "ai" / "standards"
+    claude_skills = root / ".claude" / "skills"
+    cursor_skills = root / ".cursor" / "skills"
+
+    written: list[Path] = []
+    for output_dir in (claude_skills, cursor_skills):
+        paths = generate_skills_from_standards_dir(standards_dir, output_dir, dry_run=dry_run)
+        written.extend(paths)
+        label = "Would write" if dry_run else "Wrote"
+        for p in paths:
+            try:
+                rel = p.relative_to(root)
+            except ValueError:
+                rel = p
+            console.print(f"[green]{label}[/green] {rel}")
+
+    if not dry_run and written:
+        for skills_dir in (claude_skills, cursor_skills):
+            catalog_path = skills_dir / "SKILLS_CATALOG.md"
+            write_catalog([skills_dir], catalog_path, dry_run=dry_run)
+            try:
+                rel = catalog_path.relative_to(root)
+            except ValueError:
+                rel = catalog_path
+            console.print(f"[green]Wrote[/green] {rel}")
+
+    if not written:
+        console.print("[dim]No standards found in docs/ai/standards/[/dim]")
+
+
+@agents_app.command("generate-all")
+def agents_generate_all(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print paths without writing files."),
+) -> None:
+    """Generate all platform artifacts (AGENTS.md, CLAUDE.md, Cursor rules, Windsurf, hooks)."""
+    from agentscaffold.agents.generate import run_agents_generate_all_platforms
+    from agentscaffold.config import load_config
+
+    config = load_config()
+    run_agents_generate_all_platforms(config, Path.cwd(), dry_run=dry_run)
+
+
+# ---------------------------------------------------------------------------
+# Plugin commands
+# ---------------------------------------------------------------------------
+
+
+@plugins_app.command("package")
+def plugins_package(
+    domain: str = typer.Option(..., "--domain", "-d", help="Domain pack name to package."),
+    output: str = typer.Option("dist/plugins", "--output", "-o", help="Output directory."),
+    version: str = typer.Option("0.1.0", "--version", "-v", help="Package version (semver)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print output path without writing."),
+) -> None:
+    """Package a domain pack into a pip-installable plugin."""
+    from agentscaffold.plugins.packaging import package_domain_plugin
+
+    output_dir = Path(output)
+    pkg_dir = package_domain_plugin(domain, output_dir, version=version, dry_run=dry_run)
+    if dry_run:
+        console.print(f"[dim]dry-run: would create {pkg_dir}[/dim]")
+    else:
+        console.print(f"[green]Plugin package created:[/green] {pkg_dir}")
 
 
 # ---------------------------------------------------------------------------
