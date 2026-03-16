@@ -214,6 +214,13 @@ _ROUTING_NORMALIZERS: list[tuple[str, str]] = [
     (r"\bcollisions?\b", "conflict"),
     (r"\blineage\b", "decision chain"),
     (r"\bhas .* changed enough\b", "stale"),
+    # Finding-record disambiguation: "review found/discovered X" describes a finding result,
+    # not a request to run a review.  Normalize to "record finding" so the exact substring
+    # check in route_tool_from_prompt returns scaffold_record_finding immediately.
+    (r"\breview found\b", "record finding"),
+    (r"\breview discovered\b", "record finding"),
+    # Past-tense "has been fixed" expresses resolution, not the act of recording.
+    (r"\bhas been fixed\b", "resolved finding"),
 ]
 
 _TOOL_SIGNAL_TOKENS: dict[str, set[str]] = {
