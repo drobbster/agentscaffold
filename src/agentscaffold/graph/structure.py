@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agentscaffold.config import GraphConfig
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ def _detect_language(path: Path) -> str:
 
 
 def process_structure(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     graph_config: GraphConfig | None = None,
 ) -> dict:

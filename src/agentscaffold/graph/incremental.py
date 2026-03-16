@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agentscaffold.config import GraphConfig
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def _file_hash(path: Path) -> str:
 
 
 def compute_changeset(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     graph_config: GraphConfig | None = None,
 ) -> dict[str, Any]:
@@ -114,7 +114,7 @@ def compute_changeset(
     }
 
 
-def remove_file_nodes(store: GraphStore, file_paths: list[str]) -> int:
+def remove_file_nodes(store: GraphBackend, file_paths: list[str]) -> int:
     """Remove File nodes and all associated definitions for deleted files.
 
     Cascades: removes Function, Class, Method, Interface nodes defined
@@ -154,7 +154,7 @@ def remove_file_nodes(store: GraphStore, file_paths: list[str]) -> int:
 
 
 def update_file_node(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     rel_path: str,
 ) -> bool:
@@ -189,7 +189,7 @@ def update_file_node(
 
 
 def add_file_node(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     rel_path: str,
 ) -> bool:

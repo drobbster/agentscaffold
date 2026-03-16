@@ -14,7 +14,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from agentscaffold.graph.store import GraphStore
+from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class SearchResult:
 
 
 def hybrid_search(
-    store: GraphStore,
+    store: GraphBackend,
     query: str,
     *,
     mode: str = "hybrid",
@@ -44,7 +44,7 @@ def hybrid_search(
     """Execute a hybrid search across the knowledge graph.
 
     Args:
-        store: GraphStore instance
+        store: GraphBackend instance
         query: Natural language query
         mode: "cypher", "semantic", or "hybrid"
         top_k: Number of results to return
@@ -74,7 +74,7 @@ def hybrid_search(
 
 
 def _cypher_search(
-    store: GraphStore,
+    store: GraphBackend,
     query: str,
     tables: list[str],
     limit: int,
@@ -172,7 +172,7 @@ def _cypher_search(
 
 
 def _semantic_search(
-    store: GraphStore,
+    store: GraphBackend,
     query: str,
     tables: list[str],
     limit: int,

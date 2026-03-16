@@ -15,7 +15,7 @@ from agentscaffold.graph.queries import get_queries, supported_languages
 from agentscaffold.graph.symbol_table import SymbolEntry, SymbolTable
 
 if TYPE_CHECKING:
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +177,7 @@ def _query_matches(lang: Any, query_str: str, root_node: Any) -> list[dict[str, 
 
 
 def process_parsing(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     symbol_table: SymbolTable,
     *,
@@ -339,7 +339,7 @@ def process_parsing(
 
 
 def _extract_functions(
-    store: GraphStore,
+    store: GraphBackend,
     lang: Any,
     query_str: str,
     tree: Any,
@@ -417,7 +417,7 @@ def _extract_functions(
 
 
 def _extract_classes(
-    store: GraphStore,
+    store: GraphBackend,
     lang: Any,
     query_str: str,
     tree: Any,
@@ -486,7 +486,7 @@ def _extract_classes(
 
 
 def _extract_methods(
-    store: GraphStore,
+    store: GraphBackend,
     lang: Any,
     query_str: str,
     tree: Any,
@@ -604,7 +604,7 @@ def _extract_methods(
 
 
 def _extract_interfaces(
-    store: GraphStore,
+    store: GraphBackend,
     lang: Any,
     query_str: str,
     tree: Any,

@@ -13,7 +13,7 @@ import logging
 from collections import Counter
 from typing import Any
 
-from agentscaffold.graph.store import GraphStore
+from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ except ImportError:
 
 
 def detect_communities(
-    store: GraphStore,
+    store: GraphBackend,
     *,
     resolution: float = 1.0,
     min_community_size: int = 2,
@@ -151,7 +151,7 @@ def detect_communities(
     return result
 
 
-def get_communities(store: GraphStore) -> list[dict[str, Any]]:
+def get_communities(store: GraphBackend) -> list[dict[str, Any]]:
     """Return all communities with their member files."""
     communities = store.query(
         "MATCH (c:Community) "

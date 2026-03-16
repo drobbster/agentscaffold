@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from agentscaffold.graph.symbol_table import SymbolTable
 
 if TYPE_CHECKING:
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ _PY_DIRECT_IMPORT_RE = re.compile(
 
 
 def process_imports(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     symbol_table: SymbolTable,
 ) -> dict:
@@ -97,7 +97,7 @@ def process_imports(
 
 
 def _resolve_python_imports(
-    store: GraphStore,
+    store: GraphBackend,
     source: str,
     file_id: str,
     file_path: str,
@@ -209,7 +209,7 @@ def _python_module_to_path(
 
 
 def _resolve_ts_imports(
-    store: GraphStore,
+    store: GraphBackend,
     source: str,
     file_id: str,
     file_path: str,
@@ -273,7 +273,7 @@ def _ts_specifier_to_path(
 
 
 def _create_import_edge(
-    store: GraphStore,
+    store: GraphBackend,
     from_id: str,
     to_id: str,
     imported_names: str,

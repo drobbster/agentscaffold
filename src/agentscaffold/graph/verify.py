@@ -16,7 +16,7 @@ from rich.console import Console
 from rich.table import Table
 
 if TYPE_CHECKING:
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -35,7 +35,7 @@ def _file_hash(path: Path) -> str:
 
 
 def verify_graph(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     *,
     deep: bool = False,
@@ -108,7 +108,7 @@ def verify_graph(
     return report
 
 
-def _check_governance_sync(store: GraphStore) -> dict[str, Any]:
+def _check_governance_sync(store: GraphBackend) -> dict[str, Any]:
     """Check if governance node counts are non-zero."""
     return {
         "plans": store.node_count("Plan"),
@@ -119,7 +119,7 @@ def _check_governance_sync(store: GraphStore) -> dict[str, Any]:
 
 
 def _deep_verify(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     file_rows: list[dict[str, Any]],
     sample_ratio: float,
@@ -182,7 +182,7 @@ def _deep_verify(
     }
 
 
-def check_contract_drift(store: GraphStore) -> dict[str, Any]:
+def check_contract_drift(store: GraphBackend) -> dict[str, Any]:
     """Check for drift between contract declarations and actual code.
 
     Returns a report with:
@@ -256,7 +256,7 @@ def check_contract_drift(store: GraphStore) -> dict[str, Any]:
 
 
 def check_staleness(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     file_paths: list[str],
 ) -> dict[str, str]:

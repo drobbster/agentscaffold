@@ -26,7 +26,7 @@ from agentscaffold.review.queries import (
 )
 
 if TYPE_CHECKING:
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 
 @dataclass
@@ -39,7 +39,7 @@ class Challenge:
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
-def generate_challenges(store: GraphStore, plan_number: int) -> list[Challenge]:
+def generate_challenges(store: GraphBackend, plan_number: int) -> list[Challenge]:
     """Generate adversarial challenges for a plan from graph data.
 
     Returns a list of Challenge objects, each grounded in evidence.
@@ -74,7 +74,7 @@ def generate_challenges(store: GraphStore, plan_number: int) -> list[Challenge]:
 # ---------------------------------------------------------------------------
 
 
-def _check_dependency_blast(store: GraphStore, file_path: str, out: list[Challenge]) -> None:
+def _check_dependency_blast(store: GraphBackend, file_path: str, out: list[Challenge]) -> None:
     """Generate DEPENDENCY challenges based on consumer count."""
     importers = get_file_importers(store, file_path)
     callers = get_function_callers(store, file_path)
@@ -119,7 +119,7 @@ def _check_dependency_blast(store: GraphStore, file_path: str, out: list[Challen
 
 
 def _check_history(
-    store: GraphStore, file_path: str, current_plan: int, out: list[Challenge]
+    store: GraphBackend, file_path: str, current_plan: int, out: list[Challenge]
 ) -> None:
     """Generate HISTORY challenges based on modification frequency."""
     prior_plans = get_plans_impacting_file(store, file_path)
@@ -146,7 +146,7 @@ def _check_history(
         )
 
 
-def _check_learnings(store: GraphStore, file_path: str, out: list[Challenge]) -> None:
+def _check_learnings(store: GraphBackend, file_path: str, out: list[Challenge]) -> None:
     """Generate LEARNING challenges from related learnings."""
     learnings = get_learnings_for_file(store, file_path)
 
@@ -176,7 +176,7 @@ def _check_learnings(store: GraphStore, file_path: str, out: list[Challenge]) ->
 
 
 def _check_layer(
-    store: GraphStore,
+    store: GraphBackend,
     file_path: str,
     impacted_files: list[dict[str, Any]],
     out: list[Challenge],
@@ -226,7 +226,7 @@ def _check_layer(
         )
 
 
-def _check_contracts(store: GraphStore, file_path: str, out: list[Challenge]) -> None:
+def _check_contracts(store: GraphBackend, file_path: str, out: list[Challenge]) -> None:
     """Generate CONTRACT challenges for files under contract."""
     contracts = get_contracts_for_file(store, file_path)
 
@@ -257,7 +257,7 @@ def _check_contracts(store: GraphStore, file_path: str, out: list[Challenge]) ->
 
 
 def _check_patterns(
-    store: GraphStore,
+    store: GraphBackend,
     plan_number: int,
     impacted_files: list[dict[str, Any]],
     out: list[Challenge],
@@ -295,7 +295,7 @@ def _check_patterns(
 
 
 def _check_consumer_coverage(
-    store: GraphStore,
+    store: GraphBackend,
     plan_number: int,
     impacted_files: list[dict[str, Any]],
     out: list[Challenge],

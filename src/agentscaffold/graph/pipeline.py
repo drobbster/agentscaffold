@@ -14,8 +14,9 @@ from typing import TYPE_CHECKING, Any
 from rich.console import Console
 from rich.table import Table
 
+from agentscaffold.graph.backend import GraphBackend
+from agentscaffold.graph.kuzu_backend import KuzuBackend
 from agentscaffold.graph.schema import SCHEMA_VERSION
-from agentscaffold.graph.store import GraphStore
 from agentscaffold.graph.symbol_table import SymbolTable
 
 if TYPE_CHECKING:
@@ -46,7 +47,7 @@ def run_pipeline(
 
     t0 = time.monotonic()
 
-    store = GraphStore(db_path)
+    store = KuzuBackend(db_path)
 
     # Schema version check
     stored_version = store.schema_version()
@@ -299,7 +300,7 @@ def run_pipeline(
 
 
 def _run_incremental(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     graph_config: Any,
     t0: float,
@@ -407,7 +408,7 @@ def _run_incremental(
     return summary
 
 
-def _rebuild_symbol_table(store: GraphStore, symbol_table: SymbolTable) -> None:
+def _rebuild_symbol_table(store: GraphBackend, symbol_table: SymbolTable) -> None:
     """Rebuild symbol table from existing graph data (for pipeline resumption)."""
     from agentscaffold.graph.symbol_table import SymbolEntry
 
@@ -472,7 +473,7 @@ def _build_summary(
     summary: dict[str, Any],
     phases_completed: list[str],
     t0: float,
-    store: GraphStore,
+    store: GraphBackend,
 ) -> dict[str, Any]:
     """Build summary dict even for partial/failed runs."""
     summary["elapsed_seconds"] = round(time.monotonic() - t0, 1)
@@ -482,7 +483,7 @@ def _build_summary(
     return summary
 
 
-def _print_summary(summary: dict[str, Any], store: GraphStore) -> None:
+def _print_summary(summary: dict[str, Any], store: GraphBackend) -> None:
     """Print a formatted index summary with quality metrics."""
     console.print()
 

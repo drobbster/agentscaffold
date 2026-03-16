@@ -21,7 +21,7 @@ from agentscaffold.review.queries import (
 )
 
 if TYPE_CHECKING:
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 
 @dataclass
@@ -34,7 +34,7 @@ class VerificationItem:
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
-def verify_implementation(store: GraphStore, plan_number: int) -> list[VerificationItem]:
+def verify_implementation(store: GraphBackend, plan_number: int) -> list[VerificationItem]:
     """Verify a plan's implementation against the graph.
 
     Should be run AFTER re-indexing the codebase post-implementation.
@@ -68,7 +68,7 @@ def verify_implementation(store: GraphStore, plan_number: int) -> list[Verificat
 
 
 def _check_plan_compliance(
-    store: GraphStore,
+    store: GraphBackend,
     plan_number: int,
     planned_paths: set[str],
     out: list[VerificationItem],
@@ -107,7 +107,7 @@ def _check_plan_compliance(
 
 
 def _check_signatures(
-    store: GraphStore,
+    store: GraphBackend,
     planned_paths: set[str],
     out: list[VerificationItem],
 ) -> None:
@@ -134,7 +134,7 @@ def _check_signatures(
 
 
 def _check_wiring(
-    store: GraphStore,
+    store: GraphBackend,
     planned_paths: set[str],
     out: list[VerificationItem],
 ) -> None:
@@ -170,7 +170,7 @@ def _check_wiring(
 
 
 def _check_test_delta(
-    store: GraphStore,
+    store: GraphBackend,
     planned_paths: set[str],
     out: list[VerificationItem],
 ) -> None:

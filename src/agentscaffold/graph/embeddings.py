@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from agentscaffold.graph.store import GraphStore
+from agentscaffold.graph.backend import GraphBackend
 
 if TYPE_CHECKING:
     pass
@@ -65,7 +65,7 @@ def _get_model(model_name: str = DEFAULT_MODEL) -> Any:
     return model
 
 
-def _ensure_embedding_column(store: GraphStore, table: str) -> None:
+def _ensure_embedding_column(store: GraphBackend, table: str) -> None:
     """Add an embedding column to a node table if it doesn't exist."""
     try:
         store.execute(f"ALTER TABLE {table} ADD embedding STRING DEFAULT ''")
@@ -132,7 +132,7 @@ _TEXT_BUILDERS = {
 
 
 def generate_embeddings(
-    store: GraphStore,
+    store: GraphBackend,
     *,
     model_name: str = DEFAULT_MODEL,
     tables: list[str] | None = None,
@@ -190,7 +190,7 @@ def generate_embeddings(
 
 
 def search_similar(
-    store: GraphStore,
+    store: GraphBackend,
     query: str,
     *,
     model_name: str = DEFAULT_MODEL,
@@ -243,7 +243,7 @@ def search_similar(
     return [r for _, r in scored[:top_k]]
 
 
-def embeddings_available(store: GraphStore) -> bool:
+def embeddings_available(store: GraphBackend) -> bool:
     """Check if any embeddings exist in the graph."""
     for table in _TEXT_BUILDERS:
         try:

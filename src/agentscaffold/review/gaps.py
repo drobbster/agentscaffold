@@ -22,7 +22,7 @@ from agentscaffold.review.queries import (
 )
 
 if TYPE_CHECKING:
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 
 @dataclass
@@ -35,7 +35,7 @@ class GapFinding:
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
-def generate_gaps(store: GraphStore, plan_number: int) -> list[GapFinding]:
+def generate_gaps(store: GraphBackend, plan_number: int) -> list[GapFinding]:
     """Generate gap findings for an expansion review.
 
     Returns a list of GapFinding objects, each with evidence.
@@ -64,7 +64,7 @@ def generate_gaps(store: GraphStore, plan_number: int) -> list[GapFinding]:
 
 
 def _consumer_audit(
-    store: GraphStore,
+    store: GraphBackend,
     impacted_files: list[dict[str, Any]],
     impacted_paths: set[str],
     out: list[GapFinding],
@@ -101,7 +101,7 @@ def _consumer_audit(
 
 
 def _integration_points(
-    store: GraphStore,
+    store: GraphBackend,
     impacted_files: list[dict[str, Any]],
     out: list[GapFinding],
 ) -> None:
@@ -157,7 +157,7 @@ def _integration_points(
 
 
 def _similar_plan_patterns(
-    store: GraphStore,
+    store: GraphBackend,
     plan_number: int,
     impacted_paths: set[str],
     out: list[GapFinding],
@@ -196,7 +196,7 @@ def _similar_plan_patterns(
 
 
 def _test_coverage_gaps(
-    store: GraphStore,
+    store: GraphBackend,
     impacted_files: list[dict[str, Any]],
     out: list[GapFinding],
 ) -> None:
@@ -236,7 +236,7 @@ def _test_coverage_gaps(
 
 
 def _dependency_completeness(
-    store: GraphStore,
+    store: GraphBackend,
     impacted_files: list[dict[str, Any]],
     impacted_paths: set[str],
     out: list[GapFinding],

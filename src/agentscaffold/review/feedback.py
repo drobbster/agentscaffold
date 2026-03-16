@@ -22,7 +22,7 @@ from agentscaffold.review.queries import (
 )
 
 if TYPE_CHECKING:
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 
 @dataclass
@@ -34,7 +34,7 @@ class RetroInsight:
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
-def generate_retro_enrichment(store: GraphStore, plan_number: int) -> list[RetroInsight]:
+def generate_retro_enrichment(store: GraphBackend, plan_number: int) -> list[RetroInsight]:
     """Generate retrospective enrichment for the given plan.
 
     Should be called during or after the retrospective.
@@ -60,7 +60,7 @@ def generate_retro_enrichment(store: GraphStore, plan_number: int) -> list[Retro
 
 
 def _volatility_analysis(
-    store: GraphStore,
+    store: GraphBackend,
     plan_number: int,
     impacted_files: list[dict[str, Any]],
     out: list[RetroInsight],
@@ -94,7 +94,7 @@ def _volatility_analysis(
 
 
 def _learning_patterns(
-    store: GraphStore,
+    store: GraphBackend,
     plan_number: int,
     out: list[RetroInsight],
 ) -> None:
@@ -133,7 +133,7 @@ def _learning_patterns(
 
 
 def _complexity_profile(
-    store: GraphStore,
+    store: GraphBackend,
     impacted_files: list[dict[str, Any]],
     out: list[RetroInsight],
 ) -> None:
@@ -175,7 +175,7 @@ def _complexity_profile(
 
 
 def _hot_file_check(
-    store: GraphStore,
+    store: GraphBackend,
     impacted_files: list[dict[str, Any]],
     out: list[RetroInsight],
 ) -> None:

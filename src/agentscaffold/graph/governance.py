@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 if TYPE_CHECKING:
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -552,7 +552,7 @@ def _extract_dependencies(meta: dict[str, str]) -> list[int]:
 
 
 def process_governance(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     config: Any | None = None,
 ) -> dict[str, Any]:

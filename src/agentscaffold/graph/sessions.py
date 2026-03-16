@@ -13,13 +13,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from agentscaffold.graph.store import GraphStore
+from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
 
 
 def start_session(
-    store: GraphStore,
+    store: GraphBackend,
     *,
     plan_numbers: list[int] | None = None,
     summary: str = "",
@@ -49,7 +49,7 @@ def start_session(
 
 
 def record_modification(
-    store: GraphStore,
+    store: GraphBackend,
     session_id: str,
     file_path: str,
 ) -> None:
@@ -94,7 +94,7 @@ def record_modification(
 
 
 def end_session(
-    store: GraphStore,
+    store: GraphBackend,
     session_id: str,
     *,
     summary: str = "",
@@ -110,7 +110,7 @@ def end_session(
     return get_session(store, session_id)
 
 
-def get_session(store: GraphStore, session_id: str) -> dict[str, Any]:
+def get_session(store: GraphBackend, session_id: str) -> dict[str, Any]:
     """Retrieve a session's full data including modified files."""
     rows = store.query(
         f"MATCH (s:Session) WHERE s.id = '{session_id}' "
@@ -139,7 +139,7 @@ def get_session(store: GraphStore, session_id: str) -> dict[str, Any]:
 
 
 def list_sessions(
-    store: GraphStore,
+    store: GraphBackend,
     *,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
@@ -175,7 +175,7 @@ def list_sessions(
 
 
 def get_session_context(
-    store: GraphStore,
+    store: GraphBackend,
     *,
     limit: int = 3,
 ) -> dict[str, Any]:
