@@ -284,6 +284,134 @@ def check_staleness(
     return result
 
 
+_COMPARE_NODE_TABLES: tuple[str, ...] = (
+    "File",
+    "Folder",
+    "Function",
+    "Class",
+    "Method",
+    "Interface",
+    "Community",
+    "Plan",
+    "Contract",
+    "Learning",
+    "ReviewFinding",
+    "Study",
+    "ADR",
+    "Spike",
+)
+
+_COMPARE_EDGE_TABLES: tuple[str, ...] = (
+    "IMPORTS",
+    "CALLS",
+    "DEFINES_FUNCTION",
+    "DEFINES_CLASS",
+    "PLAN_IMPACTS",
+    "ADR_GOVERNS",
+    "SPIKE_FOR_PLAN",
+    "STUDY_REFERENCES_PLAN",
+    "STUDY_REFERENCES_FILE",
+    "FINDING_ABOUT_FILE",
+)
+
+_SAMPLE_QUERIES: tuple[tuple[str, str, str], ...] = (
+    ("file_count", "MATCH (f:File) RETURN count(f)", "SELECT COUNT(*) FROM File"),
+    ("plan_count", "MATCH (p:Plan) RETURN count(p)", "SELECT COUNT(*) FROM Plan"),
+    ("function_count", "MATCH (fn:Function) RETURN count(fn)", "SELECT COUNT(*) FROM Function"),
+    ("imports_count", "MATCH ()-[r:IMPORTS]->() RETURN count(r)", "SELECT COUNT(*) FROM IMPORTS"),
+    ("adr_count", "MATCH (a:ADR) RETURN count(a)", "SELECT COUNT(*) FROM ADR"),
+)
+
+
+def compare_backends(
+    kuzu_store: GraphBackend,
+    duck_store: GraphBackend,
+) -> dict[str, Any]:
+    """Compare node/edge counts and sample query results across two backends.
+
+    Args:
+        kuzu_store: An open KuzuBackend instance.
+        duck_store: An open DuckPGQBackend instance.
+
+    Returns:
+        Report dict with keys: node_counts, edge_counts, sample_queries,
+        total_divergences, verdict ("PASS" or "FAIL").
+    """
+    node_counts: dict[str, dict[str, int]] = {}
+    edge_counts: dict[str, dict[str, int]] = {}
+    sample_results: dict[str, dict[str, Any]] = {}
+    total_divergences = 0
+
+    for table in _COMPARE_NODE_TABLES:
+        k = kuzu_store.node_count(table)
+        d = duck_store.node_count(table)
+        node_counts[table] = {"kuzu": k, "duck": d, "match": k == d}
+        if k != d:
+            total_divergences += 1
+
+    for table in _COMPARE_EDGE_TABLES:
+        k = kuzu_store.edge_count(table)
+        d = duck_store.edge_count(table)
+        edge_counts[table] = {"kuzu": k, "duck": d, "match": k == d}
+        if k != d:
+            total_divergences += 1
+
+    for label, cypher, sql in _SAMPLE_QUERIES:
+        k_val = kuzu_store.query_scalar(cypher)
+        d_val = duck_store.query_scalar(sql)
+        try:
+            k_int = int(k_val) if k_val is not None else 0
+            d_int = int(d_val) if d_val is not None else 0
+        except (TypeError, ValueError):
+            k_int = 0
+            d_int = 0
+        match = k_int == d_int
+        sample_results[label] = {"kuzu": k_int, "duck": d_int, "match": match}
+        if not match:
+            total_divergences += 1
+
+    return {
+        "node_counts": node_counts,
+        "edge_counts": edge_counts,
+        "sample_queries": sample_results,
+        "total_divergences": total_divergences,
+        "verdict": "PASS" if total_divergences == 0 else "FAIL",
+    }
+
+
+def print_comparison_report(report: dict[str, Any]) -> None:
+    """Print a formatted backend comparison report to console."""
+    table = Table(title="Backend Comparison: KuzuDB vs DuckPGQ", show_header=True)
+    table.add_column("Entity", style="cyan")
+    table.add_column("KuzuDB", justify="right")
+    table.add_column("DuckPGQ", justify="right")
+    table.add_column("Match", justify="center")
+
+    def _tick(match: bool) -> str:
+        return "[green]OK[/green]" if match else "[red]DIFF[/red]"
+
+    for name, counts in report["node_counts"].items():
+        table.add_row(name, str(counts["kuzu"]), str(counts["duck"]), _tick(counts["match"]))
+
+    for name, counts in report["edge_counts"].items():
+        table.add_row(name, str(counts["kuzu"]), str(counts["duck"]), _tick(counts["match"]))
+
+    for label, result in report["sample_queries"].items():
+        table.add_row(
+            f"[dim]{label}[/dim]",
+            str(result["kuzu"]),
+            str(result["duck"]),
+            _tick(result["match"]),
+        )
+
+    console.print(table)
+
+    verdict = report["verdict"]
+    divs = report["total_divergences"]
+    color = "green" if verdict == "PASS" else "red"
+    console.print(f"\nVerdict: [{color}]{verdict}[/{color}]  ({divs} divergence(s))")
+
+
 def print_verification_report(report: dict[str, Any]) -> None:
     """Print a formatted verification report to console."""
     table = Table(title="Graph Verification Report", show_header=True)
