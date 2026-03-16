@@ -9,3 +9,8 @@ standards:
   - performance_budgets
   - responsive_design
 approval_gates: {}
+file_patterns:
+  - "frontend/**"
+  - "ui/**"
+  - "components/**"
+  - "pages/**"

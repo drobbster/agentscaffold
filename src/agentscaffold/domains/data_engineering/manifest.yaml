@@ -12,3 +12,7 @@ standards:
   - idempotency
 approval_gates:
   data_migrations: true
+file_patterns:
+  - "pipelines/**"
+  - "ingestion/**"
+  - "schemas/**"

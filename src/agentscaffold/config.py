@@ -245,8 +245,21 @@ class ScaffoldConfig(BaseModel):
     graph: GraphConfig = Field(default_factory=GraphConfig)
     freshness: FreshnessConfig = Field(default_factory=FreshnessConfig)
     import_config: ImportConfig = Field(default_factory=ImportConfig, alias="import")
+    enforcement: EnforcementConfig = Field(default_factory=lambda: _get_enforcement_default())
 
     model_config = {"populate_by_name": True}
+
+
+def _get_enforcement_default() -> EnforcementConfig:
+    from agentscaffold.hooks.config import EnforcementConfig  # noqa: PLC0415
+
+    return EnforcementConfig()
+
+
+# Forward ref for type checkers
+from agentscaffold.hooks.config import EnforcementConfig  # noqa: E402, PLC0415
+
+ScaffoldConfig.model_rebuild()
 
 
 # ---------------------------------------------------------------------------

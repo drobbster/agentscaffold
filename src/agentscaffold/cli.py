@@ -421,6 +421,52 @@ def agents_prompt() -> None:
     run_prompt_export()
 
 
+@agents_app.command("hooks")
+def agents_hooks(
+    platform: str = typer.Option(
+        "all",
+        "--platform",
+        "-p",
+        help="Target platform: 'claude-code', 'cursor', 'windsurf', or 'all'.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print paths without writing files."),
+) -> None:
+    """Generate platform-native lifecycle hooks from enforcement config."""
+    from agentscaffold.config import load_config
+    from agentscaffold.hooks.generators.claude_code import write_claude_code_hooks
+    from agentscaffold.hooks.generators.cursor import generate_cursor_enforcement_files
+    from agentscaffold.hooks.generators.windsurf import write_windsurf_hooks
+
+    config = load_config()
+    enforcement = config.enforcement
+    root = Path.cwd()
+
+    platforms = ["claude-code", "cursor", "windsurf"] if platform == "all" else [platform]
+
+    for plat in platforms:
+        if not enforcement.platform_enabled(plat):
+            console.print(f"[dim]Skipping {plat} (disabled in config)[/dim]")
+            continue
+
+        if plat == "claude-code":
+            path = write_claude_code_hooks(enforcement, root, dry_run=dry_run)
+            label = "Would write" if dry_run else "Wrote"
+            console.print(f"[green]{label}[/green] {path.relative_to(root)}")
+        elif plat == "cursor":
+            paths = generate_cursor_enforcement_files(enforcement, output_dir=root, dry_run=dry_run)
+            label = "Would write" if dry_run else "Wrote"
+            for p in paths:
+                console.print(f"[green]{label}[/green] {p.relative_to(root)}")
+            if not paths:
+                console.print("[dim]No enforcement rules for cursor[/dim]")
+        elif plat == "windsurf":
+            path = write_windsurf_hooks(enforcement, root, dry_run=dry_run)
+            label = "Would write" if dry_run else "Wrote"
+            console.print(f"[green]{label}[/green] {path.relative_to(root)}")
+        else:
+            console.print(f"[red]Unknown platform: {plat}[/red]")
+
+
 # ---------------------------------------------------------------------------
 # CI / Task runner (top-level commands)
 # ---------------------------------------------------------------------------
