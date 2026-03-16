@@ -16,8 +16,17 @@ from rich.table import Table
 
 from agentscaffold.graph.backend import GraphBackend
 from agentscaffold.graph.kuzu_backend import KuzuBackend
-from agentscaffold.graph.schema import SCHEMA_VERSION
 from agentscaffold.graph.symbol_table import SymbolTable
+
+
+def _open_store_for_pipeline(db_path: Path, backend_name: str) -> GraphBackend:
+    """Instantiate the correct backend for pipeline writes."""
+    if backend_name == "duckpgq":
+        from agentscaffold.graph.duckpgq_backend import DuckPGQBackend  # noqa: PLC0415
+
+        return DuckPGQBackend(db_path)
+    return KuzuBackend(db_path)
+
 
 if TYPE_CHECKING:
     from agentscaffold.config import ScaffoldConfig
@@ -45,18 +54,19 @@ def run_pipeline(
     if not db_path.is_absolute():
         db_path = root / db_path
 
+    backend_name = (graph_config.backend if graph_config else None) or "kuzu"
     t0 = time.monotonic()
 
-    store = KuzuBackend(db_path)
+    store = _open_store_for_pipeline(db_path, backend_name)
 
-    # Schema version check
-    stored_version = store.schema_version()
-    if stored_version is not None and stored_version != SCHEMA_VERSION:
-        console.print(
-            f"[yellow]Graph schema changed (v{stored_version} -> v{SCHEMA_VERSION}). "
-            "Rebuilding...[/yellow]"
-        )
-        store.clear_all()
+    # Schema version check (backend-agnostic via schema_current())
+    if not store.schema_current():
+        stored_version = store.schema_version()
+        if stored_version is not None:
+            console.print(
+                f"[yellow]Graph schema changed (v{stored_version}). Rebuilding...[/yellow]"
+            )
+            store.clear_all()
 
     store.init_schema()
     phases_completed: list[str] = []

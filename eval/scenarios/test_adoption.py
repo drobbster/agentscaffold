@@ -73,6 +73,9 @@ class TestIntentAdoption:
             ("any ADRs about X", "scaffold_find_adrs"),
             ("what's the decision history for plan X", "scaffold_decision_context"),
             ("retro on plan X", "scaffold_prepare_retro"),
+            # E.6: new exact cases for finding tools
+            ("record finding for plan X", "scaffold_record_finding"),
+            ("mark finding F001 as resolved", "scaffold_resolve_finding"),
         ]
         _measure_suite("exact", cases, min_adherence_pct=95.0)
 
@@ -94,6 +97,18 @@ class TestIntentAdoption:
             ("Has plan X changed enough to require a refresh?", "scaffold_staleness_check"),
             ("Show decision lineage for plan X from ADR to spike", "scaffold_decision_context"),
             ("Any experiments or studies on this approach already?", "scaffold_find_studies"),
+            # E.6: new paraphrase cases for finding tools
+            (
+                "note that the quant review found a contract gap in plan 42",
+                "scaffold_record_finding",
+            ),
+            (
+                "this review discovered that risk bounds are not enforced",
+                "scaffold_record_finding",
+            ),
+            ("log this architectural finding against the plan", "scaffold_record_finding"),
+            ("the issue we found earlier has been fixed", "scaffold_resolve_finding"),
+            ("close finding F001, it was addressed in plan 043", "scaffold_resolve_finding"),
         ]
         _measure_suite("paraphrase", cases, min_adherence_pct=80.0)
 
@@ -108,5 +123,11 @@ class TestIntentAdoption:
             ("what is the weather in san francisco", None),
             ("help me reword this paragraph", None),
             ("generate a regex for UUIDs", None),
+            # E.6: new negative controls to guard against false positives on finding tools
+            (
+                "what findings exist for plan 42",
+                None,
+            ),  # reading, not writing; routes to prepare_review
+            ("show me open issues", None),  # review context, not record
         ]
         _measure_suite("negative_control", cases, min_adherence_pct=95.0)
