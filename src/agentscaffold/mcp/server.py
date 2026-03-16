@@ -144,6 +144,26 @@ TOOL_INTENTS: dict[str, list[str]] = {
         "trace the rationale chain for plan X",
         "why was this plan decided this way",
     ],
+    "scaffold_record_finding": [
+        "record finding",
+        "log finding",
+        "note a finding",
+        "discovered issue in plan",
+        "review found an issue",
+        "I found an issue in plan X",
+        "log this review finding",
+        "capture this finding",
+    ],
+    "scaffold_resolve_finding": [
+        "mark finding resolved",
+        "close finding",
+        "fix has been addressed",
+        "resolved finding",
+        "finding has been closed",
+        "mark this issue as resolved",
+        "resolve this finding",
+        "finding is resolved",
+    ],
 }
 
 _ROUTING_STOPWORDS = {
@@ -208,6 +228,8 @@ _TOOL_SIGNAL_TOKENS: dict[str, set[str]] = {
     "scaffold_prior_experiments": {"prior", "experiments", "evidence", "tested"},
     "scaffold_find_adrs": {"adr", "architecture", "decision", "governs"},
     "scaffold_decision_context": {"decision", "history", "chain", "spike", "intent", "adr"},
+    "scaffold_record_finding": {"record", "log", "finding", "discovered", "issue", "capture"},
+    "scaffold_resolve_finding": {"resolve", "resolved", "close", "fixed", "addressed"},
 }
 
 
