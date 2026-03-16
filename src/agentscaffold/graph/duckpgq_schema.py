@@ -38,7 +38,7 @@ Column type mapping from KuzuDB schema
   DOUBLE   →  DOUBLE
 
 This module is the DuckDB-native counterpart of ``graph/schema.py`` (KuzuDB).
-Both define SCHEMA_VERSION = 3.
+Both define SCHEMA_VERSION = 4 after Step A.8 (EmbeddingStore added).
 
 Query validation: all DuckPGQ query patterns were validated in
 ``dev_docs/spike-duckpgq-query-validation.md`` (Step A.0.5, all 5 patterns
@@ -52,7 +52,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import duckdb
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # ---------------------------------------------------------------------------
 # Node table DDL (19 tables)
@@ -498,6 +498,26 @@ EDGE TABLES (
 """
 
 
+# ---------------------------------------------------------------------------
+# Auxiliary tables (not part of the property graph topology)
+# ---------------------------------------------------------------------------
+
+# EmbeddingStore holds float-array embeddings for semantic similarity search.
+# It is a plain SQL table (not a VERTEX/EDGE TABLE) so it does not appear in
+# CREATE_PROPERTY_GRAPH_SQL.  Stored as FLOAT[] so DuckDB's
+# list_cosine_similarity() can operate on it without loading JSON.
+AUXILIARY_TABLES: list[str] = [
+    """
+    CREATE TABLE IF NOT EXISTS EmbeddingStore (
+        node_id   VARCHAR NOT NULL,
+        node_type VARCHAR NOT NULL,
+        embedding FLOAT[],
+        PRIMARY KEY (node_id, node_type)
+    )
+    """,
+]
+
+
 def all_node_ddl() -> list[str]:
     """Return DDL for all node tables in dependency order."""
     return list(NODE_TABLES)
@@ -522,6 +542,8 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     for stmt in NODE_TABLES:
         conn.execute(stmt)
     for stmt in EDGE_TABLES:
+        conn.execute(stmt)
+    for stmt in AUXILIARY_TABLES:
         conn.execute(stmt)
     conn.execute(DROP_PROPERTY_GRAPH_SQL)
     conn.execute(CREATE_PROPERTY_GRAPH_SQL)

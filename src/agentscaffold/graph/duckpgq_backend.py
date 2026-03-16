@@ -104,6 +104,24 @@ class DuckPGQBackend:
             self._conn.execute("LOAD duckpgq")
         except Exception as exc:
             raise RuntimeError(_EXT_MSG) from exc
+        self._load_vss_extension()
+
+    def _load_vss_extension(self) -> None:
+        """Optionally install and load the DuckDB vss extension (HNSW indexing).
+
+        Gracefully skips if the extension is unavailable or offline.  The
+        EmbeddingStore still works via list_cosine_similarity() without vss;
+        the extension only adds ANN index support for large embedding sets.
+        """
+        try:
+            self._conn.execute("INSTALL vss FROM community")
+        except Exception:
+            pass
+        try:
+            self._conn.execute("LOAD vss")
+            self._vss_available = True
+        except Exception:
+            self._vss_available = False
 
     # ------------------------------------------------------------------
     # Schema management
@@ -361,6 +379,66 @@ class DuckPGQBackend:
             "review_findings": self.node_count("ReviewFinding"),
             "parsing_warnings": self.node_count("ParsingWarning"),
         }
+
+    # ------------------------------------------------------------------
+    # Embeddings (Step A.8)
+    # ------------------------------------------------------------------
+
+    def store_embedding(
+        self,
+        node_id: str,
+        node_type: str,
+        vector: list[float],
+    ) -> None:
+        """Insert or replace a float-array embedding for a node.
+
+        Args:
+            node_id:   The node's ``id`` value.
+            node_type: The node table name (e.g. ``"Function"``).
+            vector:    Embedding as a plain Python list of floats.
+        """
+        self._conn.execute(
+            "INSERT INTO EmbeddingStore (node_id, node_type, embedding)"
+            " VALUES (?, ?, ?)"
+            " ON CONFLICT (node_id, node_type) DO UPDATE SET embedding = excluded.embedding",
+            [node_id, node_type, vector],
+        )
+
+    def embeddings_count(self, node_type: str) -> int:
+        """Return the number of stored embeddings for a given node type."""
+        val = self.query_scalar(
+            f"SELECT COUNT(*) FROM EmbeddingStore WHERE node_type = '{node_type}'"
+        )
+        return int(val) if val is not None else 0
+
+    def search_similar_vss(
+        self,
+        node_type: str,
+        query_vector: list[float],
+        top_k: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Approximate nearest-neighbour search using DuckDB list functions.
+
+        Uses ``list_cosine_similarity`` for exact cosine similarity over the
+        EmbeddingStore.  When the vss extension is loaded, the same table can
+        be accelerated with an HNSW index; query syntax is unchanged.
+
+        Returns a list of dicts with ``node_id`` and ``similarity`` keys,
+        ordered by similarity descending.
+        """
+        result = self._conn.execute(
+            "SELECT node_id,"
+            " list_cosine_similarity(embedding, ?) AS similarity"
+            " FROM EmbeddingStore"
+            " WHERE node_type = ?"
+            " ORDER BY similarity DESC"
+            " LIMIT ?",
+            [query_vector, node_type, top_k],
+        )
+        if result is None or result.description is None:
+            return []
+        cols = [d[0] for d in result.description]
+        return [dict(zip(cols, row)) for row in result.fetchall()]
 
     # ------------------------------------------------------------------
     # Lifecycle

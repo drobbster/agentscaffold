@@ -40,7 +40,7 @@ def conn():
 
 
 def test_schema_version():
-    assert SCHEMA_VERSION == 3
+    assert SCHEMA_VERSION == 4  # bumped in Step A.8 (EmbeddingStore added)
 
 
 def test_node_table_count():
