@@ -361,15 +361,35 @@ This blocks and communicates over stdin/stdout. The client launches this as a su
 
 ### Available Tools
 
+**Graph Intelligence Tools** — direct codebase queries:
+
 | Tool | Description |
 |------|-------------|
-| `scaffold_stats` | Codebase health dashboard |
+| `scaffold_stats` | Codebase health dashboard (files, functions, edges, governance) |
 | `scaffold_query` | Execute raw SQL queries against the knowledge graph |
 | `scaffold_search` | Hybrid search (keyword, semantic, or hybrid mode) |
 | `scaffold_context` | Full context for a symbol (definition, callers, layer, plan history) |
 | `scaffold_impact` | Blast radius analysis for a file or symbol |
-| `scaffold_validate` | Validation checks (staleness, contracts) |
-| `scaffold_review_context` | Review context for a plan (brief, challenges, gaps, verification, retrospective) |
+| `scaffold_validate` | Validation checks (layers, contracts, staleness) |
+| `scaffold_review_context` | Low-level review context for a plan (brief, challenges, gaps, verify, retro) |
+
+**Governance & Lifecycle Tools** — composite workflows triggered by natural language:
+
+| Tool | NL Trigger | Description |
+|------|-----------|-------------|
+| `scaffold_prepare_review` | "review plan X" / "critique plan X" | Full pre-review package: brief, gap analysis, adversarial challenges, ADRs |
+| `scaffold_prepare_implementation` | "implement plan X" / "begin building plan X" | Implementation readiness: blast radius, contract obligations, consumer audit |
+| `scaffold_compare_plans` | "compare plan X and Y" / "do plans overlap" | Overlap and conflict detection between two plans |
+| `scaffold_staleness_check` | "is plan X stale" / "is plan X still valid" | Checks overlapping completions, missing files, changed dependencies |
+| `scaffold_prepare_rewrite` | "rewrite plan X" / "refresh plan X" | Staleness check + current dependency landscape + new contracts |
+| `scaffold_prepare_retro` | "retro on plan X" / "post-implementation review" | Retrospective context with verification results and findings |
+| `scaffold_orient` | "where did we leave off" / "what's blocked" | Session orientation: stats, recent plans, hot files, workflow state |
+| `scaffold_find_studies` | "any studies on X" / "experiments related to X" | Search studies and A/B tests by topic or outcome |
+| `scaffold_prior_experiments` | "prior experiments for plan X" / "has this been tested" | Experiments linked to a plan via reference, tag, or file overlap |
+| `scaffold_find_adrs` | "any ADRs about X" / "what ADR governs X" | Search ADRs by topic keyword or status |
+| `scaffold_decision_context` | "decision history for plan X" / "trace decisions" | Full decision chain: ADRs, spikes, studies, dependency status |
+| `scaffold_record_finding` | "record finding" / "log this review finding" | Persist a ReviewFinding in the graph, linked to plan + files + functions |
+| `scaffold_resolve_finding` | "mark finding resolved" / "resolve this finding" | Mark a finding resolved; retained in graph for audit |
 
 ### Testing the Connection
 

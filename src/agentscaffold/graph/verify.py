@@ -66,7 +66,6 @@ def verify_graph(
     # File existence and hash check
     file_rows = ql(
         store,
-        cypher="MATCH (f:File) RETURN f.id, f.path, f.contentHash",
         sql='SELECT id AS "f.id", path AS "f.path", contentHash AS "f.contentHash" FROM File',
     )
 
@@ -147,11 +146,6 @@ def _deep_verify(
 
         stored_funcs = ql(
             store,
-            cypher=(
-                "MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) "
-                f"WHERE f.path = '{file_path}' "
-                "RETURN fn.name, fn.startLine"
-            ),
             sql=(
                 'SELECT t.fn_name AS "fn.name", t.fn_startLine AS "fn.startLine"'
                 " FROM GRAPH_TABLE(agentscaffold_graph"
@@ -210,7 +204,6 @@ def check_contract_drift(store: GraphBackend) -> dict[str, Any]:
 
     contracts = ql(
         store,
-        cypher="MATCH (c:Contract) RETURN c.id, c.name, c.declaredMethods, c.declaredClasses",
         sql=(
             'SELECT id AS "c.id", name AS "c.name", '
             'declaredMethods AS "c.declaredMethods", declaredClasses AS "c.declaredClasses" '
@@ -236,13 +229,11 @@ def check_contract_drift(store: GraphBackend) -> dict[str, Any]:
             # Check both Function and Method nodes
             fn_match = ql(
                 store,
-                cypher=f"MATCH (fn:Function) WHERE fn.name = '{method_name}' RETURN fn.id LIMIT 1",
                 sql=f"SELECT id AS \"fn.id\" FROM Function WHERE name = '{method_name}' LIMIT 1",
             )
             m_match = (
                 ql(
                     store,
-                    cypher=f"MATCH (m:Method) WHERE m.name = '{method_name}' RETURN m.id LIMIT 1",
                     sql=f"SELECT id AS \"m.id\" FROM Method WHERE name = '{method_name}' LIMIT 1",
                 )
                 if not fn_match
@@ -262,11 +253,6 @@ def check_contract_drift(store: GraphBackend) -> dict[str, Any]:
         for class_name in declared_classes:
             edges = ql(
                 store,
-                cypher=(
-                    f"MATCH (c:Contract)-[:CONTRACT_DECLARES_CLASS]->(n) "
-                    f"WHERE c.id = '{contract_id}' AND n.name = '{class_name}' "
-                    "RETURN n.id LIMIT 1"
-                ),
                 sql=(
                     f'SELECT t.n_id AS "n.id"'
                     f" FROM GRAPH_TABLE(agentscaffold_graph"
@@ -310,7 +296,6 @@ def check_staleness(
     for fp in file_paths:
         rows = ql(
             store,
-            cypher=f"MATCH (f:File) WHERE f.path = '{fp}' RETURN f.contentHash",
             sql=f"SELECT contentHash AS \"f.contentHash\" FROM File WHERE path = '{fp}'",
         )
         if not rows:

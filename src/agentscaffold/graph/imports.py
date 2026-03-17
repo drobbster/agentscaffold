@@ -51,7 +51,6 @@ def process_imports(
     """
     file_rows = ql(
         store,
-        cypher="MATCH (f:File) RETURN f.id, f.path, f.language",
         sql='SELECT id AS "f.id", path AS "f.path", language AS "f.language" FROM File',
     )
 

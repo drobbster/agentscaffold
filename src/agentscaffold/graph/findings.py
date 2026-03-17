@@ -1,7 +1,7 @@
-"""ReviewFinding write-back logic — Step C.1.
+"""ReviewFinding write-back logic.
 
-Provides ``record_finding()`` and ``resolve_finding()`` that work on any
-GraphBackend (DuckPGQ).
+Provides ``record_finding()`` and ``resolve_finding()`` that work on the
+DuckPGQ GraphBackend.
 
 Performance target: <200ms per write.
 """
@@ -74,15 +74,8 @@ def record_finding(
 
     # Link to files
     for fp in file_paths or []:
-        # Look up File node by path
-        from agentscaffold.graph.query_compat import is_duckpgq  # noqa: PLC0415
-
-        if is_duckpgq(store):
-            rows = store.query(f"SELECT id FROM File WHERE path = '{_esc(fp)}'")
-            file_id = rows[0]["id"] if rows else None
-        else:
-            rows = store.query(f"MATCH (f:File) WHERE f.path = '{_esc(fp)}' RETURN f.id LIMIT 1")
-            file_id = rows[0]["f.id"] if rows else None
+        rows = store.query(f"SELECT id FROM File WHERE path = '{_esc(fp)}'")
+        file_id = rows[0]["id"] if rows else None
 
         if file_id:
             store.create_edge("FINDING_ABOUT_FILE", "ReviewFinding", finding_id, "File", file_id)
@@ -122,18 +115,10 @@ def resolve_finding(
     """
     t0 = time.monotonic()
 
-    from agentscaffold.graph.query_compat import is_duckpgq  # noqa: PLC0415
-
-    if is_duckpgq(store):
-        store.execute(
-            f"UPDATE ReviewFinding SET status = 'resolved', resolution = '{_esc(resolution)}'"
-            f" WHERE id = '{_esc(finding_id)}'"
-        )
-    else:
-        store.execute(
-            f"MATCH (rf:ReviewFinding) WHERE rf.id = '{_esc(finding_id)}'"
-            f" SET rf.status = 'resolved', rf.resolution = '{_esc(resolution)}'"
-        )
+    store.execute(
+        f"UPDATE ReviewFinding SET status = 'resolved', resolution = '{_esc(resolution)}'"
+        f" WHERE id = '{_esc(finding_id)}'"
+    )
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {
@@ -162,39 +147,25 @@ def get_open_findings(
     Returns:
         List of finding dicts, sorted by severity then creation order.
     """
-    from agentscaffold.graph.query_compat import is_duckpgq, ql  # noqa: PLC0415
+    from agentscaffold.graph.query_compat import ql  # noqa: PLC0415
 
     if file_path:
-        if is_duckpgq(store):
-            rows = store.query(
-                f'SELECT t.rf_id AS "rf.id", t.rf_reviewType AS "rf.reviewType",'
-                f' t.rf_planNumber AS "rf.planNumber", t.rf_severity AS "rf.severity",'
-                f' t.rf_category AS "rf.category", t.rf_finding AS "rf.finding"'
-                f" FROM GRAPH_TABLE(agentscaffold_graph"
-                f"   MATCH (rf:ReviewFinding)-[e:FINDING_ABOUT_FILE]->(f:File)"
-                f"   WHERE rf.status = 'open' AND f.path = '{_esc(file_path)}'"
-                f"   COLUMNS (rf.id AS rf_id, rf.reviewType AS rf_reviewType,"
-                f"            rf.planNumber AS rf_planNumber, rf.severity AS rf_severity,"
-                f"            rf.category AS rf_category, rf.finding AS rf_finding)"
-                f" ) t LIMIT {limit}"
-            )
-        else:
-            rows = store.query(
-                f"MATCH (rf:ReviewFinding)-[:FINDING_ABOUT_FILE]->(f:File)"
-                f" WHERE rf.status = 'open' AND f.path = '{_esc(file_path)}'"
-                f" RETURN rf.id, rf.reviewType, rf.planNumber, rf.severity,"
-                f" rf.category, rf.finding LIMIT {limit}"
-            )
+        rows = store.query(
+            f'SELECT t.rf_id AS "rf.id", t.rf_reviewType AS "rf.reviewType",'
+            f' t.rf_planNumber AS "rf.planNumber", t.rf_severity AS "rf.severity",'
+            f' t.rf_category AS "rf.category", t.rf_finding AS "rf.finding"'
+            f" FROM GRAPH_TABLE(agentscaffold_graph"
+            f"   MATCH (rf:ReviewFinding)-[e:FINDING_ABOUT_FILE]->(f:File)"
+            f"   WHERE rf.status = 'open' AND f.path = '{_esc(file_path)}'"
+            f"   COLUMNS (rf.id AS rf_id, rf.reviewType AS rf_reviewType,"
+            f"            rf.planNumber AS rf_planNumber, rf.severity AS rf_severity,"
+            f"            rf.category AS rf_category, rf.finding AS rf_finding)"
+            f" ) t LIMIT {limit}"
+        )
     else:
         plan_filter = f" AND planNumber = {plan_number}" if plan_number is not None else ""
-        plan_filter_kuzu = f" AND rf.planNumber = {plan_number}" if plan_number is not None else ""
         rows = ql(
             store,
-            cypher=(
-                f"MATCH (rf:ReviewFinding) WHERE rf.status = 'open'{plan_filter_kuzu}"
-                f" RETURN rf.id, rf.reviewType, rf.planNumber, rf.severity,"
-                f" rf.category, rf.finding LIMIT {limit}"
-            ),
             sql=(
                 f'SELECT id AS "rf.id", reviewType AS "rf.reviewType",'
                 f' planNumber AS "rf.planNumber", severity AS "rf.severity",'
@@ -215,5 +186,5 @@ def get_open_findings(
 
 
 def _esc(s: str) -> str:
-    """Minimal SQL/Cypher string escaping (single-quote doubling)."""
+    """Minimal SQL string escaping (single-quote doubling)."""
     return s.replace("'", "''")

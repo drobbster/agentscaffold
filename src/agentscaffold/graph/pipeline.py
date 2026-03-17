@@ -414,10 +414,6 @@ def _rebuild_symbol_table(store: GraphBackend, symbol_table: SymbolTable) -> Non
 
     for row in ql(
         store,
-        cypher=(
-            "MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) "
-            "RETURN f.id, f.path, fn.id, fn.name, fn.isExported, fn.startLine"
-        ),
         sql=(
             'SELECT t.f_id AS "f.id", t.f_path AS "f.path",'
             ' t.fn_id AS "fn.id", t.fn_name AS "fn.name",'
@@ -445,10 +441,6 @@ def _rebuild_symbol_table(store: GraphBackend, symbol_table: SymbolTable) -> Non
 
     for row in ql(
         store,
-        cypher=(
-            "MATCH (f:File)-[:DEFINES_CLASS]->(c:Class) "
-            "RETURN f.id, f.path, c.id, c.name, c.isExported, c.startLine"
-        ),
         sql=(
             'SELECT t.f_id AS "f.id", t.f_path AS "f.path",'
             ' t.c_id AS "c.id", t.c_name AS "c.name",'
@@ -476,10 +468,6 @@ def _rebuild_symbol_table(store: GraphBackend, symbol_table: SymbolTable) -> Non
 
     for row in ql(
         store,
-        cypher=(
-            "MATCH (c:Class)-[:HAS_METHOD]->(m:Method) "
-            "RETURN m.id, m.name, m.className, m.filePath, m.isExported, m.startLine"
-        ),
         sql=(
             'SELECT t.m_id AS "m.id", t.m_name AS "m.name",'
             ' t.m_className AS "m.className", t.m_filePath AS "m.filePath",'

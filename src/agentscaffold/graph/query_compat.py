@@ -2,10 +2,6 @@
 
 Provides ``ql()``, ``ql_scalar()``, and ``ql_execute()`` that execute SQL
 queries against the DuckPGQ backend.
-
-The ``cypher`` parameter is accepted but ignored — it exists only to avoid
-breaking call sites during the transition from the removed KuzuDB backend.
-A future cleanup pass will remove the cypher parameters entirely.
 """
 
 from __future__ import annotations
@@ -23,7 +19,6 @@ def is_duckpgq(store: Any) -> bool:
 
 def ql(
     store: GraphBackend,
-    cypher: str = "",
     sql: str = "",
     params: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
@@ -31,7 +26,6 @@ def ql(
 
     Args:
         store: A GraphBackend instance.
-        cypher: Ignored (legacy parameter).
         sql: DuckDB SQL query string.
         params: Optional parameter dict forwarded to the backend's query().
 
@@ -43,7 +37,6 @@ def ql(
 
 def ql_scalar(
     store: GraphBackend,
-    cypher: str = "",
     sql: str = "",
     params: dict[str, Any] | None = None,
 ) -> Any:
@@ -56,7 +49,6 @@ def ql_scalar(
 
 def ql_execute(
     store: GraphBackend,
-    cypher: str = "",
     sql: str = "",
     params: dict[str, Any] | None = None,
 ) -> Any:

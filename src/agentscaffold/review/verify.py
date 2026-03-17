@@ -83,7 +83,6 @@ def _check_plan_compliance(
         escaped = file_id.replace("\\", "\\\\").replace("'", "\\'")
         rows = ql(
             store,
-            cypher=f"MATCH (f:File) WHERE f.id = '{escaped}' RETURN f.id",
             sql=f"SELECT id AS \"f.id\" FROM File WHERE id = '{escaped}'",
         )
         if not rows:
@@ -124,10 +123,6 @@ def _check_signatures(
         escaped = fpath.replace("\\", "\\\\").replace("'", "\\'")
         funcs = ql(
             store,
-            cypher=(
-                f"MATCH (fn:Function) WHERE fn.filePath = '{escaped}' "
-                "RETURN fn.name, fn.signature"
-            ),
             sql=(
                 f'SELECT name AS "fn.name", signature AS "fn.signature" '
                 f"FROM Function WHERE filePath = '{escaped}'"
@@ -135,7 +130,6 @@ def _check_signatures(
         )
         classes = ql(
             store,
-            cypher=f"MATCH (c:Class) WHERE c.filePath = '{escaped}' RETURN c.name",
             sql=f"SELECT name AS \"c.name\" FROM Class WHERE filePath = '{escaped}'",
         )
         total_defs += len(funcs) + len(classes)
@@ -203,10 +197,6 @@ def _check_test_delta(
         escaped = stem.replace("\\", "\\\\").replace("'", "\\'")
         test_files = ql(
             store,
-            cypher=(
-                f"MATCH (f:File) WHERE f.path CONTAINS 'test' AND f.path CONTAINS '{escaped}' "
-                "RETURN f.path LIMIT 1"
-            ),
             sql=(
                 'SELECT path AS "f.path" FROM File'
                 f" WHERE CONTAINS(path, 'test') AND CONTAINS(path, '{escaped}') LIMIT 1"

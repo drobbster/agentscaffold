@@ -770,6 +770,52 @@ throughout -- the shift is from explicit CLI commands to conversational intent.
 
 ---
 
+## NL Intent Routing Reference
+
+AgentScaffold's MCP server maps natural language trigger phrases to specific tools.
+When you use one of the phrases below in chat, the agent should route to the corresponding
+MCP tool. Use this table to verify routing behavior, write CLAUDE.md / AGENTS.md rules,
+or understand what context each workflow produces.
+
+| NL Trigger Phrase | Routes To | What It Returns |
+|-------------------|-----------|----------------|
+| "review plan X" / "critique plan X" / "devil's advocate on plan X" / "pressure-test plan X" | `scaffold_prepare_review` | Brief + adversarial challenges + gap analysis + governing ADRs + spikes |
+| "implement plan X" / "start plan X" / "begin building plan X" / "approved to go on plan X" | `scaffold_prepare_implementation` | Dependency brief + blast radius per file + contract obligations + consumer audit |
+| "compare plan X and plan Y" / "do plans X and Y overlap" / "check for conflicts between X and Y" | `scaffold_compare_plans` | Shared files, supersession candidates, conflict summary |
+| "is plan X stale" / "is plan X still valid" / "has anything changed since plan X" | `scaffold_staleness_check` | Overlapping completions, missing files, changed dependencies, contradicting studies |
+| "rewrite plan X" / "update plan X" / "refresh plan X with current state" | `scaffold_prepare_rewrite` | Staleness analysis + new dependency landscape + new contracts since writing |
+| "retro on plan X" / "post-implementation review" / "retrospective for plan X" | `scaffold_prepare_retro` | Verification results + retro enrichment + modification frequency + related studies |
+| "where did we leave off" / "what's the current state" / "what's blocked" / "what are the next steps" | `scaffold_orient` | Codebase stats + recent plans + hot files + active ADRs + workflow state |
+| "any studies on X" / "experiments related to X" / "show me studies about X" | `scaffold_find_studies` | Studies filtered by topic keyword or outcome |
+| "prior experiments for plan X" / "has this been tested" / "what experiments relate to plan X" | `scaffold_prior_experiments` | Directly referenced studies + tag-matched + file-overlap studies |
+| "any ADRs about X" / "what ADR governs X" / "which architecture decision governs X" | `scaffold_find_adrs` | ADRs filtered by topic keyword or status |
+| "decision history for plan X" / "trace the decisions for plan X" / "what ADR governs plan X" | `scaffold_decision_context` | Governing ADRs + validation spikes + supporting studies + dependency status |
+| "record finding" / "log this review finding" / "I found an issue in plan X" | `scaffold_record_finding` | Creates ReviewFinding node in graph, linked to plan + files + functions |
+| "mark finding resolved" / "resolve this finding" / "fix has been addressed" | `scaffold_resolve_finding` | Updates finding status to resolved; retained in graph for audit |
+| "context for symbol X" / "what calls X" / "what does X depend on" | `scaffold_context` | Full symbol context: definition, callers, callees, layer, plan history, contracts |
+| "blast radius for file X" / "who imports X" / "impact of changing X" | `scaffold_impact` | Transitive consumers, affected layers, governance context |
+| "search for X" / "find code related to X" | `scaffold_search` | Hybrid search results (keyword + semantic, configurable mode) |
+
+### Configuring Intent Routing in CLAUDE.md
+
+If your project uses Claude Code, generate a routing policy file:
+
+```bash
+scaffold agents claude
+```
+
+This creates or updates `CLAUDE.md` with the full intent map. If you already have `CLAUDE.md`
+content, merge or append the generated policy. The routing rules are what cause the agent
+to call these tools automatically when you use trigger phrases.
+
+For Cursor, the routing policy goes into `.cursor/rules/agentscaffold.md`:
+
+```bash
+scaffold agents cursor
+```
+
+---
+
 ## Knowledge Graph: Codebase Intelligence
 
 AgentScaffold can build a knowledge graph of your codebase using `scaffold index`. This graph powers several features: auto-enriched templates, graph-backed reviews, MCP tool integration, and a living Codebase Intelligence section in AGENTS.md.
@@ -858,14 +904,16 @@ Languages without import/call resolution still get full structural indexing (def
 AgentScaffold tracks coding sessions to provide context continuity:
 
 ```bash
-# Start a session (associate with plan numbers)
+# Start a session — positional shorthand or full options
+scaffold session start "Implementing data pipeline"
 scaffold session start --plan 42 --summary "Implementing data pipeline"
 
 # Record which files you modified (usually done automatically)
 # The session tracks modifications via SESSION_MODIFIED edges
 
-# End the session with a summary
-scaffold session end <session-id> --summary "Completed phase 1"
+# End the session — omit ID to auto-end the most recent session
+scaffold session end --summary "Completed phase 1"
+scaffold session end abc123 --summary "Completed phase 1"   # explicit ID
 
 # List recent sessions
 scaffold session list
@@ -1018,7 +1066,9 @@ This helps identify natural module boundaries, tightly coupled clusters that sho
 
 ### MCP Integration
 
-When running the MCP server (`scaffold mcp`), graph-powered tools are available to AI agents:
+When running the MCP server (`scaffold mcp`), 20 tools are available to AI agents across two groups.
+
+**Graph Intelligence Tools** — direct codebase queries:
 
 | Tool | What It Does |
 |------|-------------|
@@ -1028,7 +1078,25 @@ When running the MCP server (`scaffold mcp`), graph-powered tools are available 
 | `scaffold_context` | Full context for a symbol (definition, callers, layer, plan history) |
 | `scaffold_impact` | Blast radius analysis for a file or symbol |
 | `scaffold_validate` | Validation checks (layers, contracts, staleness) |
-| `scaffold_review_context` | Review context (brief, challenges, gaps, verify, retro) for a plan |
+| `scaffold_review_context` | Low-level review context (brief, challenges, gaps, verify, retro) for a plan |
+
+**Governance & Lifecycle Tools** — composite workflows triggered by natural language:
+
+| Tool | NL Trigger | What It Does |
+|------|-----------|-------------|
+| `scaffold_prepare_review` | "review plan X" / "critique plan X" / "devil's advocate on plan X" | Full pre-review package: brief, gap analysis, adversarial challenges, governing ADRs, spikes |
+| `scaffold_prepare_implementation` | "implement plan X" / "start plan X" / "begin building plan X" | Implementation readiness: dependency brief, per-file blast radius, contract obligations, consumer audit |
+| `scaffold_compare_plans` | "compare plan X and Y" / "do plans X and Y overlap" | Overlap and conflict detection between two plans |
+| `scaffold_staleness_check` | "is plan X stale" / "is plan X still valid" | Checks overlapping completions, missing files, changed dependencies, contradicting studies |
+| `scaffold_prepare_rewrite` | "rewrite plan X" / "update plan X" / "refresh plan X" | Staleness check + new dependency landscape + contracts added since plan was written |
+| `scaffold_prepare_retro` | "retro on plan X" / "post-implementation review" | Retrospective context: verification results, retro enrichment, modification frequency, related studies |
+| `scaffold_orient` | "where did we leave off" / "what's the current state" / "what's blocked" | Session-start orientation: codebase stats, recent plans, hot files, workflow state, blockers, next steps |
+| `scaffold_find_studies` | "any studies on X" / "experiments related to X" | Search studies and A/B tests by topic or outcome |
+| `scaffold_prior_experiments` | "prior experiments for plan X" / "has this been tested" | Find experiments linked to a plan via direct reference, tag overlap, or file overlap |
+| `scaffold_find_adrs` | "any ADRs about X" / "what ADR governs X" | Search architectural decision records by topic or status |
+| `scaffold_decision_context` | "decision history for plan X" / "trace the decisions for plan X" | Full decision chain: governing ADRs, validation spikes, supporting studies, dependency status |
+| `scaffold_record_finding` | "record finding" / "log this review finding" | Create a ReviewFinding node linked to a plan, files, and functions — persists across sessions |
+| `scaffold_resolve_finding` | "mark finding resolved" / "resolve this finding" | Mark a finding as resolved; retained in graph for audit trail |
 
 The MCP tools return both structured JSON and formatted markdown, so agents can parse the data programmatically or display it directly.
 
@@ -1127,10 +1195,21 @@ scaffold index
 
 ### Tree-sitter grammar not loading for a language
 
-If `scaffold index` logs warnings about a missing language (e.g. `No language_c() in tree_sitter_c`), reinstall the `[graph]` extra to get all bundled grammars:
+Warnings like `No language_c() in tree_sitter_c` or `No language_cpp() in tree_sitter_cpp` were
+a bug in agentscaffold 0.3.0 (wrong function name lookup for C and C++). Upgrade to 0.3.1+ to
+resolve them:
 
 ```bash
-pip install --force-reinstall "agentscaffold[graph]"
+pip install --upgrade agentscaffold
+```
+
+If you see similar warnings for other languages on 0.3.1+, the grammar package for that language
+may not be installed. Install it with the appropriate extra:
+
+```bash
+pip install "agentscaffold[graph-c]"    # C
+pip install "agentscaffold[graph-cpp]"  # C++
+pip install "agentscaffold[graph]"      # Python, JS, TS
 ```
 
 Supported languages: Python, JavaScript, TypeScript, Go, Rust, Java, C, C++.

@@ -214,11 +214,6 @@ def _test_coverage_gaps(
         file_stem = escaped.split("/")[-1].split(".")[0]
         test_refs = ql(
             store,
-            cypher=(
-                "MATCH (f:File) "
-                f"WHERE f.path CONTAINS 'test' AND f.path CONTAINS '{file_stem}' "
-                "RETURN f.path LIMIT 3"
-            ),
             sql=(
                 'SELECT path AS "f.path" FROM File'
                 f" WHERE CONTAINS(path, 'test') AND CONTAINS(path, '{file_stem}') LIMIT 3"
@@ -264,7 +259,6 @@ def _dependency_completeness(
         escaped = fpath.replace("\\", "\\\\").replace("'", "\\'")
         imports = ql(
             store,
-            cypher=f"MATCH (a:File)-[:IMPORTS]->(b:File) WHERE a.path = '{escaped}' RETURN b.path",
             sql=(
                 f'SELECT t.b_path AS "b.path"'
                 f" FROM GRAPH_TABLE(agentscaffold_graph"

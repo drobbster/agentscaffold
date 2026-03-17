@@ -35,7 +35,6 @@ def detect_communities(
     # Build adjacency from import and call edges
     import_edges = ql(
         store,
-        cypher="MATCH (a:File)-[:IMPORTS]->(b:File) RETURN a.id, b.id",
         sql=(
             'SELECT t.a_id AS "a.id", t.b_id AS "b.id"'
             " FROM GRAPH_TABLE(agentscaffold_graph"
@@ -45,13 +44,6 @@ def detect_communities(
     )
     call_edges = ql(
         store,
-        cypher=(
-            "MATCH (a:Function)-[:CALLS]->(b:Function) "
-            "MATCH (fa:File)-[:DEFINES_FUNCTION]->(a) "
-            "MATCH (fb:File)-[:DEFINES_FUNCTION]->(b) "
-            "WHERE fa.id <> fb.id "
-            "RETURN DISTINCT fa.id, fb.id"
-        ),
         sql=(
             'SELECT DISTINCT t.fa_id AS "fa.id", t.fb_id AS "fb.id"'
             " FROM GRAPH_TABLE(agentscaffold_graph"
@@ -111,7 +103,6 @@ def detect_communities(
     # Clear old communities
     ql_execute(
         store,
-        cypher="MATCH (n:Community) DETACH DELETE n",
         sql="DELETE FROM Community",
     )
 
@@ -122,7 +113,6 @@ def detect_communities(
         for fid in members:
             rows = ql(
                 store,
-                cypher=f"MATCH (f:File) WHERE f.id = '{fid}' RETURN f.path",
                 sql=f"SELECT path AS \"f.path\" FROM File WHERE id = '{fid}'",
             )
             if rows:
@@ -134,10 +124,6 @@ def detect_communities(
         for fid in members:
             fc = ql_scalar(
                 store,
-                cypher=(
-                    f"MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) "
-                    f"WHERE f.id = '{fid}' RETURN count(fn)"
-                ),
                 sql=(
                     f"SELECT COUNT(*) FROM GRAPH_TABLE(agentscaffold_graph"
                     f" MATCH (f:File)-[e:DEFINES_FUNCTION]->(fn:Function)"
@@ -183,11 +169,6 @@ def get_communities(store: GraphBackend) -> list[dict[str, Any]]:
     """Return all communities with their member files."""
     communities = ql(
         store,
-        cypher=(
-            "MATCH (c:Community) "
-            "RETURN c.id, c.name, c.label, c.fileCount, c.functionCount "
-            "ORDER BY c.fileCount DESC"
-        ),
         sql=(
             'SELECT id AS "c.id", name AS "c.name", label AS "c.label",'
             ' fileCount AS "c.fileCount", functionCount AS "c.functionCount"'
@@ -199,11 +180,6 @@ def get_communities(store: GraphBackend) -> list[dict[str, Any]]:
         cid = comm["c.id"]
         members = ql(
             store,
-            cypher=(
-                f"MATCH (f:File)-[:MEMBER_OF_COMMUNITY]->(c:Community) "
-                f"WHERE c.id = '{cid}' "
-                f"RETURN f.path ORDER BY f.path"
-            ),
             sql=(
                 f'SELECT t.f_path AS "f.path"'
                 f" FROM GRAPH_TABLE(agentscaffold_graph"
