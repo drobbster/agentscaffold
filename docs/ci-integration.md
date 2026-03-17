@@ -72,6 +72,10 @@ Add a validation step to any workflow:
   run: scaffold validate
 ```
 
+`scaffold validate` runs all checks: integration (architecture layer violations), prohibitions,
+governance format (study frontmatter, learnings table structure), plan lint (active plans only),
+secrets scanning, and retrospective completeness.
+
 For agent-created PRs, use the optional flags:
 
 ```yaml
@@ -79,6 +83,43 @@ For agent-created PRs, use the optional flags:
   run: scaffold validate --check-safety-boundaries
 - name: Validate session summary
   run: scaffold validate --check-session-summary
+```
+
+### Pre-edit validation (hooks)
+
+The `--pre-edit` flag runs a fast subset (integration + prohibitions + active plan lint) suitable
+for PreToolUse hooks that must return quickly:
+
+```yaml
+enforcement:
+  rules:
+    - event: PreToolUse
+      matcher: "Edit|Write|NotebookEdit"
+      command: scaffold validate --pre-edit
+```
+
+This blocks edits that violate architecture constraints or have malformed active plans, without
+running slower checks like governance format or secrets scanning.
+
+### Parallel test and validate jobs
+
+For larger projects, run tests and validation in parallel:
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: pip install uv && uv venv && uv sync --locked --extra dev
+      - run: uv run pytest -q
+
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: pip install uv && uv venv && uv sync --locked --extra dev
+      - run: uv run scaffold validate
 ```
 
 Ensure `agentscaffold` is installed (e.g. `pip install agentscaffold` or `pip install -e ".[dev]"` if it is a project dependency).

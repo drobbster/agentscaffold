@@ -203,9 +203,8 @@ class DuckPGQBackend:
     def query(self, query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Execute a SQL query and return results as a list of dicts.
 
-        Column names in returned dicts are the SQL column names (not
-        dot-qualified like KuzuBackend returns for Cypher).  Use
-        ``query_compat.py`` for backend-agnostic queries.
+        Column names in returned dicts are the raw SQL column names.
+        Use ``query_compat.py`` for backend-agnostic queries.
         """
         try:
             if params:
@@ -244,7 +243,7 @@ class DuckPGQBackend:
         """Insert a single node (row) into the given table.
 
         Silently ignores duplicate ``id`` values (ON CONFLICT DO NOTHING).
-        None values are stored as empty strings to match KuzuBackend behaviour.
+        None values are stored as empty strings.
         """
         if not props:
             return

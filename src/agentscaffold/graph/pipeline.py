@@ -15,17 +15,13 @@ from rich.console import Console
 from rich.table import Table
 
 from agentscaffold.graph.backend import GraphBackend
-from agentscaffold.graph.kuzu_backend import KuzuBackend
+from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
 from agentscaffold.graph.symbol_table import SymbolTable
 
 
 def _open_store_for_pipeline(db_path: Path, backend_name: str) -> GraphBackend:
-    """Instantiate the correct backend for pipeline writes."""
-    if backend_name == "duckpgq":
-        from agentscaffold.graph.duckpgq_backend import DuckPGQBackend  # noqa: PLC0415
-
-        return DuckPGQBackend(db_path)
-    return KuzuBackend(db_path)
+    """Instantiate the backend for pipeline writes."""
+    return DuckPGQBackend(db_path)
 
 
 if TYPE_CHECKING:
@@ -54,7 +50,7 @@ def run_pipeline(
     if not db_path.is_absolute():
         db_path = root / db_path
 
-    backend_name = (graph_config.backend if graph_config else None) or "kuzu"
+    backend_name = (graph_config.backend if graph_config else None) or "duckpgq"
     t0 = time.monotonic()
 
     store = _open_store_for_pipeline(db_path, backend_name)

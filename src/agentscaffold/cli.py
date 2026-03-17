@@ -854,20 +854,11 @@ def graph_orient() -> None:
 @graph_app.command("verify")
 def graph_verify(
     deep: bool = typer.Option(False, "--deep", help="Re-parse a sample of files for deep check."),
-    compare_backends: bool = typer.Option(
-        False,
-        "--compare-backends",
-        help="Compare KuzuDB and DuckPGQ backends for count parity.",
-    ),
 ) -> None:
     """Spot-check graph accuracy against the filesystem."""
     from agentscaffold.config import load_config
     from agentscaffold.graph import graph_available, open_graph
     from agentscaffold.graph.verify import (
-        compare_backends as _compare_backends,
-    )
-    from agentscaffold.graph.verify import (
-        print_comparison_report,
         print_verification_report,
         verify_graph,
     )
@@ -876,21 +867,6 @@ def graph_verify(
     if not graph_available(config):
         console.print("[red]No knowledge graph found. Run 'scaffold index' first.[/red]")
         raise SystemExit(1)
-
-    if compare_backends:
-        try:
-            duck_store = open_graph(config, backend="duckpgq")
-        except Exception as exc:
-            console.print(f"[red]Could not open DuckPGQ backend: {exc}[/red]")
-            raise SystemExit(1)
-        kuzu_store = open_graph(config, backend="kuzu")
-        try:
-            report = _compare_backends(kuzu_store, duck_store)
-        finally:
-            kuzu_store.close()
-            duck_store.close()
-        print_comparison_report(report)
-        raise SystemExit(0 if report["verdict"] == "PASS" else 1)
 
     store = open_graph(config)
     report = verify_graph(store, Path.cwd(), deep=deep)

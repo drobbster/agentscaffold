@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
 from agentscaffold.graph.pipeline import run_pipeline
-from agentscaffold.graph.store import GraphStore
 
 FIXTURE_REPO = Path(__file__).parent / "fixtures" / "sample_repo"
 
@@ -32,7 +32,7 @@ def indexed_store(tmp_path_factory):
 
     run_pipeline(FIXTURE_REPO, config)
 
-    store = GraphStore(db_path)
+    store = DuckPGQBackend(db_path)
     yield store, config
     store.close()
 

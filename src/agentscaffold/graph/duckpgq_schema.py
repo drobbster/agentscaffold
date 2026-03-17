@@ -29,16 +29,12 @@ Each SQL edge table has two fixed FK columns:
 
 Plus any per-edge properties (e.g., ``importedNames``, ``confidence``).
 
-Column type mapping from KuzuDB schema
----------------------------------------
-  KuzuDB   →  DuckDB
+Column type mapping
+-------------------
   STRING   →  VARCHAR
   INT64    →  BIGINT
   BOOLEAN  →  BOOLEAN
   DOUBLE   →  DOUBLE
-
-This module is the DuckDB-native counterpart of ``graph/schema.py`` (KuzuDB).
-Both define SCHEMA_VERSION = 4 after Step A.8 (EmbeddingStore added).
 
 Query validation: all DuckPGQ query patterns were validated in
 ``dev_docs/spike-duckpgq-query-validation.md`` (Step A.0.5, all 5 patterns

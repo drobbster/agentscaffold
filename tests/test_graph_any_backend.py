@@ -1,8 +1,6 @@
-"""GraphBackend protocol tests parametrized across kuzu and duckpgq — Step A.11.
+"""GraphBackend protocol tests for DuckPGQ.
 
-Uses the ``any_store`` fixture from conftest.py which is parametrized over
-["kuzu", "duckpgq"].  Each variant is skipped if the backend's Python
-package is not installed, so the suite degrades gracefully in CI.
+Uses the ``any_store`` fixture from conftest.py.
 """
 
 from __future__ import annotations
@@ -114,7 +112,7 @@ def test_add_and_get_parsing_warning(any_store: GraphBackend) -> None:
     any_store.add_parsing_warning("w-1", "src/broken.py", "parse", "syntax error")
     warnings = any_store.get_parsing_warnings()
     assert len(warnings) == 1
-    # Key name differs by backend: "w.filePath" (kuzu) vs "filePath" (duckpgq)
+    # Key name in DuckPGQ results
     row = warnings[0]
     file_path = row.get("filePath") or row.get("w.filePath")
     assert file_path == "src/broken.py"

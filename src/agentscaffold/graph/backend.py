@@ -1,7 +1,6 @@
 """GraphBackend Protocol: the abstract interface all graph backend implementations must satisfy.
 
-Both KuzuBackend (KuzuDB) and DuckPGQBackend (DuckDB + duckpgq) implement this protocol,
-enabling consumers to be backend-agnostic.
+DuckPGQBackend (DuckDB + duckpgq) implements this protocol.
 
 Usage::
 
@@ -10,7 +9,7 @@ Usage::
         rows = store.query("...")
 
 Design notes:
-- All methods match the current GraphStore public surface exactly (audited in Plan 149 Step A.0).
+- All methods match the DuckPGQBackend public surface.
 - schema_version() and schema_current() are methods, not properties, so they appear in
   both implementations identically.
 - The Protocol uses runtime_checkable so isinstance() checks work if needed.

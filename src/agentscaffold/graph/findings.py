@@ -1,7 +1,7 @@
 """ReviewFinding write-back logic — Step C.1.
 
 Provides ``record_finding()`` and ``resolve_finding()`` that work on any
-GraphBackend (KuzuDB or DuckPGQ).
+GraphBackend (DuckPGQ).
 
 Performance target: <200ms per write.
 """

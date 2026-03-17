@@ -1,31 +1,11 @@
-"""Backend-agnostic query dispatch for AgentScaffold — Step A.7.
+"""Backend-agnostic query helpers for AgentScaffold.
 
-Provides ``ql()``, ``ql_scalar()``, and ``ql_execute()`` helpers that route
-to the correct query dialect (Cypher for KuzuDB, SQL for DuckPGQ) based on
-the runtime backend type.
+Provides ``ql()``, ``ql_scalar()``, and ``ql_execute()`` that execute SQL
+queries against the DuckPGQ backend.
 
-Usage in consumer modules::
-
-    from agentscaffold.graph.query_compat import ql, ql_scalar, is_duckpgq
-
-    rows = ql(
-        store,
-        cypher="MATCH (f:File) WHERE f.path = 'src/a.py' RETURN f.id",
-        sql="SELECT id FROM File WHERE path = 'src/a.py'",
-    )
-
-Translation rules (see dev_docs/spike-duckpgq-query-validation.md for details):
-
-  KuzuDB Cypher pattern          →  DuckPGQ / SQL equivalent
-  -------------------------------------------------------------
-  MATCH ... RETURN a.x           →  GRAPH_TABLE + COLUMNS (a.x AS ax) +
-                                     outer SELECT t.ax AS "a.x"
-  [:REL*1..N]                    →  -[e:REL]->{1,N}
-  Multiple MATCH clauses         →  Single chained path pattern
-  count(n) AS alias + ORDER BY   →  Wrap GRAPH_TABLE in subquery, GROUP BY outside
-  HAVING on single-table scan    →  Pure SQL GROUP BY ... HAVING (no GRAPH_TABLE)
-  a.prop CONTAINS 'x'            →  CONTAINS(a.prop, 'x')  (DuckDB string fn)
-  Single-node scan (no edges)    →  Direct SQL SELECT FROM Table (no GRAPH_TABLE)
+The ``cypher`` parameter is accepted but ignored — it exists only to avoid
+breaking call sites during the transition from the removed KuzuDB backend.
+A future cleanup pass will remove the cypher parameters entirely.
 """
 
 from __future__ import annotations
@@ -37,65 +17,48 @@ if TYPE_CHECKING:
 
 
 def is_duckpgq(store: Any) -> bool:
-    """Return True if *store* is a DuckPGQBackend instance.
-
-    Uses class-name check to avoid importing DuckPGQBackend (which requires
-    duckdb) in modules that also support Kuzu-only environments.
-    Unwraps proxy/wrapper objects (e.g. _NoCloseStore) that delegate via _store.
-    """
-    underlying = getattr(store, "_store", store)
-    return type(underlying).__name__ == "DuckPGQBackend"
+    """Return True. Only the DuckPGQ backend is supported."""
+    return True
 
 
 def ql(
     store: GraphBackend,
-    cypher: str,
-    sql: str,
+    cypher: str = "",
+    sql: str = "",
     params: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Execute the dialect-appropriate query and return a list of dicts.
+    """Execute a SQL query and return a list of dicts.
 
     Args:
-        store: Any GraphBackend instance.
-        cypher: KuzuDB Cypher query string (used when backend is Kuzu).
-        sql: DuckDB SQL query string, may include GRAPH_TABLE (used for DuckPGQ).
+        store: A GraphBackend instance.
+        cypher: Ignored (legacy parameter).
+        sql: DuckDB SQL query string.
         params: Optional parameter dict forwarded to the backend's query().
 
     Returns:
-        List of row dicts.  Column names match the RETURN / SELECT column
-        names of the executed query.
+        List of row dicts.
     """
-    if is_duckpgq(store):
-        return store.query(sql, params)
-    return store.query(cypher, params)
+    return store.query(sql, params)
 
 
 def ql_scalar(
     store: GraphBackend,
-    cypher: str,
-    sql: str,
+    cypher: str = "",
+    sql: str = "",
     params: dict[str, Any] | None = None,
 ) -> Any:
-    """Execute the dialect-appropriate scalar query and return a single value.
+    """Execute a SQL scalar query and return a single value.
 
     Returns None if the query yields no rows.
     """
-    if is_duckpgq(store):
-        return store.query_scalar(sql, params)
-    return store.query_scalar(cypher, params)
+    return store.query_scalar(sql, params)
 
 
 def ql_execute(
     store: GraphBackend,
-    cypher: str,
-    sql: str,
+    cypher: str = "",
+    sql: str = "",
     params: dict[str, Any] | None = None,
 ) -> Any:
-    """Execute the dialect-appropriate write statement.
-
-    Use this for CREATE / UPDATE / DELETE / SET operations that return no
-    meaningful result.
-    """
-    if is_duckpgq(store):
-        return store.execute(sql, params)
-    return store.execute(cypher, params)
+    """Execute a SQL write statement (CREATE/UPDATE/DELETE)."""
+    return store.execute(sql, params)

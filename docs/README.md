@@ -10,9 +10,7 @@ AgentScaffold supports two interaction modes:
   setup, verification, and unattended workflows.
 
 If you already used the governance framework before knowledge graph and MCP tooling,
-start here:
-
-- [Migrating Governance Workflow to NL + MCP](migrating-governance-to-nl-mcp.md)
+see the "Migration Guide for Governance-First Users" section in the [User Guide](user-guide.md).
 
 ## Template Set Included by Init
 
@@ -29,7 +27,6 @@ When you run `scaffold init`, AgentScaffold installs the full core planning temp
 |----------|-------------|
 | [Getting Started](getting-started.md) | Installation, init, first plan, knowledge graph, review, execution |
 | [User Guide](user-guide.md) | Session workflow, knowledge graph, greenfield onboarding, review patterns, MCP tools |
-| [Migrating Governance to NL + MCP](migrating-governance-to-nl-mcp.md) | Command-heavy to conversational migration while preserving governance rigor |
 | [Configuration](configuration.md) | Full scaffold.yaml reference, gates, rigor presets |
 | [Domain Packs](domain-packs.md) | Available packs, installation, using multiple packs |
 | [Creating Domain Packs](creating-domain-packs.md) | Structure, manifest, prompts, standards |

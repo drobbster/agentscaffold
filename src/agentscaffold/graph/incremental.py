@@ -222,7 +222,7 @@ def remove_file_nodes(store: GraphBackend, file_paths: list[str]) -> int:
                     pass  # Edge table may not reference File
             store.execute(f"DELETE FROM File WHERE id = '{file_id}'")
         else:
-            # KuzuDB Cypher path
+            # Cypher path (legacy)
             store.execute(
                 f"MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) "
                 f"WHERE f.id = '{file_id}' DETACH DELETE fn"

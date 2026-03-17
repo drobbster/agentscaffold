@@ -5,8 +5,8 @@ All functions accept a GraphBackend and return plain dicts/lists,
 keeping them independent of output formatting.
 
 Step A.7: All queries dispatch through ql() / ql_scalar() (query_compat.py),
-providing both KuzuDB Cypher and DuckPGQ SQL translations.  Column names in
-returned dicts use the KuzuDB dot-qualified convention (e.g. ``"a.path"``)
+providing both Cypher and DuckPGQ SQL translations.  Column names in
+returned dicts use the dot-qualified convention (e.g. ``"a.path"``)
 so that consumers are backend-agnostic.
 """
 
@@ -159,7 +159,7 @@ def get_plans_impacting_file(store: GraphBackend, file_path: str) -> list[dict[s
             " r.changeType AS r_changeType)) t"
             " ORDER BY t.p_number DESC"
         )
-    # KuzuDB: try by canonical file id first, then fall back to path match
+    # Cypher: try by canonical file id first, then fall back to path match
     file_id = f"file::{file_path}"
     escaped_id = file_id.replace("\\", "\\\\").replace("'", "\\'")
     results = store.query(
@@ -429,7 +429,7 @@ def get_recurring_finding_patterns(
     """
     return ql(
         store,
-        # KuzuDB does not support HAVING; use WITH ... WHERE instead.
+        # Cypher does not support HAVING; use WITH ... WHERE instead.
         cypher=(
             "MATCH (rf:ReviewFinding) "
             "WITH rf.category AS category, count(rf) AS occurrences "

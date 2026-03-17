@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 
 from agentscaffold.graph.backend import GraphBackend
 from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
-from agentscaffold.graph.kuzu_backend import KuzuBackend
 
 if TYPE_CHECKING:
     from agentscaffold.config import ScaffoldConfig
@@ -22,7 +21,6 @@ if TYPE_CHECKING:
 __all__ = [
     "DuckPGQBackend",
     "GraphBackend",
-    "KuzuBackend",
     "graph_available",
     "index",
     "open_graph",
@@ -32,47 +30,26 @@ __all__ = [
 def graph_available(config: ScaffoldConfig | None = None) -> bool:
     """Return True if a knowledge graph database exists on disk."""
     db_path = _resolve_db_path(config)
-    if db_path.is_file():
-        return True
-    if db_path.is_dir():
-        return any(db_path.iterdir())
-    return False
+    return db_path.is_file()
 
 
 def open_graph(config: ScaffoldConfig | None = None, *, backend: str | None = None) -> GraphBackend:
     """Open an existing graph database for querying.
 
     Args:
-        config: Optional scaffold config. Used to resolve db_path and default backend.
-        backend: Override the backend. One of "duckpgq" (default) or "kuzu".
-                 If None, falls back to config.graph.backend, then "duckpgq".
+        config: Optional scaffold config. Used to resolve db_path.
+        backend: Reserved for future use. Only "duckpgq" is supported.
 
     Raises:
-        FileNotFoundError: if no graph exists on disk (kuzu backend only).
-        RuntimeError: if a KuzuDB directory is found where a DuckDB file is expected.
         ValueError: if an unknown backend name is given.
     """
     backend_name = backend or _resolve_backend(config)
     db_path = _resolve_db_path(config)
 
-    if backend_name in ("kuzu", None):
-        if not graph_available(config):
-            raise FileNotFoundError(
-                f"No knowledge graph found at {db_path}. Run 'scaffold index' first."
-            )
-        return KuzuBackend(db_path)
-
     if backend_name == "duckpgq":
-        if db_path.is_dir():
-            raise RuntimeError(
-                f"Existing KuzuDB graph detected at {db_path}.\n"
-                "Run 'scaffold index' to rebuild on DuckDB. "
-                "Your graph data will be re-derived from source.\n"
-                "To keep using KuzuDB, set 'graph.backend: kuzu' in scaffold.yaml."
-            )
         return DuckPGQBackend(db_path)
 
-    raise ValueError(f"Unknown backend '{backend_name}'. Supported backends: 'kuzu', 'duckpgq'.")
+    raise ValueError(f"Unknown backend '{backend_name}'. Supported: 'duckpgq'.")
 
 
 def index(

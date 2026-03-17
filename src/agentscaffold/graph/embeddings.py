@@ -155,8 +155,8 @@ _DUCKPGQ_SELECT: dict[str, str] = {
 }
 
 # DuckPGQ similarity search SQL — JOIN EmbeddingStore with the node table and
-# compute list_cosine_similarity in-database.  Returns same keys as the Kuzu
-# path (n.id, n.<props>, similarity).
+# compute list_cosine_similarity in-database.  Returns keys: n.id, n.<props>,
+# similarity.
 _DUCKPGQ_SEARCH_SQL: dict[str, str] = {
     "Function": (
         'SELECT f.id AS "n.id", f.name AS "n.name",'
@@ -299,7 +299,7 @@ def search_similar(
             if row.get("similarity") is not None
         ]
 
-    # KuzuDB: fetch all embeddings and compute cosine similarity in Python
+    # Fallback: fetch all embeddings and compute cosine similarity in Python
     query_np = np.array(query_vec, dtype=np.float32)
     _builder_fn, fields = _TEXT_BUILDERS[table]
     rows = store.query(
