@@ -4,17 +4,16 @@ Each function returns structured data from the knowledge graph.
 All functions accept a GraphBackend and return plain dicts/lists,
 keeping them independent of output formatting.
 
-Step A.7: All queries dispatch through ql() / ql_scalar() (query_compat.py),
-providing both Cypher and DuckPGQ SQL translations.  Column names in
-returned dicts use the dot-qualified convention (e.g. ``"a.path"``)
-so that consumers are backend-agnostic.
+All queries dispatch through ql() / ql_scalar() (query_compat.py),
+executing SQL against the DuckPGQ backend.  Column names in returned
+dicts use the dot-qualified convention (e.g. ``"a.path"``).
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agentscaffold.graph.query_compat import is_duckpgq, ql, ql_scalar
+from agentscaffold.graph.query_compat import ql, ql_scalar
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
@@ -30,11 +29,6 @@ def get_file_importers(store: GraphBackend, file_path: str) -> list[dict[str, An
     escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
     return ql(
         store,
-        cypher=(
-            "MATCH (a:File)-[r:IMPORTS]->(b:File) "
-            f"WHERE b.path = '{escaped}' "
-            "RETURN a.path, a.language, r.importedNames"
-        ),
         sql=(
             'SELECT t.a_path AS "a.path",'
             ' t.a_language AS "a.language",'
@@ -53,11 +47,6 @@ def get_file_importees(store: GraphBackend, file_path: str) -> list[dict[str, An
     escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
     return ql(
         store,
-        cypher=(
-            "MATCH (a:File)-[r:IMPORTS]->(b:File) "
-            f"WHERE a.path = '{escaped}' "
-            "RETURN b.path, b.language, r.importedNames"
-        ),
         sql=(
             'SELECT t.b_path AS "b.path",'
             ' t.b_language AS "b.language",'
@@ -76,11 +65,6 @@ def get_function_callers(store: GraphBackend, file_path: str) -> list[dict[str, 
     escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
     return ql(
         store,
-        cypher=(
-            "MATCH (caller:Function)-[r:CALLS]->(callee:Function) "
-            f"WHERE callee.filePath = '{escaped}' AND caller.filePath <> '{escaped}' "
-            "RETURN DISTINCT caller.name, caller.filePath, callee.name, r.confidence"
-        ),
         sql=(
             "SELECT DISTINCT"
             ' t.caller_name AS "caller.name",'
@@ -101,24 +85,42 @@ def get_function_callers(store: GraphBackend, file_path: str) -> list[dict[str, 
 def get_transitive_consumers(
     store: GraphBackend, file_path: str, depth: int = 2
 ) -> list[dict[str, Any]]:
-    """Return files that transitively depend on the given file (up to depth hops)."""
-    escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
-    return ql(
-        store,
-        cypher=(
-            f"MATCH (a:File)-[:IMPORTS*1..{depth}]->(b:File) "
-            f"WHERE b.path = '{escaped}' AND a.path <> '{escaped}' "
-            "RETURN DISTINCT a.path, a.language"
-        ),
-        sql=(
-            'SELECT DISTINCT t.a_path AS "a.path",'
-            ' t.a_language AS "a.language"'
-            " FROM GRAPH_TABLE(agentscaffold_graph"
-            f" MATCH (a:File)-[e:IMPORTS]->{{1,{depth}}}(b:File)"
-            f" WHERE b.path = '{escaped}' AND a.path <> '{escaped}'"
-            " COLUMNS (a.path AS a_path, a.language AS a_language)) t"
-        ),
+    """Return files that transitively depend on the given file (up to depth hops).
+
+    Uses SQL joins instead of variable-length GRAPH_TABLE paths to avoid a
+    DuckPGQ bug in IterativeLengthFunction with recursive path queries.
+    """
+    escaped = file_path.replace("'", "''")
+    # Direct importers (depth=1)
+    sql = (
+        'SELECT DISTINCT f.path AS "a.path", f.language AS "a.language"'
+        " FROM IMPORTS i JOIN File f ON i.src = f.id"
+        " JOIN File target ON i.dst = target.id"
+        f" WHERE target.path = '{escaped}' AND f.path <> '{escaped}'"
     )
+    results = ql(store, sql=sql)
+    if depth < 2:
+        return results
+    # Second-hop importers (depth=2): files that import direct importers
+    direct_ids_sql = (
+        "SELECT f.id FROM IMPORTS i JOIN File f ON i.src = f.id"
+        " JOIN File target ON i.dst = target.id"
+        f" WHERE target.path = '{escaped}' AND f.path <> '{escaped}'"
+    )
+    sql2 = (
+        'SELECT DISTINCT f2.path AS "a.path", f2.language AS "a.language"'
+        " FROM IMPORTS i2 JOIN File f2 ON i2.src = f2.id"
+        f" WHERE i2.dst IN ({direct_ids_sql})"
+        f" AND f2.path <> '{escaped}'"
+    )
+    results2 = ql(store, sql=sql2)
+    # Deduplicate by path
+    seen = {r["a.path"] for r in results}
+    for r in results2:
+        if r["a.path"] not in seen:
+            results.append(r)
+            seen.add(r["a.path"])
+    return results
 
 
 def count_callers_for_function(store: GraphBackend, func_id: str) -> int:
@@ -126,11 +128,6 @@ def count_callers_for_function(store: GraphBackend, func_id: str) -> int:
     escaped = func_id.replace("\\", "\\\\").replace("'", "\\'")
     val = ql_scalar(
         store,
-        cypher=(
-            "MATCH (caller:Function)-[:CALLS]->(fn:Function) "
-            f"WHERE fn.id = '{escaped}' "
-            "RETURN count(DISTINCT caller)"
-        ),
         sql=f"SELECT COUNT(DISTINCT src) FROM CALLS WHERE dst = '{escaped}'",
     )
     return int(val) if val else 0
@@ -144,71 +141,38 @@ def count_callers_for_function(store: GraphBackend, func_id: str) -> int:
 def get_plans_impacting_file(store: GraphBackend, file_path: str) -> list[dict[str, Any]]:
     """Return plans that list the given file in their File Impact Map."""
     escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
-    if is_duckpgq(store):
-        return store.query(
-            'SELECT t.p_number AS "p.number",'
-            ' t.p_title AS "p.title",'
-            ' t.p_status AS "p.status",'
-            ' t.p_createdDate AS "p.createdDate",'
-            ' t.r_changeType AS "r.changeType"'
-            " FROM GRAPH_TABLE(agentscaffold_graph"
-            " MATCH (p:Plan)-[r:PLAN_IMPACTS]->(f:File)"
-            f" WHERE f.path = '{escaped}'"
-            " COLUMNS (p.number AS p_number, p.title AS p_title,"
-            " p.status AS p_status, p.createdDate AS p_createdDate,"
-            " r.changeType AS r_changeType)) t"
-            " ORDER BY t.p_number DESC"
-        )
-    # Cypher: try by canonical file id first, then fall back to path match
-    file_id = f"file::{file_path}"
-    escaped_id = file_id.replace("\\", "\\\\").replace("'", "\\'")
-    results = store.query(
-        "MATCH (p:Plan)-[r:PLAN_IMPACTS]->(f:File) "
-        f"WHERE f.id = '{escaped_id}' "
-        "RETURN p.number, p.title, p.status, p.createdDate, r.changeType "
-        "ORDER BY p.number DESC"
+    return store.query(
+        'SELECT t.p_number AS "p.number",'
+        ' t.p_title AS "p.title",'
+        ' t.p_status AS "p.status",'
+        ' t.p_createdDate AS "p.createdDate",'
+        ' t.r_changeType AS "r.changeType"'
+        " FROM GRAPH_TABLE(agentscaffold_graph"
+        " MATCH (p:Plan)-[r:PLAN_IMPACTS]->(f:File)"
+        f" WHERE f.path = '{escaped}'"
+        " COLUMNS (p.number AS p_number, p.title AS p_title,"
+        " p.status AS p_status, p.createdDate AS p_createdDate,"
+        " r.changeType AS r_changeType)) t"
+        " ORDER BY t.p_number DESC"
     )
-    if not results:
-        results = store.query(
-            "MATCH (p:Plan)-[r:PLAN_IMPACTS]->(f:File) "
-            f"WHERE f.path = '{escaped}' "
-            "RETURN p.number, p.title, p.status, p.createdDate, r.changeType "
-            "ORDER BY p.number DESC"
-        )
-    return results
 
 
 def get_learnings_for_file(store: GraphBackend, file_path: str) -> list[dict[str, Any]]:
     """Return learnings that reference the given file."""
     escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
-    if is_duckpgq(store):
-        return store.query(
-            'SELECT t.lr_learningId AS "lr.learningId",'
-            ' t.lr_planNumber AS "lr.planNumber",'
-            ' t.lr_description AS "lr.description",'
-            ' t.lr_status AS "lr.status"'
-            " FROM GRAPH_TABLE(agentscaffold_graph"
-            " MATCH (lr:Learning)-[e:LEARNING_RELATES_TO_FILE]->(f:File)"
-            f" WHERE f.path = '{escaped}'"
-            " COLUMNS (lr.learningId AS lr_learningId,"
-            " lr.planNumber AS lr_planNumber,"
-            " lr.description AS lr_description,"
-            " lr.status AS lr_status)) t"
-        )
-    file_id = f"file::{file_path}"
-    escaped_id = file_id.replace("\\", "\\\\").replace("'", "\\'")
-    results = store.query(
-        "MATCH (lr:Learning)-[:LEARNING_RELATES_TO_FILE]->(f:File) "
-        f"WHERE f.id = '{escaped_id}' "
-        "RETURN lr.learningId, lr.planNumber, lr.description, lr.status"
+    return store.query(
+        'SELECT t.lr_learningId AS "lr.learningId",'
+        ' t.lr_planNumber AS "lr.planNumber",'
+        ' t.lr_description AS "lr.description",'
+        ' t.lr_status AS "lr.status"'
+        " FROM GRAPH_TABLE(agentscaffold_graph"
+        " MATCH (lr:Learning)-[e:LEARNING_RELATES_TO_FILE]->(f:File)"
+        f" WHERE f.path = '{escaped}'"
+        " COLUMNS (lr.learningId AS lr_learningId,"
+        " lr.planNumber AS lr_planNumber,"
+        " lr.description AS lr_description,"
+        " lr.status AS lr_status)) t"
     )
-    if not results:
-        results = store.query(
-            "MATCH (lr:Learning)-[:LEARNING_RELATES_TO_FILE]->(f:File) "
-            f"WHERE f.path = '{escaped}' "
-            "RETURN lr.learningId, lr.planNumber, lr.description, lr.status"
-        )
-    return results
 
 
 def get_findings_for_file(store: GraphBackend, file_path: str) -> list[dict[str, Any]]:
@@ -217,12 +181,6 @@ def get_findings_for_file(store: GraphBackend, file_path: str) -> list[dict[str,
     escaped_id = file_id.replace("\\", "\\\\").replace("'", "\\'")
     return ql(
         store,
-        cypher=(
-            "MATCH (rf:ReviewFinding)-[:FINDING_ABOUT_FILE]->(f:File) "
-            f"WHERE f.id = '{escaped_id}' "
-            "RETURN rf.reviewType, rf.planNumber, rf.category, rf.finding, "
-            "rf.severity, rf.status"
-        ),
         sql=(
             'SELECT t.rf_reviewType AS "rf.reviewType",'
             ' t.rf_planNumber AS "rf.planNumber",'
@@ -246,36 +204,24 @@ def get_findings_for_file(store: GraphBackend, file_path: str) -> list[dict[str,
 def get_contracts_for_file(store: GraphBackend, file_path: str) -> list[dict[str, Any]]:
     """Return contracts whose declared functions/classes are in the given file."""
     escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
-    if is_duckpgq(store):
-        func_contracts = store.query(
-            'SELECT DISTINCT c.name AS "c.name",'
-            ' c.version AS "c.version",'
-            ' c.filePath AS "c.filePath"'
-            " FROM CONTRACT_DECLARES_FUNC cdf"
-            " JOIN Contract c ON c.id = cdf.src"
-            " JOIN Function fn ON fn.id = cdf.dst"
-            f" WHERE fn.filePath = '{escaped}'"
-        )
-        class_contracts = store.query(
-            'SELECT DISTINCT c.name AS "c.name",'
-            ' c.version AS "c.version",'
-            ' c.filePath AS "c.filePath"'
-            " FROM CONTRACT_DECLARES_CLASS cdc"
-            " JOIN Contract c ON c.id = cdc.src"
-            " JOIN Class cls ON cls.id = cdc.dst"
-            f" WHERE cls.filePath = '{escaped}'"
-        )
-    else:
-        func_contracts = store.query(
-            "MATCH (c:Contract)-[:CONTRACT_DECLARES_FUNC]->(fn:Function) "
-            f"WHERE fn.filePath = '{escaped}' "
-            "RETURN DISTINCT c.name, c.version, c.filePath"
-        )
-        class_contracts = store.query(
-            "MATCH (c:Contract)-[:CONTRACT_DECLARES_CLASS]->(cls:Class) "
-            f"WHERE cls.filePath = '{escaped}' "
-            "RETURN DISTINCT c.name, c.version, c.filePath"
-        )
+    func_contracts = store.query(
+        'SELECT DISTINCT c.name AS "c.name",'
+        ' c.version AS "c.version",'
+        ' c.filePath AS "c.filePath"'
+        " FROM CONTRACT_DECLARES_FUNC cdf"
+        " JOIN Contract c ON c.id = cdf.src"
+        " JOIN Function fn ON fn.id = cdf.dst"
+        f" WHERE fn.filePath = '{escaped}'"
+    )
+    class_contracts = store.query(
+        'SELECT DISTINCT c.name AS "c.name",'
+        ' c.version AS "c.version",'
+        ' c.filePath AS "c.filePath"'
+        " FROM CONTRACT_DECLARES_CLASS cdc"
+        " JOIN Contract c ON c.id = cdc.src"
+        " JOIN Class cls ON cls.id = cdc.dst"
+        f" WHERE cls.filePath = '{escaped}'"
+    )
     seen: set[str] = set()
     result: list[dict[str, Any]] = []
     for c in func_contracts + class_contracts:
@@ -292,11 +238,6 @@ def get_file_layer(store: GraphBackend, file_path: str) -> dict[str, Any] | None
     escaped_id = file_id.replace("\\", "\\\\").replace("'", "\\'")
     rows = ql(
         store,
-        cypher=(
-            "MATCH (f:File)-[:BELONGS_TO_LAYER]->(l:ArchitectureLayer) "
-            f"WHERE f.id = '{escaped_id}' "
-            "RETURN l.number, l.name, l.description"
-        ),
         sql=(
             'SELECT t.l_number AS "l.number",'
             ' t.l_name AS "l.name",'
@@ -320,12 +261,6 @@ def get_hot_files(store: GraphBackend, limit: int = 10) -> list[dict[str, Any]]:
     """Return files with the most plan impacts (most-modified files)."""
     return ql(
         store,
-        cypher=(
-            "MATCH (p:Plan)-[:PLAN_IMPACTS]->(f:File) "
-            "RETURN f.path, count(p) AS plan_count "
-            "ORDER BY plan_count DESC "
-            f"LIMIT {limit}"
-        ),
         sql=(
             'SELECT t.f_path AS "f.path", COUNT(*) AS plan_count'
             " FROM GRAPH_TABLE(agentscaffold_graph"
@@ -344,11 +279,6 @@ def get_volatile_modules(
     """Return files modified by many plans in a recent window (instability signal)."""
     return ql(
         store,
-        cypher=(
-            "MATCH (p:Plan)-[:PLAN_IMPACTS]->(f:File) "
-            "RETURN f.path, count(p) AS plan_count "
-            "ORDER BY plan_count DESC"
-        ),
         sql=(
             'SELECT t.f_path AS "f.path", COUNT(*) AS plan_count'
             " FROM GRAPH_TABLE(agentscaffold_graph"
@@ -364,11 +294,6 @@ def get_all_plans(store: GraphBackend) -> list[dict[str, Any]]:
     """Return all plans ordered by number."""
     return ql(
         store,
-        cypher=(
-            "MATCH (p:Plan) RETURN p.number, p.title, p.status, p.planType, "
-            "p.createdDate, p.lastUpdated "
-            "ORDER BY p.number DESC"
-        ),
         sql=(
             'SELECT number AS "p.number", title AS "p.title",'
             ' status AS "p.status", planType AS "p.planType",'
@@ -382,11 +307,6 @@ def get_plan_by_number(store: GraphBackend, number: int) -> dict[str, Any] | Non
     """Return a single plan by its number."""
     rows = ql(
         store,
-        cypher=(
-            f"MATCH (p:Plan) WHERE p.number = {number} "
-            "RETURN p.id, p.number, p.title, p.status, p.planType, "
-            "p.filePath, p.createdDate, p.lastUpdated"
-        ),
         sql=(
             'SELECT id AS "p.id", number AS "p.number",'
             ' title AS "p.title", status AS "p.status",'
@@ -403,10 +323,6 @@ def get_plan_impacted_files(store: GraphBackend, plan_number: int) -> list[dict[
     """Return files listed in a plan's File Impact Map."""
     return ql(
         store,
-        cypher=(
-            f"MATCH (p:Plan)-[r:PLAN_IMPACTS]->(f:File) WHERE p.number = {plan_number} "
-            "RETURN f.path, f.language, r.changeType"
-        ),
         sql=(
             'SELECT t.f_path AS "f.path",'
             ' t.f_language AS "f.language",'
@@ -429,14 +345,6 @@ def get_recurring_finding_patterns(
     """
     return ql(
         store,
-        # Cypher does not support HAVING; use WITH ... WHERE instead.
-        cypher=(
-            "MATCH (rf:ReviewFinding) "
-            "WITH rf.category AS category, count(rf) AS occurrences "
-            f"WHERE occurrences >= {min_occurrences} "
-            "RETURN category, occurrences "
-            "ORDER BY occurrences DESC"
-        ),
         sql=(
             "SELECT category, COUNT(*) AS occurrences"
             " FROM ReviewFinding"
@@ -451,10 +359,6 @@ def get_plan_dependencies(store: GraphBackend, plan_number: int) -> list[dict[st
     """Return plans that the given plan depends on."""
     return ql(
         store,
-        cypher=(
-            f"MATCH (p:Plan)-[:DEPENDS_ON_PLAN]->(dep:Plan) WHERE p.number = {plan_number} "
-            "RETURN dep.number, dep.title, dep.status"
-        ),
         sql=(
             'SELECT t.dep_number AS "dep.number",'
             ' t.dep_title AS "dep.title",'
@@ -478,10 +382,6 @@ def get_studies_for_plan(store: GraphBackend, plan_number: int) -> list[dict[str
     """Return studies that reference the given plan."""
     return ql(
         store,
-        cypher=(
-            f"MATCH (s:Study)-[:STUDY_REFERENCES_PLAN]->(p:Plan) WHERE p.number = {plan_number} "
-            "RETURN s.studyId, s.title, s.status, s.outcome, s.confidence, s.tags"
-        ),
         sql=(
             'SELECT t.s_studyId AS "s.studyId",'
             ' t.s_title AS "s.title",'
@@ -501,15 +401,9 @@ def get_studies_for_plan(store: GraphBackend, plan_number: int) -> list[dict[str
 
 def get_studies_by_tags(store: GraphBackend, tags: list[str]) -> list[dict[str, Any]]:
     """Return studies matching any of the given tags (substring match on tags field)."""
-    cypher_conditions = " OR ".join(f"s.tags CONTAINS '{t}'" for t in tags)
     sql_conditions = " OR ".join(f"CONTAINS(tags, '{t}')" for t in tags)
     return ql(
         store,
-        cypher=(
-            f"MATCH (s:Study) WHERE {cypher_conditions} "
-            "RETURN s.studyId, s.title, s.status, s.outcome, s.confidence, s.tags "
-            "ORDER BY s.started DESC"
-        ),
         sql=(
             'SELECT studyId AS "s.studyId",'
             ' title AS "s.title",'
@@ -528,11 +422,6 @@ def get_studies_by_outcome(store: GraphBackend, outcome: str) -> list[dict[str, 
     escaped = outcome.replace("'", "\\'")
     return ql(
         store,
-        cypher=(
-            f"MATCH (s:Study) WHERE s.outcome = '{escaped}' "
-            "RETURN s.studyId, s.title, s.status, s.outcome, s.confidence, s.tags "
-            "ORDER BY s.started DESC"
-        ),
         sql=(
             'SELECT studyId AS "s.studyId",'
             ' title AS "s.title",'
@@ -551,11 +440,6 @@ def get_studies_for_file(store: GraphBackend, file_path: str) -> list[dict[str, 
     escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
     return ql(
         store,
-        cypher=(
-            "MATCH (s:Study)-[:STUDY_REFERENCES_FILE]->(f:File) "
-            f"WHERE f.path = '{escaped}' "
-            "RETURN s.studyId, s.title, s.status, s.outcome, s.tags"
-        ),
         sql=(
             'SELECT t.s_studyId AS "s.studyId",'
             ' t.s_title AS "s.title",'
@@ -576,12 +460,6 @@ def get_all_studies(store: GraphBackend) -> list[dict[str, Any]]:
     """Return all studies ordered by start date descending."""
     return ql(
         store,
-        cypher=(
-            "MATCH (s:Study) "
-            "RETURN s.studyId, s.title, s.studyType, s.status, s.outcome, "
-            "s.confidence, s.tags, s.started, s.completed "
-            "ORDER BY s.started DESC"
-        ),
         sql=(
             'SELECT studyId AS "s.studyId",'
             ' title AS "s.title",'
@@ -606,10 +484,6 @@ def get_adrs_for_plan(store: GraphBackend, plan_number: int) -> list[dict[str, A
     """Return ADRs that govern the given plan."""
     return ql(
         store,
-        cypher=(
-            f"MATCH (a:ADR)-[:ADR_GOVERNS]->(p:Plan) WHERE p.number = {plan_number} "
-            "RETURN a.number, a.title, a.status, a.date"
-        ),
         sql=(
             'SELECT t.a_number AS "a.number",'
             ' t.a_title AS "a.title",'
@@ -628,11 +502,6 @@ def get_adr_by_number(store: GraphBackend, number: int) -> dict[str, Any] | None
     """Return a single ADR by number."""
     rows = ql(
         store,
-        cypher=(
-            f"MATCH (a:ADR) WHERE a.number = {number} "
-            "RETURN a.id, a.number, a.title, a.status, a.date, a.filePath, "
-            "a.relatedPlans, a.relatedADRs, a.supersededBy"
-        ),
         sql=(
             'SELECT id AS "a.id",'
             ' number AS "a.number",'
@@ -653,11 +522,6 @@ def get_all_adrs(store: GraphBackend) -> list[dict[str, Any]]:
     """Return all ADRs ordered by number."""
     return ql(
         store,
-        cypher=(
-            "MATCH (a:ADR) "
-            "RETURN a.number, a.title, a.status, a.date, a.supersededBy "
-            "ORDER BY a.number"
-        ),
         sql=(
             'SELECT number AS "a.number",'
             ' title AS "a.title",'
@@ -673,10 +537,6 @@ def get_superseded_adrs(store: GraphBackend) -> list[dict[str, Any]]:
     """Return ADRs that have been superseded."""
     return ql(
         store,
-        cypher=(
-            "MATCH (a:ADR) WHERE a.status CONTAINS 'Superseded' "
-            "RETURN a.number, a.title, a.status, a.supersededBy"
-        ),
         sql=(
             'SELECT number AS "a.number",'
             ' title AS "a.title",'
@@ -692,11 +552,6 @@ def get_adrs_for_file(store: GraphBackend, file_path: str) -> list[dict[str, Any
     escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
     return ql(
         store,
-        cypher=(
-            "MATCH (a:ADR)-[:ADR_GOVERNS]->(p:Plan)-[:PLAN_IMPACTS]->(f:File) "
-            f"WHERE f.path = '{escaped}' "
-            "RETURN DISTINCT a.number, a.title, a.status, p.number AS plan_number"
-        ),
         sql=(
             "SELECT DISTINCT"
             ' t.a_number AS "a.number",'
@@ -721,10 +576,6 @@ def get_spikes_for_plan(store: GraphBackend, plan_number: int) -> list[dict[str,
     """Return spikes that validated the given plan."""
     return ql(
         store,
-        cypher=(
-            f"MATCH (sp:Spike)-[:SPIKE_FOR_PLAN]->(p:Plan) WHERE p.number = {plan_number} "
-            "RETURN sp.title, sp.status, sp.created, sp.timeBox, sp.filePath"
-        ),
         sql=(
             'SELECT t.sp_title AS "sp.title",'
             ' t.sp_status AS "sp.status",'
@@ -745,11 +596,6 @@ def get_all_spikes(store: GraphBackend) -> list[dict[str, Any]]:
     """Return all spikes ordered by created date descending."""
     return ql(
         store,
-        cypher=(
-            "MATCH (sp:Spike) "
-            "RETURN sp.title, sp.parentPlan, sp.status, sp.created, sp.timeBox "
-            "ORDER BY sp.created DESC"
-        ),
         sql=(
             'SELECT title AS "sp.title",'
             ' parentPlan AS "sp.parentPlan",'
@@ -766,10 +612,6 @@ def get_spike_by_title(store: GraphBackend, title_fragment: str) -> list[dict[st
     escaped = title_fragment.replace("'", "\\'")
     return ql(
         store,
-        cypher=(
-            f"MATCH (sp:Spike) WHERE sp.title CONTAINS '{escaped}' "
-            "RETURN sp.title, sp.parentPlan, sp.status, sp.created, sp.filePath"
-        ),
         sql=(
             'SELECT title AS "sp.title",'
             ' parentPlan AS "sp.parentPlan",'
