@@ -14,13 +14,110 @@ This guide covers setup for specific platforms.
 Every platform starts with the same steps:
 
 ```bash
-pip install agentscaffold[all]   # or agentscaffold[graph] for lighter install
+pip install "agentscaffold[all]"  # graph + search + MCP + all language parsers
 cd my-project
 scaffold init
 scaffold index                    # Build knowledge graph
 ```
 
+For a lighter install without semantic search or extra language parsers:
+
+```bash
+pip install "agentscaffold[graph,mcp]"
+```
+
+For CI pipelines that only need governance checks (no graph, no MCP):
+
+```bash
+pip install agentscaffold
+```
+
+See [Installation](getting-started.md#1-installation) in the Getting Started guide for a
+full breakdown of what each extra includes.
+
 After this, your project has `AGENTS.md` at the root and `.scaffold/graph.db` with the indexed knowledge graph. The agent rules in `AGENTS.md` work immediately with any agent that reads project files.
+
+## Isolated Install: Two Venvs
+
+If your project already has a virtual environment and you want to keep agentscaffold's
+dependencies separate — or if there are version conflicts between your project's deps and
+agentscaffold's (duckdb, sentence-transformers, graspologic, etc.) — install agentscaffold
+into a dedicated venv and point the MCP config at the full path.
+
+### Setup
+
+```bash
+# From your project root
+python -m venv .venv-scaffold
+.venv-scaffold/bin/pip install "agentscaffold[all]"
+```
+
+Or with uv:
+
+```bash
+uv venv .venv-scaffold
+uv pip install "agentscaffold[all]" --python .venv-scaffold/bin/python
+```
+
+Then use the full path in your MCP config instead of `scaffold`:
+
+```json
+{
+  "mcpServers": {
+    "agentscaffold": {
+      "command": "/absolute/path/to/your-project/.venv-scaffold/bin/scaffold",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The `scaffold` CLI commands (e.g. `scaffold index`, `scaffold validate`) still work from
+your project root when you run them from this venv:
+
+```bash
+.venv-scaffold/bin/scaffold index
+.venv-scaffold/bin/scaffold validate
+```
+
+Or activate it temporarily:
+
+```bash
+source .venv-scaffold/bin/activate
+scaffold index
+deactivate
+```
+
+### Keep It Out of Git
+
+Add the venv to your `.gitignore` — it's a local tool install, not project source:
+
+```
+.venv-scaffold/
+```
+
+### Upgrading
+
+To upgrade agentscaffold without touching your project venv:
+
+```bash
+.venv-scaffold/bin/pip install --upgrade agentscaffold
+# or with uv:
+uv pip install --upgrade agentscaffold --python .venv-scaffold/bin/python
+```
+
+After upgrading, restart the MCP server in your IDE so it picks up the new version.
+
+### When to Use One Venv vs. Two
+
+| Situation | Recommendation |
+|-----------|---------------|
+| Project has no conflicting deps | Install into your project venv; use `scaffold` on PATH |
+| Project has duckdb, torch, or heavy ML deps at different versions | Use a dedicated `.venv-scaffold/` |
+| CI/CD environment | Install into a dedicated venv; reference the full path in your workflow |
+| Multiple projects sharing one agentscaffold install | Not recommended — keep one venv per project for isolation |
+
+---
 
 ## Verify NL Intent Routing
 

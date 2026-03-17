@@ -4,11 +4,28 @@ This guide walks you through installing AgentScaffold, initializing a project, a
 
 ## 1. Installation
 
-Install from PyPI:
+Install from PyPI. The base package and optional extras cover different capabilities:
+
+| Install command | What you get |
+|----------------|-------------|
+| `pip install agentscaffold` | Governance framework only: plan lifecycle, reviews, templates, `scaffold init/validate/plan/retro` CLI. No graph, no MCP. |
+| `pip install "agentscaffold[graph]"` | + Knowledge graph indexing (DuckDB/DuckPGQ) with Python, JS, TS parsers. Enables `scaffold index`, `scaffold graph`, `scaffold review`. |
+| `pip install "agentscaffold[graph-all-languages]"` | + Go, Rust, Java, C, C++ tree-sitter parsers on top of `[graph]`. |
+| `pip install "agentscaffold[search]"` | + Semantic search via sentence-transformers. Required for `--mode semantic` and `--mode hybrid`. |
+| `pip install "agentscaffold[mcp]"` | + MCP server (`scaffold mcp`). Required for IDE tool integration (Cursor, Claude Code, etc.). |
+| `pip install "agentscaffold[all]"` | Everything above. Recommended for full interactive sessions with an AI agent. |
+
+Most users want `agentscaffold[all]` or at minimum `agentscaffold[graph,mcp]` for MCP tool
+support. The bare install is useful for CI pipelines that only need `scaffold validate`.
 
 ```bash
-pip install agentscaffold
+pip install "agentscaffold[all]"
 ```
+
+If your project has dependency conflicts with agentscaffold's packages (duckdb,
+sentence-transformers, graspologic), install it into a dedicated virtual environment
+instead. See [Isolated Install: Two Venvs](platform-integration.md#isolated-install-two-venvs)
+in the Platform Integration guide.
 
 Verify installation:
 
