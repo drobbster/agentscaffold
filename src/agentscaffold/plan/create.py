@@ -75,3 +75,13 @@ def run_plan_create(name: str, plan_type: str) -> None:
     dest.write_text(content)
 
     console.print(f"[green]Created plan:[/green] {dest}")
+
+    # Auto-lint the new plan and report issues
+    from agentscaffold.plan.lint import _lint_plan
+
+    issues = _lint_plan(dest)
+    if issues:
+        console.print(f"\n[yellow]Plan lint found {len(issues)} issue(s):[/yellow]")
+        for issue in issues:
+            console.print(f"  - {issue}")
+        console.print("[yellow]Fix these before moving the plan to Review.[/yellow]")

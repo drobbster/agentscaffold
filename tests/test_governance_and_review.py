@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
 from agentscaffold.graph.pipeline import run_pipeline
-from agentscaffold.graph.store import GraphStore
 
 FIXTURE_REPO = Path(__file__).parent / "fixtures" / "sample_repo"
 
@@ -34,7 +34,7 @@ def indexed_store(tmp_path_factory):
 
     summary = run_pipeline(FIXTURE_REPO, config)
 
-    store = GraphStore(db_path)
+    store = DuckPGQBackend(db_path)
     yield store, summary
     store.close()
 
@@ -65,7 +65,8 @@ class TestGovernanceIngestion:
     def test_plan_node_data(self, indexed_store):
         store, _summary = indexed_store
         rows = store.query(
-            "MATCH (p:Plan) WHERE p.number = 42 " "RETURN p.title, p.status, p.planType"
+            'SELECT title AS "p.title", status AS "p.status", '
+            'planType AS "p.planType" FROM Plan WHERE number = 42'
         )
         assert len(rows) >= 1
         plan = rows[0]
@@ -73,7 +74,7 @@ class TestGovernanceIngestion:
 
     def test_contract_node_data(self, indexed_store):
         store, _summary = indexed_store
-        rows = store.query("MATCH (c:Contract) RETURN c.name, c.version")
+        rows = store.query('SELECT name AS "c.name", version AS "c.version" FROM Contract')
         assert len(rows) >= 1
         contract = rows[0]
         assert contract.get("c.version") == "1.2"
@@ -81,8 +82,9 @@ class TestGovernanceIngestion:
     def test_learning_node_data(self, indexed_store):
         store, _summary = indexed_store
         rows = store.query(
-            "MATCH (lr:Learning) WHERE lr.learningId = 'L042-1' "
-            "RETURN lr.description, lr.planNumber, lr.status"
+            'SELECT description AS "lr.description", '
+            'planNumber AS "lr.planNumber", status AS "lr.status" '
+            "FROM Learning WHERE learningId = 'L042-1'"
         )
         assert len(rows) >= 1
         assert rows[0].get("lr.planNumber") == 42

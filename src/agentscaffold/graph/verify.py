@@ -15,8 +15,10 @@ from typing import TYPE_CHECKING, Any
 from rich.console import Console
 from rich.table import Table
 
+from agentscaffold.graph.query_compat import ql
+
 if TYPE_CHECKING:
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -35,7 +37,7 @@ def _file_hash(path: Path) -> str:
 
 
 def verify_graph(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     *,
     deep: bool = False,
@@ -62,7 +64,11 @@ def verify_graph(
     }
 
     # File existence and hash check
-    file_rows = store.query("MATCH (f:File) RETURN f.id, f.path, f.contentHash")
+    file_rows = ql(
+        store,
+        cypher="MATCH (f:File) RETURN f.id, f.path, f.contentHash",
+        sql='SELECT id AS "f.id", path AS "f.path", contentHash AS "f.contentHash" FROM File',
+    )
 
     for row in file_rows:
         file_path = row["f.path"]
@@ -108,7 +114,7 @@ def verify_graph(
     return report
 
 
-def _check_governance_sync(store: GraphStore) -> dict[str, Any]:
+def _check_governance_sync(store: GraphBackend) -> dict[str, Any]:
     """Check if governance node counts are non-zero."""
     return {
         "plans": store.node_count("Plan"),
@@ -119,7 +125,7 @@ def _check_governance_sync(store: GraphStore) -> dict[str, Any]:
 
 
 def _deep_verify(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     file_rows: list[dict[str, Any]],
     sample_ratio: float,
@@ -139,10 +145,20 @@ def _deep_verify(
         if not full_path.is_file():
             continue
 
-        stored_funcs = store.query(
-            "MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) "
-            f"WHERE f.path = '{file_path}' "
-            "RETURN fn.name, fn.startLine"
+        stored_funcs = ql(
+            store,
+            cypher=(
+                "MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) "
+                f"WHERE f.path = '{file_path}' "
+                "RETURN fn.name, fn.startLine"
+            ),
+            sql=(
+                'SELECT t.fn_name AS "fn.name", t.fn_startLine AS "fn.startLine"'
+                " FROM GRAPH_TABLE(agentscaffold_graph"
+                " MATCH (f:File)-[e:DEFINES_FUNCTION]->(fn:Function)"
+                f" WHERE f.path = '{file_path}'"
+                " COLUMNS (fn.name AS fn_name, fn.startLine AS fn_startLine)) t"
+            ),
         )
 
         if not stored_funcs:
@@ -182,7 +198,7 @@ def _deep_verify(
     }
 
 
-def check_contract_drift(store: GraphStore) -> dict[str, Any]:
+def check_contract_drift(store: GraphBackend) -> dict[str, Any]:
     """Check for drift between contract declarations and actual code.
 
     Returns a report with:
@@ -190,8 +206,16 @@ def check_contract_drift(store: GraphStore) -> dict[str, Any]:
     - undocumented: methods in code linked to a contract but not declared
     - summary counts
     """
-    contracts = store.query(
-        "MATCH (c:Contract) RETURN c.id, c.name, c.declaredMethods, c.declaredClasses"
+    from agentscaffold.graph.query_compat import ql
+
+    contracts = ql(
+        store,
+        cypher="MATCH (c:Contract) RETURN c.id, c.name, c.declaredMethods, c.declaredClasses",
+        sql=(
+            'SELECT id AS "c.id", name AS "c.name", '
+            'declaredMethods AS "c.declaredMethods", declaredClasses AS "c.declaredClasses" '
+            "FROM Contract"
+        ),
     )
 
     declared_only: list[dict[str, str]] = []
@@ -210,11 +234,17 @@ def check_contract_drift(store: GraphStore) -> dict[str, Any]:
 
         for method_name in declared_methods:
             # Check both Function and Method nodes
-            fn_match = store.query(
-                f"MATCH (fn:Function) WHERE fn.name = '{method_name}' RETURN fn.id LIMIT 1"
+            fn_match = ql(
+                store,
+                cypher=f"MATCH (fn:Function) WHERE fn.name = '{method_name}' RETURN fn.id LIMIT 1",
+                sql=f"SELECT id AS \"fn.id\" FROM Function WHERE name = '{method_name}' LIMIT 1",
             )
             m_match = (
-                store.query(f"MATCH (m:Method) WHERE m.name = '{method_name}' RETURN m.id LIMIT 1")
+                ql(
+                    store,
+                    cypher=f"MATCH (m:Method) WHERE m.name = '{method_name}' RETURN m.id LIMIT 1",
+                    sql=f"SELECT id AS \"m.id\" FROM Method WHERE name = '{method_name}' LIMIT 1",
+                )
                 if not fn_match
                 else []
             )
@@ -230,10 +260,20 @@ def check_contract_drift(store: GraphStore) -> dict[str, Any]:
                 )
 
         for class_name in declared_classes:
-            edges = store.query(
-                f"MATCH (c:Contract)-[:CONTRACT_DECLARES_CLASS]->(n) "
-                f"WHERE c.id = '{contract_id}' AND n.name = '{class_name}' "
-                "RETURN n.id LIMIT 1"
+            edges = ql(
+                store,
+                cypher=(
+                    f"MATCH (c:Contract)-[:CONTRACT_DECLARES_CLASS]->(n) "
+                    f"WHERE c.id = '{contract_id}' AND n.name = '{class_name}' "
+                    "RETURN n.id LIMIT 1"
+                ),
+                sql=(
+                    f'SELECT t.n_id AS "n.id"'
+                    f" FROM GRAPH_TABLE(agentscaffold_graph"
+                    f" MATCH (c:Contract)-[e:CONTRACT_DECLARES_CLASS]->(n:Class)"
+                    f" WHERE c.id = '{contract_id}' AND n.name = '{class_name}'"
+                    f" COLUMNS (n.id AS n_id)) t LIMIT 1"
+                ),
             )
             if edges:
                 linked_ok += 1
@@ -256,7 +296,7 @@ def check_contract_drift(store: GraphStore) -> dict[str, Any]:
 
 
 def check_staleness(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     file_paths: list[str],
 ) -> dict[str, str]:
@@ -268,7 +308,11 @@ def check_staleness(
     result: dict[str, str] = {}
 
     for fp in file_paths:
-        rows = store.query(f"MATCH (f:File) WHERE f.path = '{fp}' RETURN f.contentHash")
+        rows = ql(
+            store,
+            cypher=f"MATCH (f:File) WHERE f.path = '{fp}' RETURN f.contentHash",
+            sql=f"SELECT contentHash AS \"f.contentHash\" FROM File WHERE path = '{fp}'",
+        )
         if not rows:
             result[fp] = "unknown"
             continue

@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from agentscaffold.graph.query_compat import ql
 from agentscaffold.review.queries import (
     get_file_importers,
     get_function_callers,
@@ -22,7 +23,7 @@ from agentscaffold.review.queries import (
 )
 
 if TYPE_CHECKING:
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 
 @dataclass
@@ -34,7 +35,7 @@ class RetroInsight:
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
-def generate_retro_enrichment(store: GraphStore, plan_number: int) -> list[RetroInsight]:
+def generate_retro_enrichment(store: GraphBackend, plan_number: int) -> list[RetroInsight]:
     """Generate retrospective enrichment for the given plan.
 
     Should be called during or after the retrospective.
@@ -60,7 +61,7 @@ def generate_retro_enrichment(store: GraphStore, plan_number: int) -> list[Retro
 
 
 def _volatility_analysis(
-    store: GraphStore,
+    store: GraphBackend,
     plan_number: int,
     impacted_files: list[dict[str, Any]],
     out: list[RetroInsight],
@@ -94,7 +95,7 @@ def _volatility_analysis(
 
 
 def _learning_patterns(
-    store: GraphStore,
+    store: GraphBackend,
     plan_number: int,
     out: list[RetroInsight],
 ) -> None:
@@ -108,10 +109,24 @@ def _learning_patterns(
             continue
         file_id = f"file::{fpath}"
         escaped = file_id.replace("\\", "\\\\").replace("'", "\\'")
-        learnings = store.query(
-            "MATCH (lr:Learning)-[:LEARNING_RELATES_TO_FILE]->(f:File) "
-            f"WHERE f.id = '{escaped}' "
-            "RETURN lr.learningId, lr.description, lr.planNumber"
+        learnings = ql(
+            store,
+            cypher=(
+                "MATCH (lr:Learning)-[:LEARNING_RELATES_TO_FILE]->(f:File) "
+                f"WHERE f.id = '{escaped}' "
+                "RETURN lr.learningId, lr.description, lr.planNumber"
+            ),
+            sql=(
+                'SELECT t.lr_learningId AS "lr.learningId",'
+                ' t.lr_description AS "lr.description",'
+                ' t.lr_planNumber AS "lr.planNumber"'
+                " FROM GRAPH_TABLE(agentscaffold_graph"
+                " MATCH (lr:Learning)-[e:LEARNING_RELATES_TO_FILE]->(f:File)"
+                f" WHERE f.id = '{escaped}'"
+                " COLUMNS (lr.learningId AS lr_learningId,"
+                " lr.description AS lr_description,"
+                " lr.planNumber AS lr_planNumber)) t"
+            ),
         )
         all_learnings.extend(learnings)
 
@@ -133,7 +148,7 @@ def _learning_patterns(
 
 
 def _complexity_profile(
-    store: GraphStore,
+    store: GraphBackend,
     impacted_files: list[dict[str, Any]],
     out: list[RetroInsight],
 ) -> None:
@@ -175,7 +190,7 @@ def _complexity_profile(
 
 
 def _hot_file_check(
-    store: GraphStore,
+    store: GraphBackend,
     impacted_files: list[dict[str, Any]],
     out: list[RetroInsight],
 ) -> None:

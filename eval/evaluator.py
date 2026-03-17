@@ -241,3 +241,60 @@ def score_readability(text: str, name: str = "document") -> ReadabilityReport:
 
     report.score = round(max(1.0 - penalties, 0.0), 2)
     return report
+
+
+# ---------------------------------------------------------------------------
+# Frontmatter scoring (Step E.5)
+# ---------------------------------------------------------------------------
+
+
+def score_frontmatter_correctness(
+    text: str, expected_fields: list[str], name: str = "document"
+) -> EvalResult:
+    """Parse YAML frontmatter from markdown and return field-level pass/fail.
+
+    The frontmatter block is delimited by leading ``---`` lines.  Fields not
+    present or empty are counted as missing.
+
+    Args:
+        text: Markdown text that may begin with a YAML frontmatter block.
+        expected_fields: Field names that must be present and non-empty.
+        name: Human-readable name for the scenario label.
+
+    Returns:
+        EvalResult with per-field observations and a score proportional to
+        the fraction of expected fields that are present and non-empty.
+    """
+    import yaml  # noqa: PLC0415
+
+    fm: dict[str, Any] = {}
+    lines = text.splitlines()
+
+    if lines and lines[0].strip() == "---":
+        end = None
+        for i, ln in enumerate(lines[1:], 1):
+            if ln.strip() == "---":
+                end = i
+                break
+        if end is not None:
+            try:
+                fm = yaml.safe_load("\n".join(lines[1:end])) or {}
+            except yaml.YAMLError:
+                fm = {}
+
+    present = [f for f in expected_fields if fm.get(f)]
+    missing = [f for f in expected_fields if not fm.get(f)]
+    score = len(present) / len(expected_fields) if expected_fields else 1.0
+
+    observations = [f"Frontmatter keys found: {list(fm.keys())}"]
+    if missing:
+        observations.append(f"Missing/empty fields: {missing}")
+
+    return EvalResult(
+        scenario=f"frontmatter_correctness_{name}",
+        passed=len(missing) == 0,
+        score=round(score, 2),
+        expected=f"All fields present: {expected_fields}",
+        actual=f"Present: {present}, Missing: {missing}",
+        observations=observations,
+    )

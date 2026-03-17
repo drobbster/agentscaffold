@@ -11,10 +11,11 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agentscaffold.graph.query_compat import ql
 from agentscaffold.graph.symbol_table import SymbolTable
 
 if TYPE_CHECKING:
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ MIN_CONFIDENCE = 0.3
 
 
 def process_calls(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     symbol_table: SymbolTable,
 ) -> dict:
@@ -39,9 +40,16 @@ def process_calls(
 
     Returns summary with counts by confidence bucket.
     """
-    file_rows = store.query(
-        "MATCH (f:File) WHERE f.language IN ['python', 'typescript', 'javascript'] "
-        "RETURN f.id, f.path, f.language"
+    file_rows = ql(
+        store,
+        cypher=(
+            "MATCH (f:File) WHERE f.language IN ['python', 'typescript', 'javascript'] "
+            "RETURN f.id, f.path, f.language"
+        ),
+        sql=(
+            'SELECT id AS "f.id", path AS "f.path", language AS "f.language" FROM File '
+            "WHERE language IN ('python', 'typescript', 'javascript')"
+        ),
     )
 
     total = 0
@@ -64,9 +72,22 @@ def process_calls(
             continue
 
         # Get functions defined in this file
-        caller_funcs = store.query(
-            "MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) "
-            f"WHERE f.id = '{file_id}' RETURN fn.id, fn.name, fn.startLine, fn.endLine"
+        caller_funcs = ql(
+            store,
+            cypher=(
+                "MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) "
+                f"WHERE f.id = '{file_id}' RETURN fn.id, fn.name, fn.startLine, fn.endLine"
+            ),
+            sql=(
+                'SELECT t.fn_id AS "fn.id", t.fn_name AS "fn.name",'
+                ' t.fn_sl AS "fn.startLine", t.fn_el AS "fn.endLine"'
+                " FROM GRAPH_TABLE(agentscaffold_graph"
+                "   MATCH (f:File)-[e:DEFINES_FUNCTION]->(fn:Function)"
+                f"   WHERE f.id = '{file_id}'"
+                "   COLUMNS (fn.id AS fn_id, fn.name AS fn_name,"
+                "            fn.startLine AS fn_sl, fn.endLine AS fn_el)"
+                " ) t"
+            ),
         )
 
         # Get the imported names for this file
@@ -123,10 +144,19 @@ def process_calls(
     }
 
 
-def _build_import_map(store: GraphStore) -> dict[str, dict[str, str]]:
+def _build_import_map(store: GraphBackend) -> dict[str, dict[str, str]]:
     """Build a map of file_path -> {imported_name: source_file_path}."""
-    import_edges = store.query(
-        "MATCH (a:File)-[r:IMPORTS]->(b:File) RETURN a.path, b.path, r.importedNames"
+    import_edges = ql(
+        store,
+        cypher="MATCH (a:File)-[r:IMPORTS]->(b:File) RETURN a.path, b.path, r.importedNames",
+        sql=(
+            'SELECT t.a_path AS "a.path", t.b_path AS "b.path",'
+            ' t.r_names AS "r.importedNames"'
+            " FROM GRAPH_TABLE(agentscaffold_graph"
+            "   MATCH (a:File)-[r:IMPORTS]->(b:File)"
+            "   COLUMNS (a.path AS a_path, b.path AS b_path, r.importedNames AS r_names)"
+            " ) t"
+        ),
     )
     result: dict[str, dict[str, str]] = {}
     for row in import_edges:

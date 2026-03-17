@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
 from agentscaffold.graph.pipeline import run_pipeline
-from agentscaffold.graph.store import GraphStore
 
 FIXTURE_REPO = Path(__file__).parent / "fixtures" / "sample_repo"
 
@@ -36,7 +36,7 @@ def graph_with_repo(tmp_path):
     config.graph = GraphConfig(db_path=str(db_path))
 
     run_pipeline(repo, config)
-    store = GraphStore(db_path)
+    store = DuckPGQBackend(db_path)
     yield store, config, repo
     store.close()
 
@@ -105,7 +105,10 @@ class TestRemoveFileNodes:
         store, _config, _repo = graph_with_repo
 
         files = store.query(
-            "MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) " "RETURN DISTINCT f.path LIMIT 1"
+            'SELECT DISTINCT t.f_path AS "f.path" '
+            "FROM GRAPH_TABLE(agentscaffold_graph "
+            "MATCH (f:File)-[e:DEFINES_FUNCTION]->(fn:Function) "
+            "COLUMNS (f.path AS f_path)) t LIMIT 1"
         )
         if not files:
             pytest.skip("No files with functions in fixture")
@@ -114,8 +117,10 @@ class TestRemoveFileNodes:
         file_id = f"file::{target_path}"
 
         func_count_before = store.query_scalar(
-            f"MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) "
-            f"WHERE f.id = '{file_id}' RETURN count(fn)"
+            f"SELECT COUNT(*) FROM GRAPH_TABLE(agentscaffold_graph "
+            f"MATCH (f:File)-[e:DEFINES_FUNCTION]->(fn:Function) "
+            f"WHERE f.id = '{file_id}' "
+            f"COLUMNS (fn.id AS fn_id)) t"
         )
 
         from agentscaffold.graph.incremental import remove_file_nodes
@@ -124,12 +129,12 @@ class TestRemoveFileNodes:
         assert removed == 1
 
         # File should be gone
-        remaining = store.query_scalar(f"MATCH (f:File) WHERE f.id = '{file_id}' RETURN count(f)")
+        remaining = store.query_scalar(f"SELECT COUNT(*) FROM File WHERE id = '{file_id}'")
         assert int(remaining) == 0
 
         # Functions should also be gone
         func_count_after = store.query_scalar(
-            f"MATCH (fn:Function) WHERE fn.filePath = '{target_path}' " f"RETURN count(fn)"
+            f"SELECT COUNT(*) FROM Function WHERE filePath = '{target_path}'"
         )
         assert int(func_count_after) == 0
         assert int(func_count_before) > 0
@@ -149,7 +154,7 @@ class TestAddFileNode:
         result = add_file_node(store, repo, "brand_new.py")
         assert result is True
 
-        rows = store.query("MATCH (f:File) WHERE f.path = 'brand_new.py' RETURN f.id")
+        rows = store.query("SELECT id AS \"f.id\" FROM File WHERE path = 'brand_new.py'")
         assert len(rows) == 1
 
     def test_add_nonexistent_file(self, graph_with_repo):
@@ -247,7 +252,7 @@ class TestSessionLifecycle:
         sid = start_session(store)
 
         # Get a file that exists in the graph
-        files = store.query("MATCH (f:File) RETURN f.path LIMIT 1")
+        files = store.query('SELECT path AS "f.path" FROM File LIMIT 1')
         if not files:
             pytest.skip("No files in graph")
 
@@ -267,7 +272,7 @@ class TestSessionLifecycle:
         )
 
         sid = start_session(store)
-        files = store.query("MATCH (f:File) RETURN f.path LIMIT 1")
+        files = store.query('SELECT path AS "f.path" FROM File LIMIT 1')
         if not files:
             pytest.skip("No files in graph")
 
@@ -292,7 +297,7 @@ class TestSessionContext:
         )
 
         sid = start_session(store, plan_numbers=[10], summary="working on plan 10")
-        files = store.query("MATCH (f:File) RETURN f.path LIMIT 2")
+        files = store.query('SELECT path AS "f.path" FROM File LIMIT 2')
         for f in files:
             record_modification(store, sid, f["f.path"])
 
@@ -303,7 +308,7 @@ class TestSessionContext:
 
     def test_session_context_empty(self, tmp_path):
         db_path = tmp_path / "empty.db"
-        store = GraphStore(db_path)
+        store = DuckPGQBackend(db_path)
         store.init_schema()
 
         from agentscaffold.graph.sessions import get_session_context

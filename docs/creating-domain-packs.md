@@ -45,6 +45,63 @@ approval_gates:
 | standards | No | List of standard names. Files: `standards/<name>.md.j2` |
 | approval_gates | No | Dict of gate name -> bool. Merged into `approval_required` |
 
+## Configuring Expert Reviewers
+
+Domain packs can declare **expert reviewers** in `scaffold.yaml` (under the project's
+`reviews.expert_reviewers` list). Each reviewer becomes a Cursor rule file, a Windsurf
+agent stub, and a Claude Code agent file automatically.
+
+```yaml
+reviews:
+  expert_reviewers:
+    - name: quant_architect
+      cursor_description: >
+        Deep review of trading plans, risk models, and execution logic.
+        Focus on correctness of financial calculations and risk bounds.
+      file_patterns:
+        - "libs/risk/**"
+        - "libs/execution/**"
+        - "libs/strategy/**"
+
+    - name: devils_advocate
+      cursor_description: >
+        Adversarial pressure-test of any plan's assumptions and edge cases.
+        No file-pattern filter — applies to all plans.
+```
+
+### cursor_description
+
+`cursor_description` is displayed as the Cursor agent rule description when an LLM is
+asked to pick a reviewer. It appears in the `description:` frontmatter of the generated
+`.cursor/rules/<name>.md` file.
+
+- **Write it as a directive to the reviewer**, not a description of them.
+- Be specific about what the reviewer focuses on (e.g. "Focus on risk bounds" is better
+  than "Reviews risk code").
+- If omitted, AgentScaffold generates a fallback description from the reviewer name.
+
+### file_patterns
+
+`file_patterns` is a list of glob patterns. When present:
+
+- The Cursor rule gets `globs: ["libs/risk/**", ...]` in its frontmatter, so Cursor
+  activates the reviewer only when those files are in context.
+- The `alwaysApply` flag is set to `false` in all cases (reviewers are on-demand, not
+  ambient).
+
+When `file_patterns` is absent, the rule still has `alwaysApply: false` but no `globs:`
+field — the reviewer is triggered by explicit invocation only.
+
+### Regenerating agent files after changes
+
+After editing `expert_reviewers` in `scaffold.yaml`, regenerate all platform files:
+
+```bash
+scaffold agents generate --all-platforms
+```
+
+This updates `.cursor/rules/`, `.claude/agents/`, and windsurf stub files in one pass.
+
 ## Writing Review Prompts
 
 Review prompts follow a multi-phase pattern:

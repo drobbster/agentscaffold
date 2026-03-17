@@ -24,7 +24,7 @@ REQUIRED_SECTIONS: list[tuple[str, ...]] = [
 
 HEADING_RE = re.compile(r"^#{1,4}\s+(?:\d+\.\s*)?(.+)", re.MULTILINE)
 CHECKBOX_RE = re.compile(r"^-\s+\[[ xX]\]\s+", re.MULTILINE)
-FILE_REF_RE = re.compile(r"\|\s*\S+\.\w+\s*\|")
+FILE_REF_RE = re.compile(r"\|\s*`?\S+\.\w+`?\s*\|")
 TEST_FILE_RE = re.compile(r"test[_s]?\S*\.py|\.test\.\w+|_test\.\w+|spec\.\w+")
 
 

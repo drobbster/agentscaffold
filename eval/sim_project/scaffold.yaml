@@ -36,3 +36,31 @@ standards:
 
 prohibitions:
   emojis: true
+
+reviews:
+  expert_reviewers:
+    - name: quant_architect
+      cursor_description: >
+        Deep review of trading plans, risk models, and execution logic.
+        Load when reviewing plans that touch libs/risk/, libs/execution/,
+        or libs/strategy/.
+      file_patterns:
+        - "libs/risk/**"
+        - "libs/execution/**"
+        - "libs/strategy/**"
+    - name: devils_advocate
+      cursor_description: >
+        Adversarial pressure-test of any plan's assumptions and edge cases.
+        Load when stress-testing a plan before implementation.
+
+enforcement:
+  prohibitions_on_write: true
+  auto_orient_on_session: true
+
+platforms:
+  cursor:
+    generate_hooks: true
+    generate_agents: true
+  claude_code:
+    generate_hooks: true
+    generate_agents: true

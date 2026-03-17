@@ -22,10 +22,10 @@ from agentscaffold.review.queries import (
 )
 
 if TYPE_CHECKING:
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 
-def generate_brief(store: GraphStore, plan_number: int) -> dict[str, Any]:
+def generate_brief(store: GraphBackend, plan_number: int) -> dict[str, Any]:
     """Generate a pre-review brief for the given plan.
 
     Returns a structured dict suitable for rendering into markdown or JSON.

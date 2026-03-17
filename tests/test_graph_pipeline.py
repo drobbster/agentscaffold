@@ -5,13 +5,6 @@ from __future__ import annotations
 import pytest
 
 try:
-    import kuzu  # noqa: F401
-
-    HAS_KUZU = True
-except ImportError:
-    HAS_KUZU = False
-
-try:
     import tree_sitter  # noqa: F401
 
     HAS_TREE_SITTER = True
@@ -19,8 +12,8 @@ except ImportError:
     HAS_TREE_SITTER = False
 
 pytestmark = pytest.mark.skipif(
-    not (HAS_KUZU and HAS_TREE_SITTER),
-    reason="kuzu and tree-sitter required",
+    not HAS_TREE_SITTER,
+    reason="tree-sitter required",
 )
 
 
@@ -49,7 +42,7 @@ class TestStructurePhase:
         """File nodes have contentHash populated."""
         repo, store = indexed_repo
         rows = store.query(
-            "MATCH (f:File) WHERE f.path = 'libs/data/router.py' " "RETURN f.contentHash"
+            'SELECT contentHash AS "f.contentHash" FROM File ' "WHERE path = 'libs/data/router.py'"
         )
         assert len(rows) == 1
         assert rows[0]["f.contentHash"] != ""
@@ -58,7 +51,7 @@ class TestStructurePhase:
         """Python files are tagged with correct language."""
         repo, store = indexed_repo
         rows = store.query(
-            "MATCH (f:File) WHERE f.path = 'libs/data/router.py' " "RETURN f.language"
+            'SELECT language AS "f.language" FROM File ' "WHERE path = 'libs/data/router.py'"
         )
         assert rows[0]["f.language"] == "python"
 
@@ -81,7 +74,7 @@ class TestParsingPhase:
     def test_data_router_class(self, indexed_repo):
         """DataRouter class is found in the graph."""
         repo, store = indexed_repo
-        rows = store.query("MATCH (c:Class) WHERE c.name = 'DataRouter' RETURN c.filePath")
+        rows = store.query("SELECT filePath AS \"c.filePath\" FROM Class WHERE name = 'DataRouter'")
         assert len(rows) >= 1
         assert "router.py" in rows[0]["c.filePath"]
 

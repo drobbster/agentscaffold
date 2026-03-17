@@ -14,9 +14,15 @@ from typing import TYPE_CHECKING, Any
 from rich.console import Console
 from rich.table import Table
 
-from agentscaffold.graph.schema import SCHEMA_VERSION
-from agentscaffold.graph.store import GraphStore
+from agentscaffold.graph.backend import GraphBackend
+from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
 from agentscaffold.graph.symbol_table import SymbolTable
+
+
+def _open_store_for_pipeline(db_path: Path, backend_name: str) -> GraphBackend:
+    """Instantiate the backend for pipeline writes."""
+    return DuckPGQBackend(db_path)
+
 
 if TYPE_CHECKING:
     from agentscaffold.config import ScaffoldConfig
@@ -44,18 +50,19 @@ def run_pipeline(
     if not db_path.is_absolute():
         db_path = root / db_path
 
+    backend_name = (graph_config.backend if graph_config else None) or "duckpgq"
     t0 = time.monotonic()
 
-    store = GraphStore(db_path)
+    store = _open_store_for_pipeline(db_path, backend_name)
 
-    # Schema version check
-    stored_version = store.schema_version()
-    if stored_version is not None and stored_version != SCHEMA_VERSION:
-        console.print(
-            f"[yellow]Graph schema changed (v{stored_version} -> v{SCHEMA_VERSION}). "
-            "Rebuilding...[/yellow]"
-        )
-        store.clear_all()
+    # Schema version check (backend-agnostic via schema_current())
+    if not store.schema_current():
+        stored_version = store.schema_version()
+        if stored_version is not None:
+            console.print(
+                f"[yellow]Graph schema changed (v{stored_version}). Rebuilding...[/yellow]"
+            )
+            store.clear_all()
 
     store.init_schema()
     phases_completed: list[str] = []
@@ -72,9 +79,16 @@ def run_pipeline(
             failed_phase = pipeline_state["state"].split(":", 1)[-1]
             console.print(
                 f"[yellow]Previous index failed during '{failed_phase}'. "
-                "Clearing graph and starting fresh...[/yellow]"
+                "Clearing derived data and starting fresh "
+                "(review findings and sessions preserved)...[/yellow]"
             )
-            store.clear_all()
+            store.clear_derived()
+        elif pipeline_state["state"] == "complete":
+            console.print(
+                "[dim]Full re-index: clearing derived data "
+                "(review findings and sessions preserved)...[/dim]"
+            )
+            store.clear_derived()
         elif pipeline_state["state"] == "partial":
             phases_completed = pipeline_state["phases_completed"]
             console.print(
@@ -88,15 +102,7 @@ def run_pipeline(
     total_phases = 4  # structure, parsing, resolution, governance
     if embeddings:
         total_phases += 1
-    has_communities = False
-    try:
-        from agentscaffold.graph.communities import _leiden_available
-
-        has_communities = _leiden_available
-    except ImportError:
-        pass
-    if has_communities:
-        total_phases += 1
+    total_phases += 1  # communities phase is always included
 
     # Phase 1: Structure
     if "structure" not in phases_completed:
@@ -234,7 +240,7 @@ def run_pipeline(
             # Governance failure is non-fatal; code graph is still usable
 
     # Phase 5 (optional): Community detection
-    if has_communities and "communities" not in phases_completed:
+    if "communities" not in phases_completed:
         phase_num = len(phases_completed) + 1
         console.print(
             f"[bold]Phase {phase_num}/{total_phases}: Communities[/bold] "
@@ -299,7 +305,7 @@ def run_pipeline(
 
 
 def _run_incremental(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     graph_config: Any,
     t0: float,
@@ -374,17 +380,11 @@ def _run_incremental(
         call_result = process_calls(store, root, symbol_table)
         summary["calls"] = call_result
 
-    # Re-run communities if available
-    try:
-        from agentscaffold.graph.communities import _leiden_available
+    # Re-run communities
+    from agentscaffold.graph.communities import detect_communities
 
-        if _leiden_available:
-            from agentscaffold.graph.communities import detect_communities
-
-            comm_result = detect_communities(store)
-            summary["communities"] = comm_result
-    except ImportError:
-        pass
+    comm_result = detect_communities(store)
+    summary["communities"] = comm_result
 
     # Re-run embeddings if requested
     if embeddings:
@@ -407,13 +407,27 @@ def _run_incremental(
     return summary
 
 
-def _rebuild_symbol_table(store: GraphStore, symbol_table: SymbolTable) -> None:
+def _rebuild_symbol_table(store: GraphBackend, symbol_table: SymbolTable) -> None:
     """Rebuild symbol table from existing graph data (for pipeline resumption)."""
-    from agentscaffold.graph.symbol_table import SymbolEntry
+    from agentscaffold.graph.query_compat import ql  # noqa: PLC0415
+    from agentscaffold.graph.symbol_table import SymbolEntry  # noqa: PLC0415
 
-    for row in store.query(
-        "MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) "
-        "RETURN f.id, f.path, fn.id, fn.name, fn.isExported, fn.startLine"
+    for row in ql(
+        store,
+        cypher=(
+            "MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) "
+            "RETURN f.id, f.path, fn.id, fn.name, fn.isExported, fn.startLine"
+        ),
+        sql=(
+            'SELECT t.f_id AS "f.id", t.f_path AS "f.path",'
+            ' t.fn_id AS "fn.id", t.fn_name AS "fn.name",'
+            ' t.fn_isExported AS "fn.isExported", t.fn_startLine AS "fn.startLine"'
+            " FROM GRAPH_TABLE(agentscaffold_graph"
+            " MATCH (f:File)-[e:DEFINES_FUNCTION]->(fn:Function)"
+            " COLUMNS (f.id AS f_id, f.path AS f_path,"
+            " fn.id AS fn_id, fn.name AS fn_name,"
+            " fn.isExported AS fn_isExported, fn.startLine AS fn_startLine)) t"
+        ),
     ):
         module = row["f.path"].replace("/", ".").removesuffix(".py")
         symbol_table.add(
@@ -429,9 +443,22 @@ def _rebuild_symbol_table(store: GraphStore, symbol_table: SymbolTable) -> None:
             )
         )
 
-    for row in store.query(
-        "MATCH (f:File)-[:DEFINES_CLASS]->(c:Class) "
-        "RETURN f.id, f.path, c.id, c.name, c.isExported, c.startLine"
+    for row in ql(
+        store,
+        cypher=(
+            "MATCH (f:File)-[:DEFINES_CLASS]->(c:Class) "
+            "RETURN f.id, f.path, c.id, c.name, c.isExported, c.startLine"
+        ),
+        sql=(
+            'SELECT t.f_id AS "f.id", t.f_path AS "f.path",'
+            ' t.c_id AS "c.id", t.c_name AS "c.name",'
+            ' t.c_isExported AS "c.isExported", t.c_startLine AS "c.startLine"'
+            " FROM GRAPH_TABLE(agentscaffold_graph"
+            " MATCH (f:File)-[e:DEFINES_CLASS]->(c:Class)"
+            " COLUMNS (f.id AS f_id, f.path AS f_path,"
+            " c.id AS c_id, c.name AS c_name,"
+            " c.isExported AS c_isExported, c.startLine AS c_startLine)) t"
+        ),
     ):
         module = row["f.path"].replace("/", ".").removesuffix(".py")
         symbol_table.add(
@@ -447,9 +474,22 @@ def _rebuild_symbol_table(store: GraphStore, symbol_table: SymbolTable) -> None:
             )
         )
 
-    for row in store.query(
-        "MATCH (c:Class)-[:HAS_METHOD]->(m:Method) "
-        "RETURN m.id, m.name, m.className, m.filePath, m.isExported, m.startLine"
+    for row in ql(
+        store,
+        cypher=(
+            "MATCH (c:Class)-[:HAS_METHOD]->(m:Method) "
+            "RETURN m.id, m.name, m.className, m.filePath, m.isExported, m.startLine"
+        ),
+        sql=(
+            'SELECT t.m_id AS "m.id", t.m_name AS "m.name",'
+            ' t.m_className AS "m.className", t.m_filePath AS "m.filePath",'
+            ' t.m_isExported AS "m.isExported", t.m_startLine AS "m.startLine"'
+            " FROM GRAPH_TABLE(agentscaffold_graph"
+            " MATCH (c:Class)-[e:HAS_METHOD]->(m:Method)"
+            " COLUMNS (m.id AS m_id, m.name AS m_name,"
+            " m.className AS m_className, m.filePath AS m_filePath,"
+            " m.isExported AS m_isExported, m.startLine AS m_startLine)) t"
+        ),
     ):
         file_path = row["m.filePath"]
         module = file_path.replace("/", ".").removesuffix(".py")
@@ -472,7 +512,7 @@ def _build_summary(
     summary: dict[str, Any],
     phases_completed: list[str],
     t0: float,
-    store: GraphStore,
+    store: GraphBackend,
 ) -> dict[str, Any]:
     """Build summary dict even for partial/failed runs."""
     summary["elapsed_seconds"] = round(time.monotonic() - t0, 1)
@@ -482,7 +522,7 @@ def _build_summary(
     return summary
 
 
-def _print_summary(summary: dict[str, Any], store: GraphStore) -> None:
+def _print_summary(summary: dict[str, Any], store: GraphBackend) -> None:
     """Print a formatted index summary with quality metrics."""
     console.print()
 

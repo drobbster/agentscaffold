@@ -231,8 +231,8 @@ scaffold graph verify
 scaffold validate
 ```
 
-For a full migration guide, see
-[Migrating Governance to NL + MCP](migrating-governance-to-nl-mcp.md).
+For a full migration guide, see the "Migration Guide for Governance-First Users"
+section in the [User Guide](user-guide.md).
 
 ## 11. Next Steps
 

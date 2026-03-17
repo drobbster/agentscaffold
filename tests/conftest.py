@@ -54,15 +54,11 @@ def fixture_repo(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def graph_store(tmp_path: Path):
-    """Create a fresh GraphStore in a temp directory."""
-    try:
-        from agentscaffold.graph.store import GraphStore
-    except ImportError:
-        pytest.skip("kuzu not installed")
+def any_store(tmp_path: Path):
+    """Yield a DuckPGQBackend instance for tests."""
+    from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
 
-    db_path = tmp_path / "test.db"
-    store = GraphStore(db_path)
+    store = DuckPGQBackend(":memory:")
     store.init_schema()
     yield store
     store.close()
@@ -71,17 +67,15 @@ def graph_store(tmp_path: Path):
 @pytest.fixture()
 def indexed_repo(fixture_repo: Path, tmp_path: Path):
     """fixture_repo with graph already built. Returns (repo_path, store)."""
-    try:
-        from agentscaffold.graph.pipeline import run_pipeline
-        from agentscaffold.graph.store import GraphStore
-    except ImportError:
-        pytest.skip("kuzu not installed")
+    from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
+    from agentscaffold.graph.pipeline import run_pipeline
 
-    db_path = tmp_path / "graph.db"
+    db_path = tmp_path / "graph.duckdb"
     from agentscaffold.config import GraphConfig
 
-    config = type("FakeConfig", (), {"graph": GraphConfig(db_path=str(db_path))})()
+    config = ScaffoldConfig()
+    config.graph = GraphConfig(db_path=str(db_path), backend="duckpgq")
     run_pipeline(root=fixture_repo, config=config)
-    store = GraphStore(db_path)
+    store = DuckPGQBackend(db_path)
     yield fixture_repo, store
     store.close()

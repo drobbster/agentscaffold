@@ -29,13 +29,14 @@ class TestConversationReplay:
         shutil.copytree(SIM_PROJECT, dest)
 
         from agentscaffold.config import GraphConfig, ScaffoldConfig
+        from agentscaffold.graph import open_graph
         from agentscaffold.graph.pipeline import run_pipeline
-        from agentscaffold.graph.store import GraphStore
 
-        db_path = dest / ".scaffold" / "graph.db"
+        db_path = dest / ".scaffold" / "graph.duckdb"
         config = ScaffoldConfig()
         config.graph = GraphConfig(
             db_path=str(db_path),
+            backend="duckpgq",
             plans_dir="docs/ai/plans/",
             contracts_dir="docs/ai/contracts/",
             learnings_file="docs/ai/state/learnings_tracker.md",
@@ -51,7 +52,7 @@ class TestConversationReplay:
         except Exception as exc:
             errors.append(f"Step 1 (Index) failed: {exc}")
 
-        store = GraphStore(db_path)
+        store = open_graph(config)
 
         try:
             # Step 2: Start a session (simulating agent beginning work on Plan 068)
@@ -205,10 +206,11 @@ class TestConversationReplay:
             render_template,
         )
 
-        db_path = dest / ".scaffold" / "graph.db"
+        db_path = dest / ".scaffold" / "graph.duckdb"
         config = ScaffoldConfig()
         config.graph = GraphConfig(
             db_path=str(db_path),
+            backend="duckpgq",
             plans_dir="docs/ai/plans/",
             contracts_dir="docs/ai/contracts/",
             learnings_file="docs/ai/state/learnings_tracker.md",

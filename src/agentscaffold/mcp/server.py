@@ -144,6 +144,26 @@ TOOL_INTENTS: dict[str, list[str]] = {
         "trace the rationale chain for plan X",
         "why was this plan decided this way",
     ],
+    "scaffold_record_finding": [
+        "record finding",
+        "log finding",
+        "note a finding",
+        "discovered issue in plan",
+        "review found an issue",
+        "I found an issue in plan X",
+        "log this review finding",
+        "capture this finding",
+    ],
+    "scaffold_resolve_finding": [
+        "mark finding resolved",
+        "close finding",
+        "fix has been addressed",
+        "resolved finding",
+        "finding has been closed",
+        "mark this issue as resolved",
+        "resolve this finding",
+        "finding is resolved",
+    ],
 }
 
 _ROUTING_STOPWORDS = {
@@ -194,6 +214,13 @@ _ROUTING_NORMALIZERS: list[tuple[str, str]] = [
     (r"\bcollisions?\b", "conflict"),
     (r"\blineage\b", "decision chain"),
     (r"\bhas .* changed enough\b", "stale"),
+    # Finding-record disambiguation: "review found/discovered X" describes a finding result,
+    # not a request to run a review.  Normalize to "record finding" so the exact substring
+    # check in route_tool_from_prompt returns scaffold_record_finding immediately.
+    (r"\breview found\b", "record finding"),
+    (r"\breview discovered\b", "record finding"),
+    # Past-tense "has been fixed" expresses resolution, not the act of recording.
+    (r"\bhas been fixed\b", "resolved finding"),
 ]
 
 _TOOL_SIGNAL_TOKENS: dict[str, set[str]] = {
@@ -208,6 +235,8 @@ _TOOL_SIGNAL_TOKENS: dict[str, set[str]] = {
     "scaffold_prior_experiments": {"prior", "experiments", "evidence", "tested"},
     "scaffold_find_adrs": {"adr", "architecture", "decision", "governs"},
     "scaffold_decision_context": {"decision", "history", "chain", "spike", "intent", "adr"},
+    "scaffold_record_finding": {"record", "log", "finding", "discovered", "issue", "capture"},
+    "scaffold_resolve_finding": {"resolve", "resolved", "close", "fixed", "addressed"},
 }
 
 
@@ -610,6 +639,81 @@ def _get_tool_definitions() -> list:
                 "required": ["plan_number"],
             },
         ),
+        Tool(
+            name="scaffold_record_finding",
+            description=(
+                "Record a review finding in the knowledge graph. Creates a ReviewFinding "
+                "node linked to the relevant plan, files, and functions. Use this when "
+                "you identify an issue, concern, or improvement during a code review. "
+                "Findings persist across sessions and surface in future reviews."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "plan_number": {
+                        "type": "integer",
+                        "description": "Plan number this finding relates to",
+                    },
+                    "review_type": {
+                        "type": "string",
+                        "description": (
+                            "Review type (e.g. 'quant_architect', 'security', 'devils_advocate')"
+                        ),
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": (
+                            "Finding category (e.g. 'correctness', 'performance', 'risk')"
+                        ),
+                    },
+                    "finding": {
+                        "type": "string",
+                        "description": "Human-readable description of the finding",
+                    },
+                    "severity": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high", "critical"],
+                        "description": "Severity level (default: medium)",
+                        "default": "medium",
+                    },
+                    "file_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "File paths related to this finding",
+                    },
+                    "function_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Function node IDs related to this finding",
+                    },
+                },
+                "required": ["plan_number", "review_type", "category", "finding"],
+            },
+        ),
+        Tool(
+            name="scaffold_resolve_finding",
+            description=(
+                "Mark a ReviewFinding as resolved. Use this when an issue identified "
+                "during a prior review has been addressed. The finding remains in the "
+                "graph with status='resolved' for audit trail purposes."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "finding_id": {
+                        "type": "string",
+                        "description": (
+                            "The ID of the finding to resolve (from scaffold_record_finding)"
+                        ),
+                    },
+                    "resolution": {
+                        "type": "string",
+                        "description": "Description of how the finding was resolved",
+                    },
+                },
+                "required": ["finding_id", "resolution"],
+            },
+        ),
     ]
 
 
@@ -701,8 +805,18 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             return result
 
         elif name == "scaffold_query":
+            from agentscaffold.graph.query_compat import is_duckpgq
+
             cypher = arguments.get("cypher", "")
-            rows = store.query(cypher)
+            sql = arguments.get("sql", "")
+            if cypher and sql:
+                from agentscaffold.graph.query_compat import ql
+
+                rows = ql(store, cypher=cypher, sql=sql)
+            elif sql and is_duckpgq(store):
+                rows = store.query(sql)
+            else:
+                rows = store.query(cypher)
             return {"results": rows, "count": len(rows), "meta": meta}
 
         elif name == "scaffold_context":
@@ -753,6 +867,12 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         elif name == "scaffold_decision_context":
             return _tool_decision_context(store, arguments, meta)
 
+        elif name == "scaffold_record_finding":
+            return _tool_record_finding(store, arguments, meta)
+
+        elif name == "scaffold_resolve_finding":
+            return _tool_resolve_finding(store, arguments, meta)
+
         else:
             return {"error": f"Unknown tool: {name}"}
 
@@ -778,17 +898,35 @@ def _build_meta(
 
 def _tool_context(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
     """Handle scaffold_context tool call."""
+    from agentscaffold.graph.query_compat import ql
+
     symbol = arguments.get("symbol", "")
 
     # Search across functions, classes, methods
-    results = store.query(
-        f"MATCH (fn:Function) WHERE fn.name = '{symbol}' "
-        "RETURN fn.id, fn.name, fn.filePath, fn.startLine, fn.endLine, fn.signature"
+    results = ql(
+        store,
+        cypher=(
+            f"MATCH (fn:Function) WHERE fn.name = '{symbol}' "
+            "RETURN fn.id, fn.name, fn.filePath, fn.startLine, fn.endLine, fn.signature"
+        ),
+        sql=(
+            f'SELECT id AS "fn.id", name AS "fn.name", filePath AS "fn.filePath", '
+            f'startLine AS "fn.startLine", endLine AS "fn.endLine", signature AS "fn.signature" '
+            f"FROM Function WHERE name = '{symbol}'"
+        ),
     )
     if not results:
-        results = store.query(
-            f"MATCH (c:Class) WHERE c.name = '{symbol}' "
-            "RETURN c.id, c.name, c.filePath, c.startLine, c.endLine"
+        results = ql(
+            store,
+            cypher=(
+                f"MATCH (c:Class) WHERE c.name = '{symbol}' "
+                "RETURN c.id, c.name, c.filePath, c.startLine, c.endLine"
+            ),
+            sql=(
+                f'SELECT id AS "c.id", name AS "c.name", filePath AS "c.filePath", '
+                f'startLine AS "c.startLine", endLine AS "c.endLine" '
+                f"FROM Class WHERE name = '{symbol}'"
+            ),
         )
 
     if not results:
@@ -798,15 +936,43 @@ def _tool_context(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str
     node_id = node.get("fn.id") or node.get("c.id")
 
     # Find callers
-    callers = store.query(
-        f"MATCH (caller:Function)-[r:CALLS]->(fn:Function) WHERE fn.id = '{node_id}' "
-        "RETURN caller.name, caller.filePath, r.confidence"
+    callers = ql(
+        store,
+        cypher=(
+            f"MATCH (caller:Function)-[r:CALLS]->(fn:Function) WHERE fn.id = '{node_id}' "
+            "RETURN caller.name, caller.filePath, r.confidence"
+        ),
+        sql=(
+            f'SELECT t.caller_name AS "caller.name", t.caller_fp AS "caller.filePath", '
+            f't.r_conf AS "r.confidence" '
+            f"FROM GRAPH_TABLE(agentscaffold_graph "
+            f"MATCH (caller:Function)-[r:CALLS]->(fn:Function) "
+            f"WHERE fn.id = '{node_id}' "
+            f"COLUMNS (caller.name AS caller_name, "
+            f"caller.filePath AS caller_fp, "
+            f"r.confidence AS r_conf)) t"
+        ),
     )
 
     # Find callees
-    callees = store.query(
-        f"MATCH (fn:Function)-[r:CALLS]->(callee:Function) WHERE fn.id = '{node_id}' "
-        "RETURN callee.name, callee.filePath, r.confidence"
+    callees = ql(
+        store,
+        cypher=(
+            f"MATCH (fn:Function)-[r:CALLS]->(callee:Function) "
+            f"WHERE fn.id = '{node_id}' "
+            "RETURN callee.name, callee.filePath, r.confidence"
+        ),
+        sql=(
+            f'SELECT t.callee_name AS "callee.name", '
+            f't.callee_fp AS "callee.filePath", '
+            f't.r_conf AS "r.confidence" '
+            f"FROM GRAPH_TABLE(agentscaffold_graph "
+            f"MATCH (fn:Function)-[r:CALLS]->(callee:Function) "
+            f"WHERE fn.id = '{node_id}' "
+            f"COLUMNS (callee.name AS callee_name, "
+            f"callee.filePath AS callee_fp, "
+            f"r.confidence AS r_conf)) t"
+        ),
     )
 
     return {
@@ -821,21 +987,47 @@ def _tool_context(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str
 
 def _tool_impact(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
     """Handle scaffold_impact tool call."""
+    from agentscaffold.graph.query_compat import ql
+
     target = arguments.get("file_or_symbol", "")
     _depth = arguments.get("depth", 2)  # noqa: F841 -- reserved for multi-hop traversal
 
     file_id = f"file::{target}"
 
     # Find direct importers
-    importers = store.query(
-        f"MATCH (a:File)-[:IMPORTS]->(b:File) WHERE b.id = '{file_id}' RETURN a.path, a.language"
+    importers = ql(
+        store,
+        cypher=(
+            f"MATCH (a:File)-[:IMPORTS]->(b:File) "
+            f"WHERE b.id = '{file_id}' RETURN a.path, a.language"
+        ),
+        sql=(
+            f'SELECT t.a_path AS "a.path", t.a_lang AS "a.language" '
+            f"FROM GRAPH_TABLE(agentscaffold_graph "
+            f"MATCH (a:File)-[e:IMPORTS]->(b:File) "
+            f"WHERE b.id = '{file_id}' "
+            f"COLUMNS (a.path AS a_path, a.language AS a_lang)) t"
+        ),
     )
 
     # Find functions in this file and their callers
-    callers = store.query(
-        "MATCH (caller:Function)-[r:CALLS]->(fn:Function)-[:DEFINES_FUNCTION]-(f:File) "
-        f"WHERE f.id = '{file_id}' "
-        "RETURN DISTINCT caller.filePath, caller.name, r.confidence"
+    callers = ql(
+        store,
+        cypher=(
+            "MATCH (caller:Function)-[r:CALLS]->(fn:Function)-[:DEFINES_FUNCTION]-(f:File) "
+            f"WHERE f.id = '{file_id}' "
+            "RETURN DISTINCT caller.filePath, caller.name, r.confidence"
+        ),
+        sql=(
+            f'SELECT DISTINCT t.caller_fp AS "caller.filePath", t.caller_name AS "caller.name", '
+            f't.r_conf AS "r.confidence" '
+            f"FROM GRAPH_TABLE(agentscaffold_graph "
+            f"MATCH (caller:Function)-[r:CALLS]->(fn:Function)<-[e:DEFINES_FUNCTION]-(f:File) "
+            f"WHERE f.id = '{file_id}' "
+            f"COLUMNS (caller.filePath AS caller_fp, "
+            f"caller.name AS caller_name, "
+            f"r.confidence AS r_conf)) t"
+        ),
     )
 
     return {
@@ -962,11 +1154,67 @@ def _tool_review_context(store: Any, arguments: dict[str, Any], meta: dict) -> d
 # Composite tool handlers
 # ---------------------------------------------------------------------------
 
+_SEVERITY_ORDER: tuple[str, ...] = ("critical", "high", "medium", "low")
+
+
+def _sev_key(row: dict) -> int:
+    sev = (row.get("rf.severity") or "medium").lower()
+    try:
+        return _SEVERITY_ORDER.index(sev)
+    except ValueError:
+        return len(_SEVERITY_ORDER)
+
+
+def _file_matches_domain_pattern(fpath: str, pattern: str) -> bool:
+    """Check if a file path matches a domain file_patterns glob entry."""
+    import fnmatch  # noqa: PLC0415
+
+    if pattern.endswith("/**"):
+        prefix = pattern[:-3]
+        return fpath.startswith(prefix + "/") or fpath == prefix
+    return fnmatch.fnmatch(fpath, pattern)
+
+
+def _build_reviewer_hints(root: Path, impacted_paths: list[str]) -> list[str]:
+    """Derive rule file hints from impacted files and domain manifests."""
+    from agentscaffold.domain_packs.loader import (  # noqa: PLC0415
+        _get_available_packs,
+        _load_manifest,
+    )
+
+    hints: list[str] = []
+
+    agentscaffold_rule = root / ".cursor" / "rules" / "agentscaffold.md"
+    if agentscaffold_rule.is_file():
+        hints.append(".cursor/rules/agentscaffold.md")
+
+    matched_standards: set[str] = set()
+    for pack in _get_available_packs():
+        try:
+            manifest = _load_manifest(pack)
+        except FileNotFoundError:
+            continue
+        patterns = manifest.get("file_patterns", [])
+        if not patterns:
+            continue
+        for fpath in impacted_paths:
+            if any(_file_matches_domain_pattern(fpath, p) for p in patterns):
+                matched_standards.update(manifest.get("standards", []))
+                break
+
+    for std in sorted(matched_standards):
+        std_path = root / "docs" / "ai" / "standards" / f"{std}.md"
+        if std_path.is_file():
+            hints.append(f"docs/ai/standards/{std}.md")
+
+    return hints
+
 
 def _tool_prepare_review(
     store: Any, arguments: dict[str, Any], meta: dict, root: Path, config: Any
 ) -> dict[str, Any]:
     """Composite: full review context for a plan."""
+    from agentscaffold.graph.findings import get_open_findings  # noqa: PLC0415
     from agentscaffold.review.brief import format_brief_markdown, generate_brief
     from agentscaffold.review.challenges import format_challenges_markdown, generate_challenges
     from agentscaffold.review.gaps import format_gaps_markdown, generate_gaps
@@ -985,6 +1233,23 @@ def _tool_prepare_review(
     challenges = generate_challenges(store, pn)
     gaps = generate_gaps(store, pn)
 
+    # Collect impacted paths from the brief (avoids a redundant graph query)
+    impacted_paths = [fp["path"] for fp in brief.get("file_profiles", []) if fp.get("path")]
+
+    # Open findings: plan-scoped first, then file-scoped (deduplicated)
+    plan_findings = get_open_findings(store, plan_number=pn, limit=20)
+    seen_ids: set[str] = {r.get("rf.id", "") for r in plan_findings}
+    file_findings: list[dict] = []
+    for fpath in impacted_paths[:10]:
+        for row in get_open_findings(store, file_path=fpath, limit=5):
+            fid = row.get("rf.id", "")
+            if fid not in seen_ids:
+                seen_ids.add(fid)
+                file_findings.append(row)
+    all_findings = sorted(plan_findings + file_findings, key=_sev_key)[:20]
+
+    reviewer_hints = _build_reviewer_hints(root, impacted_paths)
+
     return {
         "plan_number": pn,
         "brief": brief,
@@ -999,6 +1264,8 @@ def _tool_prepare_review(
         "validation_spikes": get_spikes_for_plan(store, pn),
         "related_studies": get_studies_for_plan(store, pn),
         "dependencies": get_plan_dependencies(store, pn),
+        "open_findings": all_findings,
+        "reviewer_hints": reviewer_hints,
         "meta": meta,
     }
 
@@ -1398,6 +1665,50 @@ def _tool_decision_context(store: Any, arguments: dict[str, Any], meta: dict) ->
     }
 
 
+def _tool_record_finding(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+    """Record a review finding in the knowledge graph."""
+    from agentscaffold.graph.findings import record_finding  # noqa: PLC0415
+
+    plan_number = arguments.get("plan_number")
+    review_type = arguments.get("review_type", "")
+    category = arguments.get("category", "")
+    finding = arguments.get("finding", "")
+
+    if not all([plan_number is not None, review_type, category, finding]):
+        return {
+            "error": "plan_number, review_type, category, and finding are required.",
+            "meta": meta,
+        }
+
+    result = record_finding(
+        store,
+        plan_number=int(plan_number),
+        review_type=review_type,
+        category=category,
+        finding=finding,
+        severity=arguments.get("severity", "medium"),
+        file_paths=arguments.get("file_paths") or [],
+        function_ids=arguments.get("function_ids") or [],
+    )
+    result["meta"] = meta
+    return result
+
+
+def _tool_resolve_finding(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+    """Mark a ReviewFinding as resolved."""
+    from agentscaffold.graph.findings import resolve_finding  # noqa: PLC0415
+
+    finding_id = arguments.get("finding_id", "")
+    resolution = arguments.get("resolution", "")
+
+    if not finding_id or not resolution:
+        return {"error": "finding_id and resolution are required.", "meta": meta}
+
+    result = resolve_finding(store, finding_id, resolution=resolution)
+    result["meta"] = meta
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Resource dispatch
 # ---------------------------------------------------------------------------
@@ -1420,9 +1731,21 @@ def _dispatch_resource(uri: str) -> dict[str, Any]:
             return stats
 
         elif uri == "scaffold://project/layers":
-            layers = store.query(
-                "MATCH (l:ArchitectureLayer) RETURN l.number, l.name, l.pathPatterns "
-                "ORDER BY l.number"
+            from agentscaffold.graph.query_compat import ql
+
+            layers = ql(
+                store,
+                cypher=(
+                    "MATCH (l:ArchitectureLayer) "
+                    "RETURN l.number, l.name, l.pathPatterns "
+                    "ORDER BY l.number"
+                ),
+                sql=(
+                    'SELECT number AS "l.number", '
+                    'name AS "l.name", '
+                    'pathPatterns AS "l.pathPatterns" '
+                    "FROM ArchitectureLayer ORDER BY number"
+                ),
             )
             return {"layers": layers}
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +39,9 @@ app.add_typer(domains_app, name="domain", hidden=True)
 
 agents_app = typer.Typer(help="Agent integration file generation.")
 app.add_typer(agents_app, name="agents")
+
+plugins_app = typer.Typer(help="Plugin packaging and distribution.")
+app.add_typer(plugins_app, name="plugins")
 
 graph_app = typer.Typer(help="Knowledge graph operations.")
 app.add_typer(graph_app, name="graph")
@@ -80,6 +85,9 @@ def validate(
     check_session_summary: bool = typer.Option(
         False, "--check-session-summary", help="Verify session summary exists for agent PRs."
     ),
+    pre_edit: bool = typer.Option(
+        False, "--pre-edit", help="Quick pre-edit check (integration + prohibitions only)."
+    ),
 ) -> None:
     """Run all enforcement checks (lint, integration, retros, prohibitions, secrets)."""
     from agentscaffold.validate.orchestrator import run_validate
@@ -87,6 +95,7 @@ def validate(
     run_validate(
         check_safety_boundaries=check_safety_boundaries,
         check_session_summary=check_session_summary,
+        pre_edit=pre_edit,
     )
 
 
@@ -143,7 +152,12 @@ def metrics() -> None:
 @app.command()
 def version() -> None:
     """Show AgentScaffold version."""
-    console.print(f"agentscaffold {__version__}")
+    try:
+        resolved_version = package_version("agentscaffold")
+    except PackageNotFoundError:
+        # Fallback for source-only execution without installed metadata.
+        resolved_version = __version__
+    console.print(f"agentscaffold {resolved_version}")
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +426,145 @@ def agents_prompt() -> None:
     from agentscaffold.agents.prompt import run_prompt_export
 
     run_prompt_export()
+
+
+@agents_app.command("hooks")
+def agents_hooks(
+    platform: str = typer.Option(
+        "all",
+        "--platform",
+        "-p",
+        help="Target platform: 'claude-code', 'cursor', 'windsurf', or 'all'.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print paths without writing files."),
+) -> None:
+    """Generate platform-native lifecycle hooks from enforcement config."""
+    from agentscaffold.config import load_config
+    from agentscaffold.hooks.generators.claude_code import write_claude_code_hooks
+    from agentscaffold.hooks.generators.cursor import generate_cursor_enforcement_files
+    from agentscaffold.hooks.generators.windsurf import write_windsurf_hooks
+
+    config = load_config()
+    enforcement = config.enforcement
+    root = Path.cwd()
+
+    platforms = ["claude-code", "cursor", "windsurf"] if platform == "all" else [platform]
+
+    for plat in platforms:
+        if not enforcement.platform_enabled(plat):
+            console.print(f"[dim]Skipping {plat} (disabled in config)[/dim]")
+            continue
+
+        if plat == "claude-code":
+            path = write_claude_code_hooks(enforcement, root, dry_run=dry_run)
+            label = "Would write" if dry_run else "Wrote"
+            console.print(f"[green]{label}[/green] {path.relative_to(root)}")
+        elif plat == "cursor":
+            paths = generate_cursor_enforcement_files(enforcement, output_dir=root, dry_run=dry_run)
+            label = "Would write" if dry_run else "Wrote"
+            for p in paths:
+                console.print(f"[green]{label}[/green] {p.relative_to(root)}")
+            if not paths:
+                console.print("[dim]No enforcement rules for cursor[/dim]")
+        elif plat == "windsurf":
+            path = write_windsurf_hooks(enforcement, root, dry_run=dry_run)
+            label = "Would write" if dry_run else "Wrote"
+            console.print(f"[green]{label}[/green] {path.relative_to(root)}")
+        else:
+            console.print(f"[red]Unknown platform: {plat}[/red]")
+
+
+@agents_app.command("skills")
+def agents_skills(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print paths without writing files."),
+    if_standards_changed: bool = typer.Option(
+        False,
+        "--if-standards-changed",
+        help="Only regenerate if standards files are newer than existing skills.",
+    ),
+) -> None:
+    """Generate SKILL.md files into .claude/skills/ and .cursor/skills/."""
+    from agentscaffold.skills.catalog import write_catalog
+    from agentscaffold.skills.generator import generate_skills_from_standards_dir
+
+    root = Path.cwd()
+    standards_dir = root / "docs" / "ai" / "standards"
+    claude_skills = root / ".claude" / "skills"
+    cursor_skills = root / ".cursor" / "skills"
+
+    # Quick mtime check: skip if no standards are newer than the marker
+    if if_standards_changed:
+        marker = root / ".scaffold" / ".skills_generated"
+        if marker.is_file() and standards_dir.is_dir():
+            marker_mtime = marker.stat().st_mtime
+            any_newer = any(f.stat().st_mtime > marker_mtime for f in standards_dir.glob("*.md"))
+            if not any_newer:
+                return  # nothing changed, skip silently
+
+    written: list[Path] = []
+    for output_dir in (claude_skills, cursor_skills):
+        paths = generate_skills_from_standards_dir(standards_dir, output_dir, dry_run=dry_run)
+        written.extend(paths)
+        label = "Would write" if dry_run else "Wrote"
+        for p in paths:
+            try:
+                rel = p.relative_to(root)
+            except ValueError:
+                rel = p
+            console.print(f"[green]{label}[/green] {rel}")
+
+    if not dry_run and written:
+        for skills_dir in (claude_skills, cursor_skills):
+            catalog_path = skills_dir / "SKILLS_CATALOG.md"
+            write_catalog([skills_dir], catalog_path, dry_run=dry_run)
+            try:
+                rel = catalog_path.relative_to(root)
+            except ValueError:
+                rel = catalog_path
+            console.print(f"[green]Wrote[/green] {rel}")
+
+        # Update marker timestamp
+        marker = root / ".scaffold" / ".skills_generated"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+
+    if not written:
+        console.print("[dim]No standards found in docs/ai/standards/[/dim]")
+
+
+@agents_app.command("generate-all")
+def agents_generate_all(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print paths without writing files."),
+) -> None:
+    """Generate all platform artifacts (AGENTS.md, CLAUDE.md, Cursor rules, Windsurf, hooks)."""
+    from agentscaffold.agents.generate import run_agents_generate_all_platforms
+    from agentscaffold.config import load_config
+
+    config = load_config()
+    run_agents_generate_all_platforms(config, Path.cwd(), dry_run=dry_run)
+
+
+# ---------------------------------------------------------------------------
+# Plugin commands
+# ---------------------------------------------------------------------------
+
+
+@plugins_app.command("package")
+def plugins_package(
+    domain: str = typer.Option(..., "--domain", "-d", help="Domain pack name to package."),
+    output: str = typer.Option("dist/plugins", "--output", "-o", help="Output directory."),
+    version: str = typer.Option("0.1.0", "--version", "-v", help="Package version (semver)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print output path without writing."),
+) -> None:
+    """Package a domain pack into a pip-installable plugin."""
+    from agentscaffold.plugins.packaging import package_domain_plugin
+
+    output_dir = Path(output)
+    pkg_dir = package_domain_plugin(domain, output_dir, version=version, dry_run=dry_run)
+    if dry_run:
+        console.print(f"[dim]dry-run: would create {pkg_dir}[/dim]")
+    else:
+        console.print(f"[green]Plugin package created:[/green] {pkg_dir}")
 
 
 # ---------------------------------------------------------------------------
@@ -705,7 +858,10 @@ def graph_verify(
     """Spot-check graph accuracy against the filesystem."""
     from agentscaffold.config import load_config
     from agentscaffold.graph import graph_available, open_graph
-    from agentscaffold.graph.verify import print_verification_report, verify_graph
+    from agentscaffold.graph.verify import (
+        print_verification_report,
+        verify_graph,
+    )
 
     config = load_config()
     if not graph_available(config):

@@ -94,13 +94,28 @@ def get_graph_context(config: ScaffoldConfig) -> dict[str, Any]:
         volatile = get_volatile_modules(store)
         plans = get_all_plans(store)
 
+        from agentscaffold.graph.query_compat import ql  # noqa: PLC0415
+
         # Architecture layers
-        layers = store.query(
-            "MATCH (l:ArchitectureLayer) RETURN l.number, l.name, l.description ORDER BY l.number"
+        layers = ql(
+            store,
+            cypher=(
+                "MATCH (l:ArchitectureLayer) "
+                "RETURN l.number, l.name, l.description "
+                "ORDER BY l.number"
+            ),
+            sql=(
+                'SELECT number AS "l.number", name AS "l.name", description AS "l.description"'
+                " FROM ArchitectureLayer ORDER BY number"
+            ),
         )
 
         # Active contracts
-        contracts = store.query("MATCH (c:Contract) RETURN c.name, c.version LIMIT 20")
+        contracts = ql(
+            store,
+            cypher="MATCH (c:Contract) RETURN c.name, c.version LIMIT 20",
+            sql='SELECT name AS "c.name", version AS "c.version" FROM Contract LIMIT 20',
+        )
 
         return {
             "graph_stats": stats,

@@ -13,3 +13,7 @@ standards:
   - model_serving
 approval_gates:
   model_deployment: true
+file_patterns:
+  - "models/**"
+  - "pipelines/**"
+  - "experiments/**"

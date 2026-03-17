@@ -765,8 +765,8 @@ Fallback and override guardrails:
 - If graph might be stale, run `scaffold index --incremental` before continuing.
 - Keep explicit validation commands (`scaffold validate`, `scaffold graph verify`) before completion.
 
-For a focused migration path, see
-[Migrating Governance to NL + MCP](migrating-governance-to-nl-mcp.md).
+The steps above cover the full migration path. Governance rigor is preserved
+throughout -- the shift is from explicit CLI commands to conversational intent.
 
 ---
 

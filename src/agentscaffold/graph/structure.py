@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agentscaffold.config import GraphConfig
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,10 @@ DEFAULT_IGNORE = [
     "**/build/**",
     "**/*.egg-info/**",
     "**/outputs/**",
+    "**/mlruns/**",
+    "**/.cursor/**",
+    "**/.claude/**",
+    "**/.hypothesis/**",
 ]
 
 
@@ -92,17 +96,27 @@ def _load_gitignore_patterns(root: Path) -> list[str]:
 
 
 def _should_ignore(rel_path: str, patterns: list[str]) -> bool:
-    """Check if a relative path matches any ignore pattern."""
+    """Check if a relative path matches any ignore pattern.
+
+    Handles ``**/`` prefixes correctly: ``**`` can match zero path components,
+    so ``**/.git/**`` also matches ``.git/HEAD`` at the repo root.
+    """
     for pattern in patterns:
-        if fnmatch(rel_path, pattern):
-            return True
-        if fnmatch(rel_path + "/", pattern):
-            return True
-        parts = rel_path.split("/")
-        for i in range(len(parts)):
-            partial = "/".join(parts[: i + 1])
-            if fnmatch(partial, pattern) or fnmatch(partial + "/", pattern):
+        # Build candidate patterns: original + **/-stripped variant
+        candidates = [pattern]
+        if pattern.startswith("**/"):
+            candidates.append(pattern[3:])
+
+        for pat in candidates:
+            if fnmatch(rel_path, pat):
                 return True
+            if fnmatch(rel_path + "/", pat):
+                return True
+            parts = rel_path.split("/")
+            for i in range(len(parts)):
+                partial = "/".join(parts[: i + 1])
+                if fnmatch(partial, pat) or fnmatch(partial + "/", pat):
+                    return True
     return False
 
 
@@ -124,7 +138,7 @@ def _detect_language(path: Path) -> str:
 
 
 def process_structure(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     graph_config: GraphConfig | None = None,
 ) -> dict:
