@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from agentscaffold.graph.query_compat import ql
 from agentscaffold.review.queries import (
     get_file_importers,
     get_function_callers,
@@ -80,7 +81,11 @@ def _check_plan_compliance(
             continue
         file_id = f"file::{fpath}"
         escaped = file_id.replace("\\", "\\\\").replace("'", "\\'")
-        rows = store.query(f"MATCH (f:File) WHERE f.id = '{escaped}' RETURN f.id")
+        rows = ql(
+            store,
+            cypher=f"MATCH (f:File) WHERE f.id = '{escaped}' RETURN f.id",
+            sql=f"SELECT id AS \"f.id\" FROM File WHERE id = '{escaped}'",
+        )
         if not rows:
             missing.append(fpath)
 
@@ -117,10 +122,22 @@ def _check_signatures(
         if not fpath:
             continue
         escaped = fpath.replace("\\", "\\\\").replace("'", "\\'")
-        funcs = store.query(
-            f"MATCH (fn:Function) WHERE fn.filePath = '{escaped}' RETURN fn.name, fn.signature"
+        funcs = ql(
+            store,
+            cypher=(
+                f"MATCH (fn:Function) WHERE fn.filePath = '{escaped}' "
+                "RETURN fn.name, fn.signature"
+            ),
+            sql=(
+                f'SELECT name AS "fn.name", signature AS "fn.signature" '
+                f"FROM Function WHERE filePath = '{escaped}'"
+            ),
         )
-        classes = store.query(f"MATCH (c:Class) WHERE c.filePath = '{escaped}' RETURN c.name")
+        classes = ql(
+            store,
+            cypher=f"MATCH (c:Class) WHERE c.filePath = '{escaped}' RETURN c.name",
+            sql=f"SELECT name AS \"c.name\" FROM Class WHERE filePath = '{escaped}'",
+        )
         total_defs += len(funcs) + len(classes)
 
     out.append(
@@ -184,9 +201,16 @@ def _check_test_delta(
 
         stem = fpath.split("/")[-1].split(".")[0]
         escaped = stem.replace("\\", "\\\\").replace("'", "\\'")
-        test_files = store.query(
-            f"MATCH (f:File) WHERE f.path CONTAINS 'test' AND f.path CONTAINS '{escaped}' "
-            "RETURN f.path LIMIT 1"
+        test_files = ql(
+            store,
+            cypher=(
+                f"MATCH (f:File) WHERE f.path CONTAINS 'test' AND f.path CONTAINS '{escaped}' "
+                "RETURN f.path LIMIT 1"
+            ),
+            sql=(
+                'SELECT path AS "f.path" FROM File'
+                f" WHERE CONTAINS(path, 'test') AND CONTAINS(path, '{escaped}') LIMIT 1"
+            ),
         )
 
         if test_files:

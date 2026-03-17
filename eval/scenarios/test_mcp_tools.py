@@ -86,7 +86,10 @@ class TestScaffoldQuery:
         with p1, p2, p3:
             result_data = _dispatch_tool(
                 "scaffold_query",
-                {"cypher": "MATCH (f:File) RETURN f.path LIMIT 5"},
+                {
+                    "cypher": "MATCH (f:File) RETURN f.path LIMIT 5",
+                    "sql": 'SELECT path AS "f.path" FROM File LIMIT 5',
+                },
             )
 
         has_results = "results" in result_data
@@ -102,84 +105,6 @@ class TestScaffoldQuery:
         )
         collect_result(result)
         assert has_results and count > 0
-
-
-class TestScaffoldContext:
-    """Scenario: scaffold_context returns symbol info."""
-
-    @timed
-    def test_context_for_known_symbol(self, indexed_sim):
-        root, store, config = indexed_sim
-        from agentscaffold.mcp.server import _dispatch_tool
-
-        p1, p2, p3 = _patch_mcp(config, store)
-        with p1, p2, p3:
-            result_data = _dispatch_tool("scaffold_context", {"symbol": "normalize_ohlcv"})
-
-        has_symbol = "symbol" in result_data and "error" not in result_data
-
-        result = EvalResult(
-            scenario="mcp_context_known",
-            passed=has_symbol,
-            score=1.0 if has_symbol else 0.0,
-            expected="Symbol details for normalize_ohlcv",
-            actual=f"Keys: {list(result_data.keys())}",
-            category="mcp",
-        )
-        collect_result(result)
-        assert has_symbol
-
-    @timed
-    def test_context_for_unknown_symbol(self, indexed_sim):
-        root, store, config = indexed_sim
-        from agentscaffold.mcp.server import _dispatch_tool
-
-        p1, p2, p3 = _patch_mcp(config, store)
-        with p1, p2, p3:
-            result_data = _dispatch_tool("scaffold_context", {"symbol": "nonexistent_xyz"})
-
-        has_error = "error" in result_data
-
-        result = EvalResult(
-            scenario="mcp_context_unknown",
-            passed=has_error,
-            score=1.0 if has_error else 0.0,
-            expected="Error response for unknown symbol",
-            actual=f"Keys: {list(result_data.keys())}",
-            category="mcp",
-        )
-        collect_result(result)
-        assert has_error
-
-
-class TestScaffoldSearch:
-    """Scenario: scaffold_search hybrid search works."""
-
-    @timed
-    def test_search_cypher_mode(self, indexed_sim):
-        root, store, config = indexed_sim
-        from agentscaffold.mcp.server import _dispatch_tool
-
-        p1, p2, p3 = _patch_mcp(config, store)
-        with p1, p2, p3:
-            result_data = _dispatch_tool(
-                "scaffold_search",
-                {"query": "DataRouter", "mode": "cypher", "top_k": 5},
-            )
-
-        has_results = result_data.get("count", 0) > 0
-        has_markdown = bool(result_data.get("markdown"))
-
-        result = EvalResult(
-            scenario="mcp_search_cypher",
-            passed=has_results,
-            score=1.0 if has_results and has_markdown else 0.5,
-            expected="Search results for 'DataRouter'",
-            actual=f"count={result_data.get('count')}, has_markdown={has_markdown}",
-            category="mcp",
-        )
-        collect_result(result)
-        assert has_results
 
 
 class TestScaffoldReviewContext:

@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agentscaffold.graph.query_compat import ql
 from agentscaffold.graph.symbol_table import SymbolTable
 
 if TYPE_CHECKING:
@@ -48,7 +49,11 @@ def process_imports(
 
     Returns summary with resolved/unresolved counts.
     """
-    file_rows = store.query("MATCH (f:File) RETURN f.id, f.path, f.language")
+    file_rows = ql(
+        store,
+        cypher="MATCH (f:File) RETURN f.id, f.path, f.language",
+        sql='SELECT id AS "f.id", path AS "f.path", language AS "f.language" FROM File',
+    )
 
     resolved = 0
     unresolved = 0

@@ -174,6 +174,32 @@ class DuckPGQBackend:
             return self._conn.execute(query, list(params.values()))
         return self._conn.execute(query)
 
+    def _reregister_property_graph(self) -> None:
+        """Re-register the property graph for this connection.
+
+        DuckPGQ's property graph name is connection-global. If another
+        connection called DROP+CREATE on the same graph name, this connection
+        loses its graph registration. This method recovers by re-running
+        DROP+CREATE on this connection.
+
+        Handles the case where DROP silently no-ops and CREATE then raises
+        "already exists" by swallowing the duplicate-create error.
+        """
+        from agentscaffold.graph.duckpgq_schema import (
+            CREATE_PROPERTY_GRAPH_SQL,
+            DROP_PROPERTY_GRAPH_SQL,
+        )
+
+        try:
+            self._conn.execute(DROP_PROPERTY_GRAPH_SQL)
+        except Exception:
+            pass  # IF EXISTS should not raise, but guard anyway
+        try:
+            self._conn.execute(CREATE_PROPERTY_GRAPH_SQL)
+        except Exception as exc:
+            if "already exists" not in str(exc):
+                raise
+
     def query(self, query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Execute a SQL query and return results as a list of dicts.
 
@@ -181,10 +207,20 @@ class DuckPGQBackend:
         dot-qualified like KuzuBackend returns for Cypher).  Use
         ``query_compat.py`` for backend-agnostic queries.
         """
-        if params:
-            result = self._conn.execute(query, list(params.values()))
-        else:
-            result = self._conn.execute(query)
+        try:
+            if params:
+                result = self._conn.execute(query, list(params.values()))
+            else:
+                result = self._conn.execute(query)
+        except Exception as exc:
+            if "Property graph" in str(exc) and "does not exist" in str(exc):
+                self._reregister_property_graph()
+                if params:
+                    result = self._conn.execute(query, list(params.values()))
+                else:
+                    result = self._conn.execute(query)
+            else:
+                raise
         if result is None or result.description is None:
             return []
         cols = [desc[0] for desc in result.description]
@@ -287,7 +323,72 @@ class DuckPGQBackend:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = duckdb.connect(db_str)
         self._load_extension()
-        self.init_schema()
+        _duckpgq_init_schema(self._conn, force_recreate_graph=True)
+        self._ensure_meta()
+
+    def clear_derived(self) -> None:
+        """Clear index-derived data while preserving user-generated knowledge.
+
+        Keeps: ReviewFinding (+ edges), Session (+ edges)
+        Clears: everything else (files, functions, classes, communities, governance, etc.)
+
+        This is the correct method for full re-indexing -- learned knowledge
+        (review findings, sessions) survives while derived data is rebuilt.
+        """
+        # Tables that represent knowledge gained through work, not derived from code
+        preserve_nodes = {"ReviewFinding", "Session", "GraphMeta"}
+        preserve_edges = {
+            "FINDING_ABOUT_FILE",
+            "FINDING_ABOUT_FUNC",
+            "FINDING_LED_TO",
+            "FINDING_ADDRESSED_BY",
+            "SESSION_MODIFIED",
+        }
+
+        # Drop and recreate the property graph (required before table changes)
+        from agentscaffold.graph.duckpgq_schema import (
+            DROP_PROPERTY_GRAPH_SQL,
+        )
+
+        try:
+            self._conn.execute(DROP_PROPERTY_GRAPH_SQL)
+        except Exception:
+            pass
+
+        # Clear derived edge tables
+        for edge_table in _EDGE_TABLE_NAMES:
+            if edge_table not in preserve_edges:
+                try:
+                    self._conn.execute(f"DELETE FROM {edge_table}")
+                except Exception:
+                    pass
+
+        # Clear derived node tables
+        from agentscaffold.graph.duckpgq_schema import NODE_TABLES
+
+        for stmt in NODE_TABLES:
+            # Extract table name from CREATE TABLE IF NOT EXISTS <name>
+            table_name = stmt.strip().split("(")[0].split()[-1]
+            if table_name not in preserve_nodes:
+                try:
+                    self._conn.execute(f"DELETE FROM {table_name}")
+                except Exception:
+                    pass
+
+        # Clear auxiliary tables except GraphMeta
+        try:
+            self._conn.execute("DELETE FROM EmbeddingStore")
+        except Exception:
+            pass
+        try:
+            self._conn.execute("DELETE FROM ParsingWarning")
+        except Exception:
+            pass
+
+        # Recreate the property graph
+        from agentscaffold.graph.duckpgq_schema import CREATE_PROPERTY_GRAPH_SQL
+
+        self._conn.execute(CREATE_PROPERTY_GRAPH_SQL)
 
     # ------------------------------------------------------------------
     # Pipeline state management

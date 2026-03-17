@@ -30,9 +30,9 @@ def sim_project_path(tmp_path_factory) -> Path:
 
 
 @pytest.fixture(scope="session")
-def sim_project_path_kuzu(tmp_path_factory) -> Path:
-    """Separate copy of the simulation project for the KuzuDB-only fixture."""
-    tmp = tmp_path_factory.mktemp("sim_kuzu")
+def sim_project_path_duckdb(tmp_path_factory) -> Path:
+    """Separate copy of the simulation project for the indexed_sim_duckdb fixture."""
+    tmp = tmp_path_factory.mktemp("sim_duckdb")
     dest = tmp / "sim_project"
     shutil.copytree(SIM_PROJECT, dest)
     return dest
@@ -40,7 +40,7 @@ def sim_project_path_kuzu(tmp_path_factory) -> Path:
 
 @pytest.fixture(scope="session")
 def indexed_sim(sim_project_path) -> tuple:
-    """Index the simulation project (KuzuDB) and return (path, store, config).
+    """Index the simulation project (DuckPGQ) and return (path, store, config).
 
     Note: run_pipeline closes its own store, so we open a fresh one for queries.
     """
@@ -48,13 +48,16 @@ def indexed_sim(sim_project_path) -> tuple:
     from agentscaffold.graph import open_graph
     from agentscaffold.graph.pipeline import run_pipeline
 
-    db_path = sim_project_path / ".scaffold" / "graph.db"
+    db_path = sim_project_path / ".scaffold" / "graph.duckdb"
     config = ScaffoldConfig()
     config.graph = GraphConfig(
         db_path=str(db_path),
-        backend="kuzu",
+        backend="duckpgq",
         **_GRAPH_CONFIG_KWARGS,
     )
+    # Disable async freshness to prevent background workers from clobbering
+    # the DuckPGQ property graph (which is process-global).
+    config.freshness.async_enabled = False
 
     run_pipeline(sim_project_path, config)
 
@@ -64,66 +67,50 @@ def indexed_sim(sim_project_path) -> tuple:
 
 
 @pytest.fixture(scope="session")
-def indexed_sim_duckdb(sim_project_path) -> tuple:
-    """Index the simulation project (DuckPGQ) and return (path, store, config)."""
+def indexed_sim_duckdb(sim_project_path_duckdb) -> tuple:
+    """Index the simulation project (DuckPGQ) with an isolated database file."""
     from agentscaffold.config import GraphConfig, ScaffoldConfig
     from agentscaffold.graph import open_graph
     from agentscaffold.graph.pipeline import run_pipeline
 
-    db_path = sim_project_path / ".scaffold" / "graph_duckpgq.duckdb"
+    db_path = sim_project_path_duckdb / ".scaffold" / "graph_duckdb.duckdb"
     config = ScaffoldConfig()
     config.graph = GraphConfig(
         db_path=str(db_path),
         backend="duckpgq",
         **_GRAPH_CONFIG_KWARGS,
     )
+    # Disable async freshness to prevent background workers from clobbering
+    # the DuckPGQ property graph (which is process-global).
+    config.freshness.async_enabled = False
 
-    run_pipeline(sim_project_path, config)
+    run_pipeline(sim_project_path_duckdb, config)
 
     store = open_graph(config)
-    yield sim_project_path, store, config
+    yield sim_project_path_duckdb, store, config
     store.close()
+
+
+def _available_backends():
+    return ["duckpgq"]
 
 
 @pytest.fixture(
     scope="session",
-    params=["kuzu", "duckpgq"],
-    ids=["backend=kuzu", "backend=duckpgq"],
+    params=_available_backends(),
+    ids=[f"backend={b}" for b in _available_backends()],
 )
 def indexed_sim_both_backends(
     request,
-    sim_project_path,
-    sim_project_path_kuzu,
+    indexed_sim,
 ):
-    """Parametrized fixture: yields (path, store, config) for each backend.
+    """Parametrized fixture: yields (path, store, config) for the duckpgq backend.
 
-    KuzuDB uses sim_project_path_kuzu to avoid colliding with indexed_sim's db file.
-    DuckPGQ re-uses sim_project_path with a .duckdb file.
+    Reuses indexed_sim to avoid DuckPGQ property graph conflicts: DuckPGQ property
+    graphs are process-global, so running a second pipeline (DROP+CREATE) would
+    clobber the shared store's graph registration.
     """
-    backend = request.param
-    from agentscaffold.config import GraphConfig, ScaffoldConfig
-    from agentscaffold.graph import open_graph
-    from agentscaffold.graph.pipeline import run_pipeline
-
-    if backend == "kuzu":
-        root = sim_project_path_kuzu
-        db_path = root / ".scaffold" / "graph_both.db"
-    else:
-        root = sim_project_path
-        db_path = root / ".scaffold" / "graph_duckpgq.duckdb"
-
-    config = ScaffoldConfig()
-    config.graph = GraphConfig(
-        db_path=str(db_path),
-        backend=backend,
-        **_GRAPH_CONFIG_KWARGS,
-    )
-
-    run_pipeline(root, config)
-
-    store = open_graph(config)
-    yield root, store, config
-    store.close()
+    return indexed_sim
 
 
 @pytest.fixture()

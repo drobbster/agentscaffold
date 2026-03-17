@@ -182,7 +182,16 @@ class TestCommunities:
         """Community detection should find at least 1 module cluster."""
         root, store, config = indexed_sim
 
-        communities = store.query("MATCH (c:Community) RETURN c.id, c.label, c.fileCount")
+        from agentscaffold.graph.query_compat import ql
+
+        communities = ql(
+            store,
+            cypher="MATCH (c:Community) RETURN c.id, c.label, c.fileCount",
+            sql=(
+                'SELECT id AS "c.id", label AS "c.label",'
+                ' fileCount AS "c.fileCount" FROM Community'
+            ),
+        )
 
         result = EvalResult(
             scenario="communities_detected",
@@ -200,8 +209,17 @@ class TestCommunities:
         """Files should be assigned to communities."""
         root, store, config = indexed_sim
 
-        members = store.query(
-            "MATCH (f:File)-[:MEMBER_OF_COMMUNITY]->(c:Community) RETURN f.path, c.label"
+        from agentscaffold.graph.query_compat import ql
+
+        members = ql(
+            store,
+            cypher="MATCH (f:File)-[:MEMBER_OF_COMMUNITY]->(c:Community) RETURN f.path, c.label",
+            sql=(
+                'SELECT t.f_path AS "f.path", t.c_label AS "c.label" '
+                "FROM GRAPH_TABLE(agentscaffold_graph "
+                "  MATCH (f:File)-[e:MEMBER_OF_COMMUNITY]->(c:Community) "
+                "  COLUMNS (f.path AS f_path, c.label AS c_label)) t"
+            ),
         )
 
         result = EvalResult(

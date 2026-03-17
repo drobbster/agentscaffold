@@ -2,9 +2,16 @@
 
 Prerequisite for Phase C gate.  Verifies that the ReviewFinding write-back
 path (record → query → resolve → verify) works correctly.
+
+Also covers B-149-2: concurrent write hardening — N threads calling
+record_finding() concurrently on the same store instance must not lose writes
+or corrupt data.  Latency is measured to surface WAL serialization overhead.
 """
 
 from __future__ import annotations
+
+import concurrent.futures
+import time
 
 from eval.runner import EvalResult, collect_result
 
@@ -117,14 +124,14 @@ class TestFindingLifecycle:
         # Query FINDING_ABOUT_FILE edges — use backend-appropriate SQL for DuckPGQ
         if is_duckpgq(store):
             sql = (
-                f'SELECT f.path AS "f.path" FROM GRAPH_TABLE(agentscaffold_graph '
+                f'SELECT t.f_path AS "f.path" FROM GRAPH_TABLE(agentscaffold_graph '
                 f"  MATCH (rf:ReviewFinding)-[e:FINDING_ABOUT_FILE]->(f:File) "
                 f"  WHERE rf.id = '{fid}' "
-                f"  COLUMNS (f.path) "
+                f"  COLUMNS (f.path AS f_path) "
                 f") t"
             )
         else:
-            sql = None  # unused for kuzu
+            sql = ""
 
         rows = ql(
             store,
@@ -155,3 +162,126 @@ class TestFindingLifecycle:
         assert (
             has_edge
         ), f"Expected FINDING_ABOUT_FILE edge to libs/data/router.py, got: {edge_paths}"
+
+
+class TestConcurrentFindingWrites:
+    """B-149-2: Concurrent write hardening.
+
+    Validates that N threads calling record_finding() on the same store instance
+    simultaneously produce no data loss, no corruption, and acceptable latency.
+
+    DuckDB serialises concurrent writers on the same connection under the hood;
+    this test surface any latency degradation and guards against races at the
+    Python-layer (e.g. dict mutation, ID collision).
+    """
+
+    _CONCURRENCY = 8
+    _LATENCY_CEILING_MS = 2000  # max tolerated wall-clock for all 8 writes combined
+
+    def test_concurrent_writes_no_data_loss(self, indexed_sim_duckdb):
+        """All N concurrent record_finding() calls persist without data loss."""
+        _, store, _ = indexed_sim_duckdb
+        from agentscaffold.graph.findings import record_finding
+
+        def _write(idx: int) -> dict:
+            return record_finding(
+                store,
+                plan_number=9000 + idx,
+                review_type="concurrent_test",
+                category="concurrent",
+                finding=f"Concurrent write #{idx} — data-loss guard",
+                severity="low",
+            )
+
+        t0 = time.monotonic()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self._CONCURRENCY) as pool:
+            futures = [pool.submit(_write, i) for i in range(self._CONCURRENCY)]
+            results = [f.result() for f in concurrent.futures.as_completed(futures)]
+        elapsed_ms = (time.monotonic() - t0) * 1000
+
+        ids_returned = {r["id"] for r in results}
+        statuses = [r["status"] for r in results]
+
+        all_open = all(s == "open" for s in statuses)
+        no_id_collision = len(ids_returned) == self._CONCURRENCY
+        within_latency = elapsed_ms < self._LATENCY_CEILING_MS
+
+        passed = all_open and no_id_collision
+        collect_result(
+            EvalResult(
+                scenario="concurrent_writes_no_data_loss",
+                passed=passed,
+                score=1.0 if passed else 0.0,
+                expected=f"{self._CONCURRENCY} distinct open findings",
+                actual=(
+                    f"ids={len(ids_returned)}, all_open={all_open}, elapsed_ms={elapsed_ms:.1f}"
+                ),
+                observations=[
+                    f"concurrency={self._CONCURRENCY}",
+                    f"elapsed_ms={elapsed_ms:.1f}",
+                    f"latency_ceiling_ms={self._LATENCY_CEILING_MS}",
+                    f"within_latency={within_latency}",
+                ],
+                category="lifecycle",
+            )
+        )
+        assert (
+            no_id_collision
+        ), f"Expected {self._CONCURRENCY} distinct IDs, got {len(ids_returned)}: {ids_returned}"
+        assert all_open, f"Not all findings have status='open': {statuses}"
+
+    def test_concurrent_writes_latency(self, indexed_sim_duckdb):
+        """Combined wall-clock for N concurrent writes stays under ceiling.
+
+        This is a soft signal test: a latency breach is reported but does not
+        fail CI.  It surfaces WAL serialisation pressure under concurrent load.
+        """
+        _, store, _ = indexed_sim_duckdb
+        from agentscaffold.graph.findings import record_finding
+
+        individual_ms: list[float] = []
+
+        def _write(idx: int) -> float:
+            t = time.monotonic()
+            record_finding(
+                store,
+                plan_number=9100 + idx,
+                review_type="latency_test",
+                category="concurrent",
+                finding=f"Concurrent latency probe #{idx}",
+                severity="medium",
+            )
+            return (time.monotonic() - t) * 1000
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self._CONCURRENCY) as pool:
+            futures = [pool.submit(_write, i) for i in range(self._CONCURRENCY)]
+            individual_ms = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+        max_ms = max(individual_ms)
+        p95_ms = sorted(individual_ms)[int(len(individual_ms) * 0.95)]
+        # Soft signal: report but do not assert — latency degrades under concurrent
+        # load due to DuckDB WAL serialisation; the ceiling is informational.
+        within_ceiling = max_ms < self._LATENCY_CEILING_MS
+
+        collect_result(
+            EvalResult(
+                scenario="concurrent_writes_latency",
+                passed=within_ceiling,
+                score=1.0 if within_ceiling else 0.5,
+                expected=(
+                    f"max individual write < {self._LATENCY_CEILING_MS}ms "
+                    f"under {self._CONCURRENCY}-thread load"
+                ),
+                actual=f"max_ms={max_ms:.1f}, p95_ms={p95_ms:.1f}",
+                observations=[
+                    f"individual_ms={[round(m, 1) for m in sorted(individual_ms)]}",
+                    f"concurrency={self._CONCURRENCY}",
+                ],
+                category="lifecycle",
+            )
+        )
+        # Soft assertion — fail only on extreme degradation (10× ceiling)
+        assert max_ms < self._LATENCY_CEILING_MS * 10, (
+            f"Extreme write latency under concurrent load: {max_ms:.1f}ms "
+            f"(ceiling={self._LATENCY_CEILING_MS}ms × 10)"
+        )

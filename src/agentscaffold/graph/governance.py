@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from agentscaffold.graph.query_compat import ql
+
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
 
@@ -240,7 +242,8 @@ def _parse_contract(filepath: Path) -> dict[str, Any] | None:
 # Learnings parsing
 # ---------------------------------------------------------------------------
 
-_LEARNING_RE = re.compile(
+# 5-column table: | ID | Plan | Description | Target | Status |
+_LEARNING_RE_5COL = re.compile(
     r"^\|\s*(?P<id>L\d+-\d+)\s*\|"
     r"\s*(?P<plan>\d+)\s*\|"
     r"\s*(?P<desc>[^|]+?)\s*\|"
@@ -249,31 +252,73 @@ _LEARNING_RE = re.compile(
     re.MULTILINE,
 )
 
+# 4-column table: | ID | Learning | Target | Status | (plan number in ID)
+_LEARNING_RE_4COL = re.compile(
+    r"^\|\s*(?P<id>L(?P<plan>\d+)-\d+)\s*\|"
+    r"\s*(?P<desc>[^|]+?)\s*\|"
+    r"\s*(?P<target>[^|]+?)\s*\|"
+    r"\s*(?P<status>[^|]+?)\s*\|",
+    re.MULTILINE,
+)
+
+# 3-column table: | ID | Learning | Target | (no status, plan in ID)
+_LEARNING_RE_3COL = re.compile(
+    r"^\|\s*(?P<id>L(?P<plan>\d+)-\d+)\s*\|"
+    r"\s*(?P<desc>[^|]+?)\s*\|"
+    r"\s*(?P<target>[^|]+?)\s*\|\s*$",
+    re.MULTILINE,
+)
+
+# YAML-like list: ### L042-1 / - Plan: 042 / - Description: ... / - Target: ... / - Status: ...
+_LEARNING_RE_LIST = re.compile(
+    r"^###\s+(?P<id>L(?P<plan>\d+)-\d+)\s*\n"
+    r"(?:-\s*Plan:\s*\d+\s*\n)?"
+    r"-\s*Description:\s*(?P<desc>.+?)\s*\n"
+    r"-\s*Target:\s*(?P<target>.+?)\s*\n"
+    r"-\s*Status:\s*(?P<status>\S+)",
+    re.MULTILINE,
+)
+
 
 def _parse_learnings(filepath: Path) -> list[dict[str, Any]]:
-    """Parse the learnings tracker markdown table."""
+    """Parse the learnings tracker in any of the supported formats.
+
+    Supports three formats:
+    - 5-column table: ``| ID | Plan | Description | Target | Status |``
+    - 4-column table: ``| ID | Learning | Target | Status |`` (plan in ID)
+    - YAML-like list:  ``### L042-1`` with ``- Plan:`` / ``- Description:`` fields
+    """
     try:
         text = filepath.read_text(errors="replace")
     except OSError:
         return []
 
     learnings: list[dict[str, Any]] = []
-    for m in _LEARNING_RE.finditer(text):
-        learning_id = m.group("id").strip()
-        plan_number = int(m.group("plan").strip())
-        description = m.group("desc").strip()
-        target = m.group("target").strip()
-        status = m.group("status").strip()
-        if learning_id and description:
-            learnings.append(
-                {
-                    "learning_id": learning_id,
-                    "plan_number": plan_number,
-                    "description": description,
-                    "target": target,
-                    "status": status,
-                }
-            )
+    seen_ids: set[str] = set()
+
+    for regex in (_LEARNING_RE_5COL, _LEARNING_RE_4COL, _LEARNING_RE_3COL, _LEARNING_RE_LIST):
+        for m in regex.finditer(text):
+            learning_id = m.group("id").strip()
+            if learning_id in seen_ids:
+                continue
+            seen_ids.add(learning_id)
+            plan_number = int(m.group("plan").strip())
+            description = m.group("desc").strip()
+            target = m.group("target").strip()
+            try:
+                status = m.group("status").strip()
+            except IndexError:
+                status = "Pending"
+            if learning_id and description:
+                learnings.append(
+                    {
+                        "learning_id": learning_id,
+                        "plan_number": plan_number,
+                        "description": description,
+                        "target": target,
+                        "status": status,
+                    }
+                )
     return learnings
 
 
@@ -591,7 +636,11 @@ def process_governance(
 
     # File ID lookup for linking governance -> code nodes
     file_id_map: dict[str, str] = {}
-    for row in store.query("MATCH (f:File) RETURN f.id, f.path"):
+    for row in ql(
+        store,
+        cypher="MATCH (f:File) RETURN f.id, f.path",
+        sql='SELECT id AS "f.id", path AS "f.path" FROM File',
+    ):
         file_id_map[row["f.path"]] = row["f.id"]
 
     # Track plan number -> plan_id for cross-referencing
@@ -678,8 +727,16 @@ def process_governance(
             contract_count += 1
 
             for method_name in data.get("declared_methods", []):
-                fn_rows = store.query(
-                    f"MATCH (fn:Function) WHERE fn.name = '{method_name}' RETURN fn.id LIMIT 1"
+                fn_rows = ql(
+                    store,
+                    cypher=(
+                        f"MATCH (fn:Function) WHERE fn.name = '{method_name}' "
+                        f"RETURN fn.id LIMIT 1"
+                    ),
+                    sql=(
+                        f'SELECT id AS "fn.id" FROM Function '
+                        f"WHERE name = '{method_name}' LIMIT 1"
+                    ),
                 )
                 if fn_rows:
                     store.create_edge(
@@ -692,8 +749,10 @@ def process_governance(
                     declares_edge_count += 1
 
             for class_name in data.get("declared_classes", []):
-                cls_rows = store.query(
-                    f"MATCH (c:Class) WHERE c.name = '{class_name}' RETURN c.id LIMIT 1"
+                cls_rows = ql(
+                    store,
+                    cypher=f"MATCH (c:Class) WHERE c.name = '{class_name}' RETURN c.id LIMIT 1",
+                    sql=f"SELECT id AS \"c.id\" FROM Class WHERE name = '{class_name}' LIMIT 1",
                 )
                 if cls_rows:
                     store.create_edge(

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agentscaffold.graph.backend import GraphBackend
+from agentscaffold.graph.query_compat import ql
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +86,17 @@ def _cypher_search(
 
     for table in tables:
         if table == "Function":
-            rows = store.query(
-                f"MATCH (n:Function) RETURN n.id, n.name, n.filePath, n.signature LIMIT {limit * 2}"
+            rows = ql(
+                store,
+                cypher=(
+                    f"MATCH (n:Function) RETURN n.id, n.name, n.filePath, "
+                    f"n.signature LIMIT {limit * 2}"
+                ),
+                sql=(
+                    f'SELECT id AS "n.id", name AS "n.name", '
+                    f'filePath AS "n.filePath", signature AS "n.signature" '
+                    f"FROM Function LIMIT {limit * 2}"
+                ),
             )
             for row in rows:
                 score = _text_match_score(
@@ -109,7 +119,14 @@ def _cypher_search(
                     )
 
         elif table == "Class":
-            rows = store.query(f"MATCH (n:Class) RETURN n.id, n.name, n.filePath LIMIT {limit * 2}")
+            rows = ql(
+                store,
+                cypher=(f"MATCH (n:Class) RETURN n.id, n.name, n.filePath " f"LIMIT {limit * 2}"),
+                sql=(
+                    f'SELECT id AS "n.id", name AS "n.name", '
+                    f'filePath AS "n.filePath" FROM Class LIMIT {limit * 2}'
+                ),
+            )
             for row in rows:
                 score = _text_match_score(terms, row.get("n.name", ""), row.get("n.filePath", ""))
                 if score > 0:
@@ -125,10 +142,18 @@ def _cypher_search(
                     )
 
         elif table == "Method":
-            rows = store.query(
-                f"MATCH (n:Method) "
-                f"RETURN n.id, n.name, n.className, n.filePath, n.signature "
-                f"LIMIT {limit * 2}"
+            rows = ql(
+                store,
+                cypher=(
+                    f"MATCH (n:Method) "
+                    f"RETURN n.id, n.name, n.className, n.filePath, n.signature "
+                    f"LIMIT {limit * 2}"
+                ),
+                sql=(
+                    f'SELECT id AS "n.id", name AS "n.name", className AS "n.className",'
+                    f' filePath AS "n.filePath", signature AS "n.signature"'
+                    f" FROM Method LIMIT {limit * 2}"
+                ),
             )
             for row in rows:
                 full_name = f"{row.get('n.className', '')}.{row.get('n.name', '')}"
@@ -152,7 +177,14 @@ def _cypher_search(
                     )
 
         elif table == "File":
-            rows = store.query(f"MATCH (n:File) RETURN n.id, n.path, n.language LIMIT {limit * 2}")
+            rows = ql(
+                store,
+                cypher=(f"MATCH (n:File) RETURN n.id, n.path, n.language " f"LIMIT {limit * 2}"),
+                sql=(
+                    f'SELECT id AS "n.id", path AS "n.path", '
+                    f'language AS "n.language" FROM File LIMIT {limit * 2}'
+                ),
+            )
             for row in rows:
                 score = _text_match_score(terms, row.get("n.path", ""), row.get("n.language", ""))
                 if score > 0:

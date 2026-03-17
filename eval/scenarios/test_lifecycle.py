@@ -52,7 +52,7 @@ class TestFullIndexLifecycle:
         rows = ql(
             store,
             cypher="MATCH (f:File) WHERE f.language = 'python' RETURN f.path",
-            sql='SELECT path AS "f.path" FROM File WHERE language = python',
+            sql="SELECT path AS \"f.path\" FROM File WHERE language = 'python'",
         )
         file_paths = {r["f.path"] for r in rows}
 
@@ -179,10 +179,10 @@ class TestFullIndexLifecycle:
 
         if is_duckpgq(store):
             sql = (
-                'SELECT a.path AS "a.path", b.path AS "b.path" '
+                'SELECT t.a_path AS "a.path", t.b_path AS "b.path" '
                 "FROM GRAPH_TABLE(agentscaffold_graph "
                 "  MATCH (a:File)-[e:IMPORTS]->(b:File) "
-                "  COLUMNS (a.path, b.path) "
+                "  COLUMNS (a.path AS a_path, b.path AS b_path) "
                 ") t"
             )
         else:
@@ -221,9 +221,9 @@ class TestIncrementalIndex:
         from agentscaffold.config import GraphConfig, ScaffoldConfig
         from agentscaffold.graph.pipeline import run_pipeline
 
-        db_path = dest / ".scaffold" / "graph.db"
+        db_path = dest / ".scaffold" / "graph.duckdb"
         config = ScaffoldConfig()
-        config.graph = GraphConfig(db_path=str(db_path))
+        config.graph = GraphConfig(db_path=str(db_path), backend="duckpgq")
 
         run_pipeline(dest, config)
         summary2 = run_pipeline(dest, config, incremental=True)
@@ -248,9 +248,9 @@ class TestIncrementalIndex:
         from agentscaffold.config import GraphConfig, ScaffoldConfig
         from agentscaffold.graph.pipeline import run_pipeline
 
-        db_path = dest / ".scaffold" / "graph.db"
+        db_path = dest / ".scaffold" / "graph.duckdb"
         config = ScaffoldConfig()
-        config.graph = GraphConfig(db_path=str(db_path))
+        config.graph = GraphConfig(db_path=str(db_path), backend="duckpgq")
 
         run_pipeline(dest, config)
 
@@ -315,8 +315,20 @@ class TestSessionLifecycle:
         sid = start_session(store, plan_numbers=[68], summary="Working on execution engine")
         record_modification(store, sid, "libs/execution/engine.py")
 
-        session_mods = store.query(
-            f"MATCH (s:Session)-[:SESSION_MODIFIED]->(f:File) WHERE s.id = '{sid}' RETURN f.path"
+        from agentscaffold.graph.query_compat import ql
+
+        session_mods = ql(
+            store,
+            cypher=(
+                f"MATCH (s:Session)-[:SESSION_MODIFIED]->(f:File) "
+                f"WHERE s.id = '{sid}' RETURN f.path"
+            ),
+            sql=(
+                f'SELECT t.f_path AS "f.path" FROM GRAPH_TABLE(agentscaffold_graph '
+                f"MATCH (s:Session)-[e:SESSION_MODIFIED]->(f:File) "
+                f"WHERE s.id = '{sid}' "
+                f"COLUMNS (f.path AS f_path)) t"
+            ),
         )
         mod_paths = [r["f.path"] for r in session_mods]
 

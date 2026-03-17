@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from agentscaffold.graph.query_compat import ql
 from agentscaffold.review.queries import (
     get_contracts_for_file,
     get_file_importers,
@@ -271,10 +272,24 @@ def _check_patterns(
 
         file_id = f"file::{fpath}"
         escaped = file_id.replace("\\", "\\\\").replace("'", "\\'")
-        findings = store.query(
-            "MATCH (rf:ReviewFinding)-[:FINDING_ABOUT_FILE]->(f:File) "
-            f"WHERE f.id = '{escaped}' "
-            "RETURN rf.category, rf.finding, rf.planNumber"
+        findings = ql(
+            store,
+            cypher=(
+                "MATCH (rf:ReviewFinding)-[:FINDING_ABOUT_FILE]->(f:File) "
+                f"WHERE f.id = '{escaped}' "
+                "RETURN rf.category, rf.finding, rf.planNumber"
+            ),
+            sql=(
+                'SELECT t.rf_category AS "rf.category",'
+                ' t.rf_finding AS "rf.finding",'
+                ' t.rf_planNumber AS "rf.planNumber"'
+                " FROM GRAPH_TABLE(agentscaffold_graph"
+                " MATCH (rf:ReviewFinding)-[e:FINDING_ABOUT_FILE]->(f:File)"
+                f" WHERE f.id = '{escaped}'"
+                " COLUMNS (rf.category AS rf_category,"
+                " rf.finding AS rf_finding,"
+                " rf.planNumber AS rf_planNumber)) t"
+            ),
         )
 
         if len(findings) >= 2:

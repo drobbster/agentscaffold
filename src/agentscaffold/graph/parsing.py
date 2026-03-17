@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agentscaffold.graph.queries import get_queries, supported_languages
+from agentscaffold.graph.query_compat import ql
 from agentscaffold.graph.symbol_table import SymbolEntry, SymbolTable
 
 if TYPE_CHECKING:
@@ -191,7 +192,11 @@ def process_parsing(
 
     Returns a summary dict with counts.
     """
-    file_rows = store.query("MATCH (f:File) RETURN f.id, f.path, f.language")
+    file_rows = ql(
+        store,
+        cypher="MATCH (f:File) RETURN f.id, f.path, f.language",
+        sql='SELECT id AS "f.id", path AS "f.path", language AS "f.language" FROM File',
+    )
 
     if file_paths is not None:
         file_rows = [r for r in file_rows if r["f.path"] in file_paths]

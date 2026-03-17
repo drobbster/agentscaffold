@@ -85,8 +85,10 @@ def generate_rule_policy_document(
     title: str,
     intro_lines: list[str] | None = None,
     quote_intents: bool = True,
+    always_apply: bool = False,
 ) -> str:
     """Build a platform rule document with policy, guardrails, and intents."""
+    frontmatter = f"---\nalwaysApply: {str(always_apply).lower()}\n---\n\n"
     lines: list[str] = [f"# {title}", ""]
     if intro_lines:
         lines.extend(intro_lines)
@@ -94,4 +96,4 @@ def generate_rule_policy_document(
     lines.extend(_tool_selection_policy_lines())
     lines.extend(_governance_guardrails_lines(config))
     lines.extend(_intent_map_lines(quote_intents=quote_intents))
-    return "\n".join(lines).rstrip() + "\n"
+    return frontmatter + "\n".join(lines).rstrip() + "\n"

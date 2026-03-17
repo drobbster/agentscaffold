@@ -40,6 +40,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "pyyaml>=6.0",
     "jinja2>=3.1.0",
+    "graspologic>=3.4.0",
 ]
 
 [project.optional-dependencies]
@@ -65,14 +66,11 @@ search = [
     "sentence-transformers>=3.0.0",
     "rank-bm25>=0.2.2",
 ]
-communities = [
-    "graspologic>=3.4.0",
-]
 mcp = [
     "mcp>=1.0.0",
 ]
 all = [
-    "agentscaffold[graph,graph-duckpgq,graph-all-languages,search,communities,mcp]",
+    "agentscaffold[graph,graph-duckpgq,graph-all-languages,search,mcp]",
 ]
 dev = [
     "pytest>=7.0.0",

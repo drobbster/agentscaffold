@@ -167,14 +167,15 @@ def get_open_findings(
     if file_path:
         if is_duckpgq(store):
             rows = store.query(
-                f'SELECT rf.id AS "rf.id", rf.reviewType AS "rf.reviewType",'
-                f' rf.planNumber AS "rf.planNumber", rf.severity AS "rf.severity",'
-                f' rf.category AS "rf.category", rf.finding AS "rf.finding"'
+                f'SELECT t.rf_id AS "rf.id", t.rf_reviewType AS "rf.reviewType",'
+                f' t.rf_planNumber AS "rf.planNumber", t.rf_severity AS "rf.severity",'
+                f' t.rf_category AS "rf.category", t.rf_finding AS "rf.finding"'
                 f" FROM GRAPH_TABLE(agentscaffold_graph"
                 f"   MATCH (rf:ReviewFinding)-[e:FINDING_ABOUT_FILE]->(f:File)"
                 f"   WHERE rf.status = 'open' AND f.path = '{_esc(file_path)}'"
-                f"   COLUMNS (rf.id, rf.reviewType, rf.planNumber, rf.severity,"
-                f"            rf.category, rf.finding)"
+                f"   COLUMNS (rf.id AS rf_id, rf.reviewType AS rf_reviewType,"
+                f"            rf.planNumber AS rf_planNumber, rf.severity AS rf_severity,"
+                f"            rf.category AS rf_category, rf.finding AS rf_finding)"
                 f" ) t LIMIT {limit}"
             )
         else:

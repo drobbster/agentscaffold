@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from agentscaffold.graph.query_compat import ql
 from agentscaffold.review.queries import (
     get_file_importers,
     get_function_callers,
@@ -108,10 +109,24 @@ def _learning_patterns(
             continue
         file_id = f"file::{fpath}"
         escaped = file_id.replace("\\", "\\\\").replace("'", "\\'")
-        learnings = store.query(
-            "MATCH (lr:Learning)-[:LEARNING_RELATES_TO_FILE]->(f:File) "
-            f"WHERE f.id = '{escaped}' "
-            "RETURN lr.learningId, lr.description, lr.planNumber"
+        learnings = ql(
+            store,
+            cypher=(
+                "MATCH (lr:Learning)-[:LEARNING_RELATES_TO_FILE]->(f:File) "
+                f"WHERE f.id = '{escaped}' "
+                "RETURN lr.learningId, lr.description, lr.planNumber"
+            ),
+            sql=(
+                'SELECT t.lr_learningId AS "lr.learningId",'
+                ' t.lr_description AS "lr.description",'
+                ' t.lr_planNumber AS "lr.planNumber"'
+                " FROM GRAPH_TABLE(agentscaffold_graph"
+                " MATCH (lr:Learning)-[e:LEARNING_RELATES_TO_FILE]->(f:File)"
+                f" WHERE f.id = '{escaped}'"
+                " COLUMNS (lr.learningId AS lr_learningId,"
+                " lr.description AS lr_description,"
+                " lr.planNumber AS lr_planNumber)) t"
+            ),
         )
         all_learnings.extend(learnings)
 

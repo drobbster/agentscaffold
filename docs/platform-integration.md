@@ -66,6 +66,53 @@ Operational notes:
 
 ---
 
+## Skills
+
+Skills are narrowly-scoped best-practice guides (testing, logging, config patterns, etc.) generated from your project's standards files. Each skill becomes a SKILL.md file that AI agents can discover and load on demand.
+
+### How Skills Work
+
+1. You write standards as markdown files in `docs/ai/standards/` (e.g., `testing.md`, `concurrency_patterns.md`).
+2. Run `scaffold agents skills` to convert them into SKILL.md files.
+3. Output goes to `.claude/skills/` and `.cursor/skills/` with a `SKILLS_CATALOG.md` index.
+
+Agents discover skills via the catalog (progressive disclosure) and load the full skill file when they need detailed guidance for a specific domain.
+
+### Generating Skills
+
+```bash
+# Generate skills from all standards
+scaffold agents skills
+
+# Preview without writing
+scaffold agents skills --dry-run
+```
+
+### Auto-Regeneration
+
+If configured in `scaffold.yaml`, skills regenerate automatically when standards files change:
+
+```yaml
+enforcement:
+  rules:
+    - event: PostToolUse
+      matcher: "Edit|Write|NotebookEdit"
+      command: scaffold agents skills --if-standards-changed
+      description: Regenerate skills when standards files are updated
+```
+
+The `--if-standards-changed` flag uses a timestamp marker (`.scaffold/.skills_generated`) to skip regeneration when no standards have been modified, keeping the hook fast (~100ms no-op).
+
+### Adding a New Skill
+
+1. Create a markdown file in `docs/ai/standards/` (e.g., `security.md`).
+2. Run `scaffold agents skills` (or let the PostToolUse hook pick it up automatically).
+3. The new skill appears in `.claude/skills/security.md` and `.cursor/skills/security.md`.
+
+Skills are distinct from AGENTS.md rules: AGENTS.md provides broad governance (plan lifecycle, architecture constraints), while skills provide specific best practices for a domain.
+
+---
+
 ## Cursor
 
 Cursor has first-class support. AgentScaffold generates:

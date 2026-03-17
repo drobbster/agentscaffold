@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from agentscaffold.graph.backend import GraphBackend
+from agentscaffold.graph.query_compat import ql, ql_execute, ql_scalar
 
 logger = logging.getLogger(__name__)
 
@@ -60,16 +61,27 @@ def record_modification(
     file_id = f"file::{file_path}"
 
     # Check file exists in graph
-    exists = store.query_scalar(f"MATCH (f:File) WHERE f.id = '{file_id}' RETURN count(f)")
+    exists = ql_scalar(
+        store,
+        cypher=f"MATCH (f:File) WHERE f.id = '{file_id}' RETURN count(f)",
+        sql=f"SELECT COUNT(*) FROM File WHERE id = '{file_id}'",
+    )
     if not exists or int(exists) == 0:
         logger.debug("File %s not in graph, skipping session tracking", file_path)
         return
 
     # Check if edge already exists
-    edge_exists = store.query_scalar(
-        f"MATCH (s:Session)-[:SESSION_MODIFIED]->(f:File) "
-        f"WHERE s.id = '{session_id}' AND f.id = '{file_id}' "
-        f"RETURN count(*)"
+    edge_exists = ql_scalar(
+        store,
+        cypher=(
+            f"MATCH (s:Session)-[:SESSION_MODIFIED]->(f:File) "
+            f"WHERE s.id = '{session_id}' AND f.id = '{file_id}' "
+            f"RETURN count(*)"
+        ),
+        sql=(
+            f"SELECT COUNT(*) FROM SESSION_MODIFIED "
+            f"WHERE src = '{session_id}' AND dst = '{file_id}'"
+        ),
     )
     if edge_exists and int(edge_exists) > 0:
         return
@@ -77,7 +89,11 @@ def record_modification(
     store.create_edge("SESSION_MODIFIED", "Session", session_id, "File", file_id)
 
     # Update the filesModified list on the session node
-    rows = store.query(f"MATCH (s:Session) WHERE s.id = '{session_id}' RETURN s.filesModified")
+    rows = ql(
+        store,
+        cypher=f"MATCH (s:Session) WHERE s.id = '{session_id}' RETURN s.filesModified",
+        sql=f"SELECT filesModified AS \"s.filesModified\" FROM Session WHERE id = '{session_id}'",
+    )
     if rows:
         try:
             current = json.loads(rows[0].get("s.filesModified", "[]"))
@@ -88,8 +104,15 @@ def record_modification(
             current.append(file_path)
             updated = json.dumps(current)
             escaped = updated.replace("\\", "\\\\").replace("'", "\\'")
-            store.execute(
-                f"MATCH (s:Session) WHERE s.id = '{session_id}' SET s.filesModified = '{escaped}'"
+            ql_execute(
+                store,
+                cypher=(
+                    f"MATCH (s:Session) WHERE s.id = '{session_id}' "
+                    f"SET s.filesModified = '{escaped}'"
+                ),
+                sql=(
+                    f"UPDATE Session SET filesModified = '{escaped}' " f"WHERE id = '{session_id}'"
+                ),
             )
 
 
@@ -105,16 +128,28 @@ def end_session(
     """
     if summary:
         escaped = summary.replace("\\", "\\\\").replace("'", "\\'")
-        store.execute(f"MATCH (s:Session) WHERE s.id = '{session_id}' SET s.summary = '{escaped}'")
+        ql_execute(
+            store,
+            cypher=f"MATCH (s:Session) WHERE s.id = '{session_id}' SET s.summary = '{escaped}'",
+            sql=f"UPDATE Session SET summary = '{escaped}' WHERE id = '{session_id}'",
+        )
 
     return get_session(store, session_id)
 
 
 def get_session(store: GraphBackend, session_id: str) -> dict[str, Any]:
     """Retrieve a session's full data including modified files."""
-    rows = store.query(
-        f"MATCH (s:Session) WHERE s.id = '{session_id}' "
-        f"RETURN s.id, s.date, s.planNumbers, s.filesModified, s.summary"
+    rows = ql(
+        store,
+        cypher=(
+            f"MATCH (s:Session) WHERE s.id = '{session_id}' "
+            f"RETURN s.id, s.date, s.planNumbers, s.filesModified, s.summary"
+        ),
+        sql=(
+            f'SELECT id AS "s.id", date AS "s.date", planNumbers AS "s.planNumbers", '
+            f'filesModified AS "s.filesModified", summary AS "s.summary" '
+            f"FROM Session WHERE id = '{session_id}'"
+        ),
     )
     if not rows:
         return {}
@@ -144,10 +179,18 @@ def list_sessions(
     limit: int = 10,
 ) -> list[dict[str, Any]]:
     """Return recent sessions ordered by date (most recent first)."""
-    rows = store.query(
-        "MATCH (s:Session) "
-        "RETURN s.id, s.date, s.planNumbers, s.filesModified, s.summary "
-        f"ORDER BY s.date DESC LIMIT {limit}"
+    rows = ql(
+        store,
+        cypher=(
+            "MATCH (s:Session) "
+            "RETURN s.id, s.date, s.planNumbers, s.filesModified, s.summary "
+            f"ORDER BY s.date DESC LIMIT {limit}"
+        ),
+        sql=(
+            'SELECT id AS "s.id", date AS "s.date", planNumbers AS "s.planNumbers", '
+            'filesModified AS "s.filesModified", summary AS "s.summary" '
+            f"FROM Session ORDER BY date DESC LIMIT {limit}"
+        ),
     )
 
     sessions = []

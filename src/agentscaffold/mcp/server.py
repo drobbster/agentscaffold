@@ -805,8 +805,18 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             return result
 
         elif name == "scaffold_query":
+            from agentscaffold.graph.query_compat import is_duckpgq
+
             cypher = arguments.get("cypher", "")
-            rows = store.query(cypher)
+            sql = arguments.get("sql", "")
+            if cypher and sql:
+                from agentscaffold.graph.query_compat import ql
+
+                rows = ql(store, cypher=cypher, sql=sql)
+            elif sql and is_duckpgq(store):
+                rows = store.query(sql)
+            else:
+                rows = store.query(cypher)
             return {"results": rows, "count": len(rows), "meta": meta}
 
         elif name == "scaffold_context":
@@ -888,17 +898,35 @@ def _build_meta(
 
 def _tool_context(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
     """Handle scaffold_context tool call."""
+    from agentscaffold.graph.query_compat import ql
+
     symbol = arguments.get("symbol", "")
 
     # Search across functions, classes, methods
-    results = store.query(
-        f"MATCH (fn:Function) WHERE fn.name = '{symbol}' "
-        "RETURN fn.id, fn.name, fn.filePath, fn.startLine, fn.endLine, fn.signature"
+    results = ql(
+        store,
+        cypher=(
+            f"MATCH (fn:Function) WHERE fn.name = '{symbol}' "
+            "RETURN fn.id, fn.name, fn.filePath, fn.startLine, fn.endLine, fn.signature"
+        ),
+        sql=(
+            f'SELECT id AS "fn.id", name AS "fn.name", filePath AS "fn.filePath", '
+            f'startLine AS "fn.startLine", endLine AS "fn.endLine", signature AS "fn.signature" '
+            f"FROM Function WHERE name = '{symbol}'"
+        ),
     )
     if not results:
-        results = store.query(
-            f"MATCH (c:Class) WHERE c.name = '{symbol}' "
-            "RETURN c.id, c.name, c.filePath, c.startLine, c.endLine"
+        results = ql(
+            store,
+            cypher=(
+                f"MATCH (c:Class) WHERE c.name = '{symbol}' "
+                "RETURN c.id, c.name, c.filePath, c.startLine, c.endLine"
+            ),
+            sql=(
+                f'SELECT id AS "c.id", name AS "c.name", filePath AS "c.filePath", '
+                f'startLine AS "c.startLine", endLine AS "c.endLine" '
+                f"FROM Class WHERE name = '{symbol}'"
+            ),
         )
 
     if not results:
@@ -908,15 +936,43 @@ def _tool_context(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str
     node_id = node.get("fn.id") or node.get("c.id")
 
     # Find callers
-    callers = store.query(
-        f"MATCH (caller:Function)-[r:CALLS]->(fn:Function) WHERE fn.id = '{node_id}' "
-        "RETURN caller.name, caller.filePath, r.confidence"
+    callers = ql(
+        store,
+        cypher=(
+            f"MATCH (caller:Function)-[r:CALLS]->(fn:Function) WHERE fn.id = '{node_id}' "
+            "RETURN caller.name, caller.filePath, r.confidence"
+        ),
+        sql=(
+            f'SELECT t.caller_name AS "caller.name", t.caller_fp AS "caller.filePath", '
+            f't.r_conf AS "r.confidence" '
+            f"FROM GRAPH_TABLE(agentscaffold_graph "
+            f"MATCH (caller:Function)-[r:CALLS]->(fn:Function) "
+            f"WHERE fn.id = '{node_id}' "
+            f"COLUMNS (caller.name AS caller_name, "
+            f"caller.filePath AS caller_fp, "
+            f"r.confidence AS r_conf)) t"
+        ),
     )
 
     # Find callees
-    callees = store.query(
-        f"MATCH (fn:Function)-[r:CALLS]->(callee:Function) WHERE fn.id = '{node_id}' "
-        "RETURN callee.name, callee.filePath, r.confidence"
+    callees = ql(
+        store,
+        cypher=(
+            f"MATCH (fn:Function)-[r:CALLS]->(callee:Function) "
+            f"WHERE fn.id = '{node_id}' "
+            "RETURN callee.name, callee.filePath, r.confidence"
+        ),
+        sql=(
+            f'SELECT t.callee_name AS "callee.name", '
+            f't.callee_fp AS "callee.filePath", '
+            f't.r_conf AS "r.confidence" '
+            f"FROM GRAPH_TABLE(agentscaffold_graph "
+            f"MATCH (fn:Function)-[r:CALLS]->(callee:Function) "
+            f"WHERE fn.id = '{node_id}' "
+            f"COLUMNS (callee.name AS callee_name, "
+            f"callee.filePath AS callee_fp, "
+            f"r.confidence AS r_conf)) t"
+        ),
     )
 
     return {
@@ -931,21 +987,47 @@ def _tool_context(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str
 
 def _tool_impact(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
     """Handle scaffold_impact tool call."""
+    from agentscaffold.graph.query_compat import ql
+
     target = arguments.get("file_or_symbol", "")
     _depth = arguments.get("depth", 2)  # noqa: F841 -- reserved for multi-hop traversal
 
     file_id = f"file::{target}"
 
     # Find direct importers
-    importers = store.query(
-        f"MATCH (a:File)-[:IMPORTS]->(b:File) WHERE b.id = '{file_id}' RETURN a.path, a.language"
+    importers = ql(
+        store,
+        cypher=(
+            f"MATCH (a:File)-[:IMPORTS]->(b:File) "
+            f"WHERE b.id = '{file_id}' RETURN a.path, a.language"
+        ),
+        sql=(
+            f'SELECT t.a_path AS "a.path", t.a_lang AS "a.language" '
+            f"FROM GRAPH_TABLE(agentscaffold_graph "
+            f"MATCH (a:File)-[e:IMPORTS]->(b:File) "
+            f"WHERE b.id = '{file_id}' "
+            f"COLUMNS (a.path AS a_path, a.language AS a_lang)) t"
+        ),
     )
 
     # Find functions in this file and their callers
-    callers = store.query(
-        "MATCH (caller:Function)-[r:CALLS]->(fn:Function)-[:DEFINES_FUNCTION]-(f:File) "
-        f"WHERE f.id = '{file_id}' "
-        "RETURN DISTINCT caller.filePath, caller.name, r.confidence"
+    callers = ql(
+        store,
+        cypher=(
+            "MATCH (caller:Function)-[r:CALLS]->(fn:Function)-[:DEFINES_FUNCTION]-(f:File) "
+            f"WHERE f.id = '{file_id}' "
+            "RETURN DISTINCT caller.filePath, caller.name, r.confidence"
+        ),
+        sql=(
+            f'SELECT DISTINCT t.caller_fp AS "caller.filePath", t.caller_name AS "caller.name", '
+            f't.r_conf AS "r.confidence" '
+            f"FROM GRAPH_TABLE(agentscaffold_graph "
+            f"MATCH (caller:Function)-[r:CALLS]->(fn:Function)<-[e:DEFINES_FUNCTION]-(f:File) "
+            f"WHERE f.id = '{file_id}' "
+            f"COLUMNS (caller.filePath AS caller_fp, "
+            f"caller.name AS caller_name, "
+            f"r.confidence AS r_conf)) t"
+        ),
     )
 
     return {
@@ -1649,9 +1731,21 @@ def _dispatch_resource(uri: str) -> dict[str, Any]:
             return stats
 
         elif uri == "scaffold://project/layers":
-            layers = store.query(
-                "MATCH (l:ArchitectureLayer) RETURN l.number, l.name, l.pathPatterns "
-                "ORDER BY l.number"
+            from agentscaffold.graph.query_compat import ql
+
+            layers = ql(
+                store,
+                cypher=(
+                    "MATCH (l:ArchitectureLayer) "
+                    "RETURN l.number, l.name, l.pathPatterns "
+                    "ORDER BY l.number"
+                ),
+                sql=(
+                    'SELECT number AS "l.number", '
+                    'name AS "l.name", '
+                    'pathPatterns AS "l.pathPatterns" '
+                    "FROM ArchitectureLayer ORDER BY number"
+                ),
             )
             return {"layers": layers}
 

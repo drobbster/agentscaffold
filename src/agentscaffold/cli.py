@@ -85,6 +85,9 @@ def validate(
     check_session_summary: bool = typer.Option(
         False, "--check-session-summary", help="Verify session summary exists for agent PRs."
     ),
+    pre_edit: bool = typer.Option(
+        False, "--pre-edit", help="Quick pre-edit check (integration + prohibitions only)."
+    ),
 ) -> None:
     """Run all enforcement checks (lint, integration, retros, prohibitions, secrets)."""
     from agentscaffold.validate.orchestrator import run_validate
@@ -92,6 +95,7 @@ def validate(
     run_validate(
         check_safety_boundaries=check_safety_boundaries,
         check_session_summary=check_session_summary,
+        pre_edit=pre_edit,
     )
 
 
@@ -473,6 +477,11 @@ def agents_hooks(
 @agents_app.command("skills")
 def agents_skills(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print paths without writing files."),
+    if_standards_changed: bool = typer.Option(
+        False,
+        "--if-standards-changed",
+        help="Only regenerate if standards files are newer than existing skills.",
+    ),
 ) -> None:
     """Generate SKILL.md files into .claude/skills/ and .cursor/skills/."""
     from agentscaffold.skills.catalog import write_catalog
@@ -482,6 +491,15 @@ def agents_skills(
     standards_dir = root / "docs" / "ai" / "standards"
     claude_skills = root / ".claude" / "skills"
     cursor_skills = root / ".cursor" / "skills"
+
+    # Quick mtime check: skip if no standards are newer than the marker
+    if if_standards_changed:
+        marker = root / ".scaffold" / ".skills_generated"
+        if marker.is_file() and standards_dir.is_dir():
+            marker_mtime = marker.stat().st_mtime
+            any_newer = any(f.stat().st_mtime > marker_mtime for f in standards_dir.glob("*.md"))
+            if not any_newer:
+                return  # nothing changed, skip silently
 
     written: list[Path] = []
     for output_dir in (claude_skills, cursor_skills):
@@ -504,6 +522,11 @@ def agents_skills(
             except ValueError:
                 rel = catalog_path
             console.print(f"[green]Wrote[/green] {rel}")
+
+        # Update marker timestamp
+        marker = root / ".scaffold" / ".skills_generated"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
 
     if not written:
         console.print("[dim]No standards found in docs/ai/standards/[/dim]")

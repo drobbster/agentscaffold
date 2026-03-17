@@ -1,7 +1,7 @@
-"""Backend parity scenarios — Step E.1.
+"""DuckPGQ consistency scenarios.
 
-Verifies that KuzuDB and DuckPGQ backends produce identical results for the
-same indexing pipeline run.  These are a Phase A exit gate.
+Verifies that DuckPGQ produces deterministic, correct results across
+two independent indexing runs of the same sim project.
 """
 
 from __future__ import annotations
@@ -35,89 +35,90 @@ def _node_counts(store) -> dict[str, int]:
     }
 
 
-class TestBackendParity:
-    """Verifies KuzuDB ↔ DuckPGQ result parity across 5 canonical checks."""
+class TestDuckPGQConsistency:
+    """Verifies DuckPGQ produces consistent, correct results across independent index runs."""
 
-    def test_node_count_parity(self, indexed_sim, indexed_sim_duckdb):
-        """File, Function, Class node counts must be identical on both backends."""
-        _, kuzu_store, _ = indexed_sim
-        _, duck_store, _ = indexed_sim_duckdb
+    def test_node_count_consistency(self, indexed_sim, indexed_sim_duckdb):
+        """File, Function, Class node counts must be identical across two independent runs."""
+        _, store_a, _ = indexed_sim
+        _, store_b, _ = indexed_sim_duckdb
 
-        kuzu_counts = _node_counts(kuzu_store)
-        duck_counts = _node_counts(duck_store)
+        counts_a = _node_counts(store_a)
+        counts_b = _node_counts(store_b)
 
         mismatches = {
-            label: (kuzu_counts[label], duck_counts[label])
-            for label in kuzu_counts
-            if kuzu_counts[label] != duck_counts[label]
+            label: (counts_a[label], counts_b[label])
+            for label in counts_a
+            if counts_a[label] != counts_b[label]
         }
 
         passed = len(mismatches) == 0
         collect_result(
             EvalResult(
-                scenario="parity_node_counts",
+                scenario="duckpgq_node_count_consistency",
                 passed=passed,
                 score=1.0 if passed else 0.0,
-                expected="Identical node counts on kuzu and duckpgq",
+                expected="Identical node counts across two independent indexing runs",
                 actual=(
-                    f"Kuzu: {kuzu_counts}, DuckPGQ: {duck_counts}"
+                    f"Run A: {counts_a}, Run B: {counts_b}"
                     + (f", Mismatches: {mismatches}" if mismatches else "")
                 ),
-                category="parity",
+                category="consistency",
             )
         )
-        assert not mismatches, f"Node count divergence: {mismatches}"
+        assert not mismatches, f"Node count divergence across runs: {mismatches}"
 
-    def test_query_result_parity(self, indexed_sim, indexed_sim_duckdb):
-        """10 canonical queries should return the same result sets on both backends."""
-        _, kuzu_store, _ = indexed_sim
-        _, duck_store, _ = indexed_sim_duckdb
+    def test_query_result_consistency(self, indexed_sim, indexed_sim_duckdb):
+        """5 canonical queries should return identical result sets across two independent runs."""
+        _, store_a, _ = indexed_sim
+        _, store_b, _ = indexed_sim_duckdb
 
         from agentscaffold.graph.query_compat import ql
 
         canonical_queries = [
             (
                 "MATCH (f:File) WHERE f.language = 'python' RETURN f.path ORDER BY f.path LIMIT 5",
-                "SELECT path FROM File WHERE language = 'python' ORDER BY path LIMIT 5",
+                (
+                    'SELECT path AS "f.path" FROM File'
+                    " WHERE language = 'python' ORDER BY path LIMIT 5"
+                ),
                 "f.path",
             ),
             (
                 "MATCH (fn:Function) RETURN fn.name ORDER BY fn.name LIMIT 5",
-                "SELECT name FROM Function ORDER BY name LIMIT 5",
+                'SELECT name AS "fn.name" FROM Function ORDER BY name LIMIT 5',
                 "fn.name",
             ),
             (
                 "MATCH (c:Class) RETURN c.name ORDER BY c.name LIMIT 5",
-                "SELECT name FROM Class ORDER BY name LIMIT 5",
+                'SELECT name AS "c.name" FROM Class ORDER BY name LIMIT 5',
                 "c.name",
             ),
             (
                 "MATCH (p:Plan) RETURN p.number ORDER BY p.number LIMIT 5",
-                "SELECT number FROM Plan ORDER BY number LIMIT 5",
+                'SELECT number AS "p.number" FROM Plan ORDER BY number LIMIT 5',
                 "p.number",
             ),
             (
                 "MATCH (c:Contract) RETURN c.name ORDER BY c.name LIMIT 5",
-                "SELECT name FROM Contract ORDER BY name LIMIT 5",
+                'SELECT name AS "c.name" FROM Contract ORDER BY name LIMIT 5',
                 "c.name",
             ),
         ]
 
         divergences: list[str] = []
         for cypher, sql, key in canonical_queries:
-            kuzu_rows = ql(kuzu_store, cypher=cypher, sql=sql)
-            duck_rows = ql(duck_store, cypher=cypher, sql=sql)
-            kuzu_vals = sorted(str(r.get(key, "")) for r in kuzu_rows)
-            duck_vals = sorted(str(r.get(key, "")) for r in duck_rows)
-            if kuzu_vals != duck_vals:
-                divergences.append(
-                    f"Query diverged on '{cypher[:50]}...': kuzu={kuzu_vals}, duck={duck_vals}"
-                )
+            rows_a = ql(store_a, cypher=cypher, sql=sql)
+            rows_b = ql(store_b, cypher=cypher, sql=sql)
+            vals_a = sorted(str(r.get(key, "")) for r in rows_a)
+            vals_b = sorted(str(r.get(key, "")) for r in rows_b)
+            if vals_a != vals_b:
+                divergences.append(f"Query diverged on '{cypher[:50]}...': A={vals_a}, B={vals_b}")
 
         passed = len(divergences) == 0
         collect_result(
             EvalResult(
-                scenario="parity_query_results",
+                scenario="duckpgq_query_consistency",
                 passed=passed,
                 score=1.0 - len(divergences) / len(canonical_queries),
                 expected="All 5 canonical queries return identical result sets",
@@ -125,137 +126,111 @@ class TestBackendParity:
                     f"{len(canonical_queries) - len(divergences)}/{len(canonical_queries)} match"
                 ),
                 observations=divergences[:5],
-                category="parity",
+                category="consistency",
             )
         )
         assert not divergences, "Query result divergences:\n" + "\n".join(divergences)
 
-    def test_search_parity(self, indexed_sim, indexed_sim_duckdb):
-        """hybrid_search('DataRouter') top-5 should be identical on both backends."""
-        _, kuzu_store, _ = indexed_sim
-        _, duck_store, _ = indexed_sim_duckdb
+    def test_search_consistency(self, indexed_sim, indexed_sim_duckdb):
+        """Router file search should return identical results across two independent runs."""
+        _, store_a, _ = indexed_sim
+        _, store_b, _ = indexed_sim_duckdb
 
         from agentscaffold.graph.query_compat import ql
 
         cypher = (
             "MATCH (f:File) WHERE f.path CONTAINS 'router' RETURN f.path ORDER BY f.path LIMIT 5"
         )
-        sql = "SELECT path FROM File WHERE path LIKE '%router%' ORDER BY path LIMIT 5"
+        sql = "SELECT path AS \"f.path\" FROM File WHERE path LIKE '%router%' ORDER BY path LIMIT 5"
 
-        kuzu_rows = ql(kuzu_store, cypher=cypher, sql=sql)
-        duck_rows = ql(duck_store, cypher=cypher, sql=sql)
+        rows_a = ql(store_a, cypher=cypher, sql=sql)
+        rows_b = ql(store_b, cypher=cypher, sql=sql)
 
-        kuzu_paths = sorted(r.get("f.path", "") for r in kuzu_rows)
-        duck_paths = sorted(r.get("f.path", "") for r in duck_rows)
+        paths_a = sorted(r.get("f.path", "") for r in rows_a)
+        paths_b = sorted(r.get("f.path", "") for r in rows_b)
 
-        passed = kuzu_paths == duck_paths
+        passed = paths_a == paths_b
         collect_result(
             EvalResult(
-                scenario="parity_search",
+                scenario="duckpgq_search_consistency",
                 passed=passed,
                 score=1.0 if passed else 0.0,
-                expected="Identical top-5 paths for router search",
-                actual=f"Kuzu: {kuzu_paths}, DuckPGQ: {duck_paths}",
-                category="parity",
+                expected="Identical top-5 paths for router search across runs",
+                actual=f"Run A: {paths_a}, Run B: {paths_b}",
+                category="consistency",
             )
         )
-        assert passed, f"Search diverged: kuzu={kuzu_paths}, duck={duck_paths}"
+        assert passed, f"Search result divergence: A={paths_a}, B={paths_b}"
 
-    def test_finding_write_parity(self, indexed_sim, indexed_sim_duckdb):
-        """record_finding() + get_open_findings() round-trips on both backends."""
-        root, kuzu_store, _ = indexed_sim
-        _, duck_store, _ = indexed_sim_duckdb
+    def test_finding_write_read(self, indexed_sim):
+        """record_finding() + get_open_findings() round-trip on DuckPGQ."""
+        _, store, _ = indexed_sim
 
         from agentscaffold.graph.findings import get_open_findings, record_finding
 
-        kuzu_result = record_finding(
-            kuzu_store,
+        result = record_finding(
+            store,
             plan_number=9999,
-            review_type="parity_test",
+            review_type="consistency_test",
             category="test",
-            finding="Parity test finding for kuzu",
-            severity="low",
-        )
-        duck_result = record_finding(
-            duck_store,
-            plan_number=9999,
-            review_type="parity_test",
-            category="test",
-            finding="Parity test finding for duckpgq",
+            finding="DuckPGQ consistency test finding",
             severity="low",
         )
 
-        kuzu_findings = get_open_findings(kuzu_store, plan_number=9999)
-        duck_findings = get_open_findings(duck_store, plan_number=9999)
+        findings = get_open_findings(store, plan_number=9999)
 
-        kuzu_ok = len(kuzu_findings) > 0 and kuzu_result.get("id") in {
-            f.get("rf.id") for f in kuzu_findings
-        }
-        duck_ok = len(duck_findings) > 0 and duck_result.get("id") in {
-            f.get("rf.id") for f in duck_findings
-        }
+        ok = len(findings) > 0 and result.get("id") in {f.get("rf.id") for f in findings}
 
-        passed = kuzu_ok and duck_ok
         collect_result(
             EvalResult(
-                scenario="parity_finding_write",
-                passed=passed,
-                score=1.0 if passed else (0.5 if kuzu_ok or duck_ok else 0.0),
-                expected="Findings written and readable on both backends",
-                actual=f"kuzu_ok={kuzu_ok}, duck_ok={duck_ok}",
+                scenario="duckpgq_finding_write_read",
+                passed=ok,
+                score=1.0 if ok else 0.0,
+                expected="Finding written and readable on DuckPGQ",
+                actual=f"ok={ok}, findings_count={len(findings)}",
                 observations=[
-                    f"Kuzu findings: {len(kuzu_findings)}",
-                    f"DuckPGQ findings: {len(duck_findings)}",
+                    f"Finding ID: {result.get('id')}",
+                    f"Open findings for plan 9999: {len(findings)}",
                 ],
-                category="parity",
+                category="consistency",
             )
         )
-        assert kuzu_ok, f"Kuzu finding round-trip failed: {kuzu_findings}"
-        assert duck_ok, f"DuckPGQ finding round-trip failed: {duck_findings}"
+        assert ok, f"DuckPGQ finding round-trip failed: {findings}"
 
-    def test_incremental_changeset_parity(self, indexed_sim, indexed_sim_duckdb, tmp_path):
-        """Same file addition should produce same changeset on both backends."""
+    def test_incremental_changeset_detection(self, tmp_path):
+        """DuckPGQ incremental indexing should detect a newly added file."""
         import shutil
 
         from agentscaffold.config import GraphConfig, ScaffoldConfig
         from agentscaffold.graph.pipeline import run_pipeline
         from eval.conftest import SIM_PROJECT
 
-        results: dict[str, list[str]] = {}
+        root = tmp_path / "consistency_check"
+        shutil.copytree(SIM_PROJECT, root)
+        db_path = root / ".scaffold" / "graph_consistency.duckdb"
+        config = ScaffoldConfig()
+        config.graph = GraphConfig(
+            db_path=str(db_path),
+            backend="duckpgq",
+        )
+        run_pipeline(root, config)
 
-        for backend in ("kuzu", "duckpgq"):
-            root = tmp_path / f"parity_{backend}"
-            shutil.copytree(SIM_PROJECT, root)
-            suffix = ".db" if backend == "kuzu" else ".duckdb"
-            db_path = root / ".scaffold" / f"graph{suffix}"
-            config = ScaffoldConfig()
-            config.graph = GraphConfig(
-                db_path=str(db_path),
-                backend=backend,
-            )
-            run_pipeline(root, config)
-            new_file = root / "libs" / "parity_check.py"
-            new_file.write_text("def parity(): pass\n")
-            summary = run_pipeline(root, config, incremental=True)
-            results[backend] = summary.get("changeset", {}).get("added", [])
+        new_file = root / "libs" / "consistency_check.py"
+        new_file.write_text("def consistency_check(): pass\n")
+        summary = run_pipeline(root, config, incremental=True)
+        added = summary.get("changeset", {}).get("added", [])
 
-        kuzu_added = set(results["kuzu"])
-        duck_added = set(results["duckpgq"])
+        new_detected = {p for p in added if "consistency_check" in p}
+        passed = bool(new_detected)
 
-        # Both should detect the new file (paths may differ in prefix, check basename)
-        kuzu_new = {p for p in kuzu_added if "parity_check" in p}
-        duck_new = {p for p in duck_added if "parity_check" in p}
-
-        passed = bool(kuzu_new) and bool(duck_new)
         collect_result(
             EvalResult(
-                scenario="parity_incremental_changeset",
+                scenario="duckpgq_incremental_changeset",
                 passed=passed,
                 score=1.0 if passed else 0.0,
-                expected="Both backends detect parity_check.py as added",
-                actual=f"Kuzu added: {kuzu_new}, DuckPGQ added: {duck_new}",
-                category="parity",
+                expected="DuckPGQ detects consistency_check.py as added",
+                actual=f"DuckPGQ added: {new_detected}",
+                category="consistency",
             )
         )
-        assert kuzu_new, f"Kuzu did not detect new file in changeset: {results['kuzu']}"
-        assert duck_new, f"DuckPGQ did not detect new file in changeset: {results['duckpgq']}"
+        assert new_detected, f"DuckPGQ did not detect new file in changeset: {added}"

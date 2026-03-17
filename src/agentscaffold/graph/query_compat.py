@@ -41,8 +41,10 @@ def is_duckpgq(store: Any) -> bool:
 
     Uses class-name check to avoid importing DuckPGQBackend (which requires
     duckdb) in modules that also support Kuzu-only environments.
+    Unwraps proxy/wrapper objects (e.g. _NoCloseStore) that delegate via _store.
     """
-    return type(store).__name__ == "DuckPGQBackend"
+    underlying = getattr(store, "_store", store)
+    return type(underlying).__name__ == "DuckPGQBackend"
 
 
 def ql(

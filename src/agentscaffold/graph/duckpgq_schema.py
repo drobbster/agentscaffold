@@ -528,16 +528,22 @@ def all_edge_ddl() -> list[str]:
     return list(EDGE_TABLES)
 
 
-def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
-    """Create all tables and (re-)register the property graph.
+def init_schema(conn: duckdb.DuckDBPyConnection, *, force_recreate_graph: bool = False) -> None:
+    """Create all tables and register the property graph.
 
-    Node and edge tables use ``CREATE TABLE IF NOT EXISTS``, so this is safe
-    to call on an existing database.  The property graph is always recreated
-    via DROP + CREATE to pick up any schema changes.
+    Node and edge tables use ``CREATE TABLE IF NOT EXISTS``.  The property
+    graph is created lazily (skip if it already exists) unless
+    *force_recreate_graph* is True.
+
+    DuckPGQ property graphs are process-global within a DuckDB instance.
+    Dropping the graph affects all open connections to any database in the
+    same process, so we avoid DROP unless explicitly forced (e.g. full
+    re-index via ``clear_all()``).
 
     Args:
-        conn: An open DuckDB connection with the duckpgq extension already
-              loaded (``LOAD duckpgq``).
+        conn: An open DuckDB connection with the duckpgq extension loaded.
+        force_recreate_graph: If True, drop and recreate the property graph.
+            Use only when performing a full re-index (not for normal opens).
     """
     for stmt in NODE_TABLES:
         conn.execute(stmt)
@@ -545,5 +551,12 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         conn.execute(stmt)
     for stmt in AUXILIARY_TABLES:
         conn.execute(stmt)
-    conn.execute(DROP_PROPERTY_GRAPH_SQL)
-    conn.execute(CREATE_PROPERTY_GRAPH_SQL)
+    if force_recreate_graph:
+        conn.execute(DROP_PROPERTY_GRAPH_SQL)
+        conn.execute(CREATE_PROPERTY_GRAPH_SQL)
+    else:
+        try:
+            conn.execute(CREATE_PROPERTY_GRAPH_SQL)
+        except Exception as exc:
+            if "already exists" not in str(exc):
+                raise

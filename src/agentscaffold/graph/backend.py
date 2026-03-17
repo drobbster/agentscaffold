@@ -94,8 +94,17 @@ class GraphBackend(Protocol):
         ...
 
     def clear_all(self) -> None:
-        """Drop and recreate the entire schema. Use for full re-index."""
+        """Drop and recreate the entire schema. Destroys everything."""
         ...
+
+    def clear_derived(self) -> None:
+        """Clear index-derived data while preserving user-generated knowledge.
+
+        Keeps ReviewFinding and Session data (knowledge gained through work).
+        Clears everything else for a clean re-index.
+        Default implementation falls back to clear_all().
+        """
+        self.clear_all()
 
     # ------------------------------------------------------------------
     # Pipeline state management
