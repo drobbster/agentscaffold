@@ -3,9 +3,8 @@
 Implements the GraphBackend protocol using DuckDB with the duckpgq community
 extension for property graph queries.
 
-Query dialect: SQL (not Cypher).  Consumers that need to be backend-agnostic
-should call through ``graph/query_compat.py`` (Step A.7), which translates
-queries to the appropriate dialect.
+Query dialect: SQL.  Consumers call through ``graph/query_compat.py``
+which provides the ``ql()``, ``ql_scalar()``, and ``ql_execute()`` helpers.
 
 Requires: pip install agentscaffold[graph-duckpgq]
 """

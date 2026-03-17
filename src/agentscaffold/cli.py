@@ -688,9 +688,9 @@ def graph_stats() -> None:
 
 @graph_app.command("query")
 def graph_query(
-    cypher: str = typer.Argument(..., help="Cypher query to execute."),
+    sql: str = typer.Argument(..., help="SQL query to execute."),
 ) -> None:
-    """Execute a raw Cypher query against the graph."""
+    """Execute a raw SQL query against the graph."""
     import json
 
     from agentscaffold.config import load_config
@@ -703,7 +703,7 @@ def graph_query(
 
     store = open_graph(config)
     try:
-        results = store.query(cypher)
+        results = store.query(sql)
         console.print(json.dumps(results, indent=2, default=str))
     except Exception as exc:
         console.print(f"[red]Query error: {exc}[/red]")
@@ -716,7 +716,7 @@ def graph_query(
 def graph_search(
     query: str = typer.Argument(..., help="Natural language search query."),
     mode: str = typer.Option(
-        "hybrid", "--mode", "-m", help="Search mode: cypher, semantic, hybrid."
+        "hybrid", "--mode", "-m", help="Search mode: keyword, semantic, hybrid."
     ),
     top_k: int = typer.Option(10, "--top", "-k", help="Number of results."),
     table: str = typer.Option(
@@ -744,14 +744,14 @@ def graph_search(
                 "Falling back to keyword search only.[/yellow]\n"
                 "[dim]Install with: pip install agentscaffold[search][/dim]\n"
             )
-            mode = "cypher"
+            mode = "keyword"
         elif not embeddings_available(store):
             console.print(
                 "[yellow]Warning: No embeddings found in graph. "
                 "Falling back to keyword search only.[/yellow]\n"
                 "[dim]Generate embeddings with: scaffold index --embeddings[/dim]\n"
             )
-            mode = "cypher"
+            mode = "keyword"
 
     tables = [table] if table else None
     results = hybrid_search(store, query, mode=mode, top_k=top_k, tables=tables)
@@ -1165,6 +1165,7 @@ def review_history(
 
 @session_app.command("start")
 def session_start(
+    summary_arg: str = typer.Argument("", help="Session description (positional shorthand)."),
     plan: list[int] = typer.Option(
         [], "--plan", "-p", help="Plan number(s) to associate with this session."
     ),
@@ -1181,7 +1182,7 @@ def session_start(
         raise SystemExit(1)
 
     store = open_graph(config)
-    session_id = start_session(store, plan_numbers=plan, summary=summary)
+    session_id = start_session(store, plan_numbers=plan, summary=summary or summary_arg)
     store.close()
     console.print(f"[green]Session started:[/green] {session_id}")
     console.print(f"  To end this session: [bold]scaffold session end {session_id}[/bold]")
@@ -1189,7 +1190,7 @@ def session_start(
 
 @session_app.command("end")
 def session_end(
-    session_id: str = typer.Argument(..., help="Session ID to finalize."),
+    session_id: str = typer.Argument("", help="Session ID to finalize (omit to end most recent)."),
     summary: str = typer.Option("", "--summary", "-s", help="Final session summary."),
 ) -> None:
     """Finalize a coding session."""
@@ -1197,7 +1198,7 @@ def session_end(
 
     from agentscaffold.config import load_config
     from agentscaffold.graph import graph_available, open_graph
-    from agentscaffold.graph.sessions import end_session
+    from agentscaffold.graph.sessions import end_session, list_sessions
 
     config = load_config()
     if not graph_available(config):
@@ -1205,6 +1206,17 @@ def session_end(
         raise SystemExit(1)
 
     store = open_graph(config)
+    if not session_id:
+        sessions = list_sessions(store, limit=1)
+        if not sessions:
+            console.print("[red]No sessions found.[/red]")
+            store.close()
+            raise SystemExit(1)
+        session_id = sessions[0].get("id", "")
+        if not session_id:
+            console.print("[red]Could not determine most recent session.[/red]")
+            store.close()
+            raise SystemExit(1)
     result = end_session(store, session_id, summary=summary)
     store.close()
     console.print(json.dumps(result, indent=2, default=str))

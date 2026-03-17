@@ -1,7 +1,7 @@
-"""Hybrid search combining Cypher graph queries with semantic vector search.
+"""Hybrid search combining keyword graph queries with semantic vector search.
 
 Supports three search modes:
-- cypher: Pure graph structural query (importers, callers, etc.)
+- keyword: Pure graph structural query (name/path matching)
 - semantic: Vector similarity against code embeddings
 - hybrid: Combines both with reciprocal rank fusion
 
@@ -29,7 +29,7 @@ class SearchResult:
     path: str
     node_type: str
     score: float
-    source: str  # "cypher", "semantic", or "both"
+    source: str  # "keyword", "semantic", or "both"
     context: dict[str, Any] = field(default_factory=dict)
 
 
@@ -47,7 +47,7 @@ def hybrid_search(
     Args:
         store: GraphBackend instance
         query: Natural language query
-        mode: "cypher", "semantic", or "hybrid"
+        mode: "keyword", "semantic", or "hybrid"
         top_k: Number of results to return
         tables: Node tables to search (default: Function, Class, Method, File)
         rrf_k: Reciprocal rank fusion constant (higher = more weight to lower ranks)
@@ -57,24 +57,24 @@ def hybrid_search(
     """
     target_tables = tables or ["Function", "Class", "Method", "File"]
 
-    cypher_results: list[SearchResult] = []
+    keyword_results: list[SearchResult] = []
     semantic_results: list[SearchResult] = []
 
-    if mode in ("cypher", "hybrid"):
-        cypher_results = _cypher_search(store, query, target_tables, top_k * 2)
+    if mode in ("keyword", "hybrid"):
+        keyword_results = _keyword_search(store, query, target_tables, top_k * 2)
 
     if mode in ("semantic", "hybrid"):
         semantic_results = _semantic_search(store, query, target_tables, top_k * 2)
 
-    if mode == "cypher":
-        return cypher_results[:top_k]
+    if mode == "keyword":
+        return keyword_results[:top_k]
     if mode == "semantic":
         return semantic_results[:top_k]
 
-    return _reciprocal_rank_fusion(cypher_results, semantic_results, top_k, rrf_k)
+    return _reciprocal_rank_fusion(keyword_results, semantic_results, top_k, rrf_k)
 
 
-def _cypher_search(
+def _keyword_search(
     store: GraphBackend,
     query: str,
     tables: list[str],
@@ -88,10 +88,6 @@ def _cypher_search(
         if table == "Function":
             rows = ql(
                 store,
-                cypher=(
-                    f"MATCH (n:Function) RETURN n.id, n.name, n.filePath, "
-                    f"n.signature LIMIT {limit * 2}"
-                ),
                 sql=(
                     f'SELECT id AS "n.id", name AS "n.name", '
                     f'filePath AS "n.filePath", signature AS "n.signature" '
@@ -113,7 +109,7 @@ def _cypher_search(
                             path=row.get("n.filePath", ""),
                             node_type="Function",
                             score=score,
-                            source="cypher",
+                            source="keyword",
                             context={"signature": row.get("n.signature", "")},
                         )
                     )
@@ -121,7 +117,6 @@ def _cypher_search(
         elif table == "Class":
             rows = ql(
                 store,
-                cypher=(f"MATCH (n:Class) RETURN n.id, n.name, n.filePath " f"LIMIT {limit * 2}"),
                 sql=(
                     f'SELECT id AS "n.id", name AS "n.name", '
                     f'filePath AS "n.filePath" FROM Class LIMIT {limit * 2}'
@@ -137,18 +132,13 @@ def _cypher_search(
                             path=row.get("n.filePath", ""),
                             node_type="Class",
                             score=score,
-                            source="cypher",
+                            source="keyword",
                         )
                     )
 
         elif table == "Method":
             rows = ql(
                 store,
-                cypher=(
-                    f"MATCH (n:Method) "
-                    f"RETURN n.id, n.name, n.className, n.filePath, n.signature "
-                    f"LIMIT {limit * 2}"
-                ),
                 sql=(
                     f'SELECT id AS "n.id", name AS "n.name", className AS "n.className",'
                     f' filePath AS "n.filePath", signature AS "n.signature"'
@@ -171,7 +161,7 @@ def _cypher_search(
                             path=row.get("n.filePath", ""),
                             node_type="Method",
                             score=score,
-                            source="cypher",
+                            source="keyword",
                             context={"signature": row.get("n.signature", "")},
                         )
                     )
@@ -179,7 +169,6 @@ def _cypher_search(
         elif table == "File":
             rows = ql(
                 store,
-                cypher=(f"MATCH (n:File) RETURN n.id, n.path, n.language " f"LIMIT {limit * 2}"),
                 sql=(
                     f'SELECT id AS "n.id", path AS "n.path", '
                     f'language AS "n.language" FROM File LIMIT {limit * 2}'
@@ -195,7 +184,7 @@ def _cypher_search(
                             path=row.get("n.path", ""),
                             node_type="File",
                             score=score,
-                            source="cypher",
+                            source="keyword",
                         )
                     )
 
@@ -248,7 +237,7 @@ def _semantic_search(
 
 
 def _reciprocal_rank_fusion(
-    cypher_results: list[SearchResult],
+    keyword_results: list[SearchResult],
     semantic_results: list[SearchResult],
     top_k: int,
     k: int = 60,
@@ -260,7 +249,7 @@ def _reciprocal_rank_fusion(
     scores: dict[str, float] = {}
     result_map: dict[str, SearchResult] = {}
 
-    for rank, r in enumerate(cypher_results):
+    for rank, r in enumerate(keyword_results):
         scores[r.node_id] = scores.get(r.node_id, 0.0) + 1.0 / (k + rank + 1)
         if r.node_id not in result_map:
             result_map[r.node_id] = r

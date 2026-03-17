@@ -1,25 +1,18 @@
 """Code embeddings for semantic similarity search.
 
 Generates vector embeddings for code definitions (functions, classes, methods)
-using sentence-transformers. Embeddings are stored as JSON arrays in the graph
-and support cosine similarity search.
+using sentence-transformers. Embeddings are stored in the EmbeddingStore table
+and support cosine similarity search via DuckDB's list_cosine_similarity.
 
 Requires: pip install agentscaffold[search]
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import TYPE_CHECKING, Any
-
-import numpy as np
+from typing import Any
 
 from agentscaffold.graph.backend import GraphBackend
-from agentscaffold.graph.query_compat import is_duckpgq
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -67,17 +60,13 @@ def _get_model(model_name: str = DEFAULT_MODEL) -> Any:
 
 
 def _ensure_embedding_column(store: GraphBackend, table: str) -> None:
-    """Add an embedding column to a node table if it doesn't exist.
+    """Ensure embedding storage is available.
 
-    For DuckPGQ backends, embeddings live in the EmbeddingStore auxiliary
-    table (added in schema v4), so no ALTER TABLE is required.
+    Embeddings live in the EmbeddingStore auxiliary table (added in schema v4),
+    so no ALTER TABLE is required.
     """
-    if is_duckpgq(store):
-        return  # EmbeddingStore handles storage; no ALTER TABLE needed
-    try:
-        store.execute(f"ALTER TABLE {table} ADD embedding STRING DEFAULT ''")
-    except Exception:
-        pass
+    # EmbeddingStore handles storage; no ALTER TABLE needed
+    return
 
 
 def _build_text_for_function(row: dict[str, Any]) -> str:
@@ -137,9 +126,9 @@ _TEXT_BUILDERS = {
     "File": (_build_text_for_file, "n.path, n.language"),
 }
 
-# DuckPGQ SQL equivalents — return the same dot-qualified column names so
+# SQL SELECT queries — return dot-qualified column names so
 # _build_text_for_* functions work without modification.
-_DUCKPGQ_SELECT: dict[str, str] = {
+_NODE_SELECT: dict[str, str] = {
     "Function": (
         'SELECT id AS "n.id", name AS "n.name",'
         ' signature AS "n.signature", filePath AS "n.filePath"'
@@ -154,10 +143,10 @@ _DUCKPGQ_SELECT: dict[str, str] = {
     "File": ('SELECT id AS "n.id", path AS "n.path", language AS "n.language" FROM File'),
 }
 
-# DuckPGQ similarity search SQL — JOIN EmbeddingStore with the node table and
+# Similarity search SQL — JOIN EmbeddingStore with the node table and
 # compute list_cosine_similarity in-database.  Returns keys: n.id, n.<props>,
 # similarity.
-_DUCKPGQ_SEARCH_SQL: dict[str, str] = {
+_SEARCH_SQL: dict[str, str] = {
     "Function": (
         'SELECT f.id AS "n.id", f.name AS "n.name",'
         ' f.signature AS "n.signature", f.filePath AS "n.filePath",'
@@ -223,13 +212,10 @@ def generate_embeddings(
             logger.warning("No text builder for table %s, skipping", table)
             continue
 
-        builder_fn, fields = _TEXT_BUILDERS[table]
+        builder_fn, _fields = _TEXT_BUILDERS[table]
         _ensure_embedding_column(store, table)
 
-        if is_duckpgq(store):
-            rows = store.query(_DUCKPGQ_SELECT[table])
-        else:
-            rows = store.query(f"MATCH (n:{table}) RETURN n.id, {fields}")
+        rows = store.query(_NODE_SELECT[table])
         if not rows:
             result[table] = 0
             continue
@@ -246,14 +232,7 @@ def generate_embeddings(
 
             for node_id, vec in zip(batch_ids, vectors):
                 vec_list = vec.tolist() if hasattr(vec, "tolist") else list(vec)
-                if is_duckpgq(store):
-                    store.store_embedding(node_id, table, vec_list)
-                else:
-                    vec_json = json.dumps(vec_list)
-                    escaped = vec_json.replace("\\", "\\\\").replace("'", "\\'")
-                    store.execute(
-                        f"MATCH (n:{table}) WHERE n.id = '{node_id}' SET n.embedding = '{escaped}'"
-                    )
+                store.store_embedding(node_id, table, vec_list)
                 count += 1
 
         result[table] = count
@@ -285,65 +264,24 @@ def search_similar(
     if table not in _TEXT_BUILDERS:
         raise ValueError(f"Unsupported table for search: {table}")
 
-    # DuckPGQ: use native list_cosine_similarity via EmbeddingStore JOIN
-    if is_duckpgq(store):
-        query_list = query_vec.tolist() if hasattr(query_vec, "tolist") else list(query_vec)
-        sql = _DUCKPGQ_SEARCH_SQL[table]
-        rows = store.query(sql, {"query_vector": query_list, "top_k": top_k})
-        return [
-            {
-                **{k: v for k, v in row.items() if k != "similarity"},
-                "similarity": round(float(row["similarity"]), 4),
-            }
-            for row in rows
-            if row.get("similarity") is not None
-        ]
-
-    # Fallback: fetch all embeddings and compute cosine similarity in Python
-    query_np = np.array(query_vec, dtype=np.float32)
-    _builder_fn, fields = _TEXT_BUILDERS[table]
-    rows = store.query(
-        f"MATCH (n:{table}) WHERE n.embedding <> '' RETURN n.id, n.embedding, {fields}"
-    )
-
-    if not rows:
-        return []
-
-    scored: list[tuple[float, dict[str, Any]]] = []
-    for row in rows:
-        try:
-            vec = np.array(json.loads(row["n.embedding"]), dtype=np.float32)
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-        dot = float(np.dot(query_np, vec))
-        norm_q = float(np.linalg.norm(query_np))
-        norm_v = float(np.linalg.norm(vec))
-        if norm_q == 0 or norm_v == 0:
-            continue
-        similarity = dot / (norm_q * norm_v)
-
-        result_row = {k: v for k, v in row.items() if k != "n.embedding"}
-        result_row["similarity"] = round(similarity, 4)
-        scored.append((similarity, result_row))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [r for _, r in scored[:top_k]]
+    # Use native list_cosine_similarity via EmbeddingStore JOIN
+    query_list = query_vec.tolist() if hasattr(query_vec, "tolist") else list(query_vec)
+    sql = _SEARCH_SQL[table]
+    rows = store.query(sql, {"query_vector": query_list, "top_k": top_k})
+    return [
+        {
+            **{k: v for k, v in row.items() if k != "similarity"},
+            "similarity": round(float(row["similarity"]), 4),
+        }
+        for row in rows
+        if row.get("similarity") is not None
+    ]
 
 
 def embeddings_available(store: GraphBackend) -> bool:
     """Check if any embeddings exist in the graph."""
-    if is_duckpgq(store):
-        try:
-            count = store.query_scalar("SELECT COUNT(*) FROM EmbeddingStore")
-            return bool(count and int(count) > 0)
-        except Exception:
-            return False
-    for table in _TEXT_BUILDERS:
-        try:
-            count = store.query_scalar(f"MATCH (n:{table}) WHERE n.embedding <> '' RETURN count(n)")
-            if count and int(count) > 0:
-                return True
-        except Exception:
-            continue
-    return False
+    try:
+        count = store.query_scalar("SELECT COUNT(*) FROM EmbeddingStore")
+        return bool(count and int(count) > 0)
+    except Exception:
+        return False

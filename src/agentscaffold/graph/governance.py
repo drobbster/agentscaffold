@@ -638,7 +638,6 @@ def process_governance(
     file_id_map: dict[str, str] = {}
     for row in ql(
         store,
-        cypher="MATCH (f:File) RETURN f.id, f.path",
         sql='SELECT id AS "f.id", path AS "f.path" FROM File',
     ):
         file_id_map[row["f.path"]] = row["f.id"]
@@ -729,10 +728,6 @@ def process_governance(
             for method_name in data.get("declared_methods", []):
                 fn_rows = ql(
                     store,
-                    cypher=(
-                        f"MATCH (fn:Function) WHERE fn.name = '{method_name}' "
-                        f"RETURN fn.id LIMIT 1"
-                    ),
                     sql=(
                         f'SELECT id AS "fn.id" FROM Function '
                         f"WHERE name = '{method_name}' LIMIT 1"
@@ -751,7 +746,6 @@ def process_governance(
             for class_name in data.get("declared_classes", []):
                 cls_rows = ql(
                     store,
-                    cypher=f"MATCH (c:Class) WHERE c.name = '{class_name}' RETURN c.id LIMIT 1",
                     sql=f"SELECT id AS \"c.id\" FROM Class WHERE name = '{class_name}' LIMIT 1",
                 )
                 if cls_rows:

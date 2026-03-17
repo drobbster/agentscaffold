@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from agentscaffold.config import GraphConfig
     from agentscaffold.graph.backend import GraphBackend
 
-from agentscaffold.graph.query_compat import is_duckpgq, ql, ql_execute, ql_scalar
+from agentscaffold.graph.query_compat import ql, ql_execute, ql_scalar
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,6 @@ def compute_changeset(
     graph_files: dict[str, str] = {}
     for row in ql(
         store,
-        cypher="MATCH (f:File) RETURN f.path, f.contentHash",
         sql='SELECT path AS "f.path", contentHash AS "f.contentHash" FROM File',
     ):
         graph_files[row["f.path"]] = row["f.contentHash"]
@@ -132,115 +131,88 @@ def remove_file_nodes(store: GraphBackend, file_paths: list[str]) -> int:
     for path in file_paths:
         file_id = f"file::{path}"
 
-        if is_duckpgq(store):
-            # DuckDB: cascade via SQL DELETE on edge and node tables
-            # Remove methods first (deepest level)
-            method_ids = [
-                r["m_id"]
-                for r in store.query(
-                    f"SELECT t.m_id FROM GRAPH_TABLE(agentscaffold_graph"
-                    f"  MATCH (f:File)-[d:DEFINES_CLASS]->(c:Class)-[h:HAS_METHOD]->(m:Method)"
-                    f"  WHERE f.id = '{file_id}'"
-                    f"  COLUMNS (m.id AS m_id)"
-                    f") t"
-                )
-            ]
-            if method_ids:
-                ids_lit = ", ".join(f"'{i}'" for i in method_ids)
-                for et in ("CALLS", "METHOD_CALLS"):
-                    store.execute(
-                        f"DELETE FROM {et} WHERE src IN ({ids_lit}) OR dst IN ({ids_lit})"
-                    )
-                store.execute(f"DELETE FROM HAS_METHOD WHERE dst IN ({ids_lit})")
-                store.execute(f"DELETE FROM Method WHERE id IN ({ids_lit})")
-            # Remove functions
-            fn_ids = [
-                r["fn_id"]
-                for r in store.query(
-                    f"SELECT t.fn_id FROM GRAPH_TABLE(agentscaffold_graph"
-                    f"  MATCH (f:File)-[d:DEFINES_FUNCTION]->(fn:Function)"
-                    f"  WHERE f.id = '{file_id}'"
-                    f"  COLUMNS (fn.id AS fn_id)"
-                    f") t"
-                )
-            ]
-            if fn_ids:
-                ids_lit = ", ".join(f"'{i}'" for i in fn_ids)
-                for et in ("CALLS", "METHOD_CALLS"):
-                    store.execute(
-                        f"DELETE FROM {et} WHERE src IN ({ids_lit}) OR dst IN ({ids_lit})"
-                    )
-                store.execute(f"DELETE FROM DEFINES_FUNCTION WHERE src = '{file_id}'")
-                store.execute(f"DELETE FROM Function WHERE id IN ({ids_lit})")
-            # Remove classes
-            cls_ids = [
-                r["c_id"]
-                for r in store.query(
-                    f"SELECT t.c_id FROM GRAPH_TABLE(agentscaffold_graph"
-                    f"  MATCH (f:File)-[d:DEFINES_CLASS]->(c:Class)"
-                    f"  WHERE f.id = '{file_id}'"
-                    f"  COLUMNS (c.id AS c_id)"
-                    f") t"
-                )
-            ]
-            if cls_ids:
-                ids_lit = ", ".join(f"'{i}'" for i in cls_ids)
-                for et in ("EXTENDS", "IMPLEMENTS", "HAS_METHOD"):
-                    store.execute(
-                        f"DELETE FROM {et} WHERE src IN ({ids_lit}) OR dst IN ({ids_lit})"
-                    )
-                store.execute(f"DELETE FROM DEFINES_CLASS WHERE src = '{file_id}'")
-                store.execute(f"DELETE FROM Class WHERE id IN ({ids_lit})")
-            # Remove interfaces
-            if_ids = [
-                r["i_id"]
-                for r in store.query(
-                    f"SELECT t.i_id FROM GRAPH_TABLE(agentscaffold_graph"
-                    f"  MATCH (f:File)-[d:DEFINES_INTERFACE]->(i:Interface)"
-                    f"  WHERE f.id = '{file_id}'"
-                    f"  COLUMNS (i.id AS i_id)"
-                    f") t"
-                )
-            ]
-            if if_ids:
-                ids_lit = ", ".join(f"'{i}'" for i in if_ids)
-                store.execute(f"DELETE FROM IMPLEMENTS WHERE dst IN ({ids_lit})")
-                store.execute(f"DELETE FROM DEFINES_INTERFACE WHERE src = '{file_id}'")
-                store.execute(f"DELETE FROM Interface WHERE id IN ({ids_lit})")
-            # Remove the file itself and its direct edges
-            for et in (
-                "IMPORTS",
-                "CONTAINS",
-                "CONTAINS_FOLDER",
-                "FINDING_ABOUT_FILE",
-                "PLAN_IMPACTS",
-                "CONTRACT_GOVERNS",
-            ):
-                try:
-                    store.execute(f"DELETE FROM {et} WHERE src = '{file_id}' OR dst = '{file_id}'")
-                except Exception:
-                    pass  # Edge table may not reference File
-            store.execute(f"DELETE FROM File WHERE id = '{file_id}'")
-        else:
-            # Cypher path (legacy)
-            store.execute(
-                f"MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) "
-                f"WHERE f.id = '{file_id}' DETACH DELETE fn"
+        # Cascade via SQL DELETE on edge and node tables
+        # Remove methods first (deepest level)
+        method_ids = [
+            r["m_id"]
+            for r in store.query(
+                f"SELECT t.m_id FROM GRAPH_TABLE(agentscaffold_graph"
+                f"  MATCH (f:File)-[d:DEFINES_CLASS]->(c:Class)-[h:HAS_METHOD]->(m:Method)"
+                f"  WHERE f.id = '{file_id}'"
+                f"  COLUMNS (m.id AS m_id)"
+                f") t"
             )
-            store.execute(
-                f"MATCH (f:File)-[:DEFINES_CLASS]->(c:Class)-[:HAS_METHOD]->(m:Method) "
-                f"WHERE f.id = '{file_id}' DETACH DELETE m"
+        ]
+        if method_ids:
+            ids_lit = ", ".join(f"'{i}'" for i in method_ids)
+            for et in ("CALLS", "METHOD_CALLS"):
+                store.execute(f"DELETE FROM {et} WHERE src IN ({ids_lit}) OR dst IN ({ids_lit})")
+            store.execute(f"DELETE FROM HAS_METHOD WHERE dst IN ({ids_lit})")
+            store.execute(f"DELETE FROM Method WHERE id IN ({ids_lit})")
+        # Remove functions
+        fn_ids = [
+            r["fn_id"]
+            for r in store.query(
+                f"SELECT t.fn_id FROM GRAPH_TABLE(agentscaffold_graph"
+                f"  MATCH (f:File)-[d:DEFINES_FUNCTION]->(fn:Function)"
+                f"  WHERE f.id = '{file_id}'"
+                f"  COLUMNS (fn.id AS fn_id)"
+                f") t"
             )
-            store.execute(
-                f"MATCH (f:File)-[:DEFINES_CLASS]->(c:Class) "
-                f"WHERE f.id = '{file_id}' DETACH DELETE c"
+        ]
+        if fn_ids:
+            ids_lit = ", ".join(f"'{i}'" for i in fn_ids)
+            for et in ("CALLS", "METHOD_CALLS"):
+                store.execute(f"DELETE FROM {et} WHERE src IN ({ids_lit}) OR dst IN ({ids_lit})")
+            store.execute(f"DELETE FROM DEFINES_FUNCTION WHERE src = '{file_id}'")
+            store.execute(f"DELETE FROM Function WHERE id IN ({ids_lit})")
+        # Remove classes
+        cls_ids = [
+            r["c_id"]
+            for r in store.query(
+                f"SELECT t.c_id FROM GRAPH_TABLE(agentscaffold_graph"
+                f"  MATCH (f:File)-[d:DEFINES_CLASS]->(c:Class)"
+                f"  WHERE f.id = '{file_id}'"
+                f"  COLUMNS (c.id AS c_id)"
+                f") t"
             )
-            store.execute(
-                f"MATCH (f:File)-[:DEFINES_INTERFACE]->(i:Interface) "
-                f"WHERE f.id = '{file_id}' DETACH DELETE i"
+        ]
+        if cls_ids:
+            ids_lit = ", ".join(f"'{i}'" for i in cls_ids)
+            for et in ("EXTENDS", "IMPLEMENTS", "HAS_METHOD"):
+                store.execute(f"DELETE FROM {et} WHERE src IN ({ids_lit}) OR dst IN ({ids_lit})")
+            store.execute(f"DELETE FROM DEFINES_CLASS WHERE src = '{file_id}'")
+            store.execute(f"DELETE FROM Class WHERE id IN ({ids_lit})")
+        # Remove interfaces
+        if_ids = [
+            r["i_id"]
+            for r in store.query(
+                f"SELECT t.i_id FROM GRAPH_TABLE(agentscaffold_graph"
+                f"  MATCH (f:File)-[d:DEFINES_INTERFACE]->(i:Interface)"
+                f"  WHERE f.id = '{file_id}'"
+                f"  COLUMNS (i.id AS i_id)"
+                f") t"
             )
-            store.execute(f"MATCH (f:File) WHERE f.id = '{file_id}' DETACH DELETE f")
-
+        ]
+        if if_ids:
+            ids_lit = ", ".join(f"'{i}'" for i in if_ids)
+            store.execute(f"DELETE FROM IMPLEMENTS WHERE dst IN ({ids_lit})")
+            store.execute(f"DELETE FROM DEFINES_INTERFACE WHERE src = '{file_id}'")
+            store.execute(f"DELETE FROM Interface WHERE id IN ({ids_lit})")
+        # Remove the file itself and its direct edges
+        for et in (
+            "IMPORTS",
+            "CONTAINS",
+            "CONTAINS_FOLDER",
+            "FINDING_ABOUT_FILE",
+            "PLAN_IMPACTS",
+            "CONTRACT_GOVERNS",
+        ):
+            try:
+                store.execute(f"DELETE FROM {et} WHERE src = '{file_id}' OR dst = '{file_id}'")
+            except Exception:
+                pass  # Edge table may not reference File
+        store.execute(f"DELETE FROM File WHERE id = '{file_id}'")
         removed += 1
         logger.debug("Removed file node: %s", path)
 
@@ -274,14 +246,6 @@ def update_file_node(
     language = _detect_language(full_path)
     ql_execute(
         store,
-        cypher=(
-            f"MATCH (f:File) WHERE f.id = '{file_id}' "
-            f"SET f.size = {stat.st_size}, "
-            f"f.lastModified = '{stat.st_mtime}', "
-            f"f.lineCount = {line_count}, "
-            f"f.contentHash = '{content_hash}', "
-            f"f.language = '{language}'"
-        ),
         sql=(
             f"UPDATE File SET size = {stat.st_size},"
             f" lastModified = '{stat.st_mtime}',"
@@ -342,7 +306,6 @@ def add_file_node(
     # Check if parent folder exists; create if not
     existing = ql_scalar(
         store,
-        cypher=f"MATCH (d:Folder) WHERE d.id = '{parent_id}' RETURN count(d)",
         sql=f"SELECT COUNT(*) FROM Folder WHERE id = '{parent_id}'",
     )
     if existing and int(existing) > 0:

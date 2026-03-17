@@ -169,3 +169,42 @@ make validate
 make lint-plans
 make test
 ```
+
+---
+
+## Troubleshooting
+
+### `scaffold validate` fails because graph.db is missing
+
+`scaffold validate` does not require the graph. If a step that uses the graph fails with a missing `.scaffold/graph.db`, run `scaffold index` first or remove the graph-dependent step from CI.
+
+### Graph freshness gate blocks the CI run
+
+If `scaffold validate` fails with a staleness error, add a graph indexing step before validation:
+
+```yaml
+- name: Build graph
+  run: scaffold index
+- name: Validate
+  run: scaffold validate
+```
+
+For faster CI, use `--incremental` after a full index is cached:
+
+```yaml
+- name: Refresh graph
+  run: scaffold index --incremental
+```
+
+### `scaffold validate --check-session-summary` fails
+
+This check expects a session summary file in `.scaffold/sessions/`. It only makes sense for agent-created PRs. If the check fires on a human PR, ensure the workflow condition is correct:
+
+```yaml
+if: contains(github.event.pull_request.labels.*.name, 'agent-created') ||
+    startsWith(github.head_ref, 'agent/')
+```
+
+### `scaffold validate --check-safety-boundaries` fails intermittently
+
+This check reads `.scaffold/safety_boundaries.yaml`. If the file was not committed or is missing on the CI runner, the check fails. Ensure `.scaffold/safety_boundaries.yaml` is tracked in git.

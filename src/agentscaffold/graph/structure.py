@@ -60,6 +60,7 @@ DEFAULT_IGNORE = [
     "**/__pycache__/**",
     "**/node_modules/**",
     "**/.venv/**",
+    "**/.venv-*/**",
     "**/venv/**",
     "**/.direnv/**",
     "**/.mypy_cache/**",

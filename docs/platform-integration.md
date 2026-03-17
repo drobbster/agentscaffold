@@ -14,13 +14,110 @@ This guide covers setup for specific platforms.
 Every platform starts with the same steps:
 
 ```bash
-pip install agentscaffold[all]   # or agentscaffold[graph] for lighter install
+pip install "agentscaffold[all]"  # graph + search + MCP + all language parsers
 cd my-project
 scaffold init
 scaffold index                    # Build knowledge graph
 ```
 
+For a lighter install without semantic search or extra language parsers:
+
+```bash
+pip install "agentscaffold[graph,mcp]"
+```
+
+For CI pipelines that only need governance checks (no graph, no MCP):
+
+```bash
+pip install agentscaffold
+```
+
+See [Installation](getting-started.md#1-installation) in the Getting Started guide for a
+full breakdown of what each extra includes.
+
 After this, your project has `AGENTS.md` at the root and `.scaffold/graph.db` with the indexed knowledge graph. The agent rules in `AGENTS.md` work immediately with any agent that reads project files.
+
+## Isolated Install: Two Venvs
+
+If your project already has a virtual environment and you want to keep agentscaffold's
+dependencies separate — or if there are version conflicts between your project's deps and
+agentscaffold's (duckdb, sentence-transformers, graspologic, etc.) — install agentscaffold
+into a dedicated venv and point the MCP config at the full path.
+
+### Setup
+
+```bash
+# From your project root
+python -m venv .venv-scaffold
+.venv-scaffold/bin/pip install "agentscaffold[all]"
+```
+
+Or with uv:
+
+```bash
+uv venv .venv-scaffold
+uv pip install "agentscaffold[all]" --python .venv-scaffold/bin/python
+```
+
+Then use the full path in your MCP config instead of `scaffold`:
+
+```json
+{
+  "mcpServers": {
+    "agentscaffold": {
+      "command": "/absolute/path/to/your-project/.venv-scaffold/bin/scaffold",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The `scaffold` CLI commands (e.g. `scaffold index`, `scaffold validate`) still work from
+your project root when you run them from this venv:
+
+```bash
+.venv-scaffold/bin/scaffold index
+.venv-scaffold/bin/scaffold validate
+```
+
+Or activate it temporarily:
+
+```bash
+source .venv-scaffold/bin/activate
+scaffold index
+deactivate
+```
+
+### Keep It Out of Git
+
+Add the venv to your `.gitignore` — it's a local tool install, not project source:
+
+```
+.venv-scaffold/
+```
+
+### Upgrading
+
+To upgrade agentscaffold without touching your project venv:
+
+```bash
+.venv-scaffold/bin/pip install --upgrade agentscaffold
+# or with uv:
+uv pip install --upgrade agentscaffold --python .venv-scaffold/bin/python
+```
+
+After upgrading, restart the MCP server in your IDE so it picks up the new version.
+
+### When to Use One Venv vs. Two
+
+| Situation | Recommendation |
+|-----------|---------------|
+| Project has no conflicting deps | Install into your project venv; use `scaffold` on PATH |
+| Project has duckdb, torch, or heavy ML deps at different versions | Use a dedicated `.venv-scaffold/` |
+| CI/CD environment | Install into a dedicated venv; reference the full path in your workflow |
+| Multiple projects sharing one agentscaffold install | Not recommended — keep one venv per project for isolation |
+
+---
 
 ## Verify NL Intent Routing
 
@@ -361,15 +458,35 @@ This blocks and communicates over stdin/stdout. The client launches this as a su
 
 ### Available Tools
 
+**Graph Intelligence Tools** — direct codebase queries:
+
 | Tool | Description |
 |------|-------------|
-| `scaffold_stats` | Codebase health dashboard |
-| `scaffold_query` | Execute Cypher queries against the graph |
-| `scaffold_search` | Hybrid search (cypher, semantic, or both) |
+| `scaffold_stats` | Codebase health dashboard (files, functions, edges, governance) |
+| `scaffold_query` | Execute raw SQL queries against the knowledge graph |
+| `scaffold_search` | Hybrid search (keyword, semantic, or hybrid mode) |
 | `scaffold_context` | Full context for a symbol (definition, callers, layer, plan history) |
 | `scaffold_impact` | Blast radius analysis for a file or symbol |
-| `scaffold_validate` | Validation checks (staleness, contracts) |
-| `scaffold_review_context` | Review context for a plan (brief, challenges, gaps, verification, retrospective) |
+| `scaffold_validate` | Validation checks (layers, contracts, staleness) |
+| `scaffold_review_context` | Low-level review context for a plan (brief, challenges, gaps, verify, retro) |
+
+**Governance & Lifecycle Tools** — composite workflows triggered by natural language:
+
+| Tool | NL Trigger | Description |
+|------|-----------|-------------|
+| `scaffold_prepare_review` | "review plan X" / "critique plan X" | Full pre-review package: brief, gap analysis, adversarial challenges, ADRs |
+| `scaffold_prepare_implementation` | "implement plan X" / "begin building plan X" | Implementation readiness: blast radius, contract obligations, consumer audit |
+| `scaffold_compare_plans` | "compare plan X and Y" / "do plans overlap" | Overlap and conflict detection between two plans |
+| `scaffold_staleness_check` | "is plan X stale" / "is plan X still valid" | Checks overlapping completions, missing files, changed dependencies |
+| `scaffold_prepare_rewrite` | "rewrite plan X" / "refresh plan X" | Staleness check + current dependency landscape + new contracts |
+| `scaffold_prepare_retro` | "retro on plan X" / "post-implementation review" | Retrospective context with verification results and findings |
+| `scaffold_orient` | "where did we leave off" / "what's blocked" | Session orientation: stats, recent plans, hot files, workflow state |
+| `scaffold_find_studies` | "any studies on X" / "experiments related to X" | Search studies and A/B tests by topic or outcome |
+| `scaffold_prior_experiments` | "prior experiments for plan X" / "has this been tested" | Experiments linked to a plan via reference, tag, or file overlap |
+| `scaffold_find_adrs` | "any ADRs about X" / "what ADR governs X" | Search ADRs by topic keyword or status |
+| `scaffold_decision_context` | "decision history for plan X" / "trace decisions" | Full decision chain: ADRs, spikes, studies, dependency status |
+| `scaffold_record_finding` | "record finding" / "log this review finding" | Persist a ReviewFinding in the graph, linked to plan + files + functions |
+| `scaffold_resolve_finding` | "mark finding resolved" / "resolve this finding" | Mark a finding resolved; retained in graph for audit |
 
 ### Testing the Connection
 
@@ -396,3 +513,59 @@ This should return a JSON response listing all available tools.
 | aider | Via `--read` flag | No | `.aider.conf.yml` | CLI only |
 
 **Full support** means both AGENTS.md rules and MCP knowledge graph tools are available. **CLI only** means the agent follows AGENTS.md rules but uses the CLI instead of MCP for graph queries.
+
+---
+
+## Troubleshooting
+
+### MCP server fails to start
+
+Check that `agentscaffold` is installed and the `scaffold` command is on your PATH:
+
+```bash
+which scaffold
+scaffold --version
+```
+
+If using a virtual environment, make sure the MCP command in your platform config uses the full path to `scaffold` inside the venv, or activate the venv first.
+
+### MCP tools return "graph not available"
+
+The MCP server requires an indexed graph. If `.scaffold/graph.db` does not exist:
+
+```bash
+scaffold index
+```
+
+Then restart the MCP server.
+
+### MCP tools time out on large repos
+
+For large repos, enable async freshness so graph refresh happens in the background rather than blocking tool calls:
+
+```yaml
+# scaffold.yaml
+freshness:
+  async_enabled: true
+  debounce_seconds: 120
+  gate_strict: false
+```
+
+### Semantic/hybrid search returns no results via MCP
+
+The `scaffold_search` tool falls back to keyword-only if embeddings are missing. To enable semantic search:
+
+```bash
+pip install "agentscaffold[search]"
+scaffold index --embeddings
+```
+
+### Testing the MCP connection
+
+Verify the server responds correctly:
+
+```bash
+echo '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}' | scaffold mcp
+```
+
+This should return a JSON list of available tools. If it hangs or errors, check that no other `scaffold mcp` process is already running on the same socket.

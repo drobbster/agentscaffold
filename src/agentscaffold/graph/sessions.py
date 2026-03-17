@@ -63,7 +63,6 @@ def record_modification(
     # Check file exists in graph
     exists = ql_scalar(
         store,
-        cypher=f"MATCH (f:File) WHERE f.id = '{file_id}' RETURN count(f)",
         sql=f"SELECT COUNT(*) FROM File WHERE id = '{file_id}'",
     )
     if not exists or int(exists) == 0:
@@ -73,11 +72,6 @@ def record_modification(
     # Check if edge already exists
     edge_exists = ql_scalar(
         store,
-        cypher=(
-            f"MATCH (s:Session)-[:SESSION_MODIFIED]->(f:File) "
-            f"WHERE s.id = '{session_id}' AND f.id = '{file_id}' "
-            f"RETURN count(*)"
-        ),
         sql=(
             f"SELECT COUNT(*) FROM SESSION_MODIFIED "
             f"WHERE src = '{session_id}' AND dst = '{file_id}'"
@@ -91,7 +85,6 @@ def record_modification(
     # Update the filesModified list on the session node
     rows = ql(
         store,
-        cypher=f"MATCH (s:Session) WHERE s.id = '{session_id}' RETURN s.filesModified",
         sql=f"SELECT filesModified AS \"s.filesModified\" FROM Session WHERE id = '{session_id}'",
     )
     if rows:
@@ -106,10 +99,6 @@ def record_modification(
             escaped = updated.replace("\\", "\\\\").replace("'", "\\'")
             ql_execute(
                 store,
-                cypher=(
-                    f"MATCH (s:Session) WHERE s.id = '{session_id}' "
-                    f"SET s.filesModified = '{escaped}'"
-                ),
                 sql=(
                     f"UPDATE Session SET filesModified = '{escaped}' " f"WHERE id = '{session_id}'"
                 ),
@@ -130,7 +119,6 @@ def end_session(
         escaped = summary.replace("\\", "\\\\").replace("'", "\\'")
         ql_execute(
             store,
-            cypher=f"MATCH (s:Session) WHERE s.id = '{session_id}' SET s.summary = '{escaped}'",
             sql=f"UPDATE Session SET summary = '{escaped}' WHERE id = '{session_id}'",
         )
 
@@ -141,10 +129,6 @@ def get_session(store: GraphBackend, session_id: str) -> dict[str, Any]:
     """Retrieve a session's full data including modified files."""
     rows = ql(
         store,
-        cypher=(
-            f"MATCH (s:Session) WHERE s.id = '{session_id}' "
-            f"RETURN s.id, s.date, s.planNumbers, s.filesModified, s.summary"
-        ),
         sql=(
             f'SELECT id AS "s.id", date AS "s.date", planNumbers AS "s.planNumbers", '
             f'filesModified AS "s.filesModified", summary AS "s.summary" '
@@ -181,11 +165,6 @@ def list_sessions(
     """Return recent sessions ordered by date (most recent first)."""
     rows = ql(
         store,
-        cypher=(
-            "MATCH (s:Session) "
-            "RETURN s.id, s.date, s.planNumbers, s.filesModified, s.summary "
-            f"ORDER BY s.date DESC LIMIT {limit}"
-        ),
         sql=(
             'SELECT id AS "s.id", date AS "s.date", planNumbers AS "s.planNumbers", '
             'filesModified AS "s.filesModified", summary AS "s.summary" '

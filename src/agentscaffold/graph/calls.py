@@ -42,10 +42,6 @@ def process_calls(
     """
     file_rows = ql(
         store,
-        cypher=(
-            "MATCH (f:File) WHERE f.language IN ['python', 'typescript', 'javascript'] "
-            "RETURN f.id, f.path, f.language"
-        ),
         sql=(
             'SELECT id AS "f.id", path AS "f.path", language AS "f.language" FROM File '
             "WHERE language IN ('python', 'typescript', 'javascript')"
@@ -74,10 +70,6 @@ def process_calls(
         # Get functions defined in this file
         caller_funcs = ql(
             store,
-            cypher=(
-                "MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) "
-                f"WHERE f.id = '{file_id}' RETURN fn.id, fn.name, fn.startLine, fn.endLine"
-            ),
             sql=(
                 'SELECT t.fn_id AS "fn.id", t.fn_name AS "fn.name",'
                 ' t.fn_sl AS "fn.startLine", t.fn_el AS "fn.endLine"'
@@ -148,7 +140,6 @@ def _build_import_map(store: GraphBackend) -> dict[str, dict[str, str]]:
     """Build a map of file_path -> {imported_name: source_file_path}."""
     import_edges = ql(
         store,
-        cypher="MATCH (a:File)-[r:IMPORTS]->(b:File) RETURN a.path, b.path, r.importedNames",
         sql=(
             'SELECT t.a_path AS "a.path", t.b_path AS "b.path",'
             ' t.r_names AS "r.importedNames"'

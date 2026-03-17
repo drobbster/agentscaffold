@@ -111,11 +111,6 @@ def _learning_patterns(
         escaped = file_id.replace("\\", "\\\\").replace("'", "\\'")
         learnings = ql(
             store,
-            cypher=(
-                "MATCH (lr:Learning)-[:LEARNING_RELATES_TO_FILE]->(f:File) "
-                f"WHERE f.id = '{escaped}' "
-                "RETURN lr.learningId, lr.description, lr.planNumber"
-            ),
             sql=(
                 'SELECT t.lr_learningId AS "lr.learningId",'
                 ' t.lr_description AS "lr.description",'

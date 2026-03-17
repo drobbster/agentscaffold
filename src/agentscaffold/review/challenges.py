@@ -274,11 +274,6 @@ def _check_patterns(
         escaped = file_id.replace("\\", "\\\\").replace("'", "\\'")
         findings = ql(
             store,
-            cypher=(
-                "MATCH (rf:ReviewFinding)-[:FINDING_ABOUT_FILE]->(f:File) "
-                f"WHERE f.id = '{escaped}' "
-                "RETURN rf.category, rf.finding, rf.planNumber"
-            ),
             sql=(
                 'SELECT t.rf_category AS "rf.category",'
                 ' t.rf_finding AS "rf.finding",'

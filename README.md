@@ -102,7 +102,7 @@ cd my-project
 scaffold init
 scaffold index          # Build the knowledge graph
 scaffold agents generate-all  # Generate IDE/agent rule files
-scaffold mcp serve      # Start MCP server for tool access
+scaffold mcp            # Start MCP server for tool access
 ```
 
 The `init` command scaffolds your project with:
@@ -115,7 +115,7 @@ The `init` command scaffolds your project with:
 - `justfile` + `Makefile` — task runner shortcuts
 - `.github/workflows/` — CI with security scanning
 
-The `index` command builds the knowledge graph at `.scaffold/graph.duckdb`, enabling search, reviews, impact analysis, and session memory.
+The `index` command builds the knowledge graph at `.scaffold/graph.db`, enabling search, reviews, impact analysis, and session memory.
 
 ### Async freshness (low-latency graph updates for MCP)
 
@@ -150,7 +150,7 @@ pip install agentscaffold[all]                # Everything
 
 ### MCP Tools (for AI agents)
 
-When you run `scaffold mcp serve`, these tools become available to your agent.
+When you run `scaffold mcp`, these tools become available to your agent.
 
 #### Interaction Modes
 

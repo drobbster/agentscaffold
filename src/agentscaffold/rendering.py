@@ -99,11 +99,6 @@ def get_graph_context(config: ScaffoldConfig) -> dict[str, Any]:
         # Architecture layers
         layers = ql(
             store,
-            cypher=(
-                "MATCH (l:ArchitectureLayer) "
-                "RETURN l.number, l.name, l.description "
-                "ORDER BY l.number"
-            ),
             sql=(
                 'SELECT number AS "l.number", name AS "l.name", description AS "l.description"'
                 " FROM ArchitectureLayer ORDER BY number"
@@ -113,7 +108,6 @@ def get_graph_context(config: ScaffoldConfig) -> dict[str, Any]:
         # Active contracts
         contracts = ql(
             store,
-            cypher="MATCH (c:Contract) RETURN c.name, c.version LIMIT 20",
             sql='SELECT name AS "c.name", version AS "c.version" FROM Contract LIMIT 20',
         )
 
