@@ -16,6 +16,18 @@ import pytest
 from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
 from agentscaffold.graph.pipeline import run_pipeline
 
+try:
+    import sentence_transformers  # noqa: F401
+
+    HAS_SENTENCE_TRANSFORMERS = True
+except ImportError:
+    HAS_SENTENCE_TRANSFORMERS = False
+
+_skip_no_st = pytest.mark.skipif(
+    not HAS_SENTENCE_TRANSFORMERS,
+    reason="sentence-transformers not installed",
+)
+
 FIXTURE_REPO = Path(__file__).parent / "fixtures" / "sample_repo"
 
 
@@ -107,6 +119,7 @@ class TestCommunityDetection:
 class TestEmbeddings:
     """Test code embedding generation and similarity search."""
 
+    @_skip_no_st
     def test_generate_embeddings(self, indexed_store):
         store, _config = indexed_store
 
@@ -117,6 +130,7 @@ class TestEmbeddings:
         assert "Function" in result
         assert result["Function"] > 0
 
+    @_skip_no_st
     def test_embeddings_available(self, indexed_store):
         store, _config = indexed_store
 
@@ -124,6 +138,7 @@ class TestEmbeddings:
 
         assert embeddings_available(store)
 
+    @_skip_no_st
     def test_search_similar(self, indexed_store):
         store, _config = indexed_store
 
@@ -135,6 +150,7 @@ class TestEmbeddings:
         assert "similarity" in results[0]
         assert results[0]["similarity"] > 0
 
+    @_skip_no_st
     def test_search_returns_ranked(self, indexed_store):
         store, _config = indexed_store
 
@@ -184,6 +200,7 @@ class TestHybridSearch:
         assert len(results) > 0
         assert results[0].source == "cypher"
 
+    @_skip_no_st
     def test_semantic_search(self, indexed_store):
         store, _config = indexed_store
 
