@@ -688,9 +688,9 @@ def graph_stats() -> None:
 
 @graph_app.command("query")
 def graph_query(
-    cypher: str = typer.Argument(..., help="Cypher query to execute."),
+    sql: str = typer.Argument(..., help="SQL query to execute."),
 ) -> None:
-    """Execute a raw Cypher query against the graph."""
+    """Execute a raw SQL query against the graph."""
     import json
 
     from agentscaffold.config import load_config
@@ -703,7 +703,7 @@ def graph_query(
 
     store = open_graph(config)
     try:
-        results = store.query(cypher)
+        results = store.query(sql)
         console.print(json.dumps(results, indent=2, default=str))
     except Exception as exc:
         console.print(f"[red]Query error: {exc}[/red]")
@@ -716,7 +716,7 @@ def graph_query(
 def graph_search(
     query: str = typer.Argument(..., help="Natural language search query."),
     mode: str = typer.Option(
-        "hybrid", "--mode", "-m", help="Search mode: cypher, semantic, hybrid."
+        "hybrid", "--mode", "-m", help="Search mode: keyword, semantic, hybrid."
     ),
     top_k: int = typer.Option(10, "--top", "-k", help="Number of results."),
     table: str = typer.Option(
@@ -744,14 +744,14 @@ def graph_search(
                 "Falling back to keyword search only.[/yellow]\n"
                 "[dim]Install with: pip install agentscaffold[search][/dim]\n"
             )
-            mode = "cypher"
+            mode = "keyword"
         elif not embeddings_available(store):
             console.print(
                 "[yellow]Warning: No embeddings found in graph. "
                 "Falling back to keyword search only.[/yellow]\n"
                 "[dim]Generate embeddings with: scaffold index --embeddings[/dim]\n"
             )
-            mode = "cypher"
+            mode = "keyword"
 
     tables = [table] if table else None
     results = hybrid_search(store, query, mode=mode, top_k=top_k, tables=tables)

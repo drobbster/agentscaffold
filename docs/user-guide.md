@@ -893,7 +893,7 @@ The graph captures six layers of information:
 
 ```bash
 scaffold graph stats                        # Health dashboard
-scaffold graph query "MATCH (f:File) RETURN count(f)"  # Raw Cypher
+scaffold graph query "SELECT count(*) FROM File"  # Raw SQL
 scaffold graph verify                       # Spot-check accuracy
 scaffold graph verify --deep                # Re-parse sample files
 ```
@@ -968,11 +968,11 @@ The graph evidence makes reviews more concrete. Instead of "this plan might affe
 Search across code definitions using natural language. Three modes are available:
 
 ```bash
-# Hybrid search (Cypher + semantic -- default)
+# Hybrid search (keyword + semantic -- default)
 scaffold graph search "data routing strategy"
 
 # Pure structural search (name/path matching)
-scaffold graph search "router" --mode cypher
+scaffold graph search "router" --mode keyword
 
 # Pure semantic search (vector similarity)
 scaffold graph search "how is data loaded" --mode semantic
@@ -986,7 +986,13 @@ scaffold graph search "base class" --table Class
 
 Hybrid mode uses **reciprocal rank fusion** (RRF) to merge structural and semantic results, giving the best of both worlds: exact name matches from graph traversal and conceptual matches from embeddings.
 
-Embeddings are generated automatically during indexing when `--embeddings` is passed:
+Semantic and hybrid search require the `[search]` extra:
+
+```bash
+pip install "agentscaffold[search]"
+```
+
+Then generate embeddings during indexing:
 
 ```bash
 scaffold index --embeddings
@@ -1017,8 +1023,8 @@ When running the MCP server (`scaffold mcp`), graph-powered tools are available 
 | Tool | What It Does |
 |------|-------------|
 | `scaffold_stats` | Codebase health dashboard (files, functions, edges, governance) |
-| `scaffold_query` | Execute raw Cypher queries against the knowledge graph |
-| `scaffold_search` | Hybrid search (cypher, semantic, or hybrid mode) |
+| `scaffold_query` | Execute raw SQL queries against the knowledge graph |
+| `scaffold_search` | Hybrid search (keyword, semantic, or hybrid mode) |
 | `scaffold_context` | Full context for a symbol (definition, callers, layer, plan history) |
 | `scaffold_impact` | Blast radius analysis for a file or symbol |
 | `scaffold_validate` | Validation checks (layers, contracts, staleness) |
@@ -1073,3 +1079,72 @@ Based on observed sessions, these patterns lead to poor outcomes:
 | State | "update workflow state, plan completion log, and changelog" | Ensures all state files are current |
 | Commit | "commit all changes" | Triggers git commit |
 | Housekeep | "move completed backlog items to the backlog archive" | Keeps backlog clean |
+
+---
+
+## Troubleshooting
+
+### Semantic search not working
+
+`scaffold graph search --mode semantic` and `--mode hybrid` require:
+
+1. `pip install "agentscaffold[search]"` (installs sentence-transformers)
+2. `scaffold index --embeddings` (generates embedding vectors)
+
+Without both, search falls back to keyword-only with a "No embeddings found" warning.
+
+### Graph is stale or showing wrong results
+
+Run `scaffold graph verify` to check staleness:
+
+```bash
+scaffold graph verify       # Fast hash check
+scaffold graph verify --deep  # Re-parses a sample of files
+```
+
+If many files are stale, do a full re-index:
+
+```bash
+scaffold index
+```
+
+For large repos where incremental is too slow, enable async freshness in `scaffold.yaml`:
+
+```yaml
+freshness:
+  async_enabled: true
+  debounce_seconds: 120
+```
+
+### DuckDB file locked or corrupted
+
+Stop any running MCP server first (`Ctrl-C` or kill the process), then:
+
+```bash
+rm .scaffold/graph.db
+scaffold index
+```
+
+### Tree-sitter grammar not loading for a language
+
+If `scaffold index` logs warnings about a missing language (e.g. `No language_c() in tree_sitter_c`), reinstall the `[graph]` extra to get all bundled grammars:
+
+```bash
+pip install --force-reinstall "agentscaffold[graph]"
+```
+
+Supported languages: Python, JavaScript, TypeScript, Go, Rust, Java, C, C++.
+
+### `scaffold graph query` returns a SQL error
+
+The graph uses DuckDB with DuckPGQ — queries are SQL, not Cypher. Example:
+
+```bash
+# Correct
+scaffold graph query "SELECT count(*) FROM File"
+
+# Wrong (Cypher syntax, will fail)
+scaffold graph query "MATCH (f:File) RETURN count(f)"
+```
+
+Use standard SQL `SELECT` statements. Property graph traversals use `FROM GRAPH_TABLE(...)` syntax.

@@ -376,7 +376,7 @@ def _get_tool_definitions() -> list:
             name="scaffold_search",
             description=(
                 "Search across code definitions using hybrid search "
-                "(structural graph + semantic similarity). Supports cypher, "
+                "(structural graph + semantic similarity). Supports keyword, "
                 "semantic, or hybrid modes."
             ),
             inputSchema={
@@ -385,7 +385,7 @@ def _get_tool_definitions() -> list:
                     "query": {"type": "string", "description": "Natural language search query"},
                     "mode": {
                         "type": "string",
-                        "enum": ["cypher", "semantic", "hybrid"],
+                        "enum": ["keyword", "semantic", "hybrid"],
                         "description": "Search mode (default: hybrid)",
                         "default": "hybrid",
                     },
@@ -415,13 +415,13 @@ def _get_tool_definitions() -> list:
         ),
         Tool(
             name="scaffold_query",
-            description="Execute a raw Cypher query against the knowledge graph.",
+            description="Execute a raw SQL query against the knowledge graph.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "cypher": {"type": "string", "description": "Cypher query to execute"},
+                    "sql": {"type": "string", "description": "SQL query to execute"},
                 },
-                "required": ["cypher"],
+                "required": ["sql"],
             },
         ),
         Tool(
@@ -805,18 +805,10 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             return result
 
         elif name == "scaffold_query":
-            from agentscaffold.graph.query_compat import is_duckpgq
-
-            cypher = arguments.get("cypher", "")
             sql = arguments.get("sql", "")
-            if cypher and sql:
-                from agentscaffold.graph.query_compat import ql
-
-                rows = ql(store, cypher=cypher, sql=sql)
-            elif sql and is_duckpgq(store):
-                rows = store.query(sql)
-            else:
-                rows = store.query(cypher)
+            if not sql:
+                return {"error": "Missing 'sql' parameter.", "meta": meta}
+            rows = store.query(sql)
             return {"results": rows, "count": len(rows), "meta": meta}
 
         elif name == "scaffold_context":
@@ -905,10 +897,6 @@ def _tool_context(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str
     # Search across functions, classes, methods
     results = ql(
         store,
-        cypher=(
-            f"MATCH (fn:Function) WHERE fn.name = '{symbol}' "
-            "RETURN fn.id, fn.name, fn.filePath, fn.startLine, fn.endLine, fn.signature"
-        ),
         sql=(
             f'SELECT id AS "fn.id", name AS "fn.name", filePath AS "fn.filePath", '
             f'startLine AS "fn.startLine", endLine AS "fn.endLine", signature AS "fn.signature" '
@@ -918,10 +906,6 @@ def _tool_context(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str
     if not results:
         results = ql(
             store,
-            cypher=(
-                f"MATCH (c:Class) WHERE c.name = '{symbol}' "
-                "RETURN c.id, c.name, c.filePath, c.startLine, c.endLine"
-            ),
             sql=(
                 f'SELECT id AS "c.id", name AS "c.name", filePath AS "c.filePath", '
                 f'startLine AS "c.startLine", endLine AS "c.endLine" '
@@ -938,10 +922,6 @@ def _tool_context(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str
     # Find callers
     callers = ql(
         store,
-        cypher=(
-            f"MATCH (caller:Function)-[r:CALLS]->(fn:Function) WHERE fn.id = '{node_id}' "
-            "RETURN caller.name, caller.filePath, r.confidence"
-        ),
         sql=(
             f'SELECT t.caller_name AS "caller.name", t.caller_fp AS "caller.filePath", '
             f't.r_conf AS "r.confidence" '
@@ -957,11 +937,6 @@ def _tool_context(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str
     # Find callees
     callees = ql(
         store,
-        cypher=(
-            f"MATCH (fn:Function)-[r:CALLS]->(callee:Function) "
-            f"WHERE fn.id = '{node_id}' "
-            "RETURN callee.name, callee.filePath, r.confidence"
-        ),
         sql=(
             f'SELECT t.callee_name AS "callee.name", '
             f't.callee_fp AS "callee.filePath", '
@@ -997,10 +972,6 @@ def _tool_impact(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str,
     # Find direct importers
     importers = ql(
         store,
-        cypher=(
-            f"MATCH (a:File)-[:IMPORTS]->(b:File) "
-            f"WHERE b.id = '{file_id}' RETURN a.path, a.language"
-        ),
         sql=(
             f'SELECT t.a_path AS "a.path", t.a_lang AS "a.language" '
             f"FROM GRAPH_TABLE(agentscaffold_graph "
@@ -1013,11 +984,6 @@ def _tool_impact(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str,
     # Find functions in this file and their callers
     callers = ql(
         store,
-        cypher=(
-            "MATCH (caller:Function)-[r:CALLS]->(fn:Function)-[:DEFINES_FUNCTION]-(f:File) "
-            f"WHERE f.id = '{file_id}' "
-            "RETURN DISTINCT caller.filePath, caller.name, r.confidence"
-        ),
         sql=(
             f'SELECT DISTINCT t.caller_fp AS "caller.filePath", t.caller_name AS "caller.name", '
             f't.r_conf AS "r.confidence" '
@@ -1735,11 +1701,6 @@ def _dispatch_resource(uri: str) -> dict[str, Any]:
 
             layers = ql(
                 store,
-                cypher=(
-                    "MATCH (l:ArchitectureLayer) "
-                    "RETURN l.number, l.name, l.pathPatterns "
-                    "ORDER BY l.number"
-                ),
                 sql=(
                     'SELECT number AS "l.number", '
                     'name AS "l.name", '

@@ -176,7 +176,14 @@ After scaffolding, build the knowledge graph to enable search, reviews, and sess
 scaffold index
 ```
 
-This indexes your codebase into a local graph database (`.scaffold/graph.db`). For semantic search, add `--embeddings`. For subsequent updates, use `--incremental` (only re-indexes changed files).
+This indexes your codebase into a local graph database (`.scaffold/graph.db`). For subsequent updates, use `--incremental` (only re-indexes changed files).
+
+For semantic and hybrid search, first install the `[search]` extra, then pass `--embeddings`:
+
+```bash
+pip install "agentscaffold[search]"
+scaffold index --embeddings
+```
 
 See the [Knowledge Graph section of the User Guide](user-guide.md#knowledge-graph-codebase-intelligence) for details on querying, MCP tools, and review integration.
 
@@ -250,6 +257,50 @@ section in the [User Guide](user-guide.md).
   ```bash
   scaffold ci setup
   ```
+
+---
+
+## Troubleshooting
+
+### `scaffold index` fails with "No language" warnings
+
+Tree-sitter grammar warnings like `No language_c() in tree_sitter_c` are harmless — the indexer skips unsupported files and continues. If a language you care about is not parsed, install the grammar:
+
+```bash
+pip install "agentscaffold[graph]"
+```
+
+All eight bundled grammars (Python, JavaScript, TypeScript, Go, Rust, Java, C, C++) are included in the `[graph]` extra.
+
+### Semantic search returns no results
+
+Two steps are required for semantic search to work:
+
+1. Install the `[search]` extra: `pip install "agentscaffold[search]"`
+2. Re-index with embeddings: `scaffold index --embeddings`
+
+If you run `scaffold graph search --mode semantic` without these, the search falls back to keyword-only with a warning.
+
+### Graph is stale after large changes
+
+Run a full re-index:
+
+```bash
+scaffold index
+```
+
+Incremental indexing (`--incremental`) only processes changed files. After moving, deleting, or renaming many files, a full re-index is more reliable.
+
+### graph.db is corrupted or locked
+
+If you see DuckDB errors on startup, delete the graph and rebuild:
+
+```bash
+rm .scaffold/graph.db
+scaffold index
+```
+
+A DuckDB file lock error usually means another process (e.g. the MCP server) is still running. Stop it first.
 
 - **Task runner**: Generate justfile and Makefile:
 

@@ -42,8 +42,6 @@ _GRAMMAR_MODULES: dict[str, str] = {
 
 _LANGUAGE_FUNC_MAP: dict[str, str] = {
     "typescript": "language_typescript",
-    "c": "language_c",
-    "cpp": "language_cpp",
 }
 
 
@@ -194,7 +192,6 @@ def process_parsing(
     """
     file_rows = ql(
         store,
-        cypher="MATCH (f:File) RETURN f.id, f.path, f.language",
         sql='SELECT id AS "f.id", path AS "f.path", language AS "f.language" FROM File',
     )
 

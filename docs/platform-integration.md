@@ -364,8 +364,8 @@ This blocks and communicates over stdin/stdout. The client launches this as a su
 | Tool | Description |
 |------|-------------|
 | `scaffold_stats` | Codebase health dashboard |
-| `scaffold_query` | Execute Cypher queries against the graph |
-| `scaffold_search` | Hybrid search (cypher, semantic, or both) |
+| `scaffold_query` | Execute raw SQL queries against the knowledge graph |
+| `scaffold_search` | Hybrid search (keyword, semantic, or hybrid mode) |
 | `scaffold_context` | Full context for a symbol (definition, callers, layer, plan history) |
 | `scaffold_impact` | Blast radius analysis for a file or symbol |
 | `scaffold_validate` | Validation checks (staleness, contracts) |
@@ -396,3 +396,59 @@ This should return a JSON response listing all available tools.
 | aider | Via `--read` flag | No | `.aider.conf.yml` | CLI only |
 
 **Full support** means both AGENTS.md rules and MCP knowledge graph tools are available. **CLI only** means the agent follows AGENTS.md rules but uses the CLI instead of MCP for graph queries.
+
+---
+
+## Troubleshooting
+
+### MCP server fails to start
+
+Check that `agentscaffold` is installed and the `scaffold` command is on your PATH:
+
+```bash
+which scaffold
+scaffold --version
+```
+
+If using a virtual environment, make sure the MCP command in your platform config uses the full path to `scaffold` inside the venv, or activate the venv first.
+
+### MCP tools return "graph not available"
+
+The MCP server requires an indexed graph. If `.scaffold/graph.db` does not exist:
+
+```bash
+scaffold index
+```
+
+Then restart the MCP server.
+
+### MCP tools time out on large repos
+
+For large repos, enable async freshness so graph refresh happens in the background rather than blocking tool calls:
+
+```yaml
+# scaffold.yaml
+freshness:
+  async_enabled: true
+  debounce_seconds: 120
+  gate_strict: false
+```
+
+### Semantic/hybrid search returns no results via MCP
+
+The `scaffold_search` tool falls back to keyword-only if embeddings are missing. To enable semantic search:
+
+```bash
+pip install "agentscaffold[search]"
+scaffold index --embeddings
+```
+
+### Testing the MCP connection
+
+Verify the server responds correctly:
+
+```bash
+echo '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}' | scaffold mcp
+```
+
+This should return a JSON list of available tools. If it hangs or errors, check that no other `scaffold mcp` process is already running on the same socket.
