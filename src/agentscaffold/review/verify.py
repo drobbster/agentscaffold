@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from agentscaffold.graph.query_compat import ql
 from agentscaffold.review.queries import (
     get_file_importers,
     get_function_callers,
@@ -21,7 +22,7 @@ from agentscaffold.review.queries import (
 )
 
 if TYPE_CHECKING:
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 
 @dataclass
@@ -34,7 +35,7 @@ class VerificationItem:
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
-def verify_implementation(store: GraphStore, plan_number: int) -> list[VerificationItem]:
+def verify_implementation(store: GraphBackend, plan_number: int) -> list[VerificationItem]:
     """Verify a plan's implementation against the graph.
 
     Should be run AFTER re-indexing the codebase post-implementation.
@@ -68,7 +69,7 @@ def verify_implementation(store: GraphStore, plan_number: int) -> list[Verificat
 
 
 def _check_plan_compliance(
-    store: GraphStore,
+    store: GraphBackend,
     plan_number: int,
     planned_paths: set[str],
     out: list[VerificationItem],
@@ -80,7 +81,10 @@ def _check_plan_compliance(
             continue
         file_id = f"file::{fpath}"
         escaped = file_id.replace("\\", "\\\\").replace("'", "\\'")
-        rows = store.query(f"MATCH (f:File) WHERE f.id = '{escaped}' RETURN f.id")
+        rows = ql(
+            store,
+            sql=f"SELECT id AS \"f.id\" FROM File WHERE id = '{escaped}'",
+        )
         if not rows:
             missing.append(fpath)
 
@@ -107,7 +111,7 @@ def _check_plan_compliance(
 
 
 def _check_signatures(
-    store: GraphStore,
+    store: GraphBackend,
     planned_paths: set[str],
     out: list[VerificationItem],
 ) -> None:
@@ -117,10 +121,17 @@ def _check_signatures(
         if not fpath:
             continue
         escaped = fpath.replace("\\", "\\\\").replace("'", "\\'")
-        funcs = store.query(
-            f"MATCH (fn:Function) WHERE fn.filePath = '{escaped}' RETURN fn.name, fn.signature"
+        funcs = ql(
+            store,
+            sql=(
+                f'SELECT name AS "fn.name", signature AS "fn.signature" '
+                f"FROM Function WHERE filePath = '{escaped}'"
+            ),
         )
-        classes = store.query(f"MATCH (c:Class) WHERE c.filePath = '{escaped}' RETURN c.name")
+        classes = ql(
+            store,
+            sql=f"SELECT name AS \"c.name\" FROM Class WHERE filePath = '{escaped}'",
+        )
         total_defs += len(funcs) + len(classes)
 
     out.append(
@@ -134,7 +145,7 @@ def _check_signatures(
 
 
 def _check_wiring(
-    store: GraphStore,
+    store: GraphBackend,
     planned_paths: set[str],
     out: list[VerificationItem],
 ) -> None:
@@ -170,7 +181,7 @@ def _check_wiring(
 
 
 def _check_test_delta(
-    store: GraphStore,
+    store: GraphBackend,
     planned_paths: set[str],
     out: list[VerificationItem],
 ) -> None:
@@ -184,9 +195,12 @@ def _check_test_delta(
 
         stem = fpath.split("/")[-1].split(".")[0]
         escaped = stem.replace("\\", "\\\\").replace("'", "\\'")
-        test_files = store.query(
-            f"MATCH (f:File) WHERE f.path CONTAINS 'test' AND f.path CONTAINS '{escaped}' "
-            "RETURN f.path LIMIT 1"
+        test_files = ql(
+            store,
+            sql=(
+                'SELECT path AS "f.path" FROM File'
+                f" WHERE CONTAINS(path, 'test') AND CONTAINS(path, '{escaped}') LIMIT 1"
+            ),
         )
 
         if test_files:

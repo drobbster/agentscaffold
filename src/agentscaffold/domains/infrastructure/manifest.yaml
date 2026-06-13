@@ -12,3 +12,8 @@ standards:
   - monitoring_alerting
 approval_gates:
   infrastructure: true
+file_patterns:
+  - "infra/**"
+  - "terraform/**"
+  - "k8s/**"
+  - "docker/**"

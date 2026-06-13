@@ -12,3 +12,8 @@ standards:
   - concurrency_patterns
 approval_gates:
   financial_calculations: true
+file_patterns:
+  - "libs/risk/**"
+  - "execution/**"
+  - "backtest/**"
+  - "strategies/**"

@@ -4,7 +4,7 @@ Uses the Leiden algorithm (via graspologic) to detect tightly coupled
 clusters of files based on import and call edges. Communities are stored
 as Community nodes with MEMBER_OF_COMMUNITY edges.
 
-Requires: pip install agentscaffold[communities]
+graspologic (Leiden algorithm) is a core dependency.
 """
 
 from __future__ import annotations
@@ -13,21 +13,17 @@ import logging
 from collections import Counter
 from typing import Any
 
-from agentscaffold.graph.store import GraphStore
+import numpy as np
+from graspologic.partition import leiden
+
+from agentscaffold.graph.backend import GraphBackend
+from agentscaffold.graph.query_compat import ql, ql_execute, ql_scalar
 
 logger = logging.getLogger(__name__)
 
-try:
-    import numpy as np
-    from graspologic.partition import leiden
-
-    _leiden_available = True
-except ImportError:
-    _leiden_available = False
-
 
 def detect_communities(
-    store: GraphStore,
+    store: GraphBackend,
     *,
     resolution: float = 1.0,
     min_community_size: int = 2,
@@ -36,19 +32,26 @@ def detect_communities(
 
     Returns summary dict with community count and membership stats.
     """
-    if not _leiden_available:
-        raise ImportError(
-            "Community detection requires graspologic: pip install agentscaffold[communities]"
-        )
-
     # Build adjacency from import and call edges
-    import_edges = store.query("MATCH (a:File)-[:IMPORTS]->(b:File) RETURN a.id, b.id")
-    call_edges = store.query(
-        "MATCH (a:Function)-[:CALLS]->(b:Function) "
-        "MATCH (fa:File)-[:DEFINES_FUNCTION]->(a) "
-        "MATCH (fb:File)-[:DEFINES_FUNCTION]->(b) "
-        "WHERE fa.id <> fb.id "
-        "RETURN DISTINCT fa.id, fb.id"
+    import_edges = ql(
+        store,
+        sql=(
+            'SELECT t.a_id AS "a.id", t.b_id AS "b.id"'
+            " FROM GRAPH_TABLE(agentscaffold_graph"
+            " MATCH (a:File)-[e:IMPORTS]->(b:File)"
+            " COLUMNS (a.id AS a_id, b.id AS b_id)) t"
+        ),
+    )
+    call_edges = ql(
+        store,
+        sql=(
+            'SELECT DISTINCT t.fa_id AS "fa.id", t.fb_id AS "fb.id"'
+            " FROM GRAPH_TABLE(agentscaffold_graph"
+            " MATCH (fa:File)-[e1:DEFINES_FUNCTION]->(a:Function)"
+            "-[e2:CALLS]->(b:Function)<-[e3:DEFINES_FUNCTION]-(fb:File)"
+            " WHERE fa.id <> fb.id"
+            " COLUMNS (fa.id AS fa_id, fb.id AS fb_id)) t"
+        ),
     )
 
     node_set: set[str] = set()
@@ -98,14 +101,20 @@ def detect_communities(
     }
 
     # Clear old communities
-    store.execute("MATCH (n:Community) DETACH DELETE n")
+    ql_execute(
+        store,
+        sql="DELETE FROM Community",
+    )
 
     files_assigned = 0
     for comm_id, members in valid_communities.items():
         # Derive a label from common path prefixes
         paths = []
         for fid in members:
-            rows = store.query(f"MATCH (f:File) WHERE f.id = '{fid}' RETURN f.path")
+            rows = ql(
+                store,
+                sql=f"SELECT path AS \"f.path\" FROM File WHERE id = '{fid}'",
+            )
             if rows:
                 paths.append(rows[0]["f.path"])
 
@@ -113,9 +122,14 @@ def detect_communities(
 
         func_count = 0
         for fid in members:
-            fc = store.query_scalar(
-                f"MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) "
-                f"WHERE f.id = '{fid}' RETURN count(fn)"
+            fc = ql_scalar(
+                store,
+                sql=(
+                    f"SELECT COUNT(*) FROM GRAPH_TABLE(agentscaffold_graph"
+                    f" MATCH (f:File)-[e:DEFINES_FUNCTION]->(fn:Function)"
+                    f" WHERE f.id = '{fid}'"
+                    f" COLUMNS (fn.id AS fn_id)) t"
+                ),
             )
             func_count += int(fc) if fc else 0
 
@@ -151,19 +165,29 @@ def detect_communities(
     return result
 
 
-def get_communities(store: GraphStore) -> list[dict[str, Any]]:
+def get_communities(store: GraphBackend) -> list[dict[str, Any]]:
     """Return all communities with their member files."""
-    communities = store.query(
-        "MATCH (c:Community) "
-        "RETURN c.id, c.name, c.label, c.fileCount, c.functionCount "
-        "ORDER BY c.fileCount DESC"
+    communities = ql(
+        store,
+        sql=(
+            'SELECT id AS "c.id", name AS "c.name", label AS "c.label",'
+            ' fileCount AS "c.fileCount", functionCount AS "c.functionCount"'
+            " FROM Community ORDER BY fileCount DESC"
+        ),
     )
 
     for comm in communities:
-        members = store.query(
-            f"MATCH (f:File)-[:MEMBER_OF_COMMUNITY]->(c:Community) "
-            f"WHERE c.id = '{comm['c.id']}' "
-            f"RETURN f.path ORDER BY f.path"
+        cid = comm["c.id"]
+        members = ql(
+            store,
+            sql=(
+                f'SELECT t.f_path AS "f.path"'
+                f" FROM GRAPH_TABLE(agentscaffold_graph"
+                f" MATCH (f:File)-[e:MEMBER_OF_COMMUNITY]->(c:Community)"
+                f" WHERE c.id = '{cid}'"
+                f" COLUMNS (f.path AS f_path)) t"
+                f" ORDER BY t.f_path"
+            ),
         )
         comm["files"] = [m["f.path"] for m in members]
 

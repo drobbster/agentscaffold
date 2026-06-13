@@ -11,10 +11,11 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agentscaffold.graph.query_compat import ql
 from agentscaffold.graph.symbol_table import SymbolTable
 
 if TYPE_CHECKING:
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -29,25 +30,32 @@ _PY_CALL_RE = re.compile(
 # Minimum confidence to create an edge
 MIN_CONFIDENCE = 0.3
 
+# Resolution reasons that point at a top-level Function (Strategy 1 in
+# _resolve_call). METHOD_CALLS edges require a Function destination per the
+# schema (Method -> Function), so method callers only emit edges for these.
+_FUNCTION_TARGET_REASONS = frozenset({"direct_import", "same_file", "unique_global"})
+
 
 def process_calls(
-    store: GraphStore,
+    store: GraphBackend,
     root: Path,
     symbol_table: SymbolTable,
 ) -> dict:
-    """Resolve call sites and create CALLS edges.
+    """Resolve call sites and create CALLS / METHOD_CALLS edges.
 
-    Returns summary with counts by confidence bucket.
+    Function callers produce ``CALLS`` edges (Function -> Function); method
+    callers produce ``METHOD_CALLS`` edges (Method -> Function). Returns a
+    summary with counts by confidence bucket plus a ``method_calls`` count.
     """
-    file_rows = store.query(
-        "MATCH (f:File) WHERE f.language IN ['python', 'typescript', 'javascript'] "
-        "RETURN f.id, f.path, f.language"
+    file_rows = ql(
+        store,
+        sql=(
+            'SELECT id AS "f.id", path AS "f.path", language AS "f.language" FROM File '
+            "WHERE language IN ('python', 'typescript', 'javascript')"
+        ),
     )
 
-    total = 0
-    high_conf = 0
-    medium_conf = 0
-    low_conf = 0
+    counters = {"total": 0, "high": 0, "medium": 0, "low": 0, "method_calls": 0}
 
     # Build a map of file imports for type-aware resolution
     import_map = _build_import_map(store)
@@ -63,70 +71,151 @@ def process_calls(
         except (OSError, PermissionError):
             continue
 
-        # Get functions defined in this file
-        caller_funcs = store.query(
-            "MATCH (f:File)-[:DEFINES_FUNCTION]->(fn:Function) "
-            f"WHERE f.id = '{file_id}' RETURN fn.id, fn.name, fn.startLine, fn.endLine"
-        )
-
-        # Get the imported names for this file
+        lines = source.splitlines()
         imported_symbols = import_map.get(file_path, {})
 
+        # Functions defined in this file -> CALLS edges
+        caller_funcs = ql(
+            store,
+            sql=(
+                'SELECT t.fn_id AS "fn.id", t.fn_name AS "fn.name",'
+                ' t.fn_sl AS "fn.startLine", t.fn_el AS "fn.endLine"'
+                " FROM GRAPH_TABLE(agentscaffold_graph"
+                "   MATCH (f:File)-[e:DEFINES_FUNCTION]->(fn:Function)"
+                f"   WHERE f.id = '{file_id}'"
+                "   COLUMNS (fn.id AS fn_id, fn.name AS fn_name,"
+                "            fn.startLine AS fn_sl, fn.endLine AS fn_el)"
+                " ) t"
+            ),
+        )
         for caller in caller_funcs:
-            caller_id = caller["fn.id"]
-            start_line = int(caller["fn.startLine"])
-            end_line = int(caller["fn.endLine"])
+            _process_caller_body(
+                store,
+                lines,
+                caller["fn.id"],
+                int(caller["fn.startLine"]),
+                int(caller["fn.endLine"]),
+                file_path,
+                imported_symbols,
+                symbol_table,
+                edge_table="CALLS",
+                src_table="Function",
+                counters=counters,
+            )
 
-            # Extract the function body lines
-            lines = source.splitlines()
-            body = "\n".join(lines[start_line - 1 : end_line])
-
-            for match in _PY_CALL_RE.finditer(body):
-                call_name = match.group(1)
-                if not call_name or call_name in _PYTHON_BUILTINS:
-                    continue
-
-                resolution = _resolve_call(
-                    call_name,
-                    file_path,
-                    imported_symbols,
-                    symbol_table,
-                )
-                if resolution is None:
-                    continue
-
-                target_id, confidence, reason = resolution
-                if confidence < MIN_CONFIDENCE:
-                    continue
-
-                store.create_edge(
-                    "CALLS",
-                    "Function",
-                    caller_id,
-                    "Function",
-                    target_id,
-                    {"confidence": confidence, "reason": reason},
-                )
-                total += 1
-                if confidence >= 0.8:
-                    high_conf += 1
-                elif confidence >= 0.5:
-                    medium_conf += 1
-                else:
-                    low_conf += 1
+        # Methods defined in this file -> METHOD_CALLS edges
+        caller_methods = ql(
+            store,
+            sql=(
+                'SELECT t.m_id AS "m.id", t.m_sl AS "m.startLine", t.m_el AS "m.endLine"'
+                " FROM GRAPH_TABLE(agentscaffold_graph"
+                "   MATCH (f:File)-[d:DEFINES_CLASS]->(c:Class)-[h:HAS_METHOD]->(m:Method)"
+                f"   WHERE f.id = '{file_id}'"
+                "   COLUMNS (m.id AS m_id, m.startLine AS m_sl, m.endLine AS m_el)"
+                " ) t"
+            ),
+        )
+        for caller in caller_methods:
+            _process_caller_body(
+                store,
+                lines,
+                caller["m.id"],
+                int(caller["m.startLine"]),
+                int(caller["m.endLine"]),
+                file_path,
+                imported_symbols,
+                symbol_table,
+                edge_table="METHOD_CALLS",
+                src_table="Method",
+                counters=counters,
+            )
 
     return {
-        "total": total,
-        "high_confidence": high_conf,
-        "medium_confidence": medium_conf,
-        "low_confidence": low_conf,
+        "total": counters["total"],
+        "high_confidence": counters["high"],
+        "medium_confidence": counters["medium"],
+        "low_confidence": counters["low"],
+        "method_calls": counters["method_calls"],
     }
 
 
-def _build_import_map(store: GraphStore) -> dict[str, dict[str, str]]:
+def _process_caller_body(
+    store: GraphBackend,
+    lines: list[str],
+    caller_id: str,
+    start_line: int,
+    end_line: int,
+    file_path: str,
+    imported_symbols: dict[str, str],
+    symbol_table: SymbolTable,
+    *,
+    edge_table: str,
+    src_table: str,
+    counters: dict[str, int],
+) -> None:
+    """Extract call sites from one caller body and create resolved edges.
+
+    ``edge_table`` is ``CALLS`` for function callers or ``METHOD_CALLS`` for
+    method callers. METHOD_CALLS targets must be Functions (schema constraint),
+    so method callers only emit edges for function-target resolutions.
+    """
+    body = "\n".join(lines[start_line - 1 : end_line])
+    seen_targets: set[str] = set()
+
+    for match in _PY_CALL_RE.finditer(body):
+        call_name = match.group(1)
+        if not call_name or call_name in _PYTHON_BUILTINS:
+            continue
+
+        resolution = _resolve_call(call_name, file_path, imported_symbols, symbol_table)
+        if resolution is None:
+            continue
+
+        target_id, confidence, reason = resolution
+        if confidence < MIN_CONFIDENCE:
+            continue
+
+        # METHOD_CALLS edges must point at a Function destination.
+        if edge_table == "METHOD_CALLS" and reason not in _FUNCTION_TARGET_REASONS:
+            continue
+
+        if target_id in seen_targets:
+            continue
+        seen_targets.add(target_id)
+
+        store.create_edge(
+            edge_table,
+            src_table,
+            caller_id,
+            "Function",
+            target_id,
+            {"confidence": confidence, "reason": reason},
+        )
+
+        if edge_table == "METHOD_CALLS":
+            counters["method_calls"] += 1
+        else:
+            counters["total"] += 1
+            if confidence >= 0.8:
+                counters["high"] += 1
+            elif confidence >= 0.5:
+                counters["medium"] += 1
+            else:
+                counters["low"] += 1
+
+
+def _build_import_map(store: GraphBackend) -> dict[str, dict[str, str]]:
     """Build a map of file_path -> {imported_name: source_file_path}."""
-    import_edges = store.query(
-        "MATCH (a:File)-[r:IMPORTS]->(b:File) RETURN a.path, b.path, r.importedNames"
+    import_edges = ql(
+        store,
+        sql=(
+            'SELECT t.a_path AS "a.path", t.b_path AS "b.path",'
+            ' t.r_names AS "r.importedNames"'
+            " FROM GRAPH_TABLE(agentscaffold_graph"
+            "   MATCH (a:File)-[r:IMPORTS]->(b:File)"
+            "   COLUMNS (a.path AS a_path, b.path AS b_path, r.importedNames AS r_names)"
+            " ) t"
+        ),
     )
     result: dict[str, dict[str, str]] = {}
     for row in import_edges:

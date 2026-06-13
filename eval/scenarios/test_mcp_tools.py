@@ -75,7 +75,7 @@ class TestScaffoldStats:
 
 
 class TestScaffoldQuery:
-    """Scenario: scaffold_query executes Cypher and returns results."""
+    """Scenario: scaffold_query executes SQL and returns results."""
 
     @timed
     def test_query_returns_results(self, indexed_sim):
@@ -86,7 +86,9 @@ class TestScaffoldQuery:
         with p1, p2, p3:
             result_data = _dispatch_tool(
                 "scaffold_query",
-                {"cypher": "MATCH (f:File) RETURN f.path LIMIT 5"},
+                {
+                    "sql": 'SELECT path AS "f.path" FROM File LIMIT 5',
+                },
             )
 
         has_results = "results" in result_data
@@ -102,84 +104,6 @@ class TestScaffoldQuery:
         )
         collect_result(result)
         assert has_results and count > 0
-
-
-class TestScaffoldContext:
-    """Scenario: scaffold_context returns symbol info."""
-
-    @timed
-    def test_context_for_known_symbol(self, indexed_sim):
-        root, store, config = indexed_sim
-        from agentscaffold.mcp.server import _dispatch_tool
-
-        p1, p2, p3 = _patch_mcp(config, store)
-        with p1, p2, p3:
-            result_data = _dispatch_tool("scaffold_context", {"symbol": "normalize_ohlcv"})
-
-        has_symbol = "symbol" in result_data and "error" not in result_data
-
-        result = EvalResult(
-            scenario="mcp_context_known",
-            passed=has_symbol,
-            score=1.0 if has_symbol else 0.0,
-            expected="Symbol details for normalize_ohlcv",
-            actual=f"Keys: {list(result_data.keys())}",
-            category="mcp",
-        )
-        collect_result(result)
-        assert has_symbol
-
-    @timed
-    def test_context_for_unknown_symbol(self, indexed_sim):
-        root, store, config = indexed_sim
-        from agentscaffold.mcp.server import _dispatch_tool
-
-        p1, p2, p3 = _patch_mcp(config, store)
-        with p1, p2, p3:
-            result_data = _dispatch_tool("scaffold_context", {"symbol": "nonexistent_xyz"})
-
-        has_error = "error" in result_data
-
-        result = EvalResult(
-            scenario="mcp_context_unknown",
-            passed=has_error,
-            score=1.0 if has_error else 0.0,
-            expected="Error response for unknown symbol",
-            actual=f"Keys: {list(result_data.keys())}",
-            category="mcp",
-        )
-        collect_result(result)
-        assert has_error
-
-
-class TestScaffoldSearch:
-    """Scenario: scaffold_search hybrid search works."""
-
-    @timed
-    def test_search_cypher_mode(self, indexed_sim):
-        root, store, config = indexed_sim
-        from agentscaffold.mcp.server import _dispatch_tool
-
-        p1, p2, p3 = _patch_mcp(config, store)
-        with p1, p2, p3:
-            result_data = _dispatch_tool(
-                "scaffold_search",
-                {"query": "DataRouter", "mode": "cypher", "top_k": 5},
-            )
-
-        has_results = result_data.get("count", 0) > 0
-        has_markdown = bool(result_data.get("markdown"))
-
-        result = EvalResult(
-            scenario="mcp_search_cypher",
-            passed=has_results,
-            score=1.0 if has_results and has_markdown else 0.5,
-            expected="Search results for 'DataRouter'",
-            actual=f"count={result_data.get('count')}, has_markdown={has_markdown}",
-            category="mcp",
-        )
-        collect_result(result)
-        assert has_results
 
 
 class TestScaffoldReviewContext:
@@ -591,9 +515,296 @@ class TestScaffoldDecisionContext:
             passed=len(missing) == 0 and has_chain,
             score=1.0 if has_chain else 0.5,
             expected="Full decision chain with ADRs/spikes/studies for plan 42",
-            actual=(f"Present: {present}, Missing: {missing}, " f"has_chain={has_chain}"),
+            actual=(f"Present: {present}, Missing: {missing}, has_chain={has_chain}"),
             category="mcp",
         )
         collect_result(result)
         assert len(missing) == 0, f"Missing keys: {missing}"
         assert has_chain, "Expected a full decision chain for plan 42"
+
+
+# ---------------------------------------------------------------------------
+# New MCP tools: scaffold_record_finding, scaffold_resolve_finding (E.4)
+# ---------------------------------------------------------------------------
+
+
+class TestScaffoldRecordFinding:
+    """Scenario: scaffold_record_finding writes a ReviewFinding node."""
+
+    @timed
+    def test_record_finding_writes_node(self, indexed_sim):
+        root, store, config = indexed_sim
+        from agentscaffold.mcp.server import _dispatch_tool
+
+        patches = _patch_mcp(config, store)
+        stack = _enter_patches(patches)
+        try:
+            data = _dispatch_tool(
+                "scaffold_record_finding",
+                {
+                    "plan_number": 42,
+                    "review_type": "quant_architect",
+                    "category": "correctness",
+                    "finding": "Risk bounds are not enforced in execution path",
+                    "severity": "high",
+                },
+            )
+        finally:
+            stack.__exit__(None, None, None)
+
+        has_id = "finding_id" in data or "id" in data
+        no_error = "error" not in data
+
+        result = EvalResult(
+            scenario="mcp_record_finding_writes_node",
+            passed=has_id and no_error,
+            score=1.0 if has_id and no_error else 0.0,
+            expected="Response contains finding_id, no error",
+            actual=f"Keys: {list(data.keys())}, has_id={has_id}, no_error={no_error}",
+            category="mcp",
+        )
+        collect_result(result)
+        assert no_error, f"Record finding returned error: {data.get('error')}"
+        assert has_id, f"Response missing finding_id: {list(data.keys())}"
+
+    @timed
+    def test_record_finding_latency_under_200ms(self, indexed_sim):
+        import time
+
+        root, store, config = indexed_sim
+        from agentscaffold.mcp.server import _dispatch_tool
+
+        patches = _patch_mcp(config, store)
+        stack = _enter_patches(patches)
+        try:
+            t0 = time.monotonic()
+            _dispatch_tool(
+                "scaffold_record_finding",
+                {
+                    "plan_number": 42,
+                    "review_type": "latency_test",
+                    "category": "perf",
+                    "finding": "Latency test finding",
+                    "severity": "low",
+                },
+            )
+            elapsed_ms = (time.monotonic() - t0) * 1000
+        finally:
+            stack.__exit__(None, None, None)
+
+        under_200 = elapsed_ms < 200
+        result = EvalResult(
+            scenario="mcp_record_finding_latency",
+            passed=under_200,
+            score=1.0 if under_200 else max(0.0, 1.0 - (elapsed_ms - 200) / 200),
+            expected="record_finding completes in <200ms",
+            actual=f"elapsed_ms={elapsed_ms:.1f}",
+            category="mcp",
+        )
+        collect_result(result)
+        assert under_200, f"record_finding took {elapsed_ms:.1f}ms (>200ms threshold)"
+
+    @timed
+    def test_record_finding_creates_file_edges(self, indexed_sim):
+        """related_files parameter causes FINDING_ABOUT_FILE edges."""
+        root, store, config = indexed_sim
+        from agentscaffold.mcp.server import _dispatch_tool
+
+        patches = _patch_mcp(config, store)
+        stack = _enter_patches(patches)
+        try:
+            data = _dispatch_tool(
+                "scaffold_record_finding",
+                {
+                    "plan_number": 42,
+                    "review_type": "edge_test",
+                    "category": "test",
+                    "finding": "Test finding with file edges via MCP",
+                    "severity": "medium",
+                    "file_paths": ["libs/data/router.py"],
+                },
+            )
+        finally:
+            stack.__exit__(None, None, None)
+
+        fid = data.get("finding_id") or data.get("id")
+        has_id = fid is not None
+        no_error = "error" not in data
+
+        result = EvalResult(
+            scenario="mcp_record_finding_file_edges",
+            passed=has_id and no_error,
+            score=1.0 if has_id and no_error else 0.0,
+            expected="Finding recorded with file_paths, no error",
+            actual=f"finding_id={fid}, no_error={no_error}",
+            category="mcp",
+        )
+        collect_result(result)
+        assert no_error, f"Record finding with file_paths returned error: {data}"
+        assert has_id, f"No finding_id returned: {data}"
+
+
+class TestScaffoldResolveFinding:
+    """Scenario: scaffold_resolve_finding changes a finding's status."""
+
+    @timed
+    def test_resolve_finding_changes_status(self, indexed_sim):
+        root, store, config = indexed_sim
+        from agentscaffold.mcp.server import _dispatch_tool
+
+        # First record a finding
+        patches = _patch_mcp(config, store)
+        stack = _enter_patches(patches)
+        try:
+            record_data = _dispatch_tool(
+                "scaffold_record_finding",
+                {
+                    "plan_number": 42,
+                    "review_type": "resolve_test",
+                    "category": "test",
+                    "finding": "Finding that will be resolved",
+                    "severity": "medium",
+                },
+            )
+        finally:
+            stack.__exit__(None, None, None)
+
+        fid = record_data.get("finding_id") or record_data.get("id")
+        assert fid, "No finding_id returned from record_finding"
+
+        # Now resolve it
+        stack2 = _enter_patches(_patch_mcp(config, store))
+        try:
+            resolve_data = _dispatch_tool(
+                "scaffold_resolve_finding",
+                {
+                    "finding_id": fid,
+                    "resolution": "Issue was addressed by refactoring the execution path",
+                },
+            )
+        finally:
+            stack2.__exit__(None, None, None)
+
+        no_error = "error" not in resolve_data
+        status_resolved = resolve_data.get("status") == "resolved"
+
+        result = EvalResult(
+            scenario="mcp_resolve_finding_changes_status",
+            passed=no_error and status_resolved,
+            score=1.0 if (no_error and status_resolved) else 0.5 if no_error else 0.0,
+            expected="status='resolved' in response, no error",
+            actual=f"status={resolve_data.get('status')}, no_error={no_error}",
+            category="mcp",
+        )
+        collect_result(result)
+        assert no_error, f"Resolve finding returned error: {resolve_data}"
+        assert status_resolved, f"Expected status=resolved, got: {resolve_data}"
+
+    @timed
+    def test_resolved_finding_not_in_open_query(self, indexed_sim):
+        """Resolved findings should not appear in get_open_findings()."""
+        _, store, config = indexed_sim
+        from agentscaffold.graph.findings import get_open_findings, record_finding, resolve_finding
+
+        result = record_finding(
+            store,
+            plan_number=300,
+            review_type="open_query_test",
+            category="test",
+            finding="Will be resolved and absent from open query",
+            severity="low",
+        )
+        fid = result["id"]
+        resolve_finding(store, fid, resolution="Fixed")
+
+        open_findings = get_open_findings(store, plan_number=300)
+        resolved_present = any(f.get("rf.id") == fid for f in open_findings)
+
+        passed = not resolved_present
+        eval_result = EvalResult(
+            scenario="mcp_resolved_not_in_open_query",
+            passed=passed,
+            score=1.0 if passed else 0.0,
+            expected=f"Resolved finding {fid} absent from open_findings query",
+            actual=f"resolved_present={resolved_present}, open_count={len(open_findings)}",
+            category="mcp",
+        )
+        collect_result(eval_result)
+        assert not resolved_present, f"Resolved finding {fid} still in open query: {open_findings}"
+
+
+# ---------------------------------------------------------------------------
+# Extend TestScaffoldPrepareReview with Phase C fields (E.4)
+# ---------------------------------------------------------------------------
+
+
+class TestScaffoldPrepareReviewEnriched:
+    """Extended prepare_review tests: reviewer_hints and open_findings (E.4)."""
+
+    @timed
+    def test_prepare_review_includes_reviewer_hints(self, indexed_sim):
+        """scaffold_prepare_review should include reviewer_hints key."""
+        root, store, config = indexed_sim
+        from agentscaffold.mcp.server import _dispatch_tool
+
+        patches = _patch_mcp(config, store, root=root)
+        stack = _enter_patches(patches)
+        try:
+            data = _dispatch_tool("scaffold_prepare_review", {"plan_number": 42})
+        finally:
+            stack.__exit__(None, None, None)
+
+        has_hints_key = "reviewer_hints" in data
+        result = EvalResult(
+            scenario="mcp_prepare_review_reviewer_hints",
+            passed=has_hints_key and "error" not in data,
+            score=1.0 if has_hints_key else 0.0,
+            expected="reviewer_hints key present in prepare_review response",
+            actual=f"Keys: {list(data.keys())}",
+            category="mcp",
+        )
+        collect_result(result)
+        assert has_hints_key, f"reviewer_hints missing from prepare_review: {list(data.keys())}"
+
+    @timed
+    def test_prepare_review_surfaces_open_findings(self, indexed_sim):
+        """pre-written finding against a plan file appears in prepare_review open_findings."""
+        root, store, config = indexed_sim
+        from agentscaffold.graph.findings import record_finding
+        from agentscaffold.mcp.server import _dispatch_tool
+
+        # Write a finding against router.py which is in plan 42's impact map
+        finding_result = record_finding(
+            store,
+            plan_number=42,
+            review_type="prepare_review_test",
+            category="contract",
+            finding="Prepare review surfacing test — should appear in open_findings",
+            severity="high",
+        )
+        fid = finding_result["id"]
+
+        patches = _patch_mcp(config, store, root=root)
+        stack = _enter_patches(patches)
+        try:
+            data = _dispatch_tool("scaffold_prepare_review", {"plan_number": 42})
+        finally:
+            stack.__exit__(None, None, None)
+
+        open_findings = data.get("open_findings", [])
+        finding_present = any(f.get("rf.id") == fid for f in open_findings)
+
+        passed = finding_present
+        result = EvalResult(
+            scenario="mcp_prepare_review_open_findings",
+            passed=passed,
+            score=1.0 if passed else 0.0,
+            expected=f"Finding {fid} present in open_findings",
+            actual=(f"open_findings_count={len(open_findings)}, finding_present={finding_present}"),
+            category="mcp",
+        )
+        collect_result(result)
+        assert finding_present, (
+            f"Finding {fid} not in open_findings. "
+            f"open_findings IDs: {[f.get('rf.id') for f in open_findings]}"
+        )

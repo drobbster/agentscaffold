@@ -1,24 +1,18 @@
 """Code embeddings for semantic similarity search.
 
 Generates vector embeddings for code definitions (functions, classes, methods)
-using sentence-transformers. Embeddings are stored as JSON arrays in the graph
-and support cosine similarity search.
+using sentence-transformers. Embeddings are stored in the EmbeddingStore table
+and support cosine similarity search via DuckDB's list_cosine_similarity.
 
 Requires: pip install agentscaffold[search]
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-import numpy as np
-
-from agentscaffold.graph.store import GraphStore
-
-if TYPE_CHECKING:
-    pass
+from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -65,12 +59,14 @@ def _get_model(model_name: str = DEFAULT_MODEL) -> Any:
     return model
 
 
-def _ensure_embedding_column(store: GraphStore, table: str) -> None:
-    """Add an embedding column to a node table if it doesn't exist."""
-    try:
-        store.execute(f"ALTER TABLE {table} ADD embedding STRING DEFAULT ''")
-    except Exception:
-        pass
+def _ensure_embedding_column(store: GraphBackend, table: str) -> None:
+    """Ensure embedding storage is available.
+
+    Embeddings live in the EmbeddingStore auxiliary table (added in schema v4),
+    so no ALTER TABLE is required.
+    """
+    # EmbeddingStore handles storage; no ALTER TABLE needed
+    return
 
 
 def _build_text_for_function(row: dict[str, Any]) -> str:
@@ -130,9 +126,69 @@ _TEXT_BUILDERS = {
     "File": (_build_text_for_file, "n.path, n.language"),
 }
 
+# SQL SELECT queries — return dot-qualified column names so
+# _build_text_for_* functions work without modification.
+_NODE_SELECT: dict[str, str] = {
+    "Function": (
+        'SELECT id AS "n.id", name AS "n.name",'
+        ' signature AS "n.signature", filePath AS "n.filePath"'
+        " FROM Function"
+    ),
+    "Class": ('SELECT id AS "n.id", name AS "n.name", filePath AS "n.filePath" FROM Class'),
+    "Method": (
+        'SELECT id AS "n.id", name AS "n.name", className AS "n.className",'
+        ' signature AS "n.signature", filePath AS "n.filePath"'
+        " FROM Method"
+    ),
+    "File": ('SELECT id AS "n.id", path AS "n.path", language AS "n.language" FROM File'),
+}
+
+# Similarity search SQL — JOIN EmbeddingStore with the node table and
+# compute list_cosine_similarity in-database.  Returns keys: n.id, n.<props>,
+# similarity.
+_SEARCH_SQL: dict[str, str] = {
+    "Function": (
+        'SELECT f.id AS "n.id", f.name AS "n.name",'
+        ' f.signature AS "n.signature", f.filePath AS "n.filePath",'
+        " list_cosine_similarity(e.embedding, ?) AS similarity"
+        " FROM EmbeddingStore e"
+        " JOIN Function f ON f.id = e.node_id"
+        " WHERE e.node_type = 'Function'"
+        " ORDER BY similarity DESC LIMIT ?"
+    ),
+    "Class": (
+        'SELECT f.id AS "n.id", f.name AS "n.name",'
+        ' f.filePath AS "n.filePath",'
+        " list_cosine_similarity(e.embedding, ?) AS similarity"
+        " FROM EmbeddingStore e"
+        " JOIN Class f ON f.id = e.node_id"
+        " WHERE e.node_type = 'Class'"
+        " ORDER BY similarity DESC LIMIT ?"
+    ),
+    "Method": (
+        'SELECT f.id AS "n.id", f.name AS "n.name",'
+        ' f.className AS "n.className",'
+        ' f.signature AS "n.signature", f.filePath AS "n.filePath",'
+        " list_cosine_similarity(e.embedding, ?) AS similarity"
+        " FROM EmbeddingStore e"
+        " JOIN Method f ON f.id = e.node_id"
+        " WHERE e.node_type = 'Method'"
+        " ORDER BY similarity DESC LIMIT ?"
+    ),
+    "File": (
+        'SELECT f.id AS "n.id", f.path AS "n.path",'
+        ' f.language AS "n.language",'
+        " list_cosine_similarity(e.embedding, ?) AS similarity"
+        " FROM EmbeddingStore e"
+        " JOIN File f ON f.id = e.node_id"
+        " WHERE e.node_type = 'File'"
+        " ORDER BY similarity DESC LIMIT ?"
+    ),
+}
+
 
 def generate_embeddings(
-    store: GraphStore,
+    store: GraphBackend,
     *,
     model_name: str = DEFAULT_MODEL,
     tables: list[str] | None = None,
@@ -156,10 +212,10 @@ def generate_embeddings(
             logger.warning("No text builder for table %s, skipping", table)
             continue
 
-        builder_fn, fields = _TEXT_BUILDERS[table]
+        builder_fn, _fields = _TEXT_BUILDERS[table]
         _ensure_embedding_column(store, table)
 
-        rows = store.query(f"MATCH (n:{table}) RETURN n.id, {fields}")
+        rows = store.query(_NODE_SELECT[table])
         if not rows:
             result[table] = 0
             continue
@@ -176,11 +232,7 @@ def generate_embeddings(
 
             for node_id, vec in zip(batch_ids, vectors):
                 vec_list = vec.tolist() if hasattr(vec, "tolist") else list(vec)
-                vec_json = json.dumps(vec_list)
-                escaped = vec_json.replace("\\", "\\\\").replace("'", "\\'")
-                store.execute(
-                    f"MATCH (n:{table}) WHERE n.id = '{node_id}' SET n.embedding = '{escaped}'"
-                )
+                store.store_embedding(node_id, table, vec_list)
                 count += 1
 
         result[table] = count
@@ -190,7 +242,7 @@ def generate_embeddings(
 
 
 def search_similar(
-    store: GraphStore,
+    store: GraphBackend,
     query: str,
     *,
     model_name: str = DEFAULT_MODEL,
@@ -208,48 +260,28 @@ def search_similar(
 
     model = _get_model(model_name)
     query_vec = model.encode([query], show_progress_bar=False)[0]
-    query_np = np.array(query_vec, dtype=np.float32)
 
     if table not in _TEXT_BUILDERS:
         raise ValueError(f"Unsupported table for search: {table}")
 
-    _builder_fn, fields = _TEXT_BUILDERS[table]
-    rows = store.query(
-        f"MATCH (n:{table}) WHERE n.embedding <> '' RETURN n.id, n.embedding, {fields}"
-    )
-
-    if not rows:
-        return []
-
-    scored: list[tuple[float, dict[str, Any]]] = []
-    for row in rows:
-        try:
-            vec = np.array(json.loads(row["n.embedding"]), dtype=np.float32)
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-        dot = float(np.dot(query_np, vec))
-        norm_q = float(np.linalg.norm(query_np))
-        norm_v = float(np.linalg.norm(vec))
-        if norm_q == 0 or norm_v == 0:
-            continue
-        similarity = dot / (norm_q * norm_v)
-
-        result_row = {k: v for k, v in row.items() if k != "n.embedding"}
-        result_row["similarity"] = round(similarity, 4)
-        scored.append((similarity, result_row))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [r for _, r in scored[:top_k]]
+    # Use native list_cosine_similarity via EmbeddingStore JOIN
+    query_list = query_vec.tolist() if hasattr(query_vec, "tolist") else list(query_vec)
+    sql = _SEARCH_SQL[table]
+    rows = store.query(sql, {"query_vector": query_list, "top_k": top_k})
+    return [
+        {
+            **{k: v for k, v in row.items() if k != "similarity"},
+            "similarity": round(float(row["similarity"]), 4),
+        }
+        for row in rows
+        if row.get("similarity") is not None
+    ]
 
 
-def embeddings_available(store: GraphStore) -> bool:
+def embeddings_available(store: GraphBackend) -> bool:
     """Check if any embeddings exist in the graph."""
-    for table in _TEXT_BUILDERS:
-        try:
-            count = store.query_scalar(f"MATCH (n:{table}) WHERE n.embedding <> '' RETURN count(n)")
-            if count and int(count) > 0:
-                return True
-        except Exception:
-            continue
-    return False
+    try:
+        count = store.query_scalar("SELECT COUNT(*) FROM EmbeddingStore")
+        return bool(count and int(count) > 0)
+    except Exception:
+        return False

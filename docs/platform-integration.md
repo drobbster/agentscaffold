@@ -14,13 +14,110 @@ This guide covers setup for specific platforms.
 Every platform starts with the same steps:
 
 ```bash
-pip install agentscaffold[all]   # or agentscaffold[graph] for lighter install
+pip install "agentscaffold[all]"  # graph + search + MCP + all language parsers
 cd my-project
 scaffold init
 scaffold index                    # Build knowledge graph
 ```
 
-After this, your project has `AGENTS.md` at the root and `.scaffold/graph.db` with the indexed knowledge graph. The agent rules in `AGENTS.md` work immediately with any agent that reads project files.
+For a lighter install without semantic search or extra language parsers:
+
+```bash
+pip install "agentscaffold[graph,mcp]"
+```
+
+For CI pipelines that only need governance checks (no graph, no MCP):
+
+```bash
+pip install agentscaffold
+```
+
+See [Installation](getting-started.md#1-installation) in the Getting Started guide for a
+full breakdown of what each extra includes.
+
+After this, your project has `AGENTS.md` at the root and `.scaffold/graph.duckdb` (a DuckDB + DuckPGQ database) with the indexed knowledge graph. The agent rules in `AGENTS.md` work immediately with any agent that reads project files.
+
+## Isolated Install: Two Venvs
+
+If your project already has a virtual environment and you want to keep agentscaffold's
+dependencies separate — or if there are version conflicts between your project's deps and
+agentscaffold's (duckdb, sentence-transformers, graspologic, etc.) — install agentscaffold
+into a dedicated venv and point the MCP config at the full path.
+
+### Setup
+
+```bash
+# From your project root
+python -m venv .venv-scaffold
+.venv-scaffold/bin/pip install "agentscaffold[all]"
+```
+
+Or with uv:
+
+```bash
+uv venv .venv-scaffold
+uv pip install "agentscaffold[all]" --python .venv-scaffold/bin/python
+```
+
+Then use the full path in your MCP config instead of `scaffold`:
+
+```json
+{
+  "mcpServers": {
+    "agentscaffold": {
+      "command": "/absolute/path/to/your-project/.venv-scaffold/bin/scaffold",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The `scaffold` CLI commands (e.g. `scaffold index`, `scaffold validate`) still work from
+your project root when you run them from this venv:
+
+```bash
+.venv-scaffold/bin/scaffold index
+.venv-scaffold/bin/scaffold validate
+```
+
+Or activate it temporarily:
+
+```bash
+source .venv-scaffold/bin/activate
+scaffold index
+deactivate
+```
+
+### Keep It Out of Git
+
+Add the venv to your `.gitignore` — it's a local tool install, not project source:
+
+```
+.venv-scaffold/
+```
+
+### Upgrading
+
+To upgrade agentscaffold without touching your project venv:
+
+```bash
+.venv-scaffold/bin/pip install --upgrade agentscaffold
+# or with uv:
+uv pip install --upgrade agentscaffold --python .venv-scaffold/bin/python
+```
+
+After upgrading, restart the MCP server in your IDE so it picks up the new version.
+
+### When to Use One Venv vs. Two
+
+| Situation | Recommendation |
+|-----------|---------------|
+| Project has no conflicting deps | Install into your project venv; use `scaffold` on PATH |
+| Project has duckdb, torch, or heavy ML deps at different versions | Use a dedicated `.venv-scaffold/` |
+| CI/CD environment | Install into a dedicated venv; reference the full path in your workflow |
+| Multiple projects sharing one agentscaffold install | Not recommended — keep one venv per project for isolation |
+
+---
 
 ## Verify NL Intent Routing
 
@@ -63,6 +160,53 @@ Operational notes:
 - Tool responses include freshness metadata so the agent can disclose confidence.
 - For stricter governance, set `gate_strict: true` to defer gate transitions when freshness
   is stale/unknown.
+
+---
+
+## Skills
+
+Skills are narrowly-scoped best-practice guides (testing, logging, config patterns, etc.) generated from your project's standards files. Each skill becomes a SKILL.md file that AI agents can discover and load on demand.
+
+### How Skills Work
+
+1. You write standards as markdown files in `docs/ai/standards/` (e.g., `testing.md`, `concurrency_patterns.md`).
+2. Run `scaffold agents skills` to convert them into SKILL.md files.
+3. Output goes to `.claude/skills/` and `.cursor/skills/` with a `SKILLS_CATALOG.md` index.
+
+Agents discover skills via the catalog (progressive disclosure) and load the full skill file when they need detailed guidance for a specific domain.
+
+### Generating Skills
+
+```bash
+# Generate skills from all standards
+scaffold agents skills
+
+# Preview without writing
+scaffold agents skills --dry-run
+```
+
+### Auto-Regeneration
+
+If configured in `scaffold.yaml`, skills regenerate automatically when standards files change:
+
+```yaml
+enforcement:
+  rules:
+    - event: PostToolUse
+      matcher: "Edit|Write|NotebookEdit"
+      command: scaffold agents skills --if-standards-changed
+      description: Regenerate skills when standards files are updated
+```
+
+The `--if-standards-changed` flag uses a timestamp marker (`.scaffold/.skills_generated`) to skip regeneration when no standards have been modified, keeping the hook fast (~100ms no-op).
+
+### Adding a New Skill
+
+1. Create a markdown file in `docs/ai/standards/` (e.g., `security.md`).
+2. Run `scaffold agents skills` (or let the PostToolUse hook pick it up automatically).
+3. The new skill appears in `.claude/skills/security.md` and `.cursor/skills/security.md`.
+
+Skills are distinct from AGENTS.md rules: AGENTS.md provides broad governance (plan lifecycle, architecture constraints), while skills provide specific best practices for a domain.
 
 ---
 
@@ -314,15 +458,35 @@ This blocks and communicates over stdin/stdout. The client launches this as a su
 
 ### Available Tools
 
+**Graph Intelligence Tools** — direct codebase queries:
+
 | Tool | Description |
 |------|-------------|
-| `scaffold_stats` | Codebase health dashboard |
-| `scaffold_query` | Execute Cypher queries against the graph |
-| `scaffold_search` | Hybrid search (cypher, semantic, or both) |
+| `scaffold_stats` | Codebase health dashboard (files, functions, edges, governance) |
+| `scaffold_query` | Execute raw SQL queries against the knowledge graph |
+| `scaffold_search` | Hybrid search (keyword, semantic, or hybrid mode) |
 | `scaffold_context` | Full context for a symbol (definition, callers, layer, plan history) |
 | `scaffold_impact` | Blast radius analysis for a file or symbol |
-| `scaffold_validate` | Validation checks (staleness, contracts) |
-| `scaffold_review_context` | Review context for a plan (brief, challenges, gaps, verification, retrospective) |
+| `scaffold_validate` | Validation checks (layers, contracts, staleness) |
+| `scaffold_review_context` | Low-level review context for a plan (brief, challenges, gaps, verify, retro) |
+
+**Governance & Lifecycle Tools** — composite workflows triggered by natural language:
+
+| Tool | NL Trigger | Description |
+|------|-----------|-------------|
+| `scaffold_prepare_review` | "review plan X" / "critique plan X" | Full pre-review package: brief, gap analysis, adversarial challenges, ADRs |
+| `scaffold_prepare_implementation` | "implement plan X" / "begin building plan X" | Implementation readiness: blast radius, contract obligations, consumer audit |
+| `scaffold_compare_plans` | "compare plan X and Y" / "do plans overlap" | Overlap and conflict detection between two plans |
+| `scaffold_staleness_check` | "is plan X stale" / "is plan X still valid" | Checks overlapping completions, missing files, changed dependencies |
+| `scaffold_prepare_rewrite` | "rewrite plan X" / "refresh plan X" | Staleness check + current dependency landscape + new contracts |
+| `scaffold_prepare_retro` | "retro on plan X" / "post-implementation review" | Retrospective context with verification results and findings |
+| `scaffold_orient` | "where did we leave off" / "what's blocked" | Session orientation: stats, recent plans, hot files, workflow state |
+| `scaffold_find_studies` | "any studies on X" / "experiments related to X" | Search studies and A/B tests by topic or outcome |
+| `scaffold_prior_experiments` | "prior experiments for plan X" / "has this been tested" | Experiments linked to a plan via reference, tag, or file overlap |
+| `scaffold_find_adrs` | "any ADRs about X" / "what ADR governs X" | Search ADRs by topic keyword or status |
+| `scaffold_decision_context` | "decision history for plan X" / "trace decisions" | Full decision chain: ADRs, spikes, studies, dependency status |
+| `scaffold_record_finding` | "record finding" / "log this review finding" | Persist a ReviewFinding in the graph, linked to plan + files + functions |
+| `scaffold_resolve_finding` | "mark finding resolved" / "resolve this finding" | Mark a finding resolved; retained in graph for audit |
 
 ### Testing the Connection
 
@@ -349,3 +513,123 @@ This should return a JSON response listing all available tools.
 | aider | Via `--read` flag | No | `.aider.conf.yml` | CLI only |
 
 **Full support** means both AGENTS.md rules and MCP knowledge graph tools are available. **CLI only** means the agent follows AGENTS.md rules but uses the CLI instead of MCP for graph queries.
+
+---
+
+## Lightweight Mode: Graph + MCP Only (No Hooks or Lifecycle Tools)
+
+If you want the knowledge graph and MCP query tools without any automated hooks or lifecycle enforcement, strip the hooks from your settings and use the tools on demand.
+
+### What to remove
+
+1. **Delete all hooks from `.claude/settings.json`** (or your platform's equivalent):
+
+```json
+{
+  "hooks": {}
+}
+```
+
+This removes `PreToolUse`, `PostToolUse`, and `SessionStart` automation. No more auto-indexing, auto-orient, or pre-edit validation.
+
+2. **Set `gate_strict: false`** in `scaffold.yaml` (this is already the default):
+
+```yaml
+freshness:
+  gate_strict: false
+```
+
+### What still works
+
+All graph intelligence and MCP query tools work independently with no hooks:
+
+| Tool | What it does |
+|------|-------------|
+| `scaffold_orient` | Project status, blockers, recent plans |
+| `scaffold_context` | Symbol context (callers, layer, plan history) |
+| `scaffold_impact` | Blast radius for a file or symbol |
+| `scaffold_search` | Keyword/semantic/hybrid search |
+| `scaffold_query` | Raw SQL against the knowledge graph |
+| `scaffold_stats` | Codebase health dashboard |
+| `scaffold_prepare_review` | Pre-review for a plan |
+| `scaffold_prepare_retro` | Post-implementation retro |
+| `scaffold_find_adrs` | Search ADRs |
+| `scaffold_decision_context` | Full decision chain for a plan |
+
+You call these when you want them. Nothing runs automatically.
+
+### What you lose
+
+- Auto-indexing after edits (run `scaffold index --incremental` manually when you want a fresh graph)
+- Pre-edit validation (run `scaffold validate` manually when you want checks)
+- Session orientation on startup (call `scaffold_orient` yourself)
+- `scaffold_begin_plan` / `scaffold_complete_plan` lifecycle enforcement (use individual tools directly)
+
+### Recommended workflow
+
+```bash
+# Index when you want fresh graph data
+scaffold index --incremental
+
+# Query the graph as needed via MCP or CLI
+scaffold graph search "risk management"
+scaffold graph stats
+```
+
+The MCP tools remain available in your IDE -- just call them explicitly instead of relying on hooks to trigger them.
+
+---
+
+## Troubleshooting
+
+### MCP server fails to start
+
+Check that `agentscaffold` is installed and the `scaffold` command is on your PATH:
+
+```bash
+which scaffold
+scaffold --version
+```
+
+If using a virtual environment, make sure the MCP command in your platform config uses the full path to `scaffold` inside the venv, or activate the venv first.
+
+### MCP tools return "graph not available"
+
+The MCP server requires an indexed graph. If `.scaffold/graph.duckdb` does not exist:
+
+```bash
+scaffold index
+```
+
+Then restart the MCP server.
+
+### MCP tools time out on large repos
+
+For large repos, enable async freshness so graph refresh happens in the background rather than blocking tool calls:
+
+```yaml
+# scaffold.yaml
+freshness:
+  async_enabled: true
+  debounce_seconds: 120
+  gate_strict: false
+```
+
+### Semantic/hybrid search returns no results via MCP
+
+The `scaffold_search` tool falls back to keyword-only if embeddings are missing. To enable semantic search:
+
+```bash
+pip install "agentscaffold[search]"
+scaffold index --embeddings
+```
+
+### Testing the MCP connection
+
+Verify the server responds correctly:
+
+```bash
+echo '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}' | scaffold mcp
+```
+
+This should return a JSON list of available tools. If it hangs or errors, check that no other `scaffold mcp` process is already running on the same socket.

@@ -4,11 +4,28 @@ This guide walks you through installing AgentScaffold, initializing a project, a
 
 ## 1. Installation
 
-Install from PyPI:
+Install from PyPI. The base package and optional extras cover different capabilities:
+
+| Install command | What you get |
+|----------------|-------------|
+| `pip install agentscaffold` | Governance framework only: plan lifecycle, reviews, templates, `scaffold init/validate/plan/retro` CLI. No graph, no MCP. |
+| `pip install "agentscaffold[graph]"` | + Knowledge graph indexing (DuckDB/DuckPGQ) with Python, JS, TS parsers. Enables `scaffold index`, `scaffold graph`, `scaffold review`. |
+| `pip install "agentscaffold[graph-all-languages]"` | + Go, Rust, Java, C, C++ tree-sitter parsers on top of `[graph]`. |
+| `pip install "agentscaffold[search]"` | + Semantic search via sentence-transformers. Required for `--mode semantic` and `--mode hybrid`. |
+| `pip install "agentscaffold[mcp]"` | + MCP server (`scaffold mcp`). Required for IDE tool integration (Cursor, Claude Code, etc.). |
+| `pip install "agentscaffold[all]"` | Everything above. Recommended for full interactive sessions with an AI agent. |
+
+Most users want `agentscaffold[all]` or at minimum `agentscaffold[graph,mcp]` for MCP tool
+support. The bare install is useful for CI pipelines that only need `scaffold validate`.
 
 ```bash
-pip install agentscaffold
+pip install "agentscaffold[all]"
 ```
+
+If your project has dependency conflicts with agentscaffold's packages (duckdb,
+sentence-transformers, graspologic), install it into a dedicated virtual environment
+instead. See [Isolated Install: Two Venvs](platform-integration.md#isolated-install-two-venvs)
+in the Platform Integration guide.
 
 Verify installation:
 
@@ -60,8 +77,14 @@ After init, your project contains:
 ```
 my-project/
   AGENTS.md              # Rules your AI agent follows
+  CLAUDE.md              # Claude Code rules
+  .windsurfrules         # Windsurf rules
   scaffold.yaml          # Framework configuration
-  .cursor/rules.md       # Cursor-specific rules
+  .cursor/
+    rules.md             # Cursor process rules
+    rules/agentscaffold.md  # MCP routing + graph trust-discipline policy
+    mcp.json             # Cursor MCP server registration
+  .claude/agents/        # One subagent file per configured reviewer
   docs/
     ai/
       templates/         # Plan templates (feature/bugfix/refactor), plus spike and study
@@ -78,6 +101,7 @@ my-project/
 ```
 
 - **AGENTS.md**: The agent reads this file to learn the plan lifecycle, gates, and collaboration protocol.
+- **Platform rule files** (`CLAUDE.md`, `.windsurfrules`, `.cursor/rules/`, `.claude/agents/`): generated automatically on a fresh init. Regenerate them after editing `scaffold.yaml` with `scaffold agents generate-all`.
 - **scaffold.yaml**: Edit this to change rigor, gates, domains, or semi-autonomous settings.
 - **docs/ai/**: Source of truth for templates, prompts, and state. The agent references these paths.
 - **Plan templates included**: `docs/ai/templates/plan_template.md`,
@@ -176,7 +200,14 @@ After scaffolding, build the knowledge graph to enable search, reviews, and sess
 scaffold index
 ```
 
-This indexes your codebase into a local graph database (`.scaffold/graph.db`). For semantic search, add `--embeddings`. For subsequent updates, use `--incremental` (only re-indexes changed files).
+This indexes your codebase into a local DuckDB + DuckPGQ graph database (`.scaffold/graph.duckdb`). For subsequent updates, use `--incremental` (only re-indexes changed files).
+
+For semantic and hybrid search, first install the `[search]` extra, then pass `--embeddings`:
+
+```bash
+pip install "agentscaffold[search]"
+scaffold index --embeddings
+```
 
 See the [Knowledge Graph section of the User Guide](user-guide.md#knowledge-graph-codebase-intelligence) for details on querying, MCP tools, and review integration.
 
@@ -231,8 +262,8 @@ scaffold graph verify
 scaffold validate
 ```
 
-For a full migration guide, see
-[Migrating Governance to NL + MCP](migrating-governance-to-nl-mcp.md).
+For a full migration guide, see the "Migration Guide for Governance-First Users"
+section in the [User Guide](user-guide.md).
 
 ## 11. Next Steps
 
@@ -250,6 +281,50 @@ For a full migration guide, see
   ```bash
   scaffold ci setup
   ```
+
+---
+
+## Troubleshooting
+
+### `scaffold index` fails with "No language" warnings
+
+Warnings like `No language_c() in tree_sitter_c` or `No language_cpp() in tree_sitter_cpp` were a bug in agentscaffold 0.3.0 (wrong grammar function name lookup for C and C++) and are fixed in 0.3.1+. Upgrade to resolve them:
+
+```bash
+pip install --upgrade "agentscaffold[graph]"
+```
+
+If a different language you care about is still not parsed, ensure the grammar extra is installed. All eight bundled grammars (Python, JavaScript, TypeScript, Go, Rust, Java, C, C++) are included in the `[graph]` extra.
+
+### Semantic search returns no results
+
+Two steps are required for semantic search to work:
+
+1. Install the `[search]` extra: `pip install "agentscaffold[search]"`
+2. Re-index with embeddings: `scaffold index --embeddings`
+
+If you run `scaffold graph search --mode semantic` without these, the search falls back to keyword-only with a warning.
+
+### Graph is stale after large changes
+
+Run a full re-index:
+
+```bash
+scaffold index
+```
+
+Incremental indexing (`--incremental`) only processes changed files. After moving, deleting, or renaming many files, a full re-index is more reliable.
+
+### graph.duckdb is corrupted or locked
+
+If you see DuckDB errors on startup, delete the graph and rebuild:
+
+```bash
+rm .scaffold/graph.duckdb
+scaffold index
+```
+
+A DuckDB file lock error usually means another process (e.g. the MCP server) is still running. Stop it first.
 
 - **Task runner**: Generate justfile and Makefile:
 

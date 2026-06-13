@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
@@ -15,61 +16,119 @@ console = Console()
 def run_validate(
     check_safety_boundaries: bool = False,
     check_session_summary: bool = False,
+    pre_edit: bool = False,
+    warn_only: bool = False,
 ) -> None:
-    """Run validation checks (integration, prohibitions, secrets, optionally safety)."""
+    """Run validation checks (integration, prohibitions, secrets, optionally safety).
+
+    When *pre_edit* is True only fast, blocking checks run (integration +
+    prohibitions) so the PreToolUse hook stays responsive.
+    """
     from agentscaffold.validate.integration import check_integration
     from agentscaffold.validate.prohibitions import check_prohibitions
-    from agentscaffold.validate.safety import check_safety_boundaries as _check_safety
-    from agentscaffold.validate.secrets import check_secrets
 
     config = load_config()
     results: list[tuple[str, list[str]]] = []
 
-    console.print("\n[bold]Running validation checks...[/bold]\n")
+    if pre_edit:
+        # Fast path: only checks that should block an edit
+        integration_issues = check_integration()
+        results.append(("Integration", integration_issues))
 
-    # Plan lint (best-effort, calls the plan lint module)
-    plan_issues: list[str] = []
-    try:
-        from agentscaffold.plan.lint import run_plan_lint
+        prohibitions_issues = check_prohibitions(config=config)
+        results.append(("Prohibitions", prohibitions_issues))
 
-        run_plan_lint(plan=None)
-    except Exception as exc:  # noqa: BLE001
-        plan_issues.append(f"Plan lint error: {exc}")
-    results.append(("Plan Lint", plan_issues))
+        # Plan lint — only active plans (Draft/Ready/In Progress) block edits
+        from agentscaffold.plan.lint import _lint_plan
+        from agentscaffold.plan.status import (
+            CHECKBOX_DONE_RE,
+            CHECKBOX_TOTAL_RE,
+            _infer_status,
+        )
 
-    # Integration check
-    integration_issues = check_integration()
-    results.append(("Integration", integration_issues))
+        skip_statuses = {"complete", "superseded", "future", "blocked", "abandoned"}
 
-    # Prohibitions check
-    prohibitions_issues = check_prohibitions(config=config)
-    results.append(("Prohibitions", prohibitions_issues))
+        plans_dir = Path("docs/ai/plans")
+        if plans_dir.is_dir():
+            plan_issues: list[str] = []
+            for pf in sorted(plans_dir.glob("*.md")):
+                text = pf.read_text(errors="replace")
 
-    # Secrets check
-    secrets_issues = check_secrets()
-    results.append(("Secrets", secrets_issues))
+                # Check explicit status metadata first
+                import re
 
-    # Retrospective check (if enabled in config gates)
-    if config.gates.in_progress_to_complete.retrospective:
-        retro_issues: list[str] = []
+                explicit = re.search(
+                    r"^[#\-\s|]*status[:\s|]+([A-Za-z ]+)",
+                    text,
+                    re.MULTILINE | re.IGNORECASE,
+                )
+                if explicit and explicit.group(1).strip().lower() in skip_statuses:
+                    continue
+
+                # Fall back to checkbox-based inference
+                total = len(CHECKBOX_TOTAL_RE.findall(text))
+                done = len(CHECKBOX_DONE_RE.findall(text))
+                if _infer_status(total, done) == "Complete":
+                    continue
+
+                for issue in _lint_plan(pf):
+                    plan_issues.append(f"{pf.name}: {issue}")
+            results.append(("Plan Lint", plan_issues))
+    else:
+        from agentscaffold.validate.safety import check_safety_boundaries as _check_safety
+        from agentscaffold.validate.secrets import check_secrets
+
+        console.print("\n[bold]Running validation checks...[/bold]\n")
+
+        # Plan lint (best-effort, calls the plan lint module)
+        plan_issues: list[str] = []
         try:
-            from agentscaffold.retro.check import run_retro_check
+            from agentscaffold.plan.lint import run_plan_lint
 
-            run_retro_check()
+            run_plan_lint(plan=None)
         except Exception as exc:  # noqa: BLE001
-            retro_issues.append(f"Retrospective check error: {exc}")
-        results.append(("Retrospectives", retro_issues))
+            plan_issues.append(f"Plan lint error: {exc}")
+        results.append(("Plan Lint", plan_issues))
 
-    # Safety boundary check (opt-in via flag)
-    if check_safety_boundaries:
-        safety_issues = _check_safety(config=config)
-        results.append(("Safety Boundaries", safety_issues))
+        # Integration check
+        integration_issues = check_integration()
+        results.append(("Integration", integration_issues))
 
-    # Session summary check (opt-in via flag)
-    if check_session_summary:
-        session_issues: list[str] = []
-        session_issues.append("Session summary check not yet implemented")
-        results.append(("Session Summary", session_issues))
+        # Prohibitions check
+        prohibitions_issues = check_prohibitions(config=config)
+        results.append(("Prohibitions", prohibitions_issues))
+
+        # Secrets check
+        secrets_issues = check_secrets()
+        results.append(("Secrets", secrets_issues))
+
+        # Governance format check
+        from agentscaffold.validate.governance import check_governance_formats
+
+        governance_issues = check_governance_formats(config=config)
+        results.append(("Governance Formats", governance_issues))
+
+        # Retrospective check (if enabled in config gates)
+        if config.gates.in_progress_to_complete.retrospective:
+            retro_issues: list[str] = []
+            try:
+                from agentscaffold.retro.check import run_retro_check
+
+                run_retro_check()
+            except Exception as exc:  # noqa: BLE001
+                retro_issues.append(f"Retrospective check error: {exc}")
+            results.append(("Retrospectives", retro_issues))
+
+        # Safety boundary check (opt-in via flag)
+        if check_safety_boundaries:
+            safety_issues = _check_safety(config=config)
+            results.append(("Safety Boundaries", safety_issues))
+
+        # Session summary check (opt-in via flag)
+        if check_session_summary:
+            session_issues: list[str] = []
+            session_issues.append("Session summary check not yet implemented")
+            results.append(("Session Summary", session_issues))
 
     # Display summary table
     table = Table(title="Validation Results")
@@ -89,14 +148,24 @@ def run_validate(
 
     # Print details for failures
     if has_failures:
-        console.print("\n[bold red]Validation failures:[/bold red]\n")
-        for name, issues in results:
-            if not issues:
-                continue
-            console.print(f"[bold]{name}:[/bold]")
-            for issue in issues:
-                console.print(f"  - {issue}")
-            console.print()
-        sys.exit(1)
+        if warn_only:
+            console.print("\n[bold yellow]Validation warnings (--warn-only):[/bold yellow]\n")
+            for name, issues in results:
+                if not issues:
+                    continue
+                console.print(f"[bold]{name}:[/bold]")
+                for issue in issues:
+                    console.print(f"  - WARN: {issue}")
+                console.print()
+        else:
+            console.print("\n[bold red]Validation failures:[/bold red]\n")
+            for name, issues in results:
+                if not issues:
+                    continue
+                console.print(f"[bold]{name}:[/bold]")
+                for issue in issues:
+                    console.print(f"  - {issue}")
+                console.print()
+            sys.exit(1)
     else:
         console.print("\n[bold green]All validation checks passed.[/bold green]\n")

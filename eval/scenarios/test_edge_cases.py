@@ -60,8 +60,14 @@ class TestEmptyFiles:
         """An empty Python file should appear as a File node with 0 definitions."""
         root, store, config = indexed_sim
 
-        results = store.query(
-            "MATCH (f:File) WHERE f.path CONTAINS 'empty_module' RETURN f.path, f.lineCount"
+        from agentscaffold.graph.query_compat import ql
+
+        results = ql(
+            store,
+            sql=(
+                'SELECT path AS "f.path", lineCount AS "f.lineCount"'
+                " FROM File WHERE CONTAINS(path, 'empty_module')"
+            ),
         )
 
         has_file = len(results) > 0
@@ -86,8 +92,14 @@ class TestUnicodeFiles:
         """unicode_provider.py should be indexed and its class found."""
         root, store, config = indexed_sim
 
-        results = store.query(
-            "MATCH (c:Class) WHERE c.name = 'DatenAnbieter' RETURN c.name, c.filePath"
+        from agentscaffold.graph.query_compat import ql
+
+        results = ql(
+            store,
+            sql=(
+                'SELECT name AS "c.name", filePath AS "c.filePath"'
+                " FROM Class WHERE name = 'DatenAnbieter'"
+            ),
         )
 
         has_class = len(results) > 0
@@ -108,7 +120,12 @@ class TestUnicodeFiles:
         """Methods with non-ASCII names should be extracted."""
         root, store, config = indexed_sim
 
-        methods = store.query("MATCH (m:Method) WHERE m.className = 'DatenAnbieter' RETURN m.name")
+        from agentscaffold.graph.query_compat import ql
+
+        methods = ql(
+            store,
+            sql="SELECT name AS \"m.name\" FROM Method WHERE className = 'DatenAnbieter'",
+        )
         method_names = {r["m.name"] for r in methods}
 
         expected = {"hole_daten", "validiere"}
@@ -133,8 +150,14 @@ class TestGoRustFiles:
         """Go file should be indexed as a File node."""
         root, store, config = indexed_sim
 
-        results = store.query(
-            "MATCH (f:File) WHERE f.path CONTAINS 'go_utils.go' RETURN f.path, f.language"
+        from agentscaffold.graph.query_compat import ql
+
+        results = ql(
+            store,
+            sql=(
+                'SELECT path AS "f.path", language AS "f.language"'
+                " FROM File WHERE CONTAINS(path, 'go_utils.go')"
+            ),
         )
 
         has_go = len(results) > 0
@@ -155,8 +178,14 @@ class TestGoRustFiles:
         """Rust file should be indexed as a File node."""
         root, store, config = indexed_sim
 
-        results = store.query(
-            "MATCH (f:File) WHERE f.path CONTAINS 'rust_helper.rs' RETURN f.path, f.language"
+        from agentscaffold.graph.query_compat import ql
+
+        results = ql(
+            store,
+            sql=(
+                'SELECT path AS "f.path", language AS "f.language"'
+                " FROM File WHERE CONTAINS(path, 'rust_helper.rs')"
+            ),
         )
 
         has_rust = len(results) > 0
@@ -184,9 +213,9 @@ class TestDeletedFiles:
         from agentscaffold.config import GraphConfig, ScaffoldConfig
         from agentscaffold.graph.pipeline import run_pipeline
 
-        db_path = dest / ".scaffold" / "graph.db"
+        db_path = dest / ".scaffold" / "graph.duckdb"
         config = ScaffoldConfig()
-        config.graph = GraphConfig(db_path=str(db_path))
+        config.graph = GraphConfig(db_path=str(db_path), backend="duckpgq")
 
         run_pipeline(dest, config)
 
@@ -231,9 +260,9 @@ class TestMalformedGovernance:
         from agentscaffold.config import GraphConfig, ScaffoldConfig
         from agentscaffold.graph.pipeline import run_pipeline
 
-        db_path = dest / ".scaffold" / "graph.db"
+        db_path = dest / ".scaffold" / "graph.duckdb"
         config = ScaffoldConfig()
-        config.graph = GraphConfig(db_path=str(db_path))
+        config.graph = GraphConfig(db_path=str(db_path), backend="duckpgq")
 
         try:
             summary = run_pipeline(dest, config)
@@ -265,9 +294,9 @@ class TestMalformedGovernance:
         from agentscaffold.config import GraphConfig, ScaffoldConfig
         from agentscaffold.graph.pipeline import run_pipeline
 
-        db_path = dest / ".scaffold" / "graph.db"
+        db_path = dest / ".scaffold" / "graph.duckdb"
         config = ScaffoldConfig()
-        config.graph = GraphConfig(db_path=str(db_path))
+        config.graph = GraphConfig(db_path=str(db_path), backend="duckpgq")
 
         try:
             summary = run_pipeline(dest, config)
@@ -327,8 +356,15 @@ class TestStalePlan:
         """Plan 012 (from 2025-06-01) should be detectable as stale."""
         root, store, config = indexed_sim
 
-        plans = store.query(
-            "MATCH (p:Plan) WHERE p.number = 12 RETURN p.number, p.status, p.lastUpdated"
+        from agentscaffold.graph.query_compat import ql
+
+        plans = ql(
+            store,
+            sql=(
+                'SELECT number AS "p.number", status AS "p.status",'
+                ' lastUpdated AS "p.lastUpdated" FROM Plan'
+                " WHERE number = 12"
+            ),
         )
 
         has_plan = len(plans) > 0

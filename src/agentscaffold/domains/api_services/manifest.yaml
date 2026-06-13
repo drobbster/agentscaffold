@@ -12,3 +12,7 @@ standards:
   - error_response
 approval_gates:
   external_apis: true
+file_patterns:
+  - "api/**"
+  - "services/**"
+  - "handlers/**"

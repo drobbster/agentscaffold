@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +39,9 @@ app.add_typer(domains_app, name="domain", hidden=True)
 
 agents_app = typer.Typer(help="Agent integration file generation.")
 app.add_typer(agents_app, name="agents")
+
+plugins_app = typer.Typer(help="Plugin packaging and distribution.")
+app.add_typer(plugins_app, name="plugins")
 
 graph_app = typer.Typer(help="Knowledge graph operations.")
 app.add_typer(graph_app, name="graph")
@@ -80,6 +85,12 @@ def validate(
     check_session_summary: bool = typer.Option(
         False, "--check-session-summary", help="Verify session summary exists for agent PRs."
     ),
+    pre_edit: bool = typer.Option(
+        False, "--pre-edit", help="Quick pre-edit check (integration + prohibitions only)."
+    ),
+    warn_only: bool = typer.Option(
+        False, "--warn-only", help="Emit failures as warnings and always exit 0."
+    ),
 ) -> None:
     """Run all enforcement checks (lint, integration, retros, prohibitions, secrets)."""
     from agentscaffold.validate.orchestrator import run_validate
@@ -87,6 +98,8 @@ def validate(
     run_validate(
         check_safety_boundaries=check_safety_boundaries,
         check_session_summary=check_session_summary,
+        pre_edit=pre_edit,
+        warn_only=warn_only,
     )
 
 
@@ -102,7 +115,7 @@ def retro_check() -> None:
 def import_conversation(
     file: Path = typer.Argument(..., help="Path to conversation export file."),
     fmt: str = typer.Option(
-        "auto", "--format", "-f", help="Format: auto, chatgpt, claude, markdown."
+        "auto", "--format", "-f", help="Format: auto, chatgpt, markdown (claude not yet supported)."
     ),
     output: Path | None = typer.Option(
         None, "--output", "-o", help="Output file path (or directory for --split)."
@@ -143,7 +156,12 @@ def metrics() -> None:
 @app.command()
 def version() -> None:
     """Show AgentScaffold version."""
-    console.print(f"agentscaffold {__version__}")
+    try:
+        resolved_version = package_version("agentscaffold")
+    except PackageNotFoundError:
+        # Fallback for source-only execution without installed metadata.
+        resolved_version = __version__
+    console.print(f"agentscaffold {resolved_version}")
 
 
 # ---------------------------------------------------------------------------
@@ -414,6 +432,155 @@ def agents_prompt() -> None:
     run_prompt_export()
 
 
+@agents_app.command("hooks")
+def agents_hooks(
+    platform: str = typer.Option(
+        "all",
+        "--platform",
+        "-p",
+        help="Target platform: 'claude-code', 'cursor', 'windsurf', or 'all'.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print paths without writing files."),
+) -> None:
+    """Generate platform-native lifecycle hooks from enforcement config."""
+    from agentscaffold.config import load_config
+    from agentscaffold.hooks.generators.claude_code import write_claude_code_hooks
+    from agentscaffold.hooks.generators.cursor import (
+        generate_cursor_enforcement_files,
+        resolve_scaffold_bin,
+        write_cursor_hooks,
+    )
+    from agentscaffold.hooks.generators.windsurf import write_windsurf_hooks
+
+    config = load_config()
+    enforcement = config.enforcement
+    root = Path.cwd()
+
+    platforms = ["claude-code", "cursor", "windsurf"] if platform == "all" else [platform]
+
+    for plat in platforms:
+        if not enforcement.platform_enabled(plat):
+            console.print(f"[dim]Skipping {plat} (disabled in config)[/dim]")
+            continue
+
+        if plat == "claude-code":
+            path = write_claude_code_hooks(enforcement, root, dry_run=dry_run)
+            label = "Would write" if dry_run else "Wrote"
+            console.print(f"[green]{label}[/green] {path.relative_to(root)}")
+        elif plat == "cursor":
+            paths = generate_cursor_enforcement_files(enforcement, output_dir=root, dry_run=dry_run)
+            paths += write_cursor_hooks(
+                enforcement,
+                root,
+                scaffold_bin=resolve_scaffold_bin(),
+                dry_run=dry_run,
+            )
+            label = "Would write" if dry_run else "Wrote"
+            for p in paths:
+                console.print(f"[green]{label}[/green] {p.relative_to(root)}")
+            if not paths:
+                console.print("[dim]No enforcement rules for cursor[/dim]")
+        elif plat == "windsurf":
+            path = write_windsurf_hooks(enforcement, root, dry_run=dry_run)
+            label = "Would write" if dry_run else "Wrote"
+            console.print(f"[green]{label}[/green] {path.relative_to(root)}")
+        else:
+            console.print(f"[red]Unknown platform: {plat}[/red]")
+
+
+@agents_app.command("skills")
+def agents_skills(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print paths without writing files."),
+    if_standards_changed: bool = typer.Option(
+        False,
+        "--if-standards-changed",
+        help="Only regenerate if standards files are newer than existing skills.",
+    ),
+) -> None:
+    """Generate SKILL.md files into .claude/skills/ and .cursor/skills/."""
+    from agentscaffold.skills.catalog import write_catalog
+    from agentscaffold.skills.generator import generate_skills_from_standards_dir
+
+    root = Path.cwd()
+    standards_dir = root / "docs" / "ai" / "standards"
+    claude_skills = root / ".claude" / "skills"
+    cursor_skills = root / ".cursor" / "skills"
+
+    # Quick mtime check: skip if no standards are newer than the marker
+    if if_standards_changed:
+        marker = root / ".scaffold" / ".skills_generated"
+        if marker.is_file() and standards_dir.is_dir():
+            marker_mtime = marker.stat().st_mtime
+            any_newer = any(f.stat().st_mtime > marker_mtime for f in standards_dir.glob("*.md"))
+            if not any_newer:
+                return  # nothing changed, skip silently
+
+    written: list[Path] = []
+    for output_dir in (claude_skills, cursor_skills):
+        paths = generate_skills_from_standards_dir(standards_dir, output_dir, dry_run=dry_run)
+        written.extend(paths)
+        label = "Would write" if dry_run else "Wrote"
+        for p in paths:
+            try:
+                rel = p.relative_to(root)
+            except ValueError:
+                rel = p
+            console.print(f"[green]{label}[/green] {rel}")
+
+    if not dry_run and written:
+        for skills_dir in (claude_skills, cursor_skills):
+            catalog_path = skills_dir / "SKILLS_CATALOG.md"
+            write_catalog([skills_dir], catalog_path, dry_run=dry_run)
+            try:
+                rel = catalog_path.relative_to(root)
+            except ValueError:
+                rel = catalog_path
+            console.print(f"[green]Wrote[/green] {rel}")
+
+        # Update marker timestamp
+        marker = root / ".scaffold" / ".skills_generated"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+
+    if not written:
+        console.print("[dim]No standards found in docs/ai/standards/[/dim]")
+
+
+@agents_app.command("generate-all")
+def agents_generate_all(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print paths without writing files."),
+) -> None:
+    """Generate all platform artifacts (AGENTS.md, CLAUDE.md, Cursor rules, Windsurf, hooks)."""
+    from agentscaffold.agents.generate import run_agents_generate_all_platforms
+    from agentscaffold.config import load_config
+
+    config = load_config()
+    run_agents_generate_all_platforms(config, Path.cwd(), dry_run=dry_run)
+
+
+# ---------------------------------------------------------------------------
+# Plugin commands
+# ---------------------------------------------------------------------------
+
+
+@plugins_app.command("package")
+def plugins_package(
+    domain: str = typer.Option(..., "--domain", "-d", help="Domain pack name to package."),
+    output: str = typer.Option("dist/plugins", "--output", "-o", help="Output directory."),
+    version: str = typer.Option("0.1.0", "--version", "-v", help="Package version (semver)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print output path without writing."),
+) -> None:
+    """Package a domain pack into a pip-installable plugin."""
+    from agentscaffold.plugins.packaging import package_domain_plugin
+
+    output_dir = Path(output)
+    pkg_dir = package_domain_plugin(domain, output_dir, version=version, dry_run=dry_run)
+    if dry_run:
+        console.print(f"[dim]dry-run: would create {pkg_dir}[/dim]")
+    else:
+        console.print(f"[green]Plugin package created:[/green] {pkg_dir}")
+
+
 # ---------------------------------------------------------------------------
 # CI / Task runner (top-level commands)
 # ---------------------------------------------------------------------------
@@ -470,11 +637,15 @@ def index_cmd(
     from agentscaffold.graph import index
 
     config = load_config()
+    # Honor the config default (graph.embeddings) when the flag is not passed,
+    # so embeddings can be enabled repo-wide via scaffold.yaml without requiring
+    # --embeddings on every index invocation (including the PostToolUse hook).
+    embeddings = with_embeddings or bool(getattr(config.graph, "embeddings", False))
     index(
         path=path,
         config=config,
         incremental=incremental,
-        embeddings=with_embeddings,
+        embeddings=embeddings,
         audit=audit,
     )
 
@@ -535,9 +706,9 @@ def graph_stats() -> None:
 
 @graph_app.command("query")
 def graph_query(
-    cypher: str = typer.Argument(..., help="Cypher query to execute."),
+    sql: str = typer.Argument(..., help="SQL query to execute."),
 ) -> None:
-    """Execute a raw Cypher query against the graph."""
+    """Execute a raw SQL query against the graph."""
     import json
 
     from agentscaffold.config import load_config
@@ -550,7 +721,7 @@ def graph_query(
 
     store = open_graph(config)
     try:
-        results = store.query(cypher)
+        results = store.query(sql)
         console.print(json.dumps(results, indent=2, default=str))
     except Exception as exc:
         console.print(f"[red]Query error: {exc}[/red]")
@@ -563,7 +734,7 @@ def graph_query(
 def graph_search(
     query: str = typer.Argument(..., help="Natural language search query."),
     mode: str = typer.Option(
-        "hybrid", "--mode", "-m", help="Search mode: cypher, semantic, hybrid."
+        "hybrid", "--mode", "-m", help="Search mode: keyword, semantic, hybrid."
     ),
     top_k: int = typer.Option(10, "--top", "-k", help="Number of results."),
     table: str = typer.Option(
@@ -591,14 +762,14 @@ def graph_search(
                 "Falling back to keyword search only.[/yellow]\n"
                 "[dim]Install with: pip install agentscaffold[search][/dim]\n"
             )
-            mode = "cypher"
+            mode = "keyword"
         elif not embeddings_available(store):
             console.print(
                 "[yellow]Warning: No embeddings found in graph. "
                 "Falling back to keyword search only.[/yellow]\n"
                 "[dim]Generate embeddings with: scaffold index --embeddings[/dim]\n"
             )
-            mode = "cypher"
+            mode = "keyword"
 
     tables = [table] if table else None
     results = hybrid_search(store, query, mode=mode, top_k=top_k, tables=tables)
@@ -705,7 +876,10 @@ def graph_verify(
     """Spot-check graph accuracy against the filesystem."""
     from agentscaffold.config import load_config
     from agentscaffold.graph import graph_available, open_graph
-    from agentscaffold.graph.verify import print_verification_report, verify_graph
+    from agentscaffold.graph.verify import (
+        print_verification_report,
+        verify_graph,
+    )
 
     config = load_config()
     if not graph_available(config):
@@ -1009,6 +1183,7 @@ def review_history(
 
 @session_app.command("start")
 def session_start(
+    summary_arg: str = typer.Argument("", help="Session description (positional shorthand)."),
     plan: list[int] = typer.Option(
         [], "--plan", "-p", help="Plan number(s) to associate with this session."
     ),
@@ -1025,7 +1200,7 @@ def session_start(
         raise SystemExit(1)
 
     store = open_graph(config)
-    session_id = start_session(store, plan_numbers=plan, summary=summary)
+    session_id = start_session(store, plan_numbers=plan, summary=summary or summary_arg)
     store.close()
     console.print(f"[green]Session started:[/green] {session_id}")
     console.print(f"  To end this session: [bold]scaffold session end {session_id}[/bold]")
@@ -1033,7 +1208,7 @@ def session_start(
 
 @session_app.command("end")
 def session_end(
-    session_id: str = typer.Argument(..., help="Session ID to finalize."),
+    session_id: str = typer.Argument("", help="Session ID to finalize (omit to end most recent)."),
     summary: str = typer.Option("", "--summary", "-s", help="Final session summary."),
 ) -> None:
     """Finalize a coding session."""
@@ -1041,7 +1216,7 @@ def session_end(
 
     from agentscaffold.config import load_config
     from agentscaffold.graph import graph_available, open_graph
-    from agentscaffold.graph.sessions import end_session
+    from agentscaffold.graph.sessions import end_session, list_sessions
 
     config = load_config()
     if not graph_available(config):
@@ -1049,6 +1224,17 @@ def session_end(
         raise SystemExit(1)
 
     store = open_graph(config)
+    if not session_id:
+        sessions = list_sessions(store, limit=1)
+        if not sessions:
+            console.print("[red]No sessions found.[/red]")
+            store.close()
+            raise SystemExit(1)
+        session_id = sessions[0].get("id", "")
+        if not session_id:
+            console.print("[red]Could not determine most recent session.[/red]")
+            store.close()
+            raise SystemExit(1)
     result = end_session(store, session_id, summary=summary)
     store.close()
     console.print(json.dumps(result, indent=2, default=str))

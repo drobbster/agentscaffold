@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 # Re-export fixtures from eval/conftest.py so pytest discovers them
-from eval.conftest import baseline_config, fresh_sim, indexed_sim, sim_project_path  # noqa: F401
 
 
 def pytest_sessionfinish(session, exitstatus):

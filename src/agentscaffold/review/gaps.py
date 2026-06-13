@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from agentscaffold.graph.query_compat import ql
 from agentscaffold.review.queries import (
     get_file_importers,
     get_file_layer,
@@ -22,7 +23,7 @@ from agentscaffold.review.queries import (
 )
 
 if TYPE_CHECKING:
-    from agentscaffold.graph.store import GraphStore
+    from agentscaffold.graph.backend import GraphBackend
 
 
 @dataclass
@@ -35,7 +36,7 @@ class GapFinding:
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
-def generate_gaps(store: GraphStore, plan_number: int) -> list[GapFinding]:
+def generate_gaps(store: GraphBackend, plan_number: int) -> list[GapFinding]:
     """Generate gap findings for an expansion review.
 
     Returns a list of GapFinding objects, each with evidence.
@@ -64,7 +65,7 @@ def generate_gaps(store: GraphStore, plan_number: int) -> list[GapFinding]:
 
 
 def _consumer_audit(
-    store: GraphStore,
+    store: GraphBackend,
     impacted_files: list[dict[str, Any]],
     impacted_paths: set[str],
     out: list[GapFinding],
@@ -101,7 +102,7 @@ def _consumer_audit(
 
 
 def _integration_points(
-    store: GraphStore,
+    store: GraphBackend,
     impacted_files: list[dict[str, Any]],
     out: list[GapFinding],
 ) -> None:
@@ -157,7 +158,7 @@ def _integration_points(
 
 
 def _similar_plan_patterns(
-    store: GraphStore,
+    store: GraphBackend,
     plan_number: int,
     impacted_paths: set[str],
     out: list[GapFinding],
@@ -196,7 +197,7 @@ def _similar_plan_patterns(
 
 
 def _test_coverage_gaps(
-    store: GraphStore,
+    store: GraphBackend,
     impacted_files: list[dict[str, Any]],
     out: list[GapFinding],
 ) -> None:
@@ -211,10 +212,12 @@ def _test_coverage_gaps(
         # Check if any test file references the source
         escaped = fpath.replace("\\", "\\\\").replace("'", "\\'")
         file_stem = escaped.split("/")[-1].split(".")[0]
-        test_refs = store.query(
-            "MATCH (f:File) "
-            f"WHERE f.path CONTAINS 'test' AND f.path CONTAINS '{file_stem}' "
-            "RETURN f.path LIMIT 3"
+        test_refs = ql(
+            store,
+            sql=(
+                'SELECT path AS "f.path" FROM File'
+                f" WHERE CONTAINS(path, 'test') AND CONTAINS(path, '{file_stem}') LIMIT 3"
+            ),
         )
 
         if not test_refs:
@@ -236,7 +239,7 @@ def _test_coverage_gaps(
 
 
 def _dependency_completeness(
-    store: GraphStore,
+    store: GraphBackend,
     impacted_files: list[dict[str, Any]],
     impacted_paths: set[str],
     out: list[GapFinding],
@@ -254,8 +257,15 @@ def _dependency_completeness(
             continue
 
         escaped = fpath.replace("\\", "\\\\").replace("'", "\\'")
-        imports = store.query(
-            f"MATCH (a:File)-[:IMPORTS]->(b:File) WHERE a.path = '{escaped}' RETURN b.path"
+        imports = ql(
+            store,
+            sql=(
+                f'SELECT t.b_path AS "b.path"'
+                f" FROM GRAPH_TABLE(agentscaffold_graph"
+                f" MATCH (a:File)-[e:IMPORTS]->(b:File)"
+                f" WHERE a.path = '{escaped}'"
+                f" COLUMNS (b.path AS b_path)) t"
+            ),
         )
 
         for imp in imports:

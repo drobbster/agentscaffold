@@ -36,6 +36,29 @@ def _tool_selection_policy_lines() -> list[str]:
     ]
 
 
+def _graph_trust_discipline_lines() -> list[str]:
+    return [
+        "## Graph Trust Discipline (Avoid Context Blindness)",
+        "",
+        "AgentScaffold's graph is a fast first-pass, not ground truth. Treat its",
+        "structural results as evidence to narrow your search, not as proof.",
+        "",
+        "- An empty result (`0 callers`, `0 importers`, no impact) means",
+        "  `unconfirmed`, NOT `unused`. Do not conclude code is safe to change",
+        "  from an empty graph result alone.",
+        "- Call/import edges exist ONLY for parsed languages (python, javascript,",
+        "  typescript, go, rust, java, c, cpp). Markdown, YAML, shell, SQL, JSON,",
+        "  and config files are invisible to structural queries. Check the",
+        "  `coverage` field on tool output; heed any `caveat`.",
+        "- Static analysis cannot see dynamic dispatch, reflection (`getattr`),",
+        "  dependency-injection registries, or config/string-driven wiring.",
+        "- Before changing safety-critical, cross-language, or dynamically-wired",
+        "  code, confirm usage with a text search (grep) in addition to the graph.",
+        "- If `scaffold_orient` reports low parsed coverage, lean more on grep.",
+        "",
+    ]
+
+
 def _governance_guardrails_lines(config: ScaffoldConfig) -> list[str]:
     lines = [
         "## Governance Guardrails (Always Apply)",
@@ -85,13 +108,16 @@ def generate_rule_policy_document(
     title: str,
     intro_lines: list[str] | None = None,
     quote_intents: bool = True,
+    always_apply: bool = False,
 ) -> str:
     """Build a platform rule document with policy, guardrails, and intents."""
+    frontmatter = f"---\nalwaysApply: {str(always_apply).lower()}\n---\n\n"
     lines: list[str] = [f"# {title}", ""]
     if intro_lines:
         lines.extend(intro_lines)
         lines.append("")
     lines.extend(_tool_selection_policy_lines())
+    lines.extend(_graph_trust_discipline_lines())
     lines.extend(_governance_guardrails_lines(config))
     lines.extend(_intent_map_lines(quote_intents=quote_intents))
-    return "\n".join(lines).rstrip() + "\n"
+    return frontmatter + "\n".join(lines).rstrip() + "\n"
