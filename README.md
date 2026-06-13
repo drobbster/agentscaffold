@@ -273,15 +273,15 @@ scaffold domains add webapp
 
 ## Documentation
 
-Full documentation is in [docs/](docs/):
+Full documentation is in [docs/](https://github.com/drobbster/agentscaffold/tree/staging/docs):
 
-- [Getting Started](docs/getting-started.md) — installation, init, first plan
-- [User Guide](docs/user-guide.md) — session workflow, knowledge graph, review patterns
-- [Platform Integration](docs/platform-integration.md) — Cursor, Claude Code, Windsurf, Cline, aider, Codex, MCP setup
-- [Configuration Reference](docs/configuration.md) — full scaffold.yaml reference
-- [Domain Packs](docs/domain-packs.md) — available packs and installation
-- [Semi-Autonomous Guide](docs/semi-autonomous-guide.md) — CLI/CI agent mode
-- [CI Integration](docs/ci-integration.md) — GitHub Actions workflows
+- [Getting Started](https://github.com/drobbster/agentscaffold/blob/staging/docs/getting-started.md) — installation, init, first plan
+- [User Guide](https://github.com/drobbster/agentscaffold/blob/staging/docs/user-guide.md) — session workflow, knowledge graph, review patterns
+- [Platform Integration](https://github.com/drobbster/agentscaffold/blob/staging/docs/platform-integration.md) — Cursor, Claude Code, Windsurf, Cline, aider, Codex, MCP setup
+- [Configuration Reference](https://github.com/drobbster/agentscaffold/blob/staging/docs/configuration.md) — full scaffold.yaml reference
+- [Domain Packs](https://github.com/drobbster/agentscaffold/blob/staging/docs/domain-packs.md) — available packs and installation
+- [Semi-Autonomous Guide](https://github.com/drobbster/agentscaffold/blob/staging/docs/semi-autonomous-guide.md) — CLI/CI agent mode
+- [CI Integration](https://github.com/drobbster/agentscaffold/blob/staging/docs/ci-integration.md) — GitHub Actions workflows
 
 ## License
 

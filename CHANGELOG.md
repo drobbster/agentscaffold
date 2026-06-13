@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to semantic versioning (pre-1.0: minor versions may
 introduce additive features and small behavior changes).
 
+## [0.4.1] - 2026-06-12
+
+### Fixed
+- README documentation links now use absolute GitHub URLs instead of relative paths,
+  so they resolve correctly on the PyPI project page (relative links rendered dead on
+  PyPI because they resolved against pypi.org rather than the repository).
+
 ## [0.4.0] - 2026-06-12
 
 ### Added
