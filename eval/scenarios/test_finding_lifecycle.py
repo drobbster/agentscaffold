@@ -37,9 +37,10 @@ class TestFindingLifecycle:
 
         rows = ql(
             store,
-            cypher=(f"MATCH (rf:ReviewFinding) WHERE rf.id = '{fid}' RETURN rf.id, rf.status"),
-            sql=f'SELECT id AS "rf.id", status AS "rf.status" '
-            f"FROM ReviewFinding WHERE id = '{fid}'",
+            sql=(
+                f'SELECT id AS "rf.id", status AS "rf.status" '
+                f"FROM ReviewFinding WHERE id = '{fid}'"
+            ),
         )
         node_present = any(r.get("rf.id") == fid for r in rows)
         status_open = any(r.get("rf.status") == "open" for r in rows)
@@ -135,10 +136,6 @@ class TestFindingLifecycle:
 
         rows = ql(
             store,
-            cypher=(
-                f"MATCH (rf:ReviewFinding)-[:FINDING_ABOUT_FILE]->(f:File) "
-                f"WHERE rf.id = '{fid}' RETURN f.path"
-            ),
             sql=sql or "",
         )
         edge_paths = [r.get("f.path", "") for r in rows]

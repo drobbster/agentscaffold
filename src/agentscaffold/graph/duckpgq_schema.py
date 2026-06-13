@@ -48,10 +48,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import duckdb
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 7
 
 # ---------------------------------------------------------------------------
-# Node table DDL (19 tables)
+# Node table DDL (20 tables)
 # ---------------------------------------------------------------------------
 
 NODE_TABLES: list[str] = [
@@ -158,7 +158,8 @@ NODE_TABLES: list[str] = [
         planType    VARCHAR,
         filePath    VARCHAR,
         createdDate VARCHAR,
-        lastUpdated VARCHAR
+        lastUpdated VARCHAR,
+        reviewedAt  VARCHAR DEFAULT NULL
     )
     """,
     """
@@ -243,6 +244,19 @@ NODE_TABLES: list[str] = [
         timeBox    VARCHAR
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS BacklogItem (
+        id         VARCHAR PRIMARY KEY,
+        planNumber BIGINT,
+        title      VARCHAR,
+        priority   VARCHAR,
+        effort     VARCHAR,
+        status     VARCHAR,
+        source     VARCHAR,
+        createdAt  VARCHAR,
+        archivedAt VARCHAR
+    )
+    """,
     # --- Metadata nodes ---
     """
     CREATE TABLE IF NOT EXISTS GraphMeta (
@@ -265,7 +279,7 @@ NODE_TABLES: list[str] = [
 ]
 
 # ---------------------------------------------------------------------------
-# Edge table DDL (34 tables)
+# Edge table DDL (35 tables)
 # All edge tables use ``src`` and ``dst`` FK columns (spike convention).
 # ---------------------------------------------------------------------------
 
@@ -352,6 +366,21 @@ EDGE_TABLES: list[str] = [
     "CREATE TABLE IF NOT EXISTS ADR_CITES_STUDY (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
     "CREATE TABLE IF NOT EXISTS ADR_CITES_SPIKE (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
     "CREATE TABLE IF NOT EXISTS SPIKE_FOR_PLAN (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS BACKLOG_ITEM_OF (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
+    # Config-driven wiring: a config File (YAML/JSON/TOML) references a code File
+    # via a fully-qualified dotted path under an allowlisted key (e.g. ``class:
+    # libs.strategies.momentum.MomentumStrategy``). ``symbol`` is the trailing
+    # Class/Function name when one resolved, else empty; ``confidence`` is 0.9 when
+    # the symbol resolved in the target file, 0.7 for a file-only resolution.
+    """
+    CREATE TABLE IF NOT EXISTS CONFIG_REFERENCES (
+        src        VARCHAR NOT NULL,
+        dst        VARCHAR NOT NULL,
+        confidence DOUBLE,
+        refKey     VARCHAR,
+        symbol     VARCHAR
+    )
+    """,
 ]
 
 # ---------------------------------------------------------------------------
@@ -380,6 +409,7 @@ VERTEX TABLES (
     Contract,
     Learning,
     ReviewFinding,
+    BacklogItem,
     Session,
     Study,
     ADR,
@@ -489,7 +519,13 @@ EDGE TABLES (
         DESTINATION KEY (dst) REFERENCES Spike (id),
     SPIKE_FOR_PLAN
         SOURCE KEY (src) REFERENCES Spike (id)
-        DESTINATION KEY (dst) REFERENCES Plan (id)
+        DESTINATION KEY (dst) REFERENCES Plan (id),
+    BACKLOG_ITEM_OF
+        SOURCE KEY (src) REFERENCES BacklogItem (id)
+        DESTINATION KEY (dst) REFERENCES Plan (id),
+    CONFIG_REFERENCES
+        SOURCE KEY (src) REFERENCES File (id)
+        DESTINATION KEY (dst) REFERENCES File (id)
 )
 """
 

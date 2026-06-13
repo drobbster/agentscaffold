@@ -33,6 +33,10 @@ AgentScaffold enforces a plan lifecycle with adversarial reviews before implemen
 | Teams managing architectural integrity | Interface contracts and ADRs linked to code prevent drift detection gaps |
 | Post-incident retrospectives | Review findings remain queryable; resolved findings keep their history |
 
+### When you probably don't need it
+
+A well-tuned `CLAUDE.md` or Cursor rules file gets a solo developer most of the way on a small, short-lived project. If you are working alone on a few thousand lines over a few days, native tooling is enough and AgentScaffold's indexing and governance overhead may not pay for itself. The value compounds with **scale** (transitive impact analysis past the point where grep breaks down), **time** (cross-session memory that accumulates instead of resetting), and **team** (a shared graph and contract lifecycle that per-developer rules files cannot provide).
+
 ## What It Does
 
 AgentScaffold combines two capabilities:
@@ -70,29 +74,31 @@ After implementation, a post-implementation review verifies what was built again
 
 These numbers are downstream of governance and memory — not the lead story, but real.
 
-**From the eval harness (115 scenarios):**
+**From the eval harness (108 scenarios):**
 
 | Task | Without AgentScaffold | With AgentScaffold | Savings |
 |------|----------------------|-------------------|---------|
-| Understand a module and its dependents | 12 reads + 2 greps | 1 tool call | ~97% fewer tokens, ~93% fewer calls |
-| Codebase orientation | 38 file reads | 2 tool calls | ~77% fewer tokens, ~95% fewer calls |
-| Impact analysis (blast radius) | 12 file reads | 1 tool call | ~88% fewer tokens, ~92% fewer calls |
-| Find all code matching a concept | 8 file reads | 1 tool call | ~44% fewer tokens, ~88% fewer calls |
-| Full plan review with evidence | 10 file reads | 1 tool call | ~90% fewer calls (richer output) |
+| Understand a module and its dependents | 12 reads + 2 greps | 1 tool call | ~89% fewer tokens, ~93% fewer calls |
+| Codebase orientation | 38 file reads | 2 tool calls | ~74% fewer tokens, ~95% fewer calls |
+| Impact analysis (blast radius) | 12 file reads | 1 tool call | ~50% fewer tokens, ~92% fewer calls |
+| Find all code matching a concept | 8 file reads | 1 tool call | ~51% fewer tokens, ~88% fewer calls |
+| Full plan review with evidence | 10 file reads | 1 tool call | ~90% fewer calls (denser output; see note) |
 
-**Capability aggregate (raw): ~91% average call reduction. ~58% average token reduction.**
+**Capability aggregate (raw): ~87% average call reduction, ~38% average token reduction.**
 
-We report two views to avoid sugar-coating:
+Full plan review is the honest outlier: it replaces ten file reads with one call but returns *more* tokens, not fewer (a token *increase* in our harness), because the single response carries the brief, adversarial challenges, gaps, verification, and retro together — plus any open findings and config consumers. The win there is calls and completeness, not token count; it is gated on call reduction and kept in the average rather than dropped. Note also that token reduction fell as the tool outputs grew richer over recent releases — the trade is denser, more useful single responses for a smaller token margin.
+
+We report three views so the headline is not the optimistic one:
 
 | View | Token Reduction | Call Reduction |
 |------|-----------------|----------------|
-| Raw capability | ~58% | ~91% |
-| Behavioral (replay-adjusted) | ~44% | ~69% |
-| Quality-adjusted behavioral | ~39% | ~62% |
+| Raw capability (tool routes correctly) | ~38% | ~87% |
+| Behavioral (replay-adjusted) | ~30% | ~70% |
+| Quality-adjusted behavioral | ~27% | ~63% |
 
-Behavioral and quality-adjusted values come from replay traces (observed tool-call sequences + quality parity checks), not phrase-level intent matching. Adjusted values are lower because agents do not always choose tools consistently — the graph does not help if the agent reads files directly instead.
+Behavioral and quality-adjusted values come from replay traces (observed tool-call sequences + quality parity checks), not phrase-level intent matching. They are lower because agents do not always route to the tool — the graph does not help if the agent reads files directly instead. Replay-observed tool-first adherence in the latest run was ~80% (20% bypass), and the Cursor/Claude rule taxonomy added in this release is aimed at closing that gap.
 
-> **Note**: Exact numbers above are from the most recent evaluation run. Run `python -m pytest eval/scenarios/ -q` in `packages/agentscaffold` to reproduce against the current codebase.
+> **Note**: Numbers above are from the most recent evaluation run (`eval/reports/latest.md`). Run `python -m pytest eval/ -q` in `packages/agentscaffold` to reproduce against the current codebase.
 
 ## Quick Start
 
@@ -115,7 +121,7 @@ The `init` command scaffolds your project with:
 - `justfile` + `Makefile` — task runner shortcuts
 - `.github/workflows/` — CI with security scanning
 
-The `index` command builds the knowledge graph at `.scaffold/graph.db`, enabling search, reviews, impact analysis, and session memory.
+The `index` command builds the knowledge graph (a DuckDB + DuckPGQ database at `.scaffold/graph.duckdb`), enabling search, reviews, impact analysis, and session memory.
 
 ### Async freshness (low-latency graph updates for MCP)
 
@@ -185,6 +191,12 @@ You don't need to memorize tool names. AgentScaffold teaches the agent how to in
 | `scaffold_resolve_finding` | Mark a finding resolved with resolution text | < 200 ms |
 
 Findings recorded via `scaffold_record_finding` appear in all future `scaffold_prepare_review` calls for the same plan, ordered by severity. Resolved findings are retained for retrospectives but filtered from active review output.
+
+**Finding lifecycle, before and after:**
+
+*Without AgentScaffold* — A reviewer flags that `libs/data/router.py` has 8 transitive importers and changing its signature is risky. The session ends. Three sessions later, a different agent reviews the same plan, re-reads the same files, re-traces the same imports, and re-derives the same risk from scratch — roughly 2,000 tokens of reasoning per session, repeated every time, because the conclusion lived only in a chat transcript no one reloads.
+
+*With AgentScaffold* — The first reviewer calls `scaffold_record_finding` (severity `high`, category `dependency`, file `libs/data/router.py`). It is persisted as a `ReviewFinding` node linked to the file. Every later `scaffold_prepare_review` for that plan surfaces it in one call, so the reviewer starts from "this risk is known and open" instead of rediscovering it. When the risk is mitigated, `scaffold_resolve_finding` records the resolution and the finding drops out of active review but stays in the graph for the retrospective. In the eval harness this cut the review's token cost by about a third versus re-deriving — but the real point is that a known issue is never silently forgotten between sessions.
 
 **Granular tools** — building blocks for custom queries:
 

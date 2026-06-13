@@ -64,7 +64,6 @@ class TestEmptyFiles:
 
         results = ql(
             store,
-            cypher="MATCH (f:File) WHERE f.path CONTAINS 'empty_module' RETURN f.path, f.lineCount",
             sql=(
                 'SELECT path AS "f.path", lineCount AS "f.lineCount"'
                 " FROM File WHERE CONTAINS(path, 'empty_module')"
@@ -97,7 +96,6 @@ class TestUnicodeFiles:
 
         results = ql(
             store,
-            cypher="MATCH (c:Class) WHERE c.name = 'DatenAnbieter' RETURN c.name, c.filePath",
             sql=(
                 'SELECT name AS "c.name", filePath AS "c.filePath"'
                 " FROM Class WHERE name = 'DatenAnbieter'"
@@ -126,7 +124,6 @@ class TestUnicodeFiles:
 
         methods = ql(
             store,
-            cypher="MATCH (m:Method) WHERE m.className = 'DatenAnbieter' RETURN m.name",
             sql="SELECT name AS \"m.name\" FROM Method WHERE className = 'DatenAnbieter'",
         )
         method_names = {r["m.name"] for r in methods}
@@ -157,7 +154,6 @@ class TestGoRustFiles:
 
         results = ql(
             store,
-            cypher="MATCH (f:File) WHERE f.path CONTAINS 'go_utils.go' RETURN f.path, f.language",
             sql=(
                 'SELECT path AS "f.path", language AS "f.language"'
                 " FROM File WHERE CONTAINS(path, 'go_utils.go')"
@@ -186,9 +182,6 @@ class TestGoRustFiles:
 
         results = ql(
             store,
-            cypher=(
-                "MATCH (f:File) WHERE f.path " "CONTAINS 'rust_helper.rs' RETURN f.path, f.language"
-            ),
             sql=(
                 'SELECT path AS "f.path", language AS "f.language"'
                 " FROM File WHERE CONTAINS(path, 'rust_helper.rs')"
@@ -367,7 +360,6 @@ class TestStalePlan:
 
         plans = ql(
             store,
-            cypher="MATCH (p:Plan) WHERE p.number = 12 RETURN p.number, p.status, p.lastUpdated",
             sql=(
                 'SELECT number AS "p.number", status AS "p.status",'
                 ' lastUpdated AS "p.lastUpdated" FROM Plan'

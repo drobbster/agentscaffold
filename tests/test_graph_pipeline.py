@@ -42,7 +42,7 @@ class TestStructurePhase:
         """File nodes have contentHash populated."""
         repo, store = indexed_repo
         rows = store.query(
-            'SELECT contentHash AS "f.contentHash" FROM File ' "WHERE path = 'libs/data/router.py'"
+            "SELECT contentHash AS \"f.contentHash\" FROM File WHERE path = 'libs/data/router.py'"
         )
         assert len(rows) == 1
         assert rows[0]["f.contentHash"] != ""
@@ -51,7 +51,7 @@ class TestStructurePhase:
         """Python files are tagged with correct language."""
         repo, store = indexed_repo
         rows = store.query(
-            'SELECT language AS "f.language" FROM File ' "WHERE path = 'libs/data/router.py'"
+            "SELECT language AS \"f.language\" FROM File WHERE path = 'libs/data/router.py'"
         )
         assert rows[0]["f.language"] == "python"
 

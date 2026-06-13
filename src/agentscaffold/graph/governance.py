@@ -160,6 +160,7 @@ def _parse_plan(filepath: Path) -> dict[str, Any] | None:
         "last_updated": last_updated,
         "file_impacts": impacts,
         "dependencies": dependencies,
+        "text": text,
     }
 
 
@@ -326,30 +327,81 @@ def _parse_learnings(filepath: Path) -> list[dict[str, Any]]:
 # Review finding parsing
 # ---------------------------------------------------------------------------
 
+# Categories emitted by the review engine (challenges.py + gaps.py) plus the
+# manual categories used in hand-written review appendices. Order matters:
+# categories that are prefixes of others (CONSUMER, DEPENDENCY, PATTERN) must
+# come AFTER their longer variants so the alternation prefers the longest match.
+# The optional (?P<severity>!{1,2}) consumes the "!"/"!!" severity markers the
+# formatters append (e.g. "[DEPENDENCY]!! ..."), keeping them out of the text.
 _FINDING_RE = re.compile(
-    r"\[(?P<category>DEPENDENCY|HISTORY|LEARNING|LAYER|CONTRACT|PATTERN|CONSUMER|PERFORMANCE|"
-    r"FINDING|RISK|GAP|EDGE_CASE)\]\s*(?P<text>[^\n]+(?:\n(?!\[)[^\n]+)*)",
+    r"\[(?P<category>"
+    r"DEPENDENCY_COMPLETENESS|DEPENDENCY|"
+    r"CONSUMER_AUDIT|CONSUMER|"
+    r"SIMILAR_PATTERN|PATTERN|"
+    r"INTEGRATION_POINTS|TEST_COVERAGE|"
+    r"HISTORY|LEARNING|LAYER|CONTRACT|PERFORMANCE|"
+    r"FINDING|RISK|GAP|EDGE_CASE"
+    r")\](?P<severity>!{1,2})?\s*(?P<text>[^\n]+(?:\n(?!\[)[^\n]+)*)",
     re.MULTILINE,
 )
+
+# Map the formatter's severity markers to ReviewFinding severity levels.
+_SEVERITY_BY_MARKER = {"!!": "high", "!": "medium", "": "medium"}
 
 
 def _parse_review_findings(text: str, plan_number: int, review_type: str) -> list[dict[str, Any]]:
     """Extract structured review findings from review text."""
     findings: list[dict[str, Any]] = []
     for i, m in enumerate(_FINDING_RE.finditer(text)):
+        severity = _SEVERITY_BY_MARKER.get(m.group("severity") or "", "medium")
         findings.append(
             {
                 "plan_number": plan_number,
                 "review_type": review_type,
                 "category": m.group("category").strip(),
                 "finding": m.group("text").strip()[:500],
-                "severity": "medium",
+                "severity": severity,
                 "resolution": "",
                 "status": "open",
                 "index": i,
             }
         )
     return findings
+
+
+# Review type label for findings ingested from plan-file text at index time,
+# distinguishing them from runtime write-back findings ("pre_review", etc.).
+_PLAN_APPENDIX_REVIEW_TYPE = "plan_appendix"
+
+
+def _ingest_plan_findings(store: GraphBackend, plan_number: int, text: str) -> int:
+    """Create ReviewFinding nodes from [CATEGORY] markers in a plan's text.
+
+    Returns the number of findings parsed. Nodes use deterministic ids and
+    create_node's ON CONFLICT DO NOTHING semantics, so this is idempotent
+    across re-indexing and never clobbers a finding already marked resolved.
+    """
+    from agentscaffold.graph.findings import _finding_id
+
+    raw = _parse_review_findings(text, plan_number, _PLAN_APPENDIX_REVIEW_TYPE)
+    for f in raw:
+        finding_id = _finding_id(
+            plan_number, _PLAN_APPENDIX_REVIEW_TYPE, f["category"], f["finding"]
+        )
+        store.create_node(
+            "ReviewFinding",
+            {
+                "id": finding_id,
+                "reviewType": _PLAN_APPENDIX_REVIEW_TYPE,
+                "planNumber": plan_number,
+                "severity": f["severity"],
+                "category": f["category"],
+                "finding": f["finding"],
+                "resolution": "",
+                "status": "open",
+            },
+        )
+    return len(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -596,6 +648,44 @@ def _extract_dependencies(meta: dict[str, str]) -> list[int]:
 # ---------------------------------------------------------------------------
 
 
+def governance_source_files(root: Path, config: Any | None = None) -> list[Path]:
+    """Return all governance source files that ``process_governance`` ingests.
+
+    Used by the incremental indexer to fingerprint governance state and decide
+    whether a governance refresh is needed (doc-only edits that the code
+    changeset cannot see). Mirrors the directory resolution in
+    ``process_governance`` so the two stay in sync.
+    """
+    if config and hasattr(config, "graph"):
+        gc = config.graph
+        dirs = [
+            root / gc.plans_dir,
+            root / gc.contracts_dir,
+            root / gc.studies_dir,
+            root / gc.adrs_dir,
+            root / gc.spikes_dir,
+        ]
+        files = [root / gc.learnings_file]
+    else:
+        dirs = [
+            root / "docs" / "ai" / "plans",
+            root / "docs" / "ai" / "contracts",
+            root / "docs" / "studies",
+            root / "docs" / "ai" / "adrs",
+            root / "docs" / "ai" / "spikes",
+        ]
+        files = [root / "docs" / "ai" / "state" / "learnings_tracker.md"]
+
+    result: list[Path] = []
+    for d in dirs:
+        if d.is_dir():
+            result.extend(sorted(d.rglob("*.md")))
+    for f in files:
+        if f.is_file():
+            result.append(f)
+    return result
+
+
 def process_governance(
     store: GraphBackend,
     root: Path,
@@ -691,6 +781,13 @@ def process_governance(
                     )
                     impact_edge_count += 1
 
+            # Ingest review findings embedded as [CATEGORY] markers in the plan
+            # text (e.g. pasted review/retro output). Idempotent: ReviewFinding
+            # ids are deterministic and create_node is ON CONFLICT DO NOTHING, so
+            # re-indexing re-affirms findings and preserves any 'resolved' status
+            # set later via the runtime resolve_finding path.
+            finding_count += _ingest_plan_findings(store, data["number"], data["text"])
+
     # --- Plan dependency edges (second pass, all plan nodes exist) ---
     dep_edge_count = 0
     for plan_id, dep_numbers in plan_dependencies:
@@ -729,8 +826,7 @@ def process_governance(
                 fn_rows = ql(
                     store,
                     sql=(
-                        f'SELECT id AS "fn.id" FROM Function '
-                        f"WHERE name = '{method_name}' LIMIT 1"
+                        f"SELECT id AS \"fn.id\" FROM Function WHERE name = '{method_name}' LIMIT 1"
                     ),
                 )
                 if fn_rows:

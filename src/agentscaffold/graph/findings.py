@@ -185,6 +185,85 @@ def get_open_findings(
     return sorted(rows, key=_sev_key)
 
 
+def record_findings_batch(
+    store: GraphBackend,
+    *,
+    plan_number: int,
+    review_type: str,
+    findings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Record multiple ReviewFinding nodes in a single transaction.
+
+    Each item in ``findings`` must have ``category`` and ``finding`` keys.
+    Optional keys per item: ``severity``, ``file_paths``, ``function_ids``.
+
+    Args:
+        store: Open GraphBackend instance.
+        plan_number: The plan this batch of findings relates to.
+        review_type: Review type label (e.g. "quant_architect").
+        findings: List of finding dicts.
+
+    Returns:
+        Dict with ``ids``, ``count``, and ``elapsed_ms``.
+    """
+    t0 = time.monotonic()
+    if not findings:
+        return {"ids": [], "count": 0, "elapsed_ms": 0.0}
+
+    ids: list[str] = []
+    now = datetime.now(timezone.utc).isoformat()
+
+    store.execute("BEGIN TRANSACTION")
+    try:
+        for item in findings:
+            category = item.get("category", "general")
+            finding_text = item.get("finding", "")
+            severity = item.get("severity", "medium")
+            finding_id = _finding_id(plan_number, review_type, category, finding_text)
+
+            props: dict[str, Any] = {
+                "id": finding_id,
+                "reviewType": review_type,
+                "planNumber": plan_number,
+                "severity": severity,
+                "category": category,
+                "finding": finding_text,
+                "resolution": "",
+                "status": "open",
+            }
+            store.create_node("ReviewFinding", props)
+
+            for fp in item.get("file_paths") or []:
+                rows = store.query(f"SELECT id FROM File WHERE path = '{_esc(fp)}'")
+                file_id = rows[0]["id"] if rows else None
+                if file_id:
+                    store.create_edge(
+                        "FINDING_ABOUT_FILE", "ReviewFinding", finding_id, "File", file_id
+                    )
+
+            for fn_id in item.get("function_ids") or []:
+                store.create_edge(
+                    "FINDING_ABOUT_FUNC", "ReviewFinding", finding_id, "Function", fn_id
+                )
+
+            ids.append(finding_id)
+
+        store.execute("COMMIT")
+    except Exception:
+        store.execute("ROLLBACK")
+        raise
+
+    elapsed_ms = (time.monotonic() - t0) * 1000
+    return {
+        "ids": ids,
+        "count": len(ids),
+        "plan_number": plan_number,
+        "review_type": review_type,
+        "elapsed_ms": elapsed_ms,
+        "created_at": now,
+    }
+
+
 def _esc(s: str) -> str:
     """Minimal SQL string escaping (single-quote doubling)."""
     return s.replace("'", "''")

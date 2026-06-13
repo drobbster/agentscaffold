@@ -65,6 +65,17 @@ def run_import(
 
     resolved_fmt = fmt if fmt != "auto" else _detect_format(file)
 
+    # Claude conversation export parsing is not implemented. Fail clearly instead
+    # of writing a placeholder file that looks like a successful import.
+    if resolved_fmt == "claude":
+        console.print(
+            "[yellow]Claude conversation import is not yet supported.[/yellow]\n"
+            "Use [bold]--format chatgpt[/bold] or [bold]--format markdown[/bold], "
+            "or convert the export to markdown first. "
+            "See agentscaffold/import_cmd/claude.py to contribute a parser."
+        )
+        return
+
     # --list: show conversation titles and exit
     if list_only:
         if resolved_fmt == "chatgpt":
@@ -169,10 +180,6 @@ def run_import(
         from agentscaffold.import_cmd.chatgpt import parse_chatgpt
 
         content = parse_chatgpt(file)
-    elif resolved_fmt == "claude":
-        from agentscaffold.import_cmd.claude import parse_claude
-
-        content = parse_claude(file)
     elif resolved_fmt == "markdown":
         from agentscaffold.import_cmd.markdown import parse_markdown
 
@@ -180,7 +187,7 @@ def run_import(
     else:
         console.print(
             f"[red]Unknown format '{resolved_fmt}'. "
-            f"Supported formats: chatgpt, claude, markdown, auto[/red]"
+            f"Supported formats: chatgpt, markdown, auto (claude not yet supported)[/red]"
         )
         return
 

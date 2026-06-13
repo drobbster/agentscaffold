@@ -830,7 +830,7 @@ scaffold index --embeddings    # Generate code embeddings for semantic search
 scaffold index --audit         # Log all resolution decisions
 ```
 
-The graph is stored at `.scaffold/graph.db` by default (configurable in `scaffold.yaml` under `graph.db_path`). It requires the `[graph]` optional dependency:
+The graph is a DuckDB + DuckPGQ database stored at `.scaffold/graph.duckdb` by default (configurable in `scaffold.yaml` under `graph.db_path`). It requires the `[graph]` optional dependency:
 
 ```bash
 pip install agentscaffold[graph]          # Python, JS, TS grammars
@@ -1100,6 +1100,50 @@ When running the MCP server (`scaffold mcp`), 20 tools are available to AI agent
 
 The MCP tools return both structured JSON and formatted markdown, so agents can parse the data programmatically or display it directly.
 
+### Review Findings: Continuous Improvement Feedback Loop
+
+`scaffold_record_finding` and `scaffold_resolve_finding` close the loop between reviews and
+implementation. Findings are persisted as graph nodes and surface automatically in every
+subsequent review of the same plan — the agent cannot forget a finding because it lives in
+the graph, not in context.
+
+**The full cycle:**
+
+1. **During review** — agent (or human) identifies an issue and records it:
+   ```
+   "record finding: plan 149 has a missing error handler in the retry path, severity high"
+   ```
+   This calls `scaffold_record_finding` and creates a `ReviewFinding` node linked to the
+   plan, affected files, and functions.
+
+2. **Next review of the same plan** — `scaffold_prepare_review` automatically includes all
+   open findings in its `open_findings` list, ordered by severity. The reviewing agent sees
+   the finding without needing to re-read prior session history.
+
+3. **After the fix ships** — mark it resolved:
+   ```
+   "mark finding rf::abc123 resolved -- added retry backoff in commit abc456"
+   ```
+   The finding status flips to `resolved`. It is retained in the graph for retrospective
+   audit but filtered from active review output.
+
+4. **Retrospective** — `scaffold_prepare_retro` surfaces resolved findings as part of the
+   post-implementation record, showing what was caught in review and how it was addressed.
+
+**Practical usage:**
+
+```
+# Record during a review session
+"I found an issue in plan 42 -- log this review finding: the session end command
+ requires an explicit session ID which breaks automation scripts. Severity: medium."
+
+# Later, after the fix
+"resolve finding rf::90cd4acdb447 -- fixed in 0.3.1, session ID is now optional"
+```
+
+Findings are linked to specific files and functions when provided, so future
+`scaffold_impact` calls on those files also surface related open findings.
+
 ### Graph Quality
 
 The graph includes verification mechanisms:
@@ -1189,7 +1233,7 @@ freshness:
 Stop any running MCP server first (`Ctrl-C` or kill the process), then:
 
 ```bash
-rm .scaffold/graph.db
+rm .scaffold/graph.duckdb
 scaffold index
 ```
 
@@ -1216,14 +1260,10 @@ Supported languages: Python, JavaScript, TypeScript, Go, Rust, Java, C, C++.
 
 ### `scaffold graph query` returns a SQL error
 
-The graph uses DuckDB with DuckPGQ — queries are SQL, not Cypher. Example:
+The graph uses DuckDB with DuckPGQ — queries must be SQL. Example:
 
 ```bash
-# Correct
 scaffold graph query "SELECT count(*) FROM File"
-
-# Wrong (Cypher syntax, will fail)
-scaffold graph query "MATCH (f:File) RETURN count(f)"
 ```
 
 Use standard SQL `SELECT` statements. Property graph traversals use `FROM GRAPH_TABLE(...)` syntax.

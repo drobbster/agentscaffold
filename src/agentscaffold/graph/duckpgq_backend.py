@@ -71,6 +71,39 @@ _EDGE_TABLE_NAMES: tuple[str, ...] = (
     "ADR_CITES_STUDY",
     "ADR_CITES_SPIKE",
     "SPIKE_FOR_PLAN",
+    "BACKLOG_ITEM_OF",
+    "CONFIG_REFERENCES",
+)
+
+# Governance artifacts derived from docs/ (plans, contracts, learnings, etc.).
+# These are re-ingested wholesale by process_governance(); clearing them before
+# re-ingestion keeps incremental runs free of stale edges/nodes. ReviewFinding
+# and Session are intentionally excluded -- they are user/agent knowledge, not
+# derived governance, and are preserved across re-indexing.
+_GOVERNANCE_NODE_TABLES: tuple[str, ...] = (
+    "Plan",
+    "Contract",
+    "Learning",
+    "Study",
+    "ADR",
+    "Spike",
+)
+_GOVERNANCE_EDGE_TABLES: tuple[str, ...] = (
+    "PLAN_IMPACTS",
+    "PLAN_INTRODUCES_FUNC",
+    "PLAN_INTRODUCES_CLASS",
+    "CONTRACT_DECLARES_FUNC",
+    "CONTRACT_DECLARES_CLASS",
+    "LEARNING_RELATES_TO_FILE",
+    "LEARNING_RELATES_TO_FUNC",
+    "DEPENDS_ON_PLAN",
+    "STUDY_REFERENCES_PLAN",
+    "STUDY_REFERENCES_FILE",
+    "ADR_GOVERNS",
+    "ADR_SUPERSEDES",
+    "ADR_CITES_STUDY",
+    "ADR_CITES_SPIKE",
+    "SPIKE_FOR_PLAN",
 )
 
 
@@ -269,6 +302,15 @@ class DuckPGQBackend:
         ``from_table`` and ``to_table`` are accepted for protocol compatibility
         but are not used — the edge table's src/dst columns already encode the
         relationship directionality.
+
+        The insert is idempotent on ``(src, dst)``: a relationship between the
+        same pair of nodes in the same edge table is created at most once. This
+        mirrors ``create_node``'s ON CONFLICT DO NOTHING semantics and prevents
+        duplicate edges from accumulating when a processor re-runs over the same
+        files (e.g. incremental indexing). All edge tables in the schema model a
+        single logical relationship per node pair, so deduplicating on
+        ``(src, dst)`` is semantically correct; edge properties (confidence,
+        importedNames, changeType) are retained from the first insert.
         """
         cols = ["src", "dst"]
         vals: list[Any] = [from_id, to_id]
@@ -276,8 +318,13 @@ class DuckPGQBackend:
             cols += list(props.keys())
             vals += [v if v is not None else "" for v in props.values()]
         placeholders = ", ".join(["?" for _ in cols])
-        sql = f"INSERT INTO {rel_table} ({', '.join(cols)}) VALUES ({placeholders})"
-        self._conn.execute(sql, vals)
+        sql = (
+            f"INSERT INTO {rel_table} ({', '.join(cols)})"
+            f" SELECT {placeholders}"
+            f" WHERE NOT EXISTS"
+            f" (SELECT 1 FROM {rel_table} WHERE src = ? AND dst = ?)"
+        )
+        self._conn.execute(sql, [*vals, from_id, to_id])
 
     def node_count(self, table: str) -> int:
         """Return the number of rows in a node table."""
@@ -334,7 +381,7 @@ class DuckPGQBackend:
         (review findings, sessions) survives while derived data is rebuilt.
         """
         # Tables that represent knowledge gained through work, not derived from code
-        preserve_nodes = {"ReviewFinding", "Session", "GraphMeta"}
+        preserve_nodes = {"ReviewFinding", "BacklogItem", "Session", "GraphMeta"}
         preserve_edges = {
             "FINDING_ABOUT_FILE",
             "FINDING_ABOUT_FUNC",
@@ -387,6 +434,27 @@ class DuckPGQBackend:
         from agentscaffold.graph.duckpgq_schema import CREATE_PROPERTY_GRAPH_SQL
 
         self._conn.execute(CREATE_PROPERTY_GRAPH_SQL)
+
+    def clear_governance(self) -> None:
+        """Delete governance nodes and edges so they can be re-ingested cleanly.
+
+        Used before re-running ``process_governance`` (notably in incremental
+        indexing) to avoid stale plan/contract/learning edges lingering after a
+        governance document changes. Preserves ReviewFinding, BacklogItem and
+        Session knowledge, matching ``clear_derived``'s preservation policy.
+
+        Uses plain DELETE (DML), so the registered property graph is unaffected.
+        """
+        for edge_table in _GOVERNANCE_EDGE_TABLES:
+            try:
+                self._conn.execute(f"DELETE FROM {edge_table}")
+            except Exception:
+                pass
+        for node_table in _GOVERNANCE_NODE_TABLES:
+            try:
+                self._conn.execute(f"DELETE FROM {node_table}")
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Pipeline state management
@@ -475,6 +543,7 @@ class DuckPGQBackend:
             "adrs": self.node_count("ADR"),
             "spikes": self.node_count("Spike"),
             "review_findings": self.node_count("ReviewFinding"),
+            "backlog_items": self.node_count("BacklogItem"),
             "parsing_warnings": self.node_count("ParsingWarning"),
         }
 

@@ -80,6 +80,10 @@ def run_agents_generate_all_platforms(
     from agentscaffold.hooks.generators.claude_code import write_claude_code_hooks  # noqa: PLC0415
     from agentscaffold.hooks.generators.cursor import (  # noqa: PLC0415
         generate_cursor_enforcement_files,
+        write_cursor_hooks,
+    )
+    from agentscaffold.hooks.generators.cursor import (  # noqa: PLC0415
+        resolve_scaffold_bin as _resolve_scaffold_bin,
     )
     from agentscaffold.hooks.generators.windsurf import write_windsurf_hooks  # noqa: PLC0415
 
@@ -125,6 +129,14 @@ def run_agents_generate_all_platforms(
         written["cursor"].extend(
             generate_cursor_enforcement_files(
                 config.enforcement, output_dir=project_root, dry_run=dry_run
+            )
+        )
+        written["cursor"].extend(
+            write_cursor_hooks(
+                config.enforcement,
+                project_root,
+                scaffold_bin=_resolve_scaffold_bin(),
+                dry_run=dry_run,
             )
         )
 

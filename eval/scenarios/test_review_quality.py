@@ -186,7 +186,6 @@ class TestCommunities:
 
         communities = ql(
             store,
-            cypher="MATCH (c:Community) RETURN c.id, c.label, c.fileCount",
             sql=(
                 'SELECT id AS "c.id", label AS "c.label",'
                 ' fileCount AS "c.fileCount" FROM Community'
@@ -213,7 +212,6 @@ class TestCommunities:
 
         members = ql(
             store,
-            cypher="MATCH (f:File)-[:MEMBER_OF_COMMUNITY]->(c:Community) RETURN f.path, c.label",
             sql=(
                 'SELECT t.f_path AS "f.path", t.c_label AS "c.label" '
                 "FROM GRAPH_TABLE(agentscaffold_graph "

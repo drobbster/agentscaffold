@@ -607,6 +607,72 @@ def get_all_spikes(store: GraphBackend) -> list[dict[str, Any]]:
     )
 
 
+# ---------------------------------------------------------------------------
+# Backlog queries
+# ---------------------------------------------------------------------------
+
+
+def get_open_backlog_items(
+    store: GraphBackend,
+    *,
+    plan_number: int | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Return open BacklogItems, optionally filtered by plan, sorted by priority."""
+    from agentscaffold.graph.backlog import get_open_backlog_items as _get_open  # noqa: PLC0415
+
+    return _get_open(store, plan_number=plan_number, limit=limit)
+
+
+def get_backlog_items_for_plan(
+    store: GraphBackend,
+    plan_number: int,
+    *,
+    include_archived: bool = False,
+) -> list[dict[str, Any]]:
+    """Return all BacklogItems for a specific plan."""
+    from agentscaffold.graph.backlog import (  # noqa: PLC0415
+        get_backlog_items_for_plan as _get_plan_items,
+    )
+
+    return _get_plan_items(store, plan_number, include_archived=include_archived)
+
+
+# ---------------------------------------------------------------------------
+# Plan lifecycle queries
+# ---------------------------------------------------------------------------
+
+
+def stamp_plan_reviewed(store: GraphBackend, plan_number: int) -> str | None:
+    """Set ``reviewedAt`` on the Plan node for the given plan number.
+
+    Returns the ISO timestamp written, or None if the Plan node does not exist.
+    """
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    now = datetime.now(timezone.utc).isoformat()
+    rows = store.query(f"SELECT id FROM Plan WHERE number = {plan_number}")
+    if not rows:
+        return None
+    plan_id = rows[0]["id"]
+    store.execute(f"UPDATE Plan SET reviewedAt = '{now}' WHERE id = '{plan_id}'")
+    return now
+
+
+def get_plan_reviewed_at(store: GraphBackend, plan_number: int) -> str | None:
+    """Return the ``reviewedAt`` timestamp for the given plan, or None."""
+    rows = store.query(f"SELECT reviewedAt FROM Plan WHERE number = {plan_number}")
+    if not rows:
+        return None
+    val = rows[0].get("reviewedAt")
+    return val if val else None
+
+
+# ---------------------------------------------------------------------------
+# Spike queries (continued)
+# ---------------------------------------------------------------------------
+
+
 def get_spike_by_title(store: GraphBackend, title_fragment: str) -> list[dict[str, Any]]:
     """Return spikes matching a title keyword."""
     escaped = title_fragment.replace("'", "\\'")

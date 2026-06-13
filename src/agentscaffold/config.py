@@ -207,7 +207,7 @@ class LayerMapping(BaseModel):
 
 
 class GraphConfig(BaseModel):
-    db_path: str = ".scaffold/graph.db"
+    db_path: str = ".scaffold/graph.duckdb"
     backend: str = "duckpgq"
     languages: list[str] | None = None
     ignore: list[str] = Field(default_factory=list)

@@ -14,10 +14,14 @@ from agentscaffold.hooks.generators.claude_code import (
     write_claude_code_hooks,
 )
 from agentscaffold.hooks.generators.cursor import (
+    INDEX_HOOK_REL_PATH,
     CursorRuleClass,
     _build_frontmatter,
     generate_cursor_enforcement_files,
+    generate_cursor_hooks_config,
     generate_enforcement_rule_file,
+    render_index_hook_script,
+    write_cursor_hooks,
 )
 from agentscaffold.hooks.generators.windsurf import (
     generate_windsurf_enforcement_section,
@@ -197,6 +201,99 @@ def test_generate_cursor_enforcement_files_platform_disabled(tmp_path: Path) -> 
     )
     paths = generate_cursor_enforcement_files(cfg, output_dir=tmp_path)
     assert paths == []
+
+
+# ---------------------------------------------------------------------------
+# Native Cursor hooks (.cursor/hooks.json + afterFileEdit wrapper)
+# ---------------------------------------------------------------------------
+
+
+def test_generate_cursor_hooks_config_freshness() -> None:
+    cfg = EnforcementConfig(freshness_trigger=True)
+    payload = generate_cursor_hooks_config(cfg)
+    assert payload["version"] == 1
+    entries = payload["hooks"]["afterFileEdit"]
+    assert entries[0]["command"] == f"./{INDEX_HOOK_REL_PATH}"
+
+
+def test_generate_cursor_hooks_config_no_freshness() -> None:
+    cfg = EnforcementConfig(freshness_trigger=False)
+    payload = generate_cursor_hooks_config(cfg)
+    assert payload["hooks"] == {}
+
+
+def test_render_index_hook_script_uses_scaffold_bin() -> None:
+    script = render_index_hook_script("/opt/venv/bin/scaffold")
+    assert script.startswith("#!/usr/bin/env bash")
+    assert 'scaffold_bin="/opt/venv/bin/scaffold"' in script
+    assert '"$scaffold_bin" index --incremental' in script
+    # Must emit a JSON object on stdout and exit cleanly (Cursor contract).
+    assert "'{}'" in script
+    assert "exit 0" in script
+
+
+def test_render_index_hook_script_is_single_flight_and_nonblocking() -> None:
+    script = render_index_hook_script("scaffold")
+    # Single-flight lock + coalesced trailing run + backgrounded so the hook
+    # returns immediately and rapid edits never stack.
+    assert 'mkdir "$lock_dir"' in script
+    assert "index.request" in script
+    assert "disown" in script
+    # Honors an explicit disable switch.
+    assert "SCAFFOLD_HOOK_DISABLE" in script
+
+
+def test_write_cursor_hooks_creates_script_and_json(tmp_path: Path) -> None:
+    cfg = EnforcementConfig(freshness_trigger=True)
+    paths = write_cursor_hooks(cfg, tmp_path, scaffold_bin="scaffold")
+    script_path, hooks_path = paths
+    assert script_path.exists()
+    assert script_path.name == "scaffold-index.sh"
+    # Script must be executable.
+    assert script_path.stat().st_mode & 0o111
+    data = json.loads(hooks_path.read_text())
+    assert data["version"] == 1
+    assert data["hooks"]["afterFileEdit"][0]["command"] == f"./{INDEX_HOOK_REL_PATH}"
+
+
+def test_write_cursor_hooks_dry_run(tmp_path: Path) -> None:
+    cfg = EnforcementConfig(freshness_trigger=True)
+    paths = write_cursor_hooks(cfg, tmp_path, dry_run=True)
+    assert len(paths) == 2
+    assert not paths[0].exists()
+    assert not paths[1].exists()
+
+
+def test_write_cursor_hooks_disabled_platform(tmp_path: Path) -> None:
+    cfg = EnforcementConfig(
+        freshness_trigger=True,
+        platforms={"cursor": PlatformHooksConfig(enabled=False)},
+    )
+    assert write_cursor_hooks(cfg, tmp_path) == []
+
+
+def test_write_cursor_hooks_no_freshness(tmp_path: Path) -> None:
+    cfg = EnforcementConfig(freshness_trigger=False)
+    assert write_cursor_hooks(cfg, tmp_path) == []
+
+
+def test_write_cursor_hooks_merges_and_is_idempotent(tmp_path: Path) -> None:
+    hooks_path = tmp_path / ".cursor" / "hooks.json"
+    hooks_path.parent.mkdir(parents=True)
+    hooks_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "hooks": {"beforeShellExecution": [{"command": "./guard.sh"}]},
+            }
+        )
+    )
+    cfg = EnforcementConfig(freshness_trigger=True)
+    write_cursor_hooks(cfg, tmp_path)
+    write_cursor_hooks(cfg, tmp_path)  # second run must not duplicate
+    data = json.loads(hooks_path.read_text())
+    assert data["hooks"]["beforeShellExecution"] == [{"command": "./guard.sh"}]
+    assert len(data["hooks"]["afterFileEdit"]) == 1
 
 
 # ---------------------------------------------------------------------------

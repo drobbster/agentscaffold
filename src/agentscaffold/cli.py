@@ -88,6 +88,9 @@ def validate(
     pre_edit: bool = typer.Option(
         False, "--pre-edit", help="Quick pre-edit check (integration + prohibitions only)."
     ),
+    warn_only: bool = typer.Option(
+        False, "--warn-only", help="Emit failures as warnings and always exit 0."
+    ),
 ) -> None:
     """Run all enforcement checks (lint, integration, retros, prohibitions, secrets)."""
     from agentscaffold.validate.orchestrator import run_validate
@@ -96,6 +99,7 @@ def validate(
         check_safety_boundaries=check_safety_boundaries,
         check_session_summary=check_session_summary,
         pre_edit=pre_edit,
+        warn_only=warn_only,
     )
 
 
@@ -111,7 +115,7 @@ def retro_check() -> None:
 def import_conversation(
     file: Path = typer.Argument(..., help="Path to conversation export file."),
     fmt: str = typer.Option(
-        "auto", "--format", "-f", help="Format: auto, chatgpt, claude, markdown."
+        "auto", "--format", "-f", help="Format: auto, chatgpt, markdown (claude not yet supported)."
     ),
     output: Path | None = typer.Option(
         None, "--output", "-o", help="Output file path (or directory for --split)."
@@ -441,7 +445,11 @@ def agents_hooks(
     """Generate platform-native lifecycle hooks from enforcement config."""
     from agentscaffold.config import load_config
     from agentscaffold.hooks.generators.claude_code import write_claude_code_hooks
-    from agentscaffold.hooks.generators.cursor import generate_cursor_enforcement_files
+    from agentscaffold.hooks.generators.cursor import (
+        generate_cursor_enforcement_files,
+        resolve_scaffold_bin,
+        write_cursor_hooks,
+    )
     from agentscaffold.hooks.generators.windsurf import write_windsurf_hooks
 
     config = load_config()
@@ -461,6 +469,12 @@ def agents_hooks(
             console.print(f"[green]{label}[/green] {path.relative_to(root)}")
         elif plat == "cursor":
             paths = generate_cursor_enforcement_files(enforcement, output_dir=root, dry_run=dry_run)
+            paths += write_cursor_hooks(
+                enforcement,
+                root,
+                scaffold_bin=resolve_scaffold_bin(),
+                dry_run=dry_run,
+            )
             label = "Would write" if dry_run else "Wrote"
             for p in paths:
                 console.print(f"[green]{label}[/green] {p.relative_to(root)}")
@@ -623,11 +637,15 @@ def index_cmd(
     from agentscaffold.graph import index
 
     config = load_config()
+    # Honor the config default (graph.embeddings) when the flag is not passed,
+    # so embeddings can be enabled repo-wide via scaffold.yaml without requiring
+    # --embeddings on every index invocation (including the PostToolUse hook).
+    embeddings = with_embeddings or bool(getattr(config.graph, "embeddings", False))
     index(
         path=path,
         config=config,
         incremental=incremental,
-        embeddings=with_embeddings,
+        embeddings=embeddings,
         audit=audit,
     )
 

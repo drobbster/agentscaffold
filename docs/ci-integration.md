@@ -174,9 +174,9 @@ make test
 
 ## Troubleshooting
 
-### `scaffold validate` fails because graph.db is missing
+### `scaffold validate` fails because the graph is missing
 
-`scaffold validate` does not require the graph. If a step that uses the graph fails with a missing `.scaffold/graph.db`, run `scaffold index` first or remove the graph-dependent step from CI.
+`scaffold validate` does not require the graph. If a step that uses the graph fails with a missing `.scaffold/graph.duckdb`, run `scaffold index` first or remove the graph-dependent step from CI.
 
 ### Graph freshness gate blocks the CI run
 

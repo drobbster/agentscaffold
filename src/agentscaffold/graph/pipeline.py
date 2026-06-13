@@ -45,7 +45,7 @@ def run_pipeline(
     """
     root = root.resolve()
     graph_config = config.graph if config else None
-    db_path = Path(graph_config.db_path) if graph_config else Path(".scaffold/graph.db")
+    db_path = Path(graph_config.db_path) if graph_config else Path(".scaffold/graph.duckdb")
 
     if not db_path.is_absolute():
         db_path = root / db_path
@@ -70,7 +70,7 @@ def run_pipeline(
 
     # Incremental mode: compute changeset and only process changed files
     if incremental and store.schema_current():
-        return _run_incremental(store, root, graph_config, t0, embeddings)
+        return _run_incremental(store, root, graph_config, t0, embeddings, config=config)
 
     # Check for resumable state or failed prior run
     if not incremental:
@@ -172,6 +172,11 @@ def run_pipeline(
             call_result = process_calls(store, root, symbol_table)
             summary["calls"] = call_result
 
+            from agentscaffold.graph.config_refs import process_config_references
+
+            config_ref_result = process_config_references(store, root)
+            summary["config_refs"] = config_ref_result
+
             phases_completed.append("resolution")
             store.update_pipeline_state("partial", phases_completed)
 
@@ -185,6 +190,10 @@ def run_pipeline(
                 f"{call_result['high_confidence']} high, "
                 f"{call_result['medium_confidence']} medium, "
                 f"{call_result['low_confidence']} low"
+            )
+            console.print(
+                f"  Config refs: {config_ref_result['edges']} edges "
+                f"from {config_ref_result['config_files']} config file(s)"
             )
 
             # Quality warnings
@@ -222,6 +231,7 @@ def run_pipeline(
             summary["governance"] = gov_result
             phases_completed.append("governance")
             store.update_pipeline_state("complete", phases_completed)
+            _write_governance_fingerprint(store, root, config)
             console.print(
                 f"  {gov_result['plans']} plans, "
                 f"{gov_result['contracts']} contracts, "
@@ -229,6 +239,7 @@ def run_pipeline(
                 f"{gov_result.get('studies', 0)} studies, "
                 f"{gov_result.get('adrs', 0)} ADRs, "
                 f"{gov_result.get('spikes', 0)} spikes, "
+                f"{gov_result.get('findings', 0)} findings, "
                 f"{gov_result['impact_edges']} impact edges, "
                 f"{gov_result.get('dependency_edges', 0)} dep edges"
             )
@@ -304,12 +315,42 @@ def run_pipeline(
     return summary
 
 
+def _governance_fp_path(store: GraphBackend) -> Path | None:
+    """Return the path to the governance fingerprint sidecar, or None.
+
+    The sidecar lives alongside the graph DB file. Returns None for in-memory
+    backends or backends that do not expose a DB path, in which case the caller
+    treats governance as always-changed (safe default).
+    """
+    db_path = getattr(store, "_db_path", None)
+    if db_path is None or str(db_path) == ":memory:":
+        return None
+    return Path(db_path).parent / "governance.fingerprint"
+
+
+def _write_governance_fingerprint(
+    store: GraphBackend, root: Path, config: ScaffoldConfig | None
+) -> None:
+    """Persist the current governance fingerprint to the sidecar (best-effort)."""
+    fp_path = _governance_fp_path(store)
+    if fp_path is None:
+        return
+    try:
+        from agentscaffold.graph.governance import governance_source_files
+        from agentscaffold.graph.incremental import governance_fingerprint
+
+        fp_path.write_text(governance_fingerprint(governance_source_files(root, config)))
+    except OSError as exc:
+        logger.warning("Could not write governance fingerprint: %s", exc)
+
+
 def _run_incremental(
     store: GraphBackend,
     root: Path,
     graph_config: Any,
     t0: float,
     embeddings: bool = False,
+    config: ScaffoldConfig | None = None,
 ) -> dict[str, Any]:
     """Run incremental index: only process changed files."""
     from agentscaffold.graph.incremental import (
@@ -333,7 +374,26 @@ def _run_incremental(
 
     summary: dict[str, Any] = {"changeset": changeset}
 
-    if not added and not modified and not deleted:
+    # Governance freshness gate. Governance documents (plans, contracts,
+    # learnings, etc.) are markdown that the code changeset cannot see, so we
+    # fingerprint them separately. A doc-only edit changes the fingerprint and
+    # forces a governance refresh; a code-only edit leaves it unchanged and
+    # skips the ~2.7s governance reingest.
+    from agentscaffold.graph.governance import governance_source_files
+    from agentscaffold.graph.incremental import governance_fingerprint
+
+    gov_files = governance_source_files(root, config)
+    current_gov_fp = governance_fingerprint(gov_files)
+    fp_path = _governance_fp_path(store)
+    prior_gov_fp = None
+    if fp_path is not None and fp_path.exists():
+        try:
+            prior_gov_fp = fp_path.read_text().strip()
+        except OSError:
+            prior_gov_fp = None
+    gov_changed = prior_gov_fp != current_gov_fp
+
+    if not added and not modified and not deleted and not gov_changed:
         console.print("[green]Graph is up to date. Nothing to do.[/green]")
         elapsed = time.monotonic() - t0
         summary["elapsed_seconds"] = round(elapsed, 1)
@@ -379,6 +439,54 @@ def _run_incremental(
 
         call_result = process_calls(store, root, symbol_table)
         summary["calls"] = call_result
+
+        # Config references can change when a config file is edited or when a
+        # referenced code file is refreshed (its incoming edges were dropped with
+        # the file node). Reprocessing is cheap and idempotent, so re-run whenever
+        # any file changed.
+        from agentscaffold.graph.config_refs import process_config_references
+
+        config_ref_result = process_config_references(store, root)
+        summary["config_refs"] = config_ref_result
+        console.print(
+            f"  Config refs: {config_ref_result['edges']} edges "
+            f"from {config_ref_result['config_files']} config file(s)"
+        )
+
+    # Refresh governance artifacts (plans, contracts, learnings, studies, ADRs,
+    # spikes) only when they actually changed, or when files were added/deleted
+    # (which can rewire plan-impact / learning-relates-to edges). A pure code
+    # content edit that touches no governance doc skips this ~2.7s reingest.
+    # We clear governance first so stale edges do not linger when a document
+    # changes, then re-ingest. Edges are idempotent on (src, dst), governance
+    # nodes use deterministic ids, and clear_governance preserves ReviewFinding
+    # and its file/func links, so this is safe to repeat.
+    if gov_changed or added or deleted:
+        try:
+            from agentscaffold.graph.governance import process_governance
+
+            store.clear_governance()
+            gov_result = process_governance(store, root, config=config)
+            summary["governance"] = gov_result
+            console.print(
+                f"  Governance: {gov_result['plans']} plans, "
+                f"{gov_result['contracts']} contracts, "
+                f"{gov_result['learnings']} learnings, "
+                f"{gov_result.get('findings', 0)} findings, "
+                f"{gov_result['impact_edges']} impact edges"
+            )
+            if fp_path is not None:
+                try:
+                    fp_path.write_text(current_gov_fp)
+                except OSError as exc:
+                    logger.warning("Could not write governance fingerprint: %s", exc)
+        except Exception as exc:
+            logger.error("Incremental governance refresh failed: %s", exc)
+            store.add_parsing_warning(
+                "pw::pipeline::governance", "", "governance", str(exc), "warning"
+            )
+    else:
+        console.print("  Governance unchanged; skipping refresh")
 
     # Re-run communities
     from agentscaffold.graph.communities import detect_communities
@@ -547,6 +655,10 @@ def _print_summary(summary: dict[str, Any], store: GraphBackend) -> None:
         f"M:{calls.get('medium_confidence', 0)} "
         f"L:{calls.get('low_confidence', 0)})",
     )
+
+    config_refs = summary.get("config_refs", {})
+    if config_refs:
+        table.add_row("Config reference edges", str(config_refs.get("edges", 0)))
 
     gov = summary.get("governance", {})
     if gov:
