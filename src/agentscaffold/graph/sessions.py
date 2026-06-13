@@ -99,9 +99,7 @@ def record_modification(
             escaped = updated.replace("\\", "\\\\").replace("'", "\\'")
             ql_execute(
                 store,
-                sql=(
-                    f"UPDATE Session SET filesModified = '{escaped}' " f"WHERE id = '{session_id}'"
-                ),
+                sql=(f"UPDATE Session SET filesModified = '{escaped}' WHERE id = '{session_id}'"),
             )
 
 

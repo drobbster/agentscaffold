@@ -40,15 +40,15 @@ def conn():
 
 
 def test_schema_version():
-    assert SCHEMA_VERSION == 4  # bumped in Step A.8 (EmbeddingStore added)
+    assert SCHEMA_VERSION == 7  # bumped in Plan 216 (CONFIG_REFERENCES edge added)
 
 
 def test_node_table_count():
-    assert len(NODE_TABLES) == 19
+    assert len(NODE_TABLES) == 20
 
 
 def test_edge_table_count():
-    assert len(EDGE_TABLES) == 34
+    assert len(EDGE_TABLES) == 36
 
 
 def test_all_node_ddl_returns_copy():
@@ -125,6 +125,7 @@ def test_create_property_graph_sql_lists_all_edge_tables():
         "ADR_CITES_STUDY",
         "ADR_CITES_SPIKE",
         "SPIKE_FOR_PLAN",
+        "CONFIG_REFERENCES",
     ]
     for name in expected_edges:
         assert name in CREATE_PROPERTY_GRAPH_SQL, f"Missing edge: {name}"
@@ -218,7 +219,7 @@ def test_graph_table_plan_impacts_query(conn):
     )
     conn.execute(
         "INSERT INTO Plan VALUES ('p:1', 1, 'Test Plan', 'COMPLETE', 'feature',"
-        " 'docs/plans/1.md', '2026-01-01', '2026-01-01')"
+        " 'docs/plans/1.md', '2026-01-01', '2026-01-01', NULL)"
     )
     conn.execute("INSERT INTO PLAN_IMPACTS VALUES ('p:1', 'f:1', 'MODIFY')")
 
@@ -266,7 +267,7 @@ def test_graph_table_adr_governs_two_hop(conn):
     conn.execute("INSERT INTO File VALUES ('f:1', 'src/a.py', 'python', 10, '', 5, '')")
     conn.execute(
         "INSERT INTO Plan VALUES"
-        " ('p:1', 1, 'Plan One', 'COMPLETE', 'feature', '', '2026-01-01', '')"
+        " ('p:1', 1, 'Plan One', 'COMPLETE', 'feature', '', '2026-01-01', '', NULL)"
     )
     conn.execute(
         "INSERT INTO ADR VALUES ('adr:1', 1, 'ADR One', 'Accepted', '2026-01-01', '', '', '', '')"

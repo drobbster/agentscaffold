@@ -130,24 +130,24 @@ class TestCritiqueTemplateEnrichment:
 
 
 class TestSearchModes:
-    """Benchmark: Compare cypher vs hybrid search results."""
+    """Benchmark: Compare keyword vs hybrid search results."""
 
     @timed
-    def test_cypher_vs_hybrid_coverage(self, indexed_sim):
-        """Hybrid search should return at least as many results as cypher alone."""
+    def test_keyword_vs_hybrid_coverage(self, indexed_sim):
+        """Hybrid search should return at least as many results as keyword alone."""
         root, store, config = indexed_sim
         from agentscaffold.graph.search import hybrid_search
 
-        cypher_results = hybrid_search(store, "DataRouter", mode="cypher", top_k=10)
+        keyword_results = hybrid_search(store, "DataRouter", mode="keyword", top_k=10)
         hybrid_results = hybrid_search(store, "DataRouter", mode="hybrid", top_k=10)
 
         benchmark = BenchmarkResult(
             scenario_name="search_mode_coverage",
             with_graph_count=len(hybrid_results),
-            without_graph_count=len(cypher_results),
-            delta=len(hybrid_results) - len(cypher_results),
+            without_graph_count=len(keyword_results),
+            delta=len(hybrid_results) - len(keyword_results),
             observations=[
-                f"Cypher: {len(cypher_results)} results",
+                f"Keyword: {len(keyword_results)} results",
                 f"Hybrid: {len(hybrid_results)} results",
             ],
         )
@@ -155,10 +155,10 @@ class TestSearchModes:
 
         result = EvalResult(
             scenario="search_coverage",
-            passed=len(hybrid_results) >= len(cypher_results),
-            score=1.0 if len(hybrid_results) >= len(cypher_results) else 0.5,
-            expected="Hybrid >= cypher results",
-            actual=f"Hybrid: {len(hybrid_results)}, Cypher: {len(cypher_results)}",
+            passed=len(hybrid_results) >= len(keyword_results),
+            score=1.0 if len(hybrid_results) >= len(keyword_results) else 0.5,
+            expected="Hybrid >= keyword results",
+            actual=f"Hybrid: {len(hybrid_results)}, Keyword: {len(keyword_results)}",
             category="benchmark",
         )
         collect_result(result)

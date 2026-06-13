@@ -39,6 +39,26 @@ def _file_hash(path: Path) -> str:
     return h.hexdigest()
 
 
+def governance_fingerprint(files: list[Path]) -> str:
+    """Compute a cheap fingerprint of governance source files.
+
+    Uses path + mtime + size (no content read) so it is fast enough to run on
+    every incremental invocation. A change in any governance document changes
+    the fingerprint, which the incremental indexer uses to decide whether to
+    refresh governance (doc-only edits the code changeset cannot see).
+    """
+    h = hashlib.sha256()
+    for p in sorted(files):
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        h.update(str(p).encode())
+        h.update(str(st.st_mtime_ns).encode())
+        h.update(str(st.st_size).encode())
+    return h.hexdigest()
+
+
 def compute_changeset(
     store: GraphBackend,
     root: Path,

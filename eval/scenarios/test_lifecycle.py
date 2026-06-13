@@ -51,7 +51,6 @@ class TestFullIndexLifecycle:
 
         rows = ql(
             store,
-            cypher="MATCH (f:File) WHERE f.language = 'python' RETURN f.path",
             sql="SELECT path AS \"f.path\" FROM File WHERE language = 'python'",
         )
         file_paths = {r["f.path"] for r in rows}
@@ -88,14 +87,12 @@ class TestFullIndexLifecycle:
 
         fn_rows = ql(
             store,
-            cypher="MATCH (fn:Function) RETURN fn.name",
             sql='SELECT name AS "fn.name" FROM Function',
         )
         fn_names = {r["fn.name"] for r in fn_rows}
 
         class_rows = ql(
             store,
-            cypher="MATCH (c:Class) RETURN c.name",
             sql='SELECT name AS "c.name" FROM Class',
         )
         class_names = {r["c.name"] for r in class_rows}
@@ -132,17 +129,14 @@ class TestFullIndexLifecycle:
 
         plans = ql(
             store,
-            cypher="MATCH (p:Plan) RETURN p.number, p.title, p.status",
-            sql=('SELECT number AS "p.number", title AS "p.title", status AS "p.status" FROM Plan'),
+            sql='SELECT number AS "p.number", title AS "p.title", status AS "p.status" FROM Plan',
         )
         contracts = ql(
             store,
-            cypher="MATCH (c:Contract) RETURN c.name, c.version",
             sql='SELECT name AS "c.name", version AS "c.version" FROM Contract',
         )
         learnings = ql(
             store,
-            cypher="MATCH (l:Learning) RETURN l.id",
             sql='SELECT id AS "l.id" FROM Learning',
         )
 
@@ -190,7 +184,6 @@ class TestFullIndexLifecycle:
 
         edges = ql(
             store,
-            cypher="MATCH (a:File)-[:IMPORTS]->(b:File) RETURN a.path, b.path",
             sql=sql,
         )
 
@@ -319,10 +312,6 @@ class TestSessionLifecycle:
 
         session_mods = ql(
             store,
-            cypher=(
-                f"MATCH (s:Session)-[:SESSION_MODIFIED]->(f:File) "
-                f"WHERE s.id = '{sid}' RETURN f.path"
-            ),
             sql=(
                 f'SELECT t.f_path AS "f.path" FROM GRAPH_TABLE(agentscaffold_graph '
                 f"MATCH (s:Session)-[e:SESSION_MODIFIED]->(f:File) "

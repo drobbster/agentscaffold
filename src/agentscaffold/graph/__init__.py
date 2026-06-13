@@ -78,7 +78,7 @@ def index(
 def _resolve_db_path(config: ScaffoldConfig | None) -> Path:
     if config is not None and hasattr(config, "graph"):
         return Path(config.graph.db_path)
-    return Path(".scaffold/graph.db")
+    return Path(".scaffold/graph.duckdb")
 
 
 def _resolve_backend(config: ScaffoldConfig | None) -> str:

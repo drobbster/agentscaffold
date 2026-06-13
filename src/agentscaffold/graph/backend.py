@@ -105,6 +105,15 @@ class GraphBackend(Protocol):
         """
         self.clear_all()
 
+    def clear_governance(self) -> None:
+        """Delete governance nodes/edges so they can be re-ingested cleanly.
+
+        Used before re-running governance ingestion (e.g. incremental indexing)
+        to avoid stale plan/contract/learning edges. Default implementation is a
+        no-op; backends that ingest governance should override it.
+        """
+        return None
+
     # ------------------------------------------------------------------
     # Pipeline state management
     # ------------------------------------------------------------------

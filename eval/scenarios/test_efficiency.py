@@ -186,11 +186,18 @@ class TestPlanReview:
         collect_efficiency(eff)
 
         blended = _efficiency_score(eff)
+        # Plan review is the deliberate token-negative composite: it replaces ~10 file
+        # reads with a single call but returns MORE tokens, because the one response
+        # carries the brief, adversarial challenges, gaps, verification, and retro
+        # together (and, since Plans 213/216, any open findings and config consumers).
+        # Its value is call reduction and completeness, not token count -- so this
+        # scenario is gated on call reduction and reports token/blended figures as
+        # informational rather than asserting on the blended threshold.
         result = EvalResult(
             scenario="efficiency_plan_review",
-            passed=blended > 0.3 and eff.call_reduction_pct > 0,
+            passed=eff.call_reduction_pct > 0,
             score=round(blended, 2),
-            expected="Blended score > 0.3 and call reduction > 0%",
+            expected="Call reduction > 0% (token-negative by design; tokens reported)",
             actual=(
                 f"Token reduction: {eff.token_reduction_pct}%, "
                 f"Call reduction: {eff.call_reduction_pct}%, "
@@ -200,11 +207,10 @@ class TestPlanReview:
             category="efficiency",
         )
         collect_result(result)
-        assert blended > 0.3, (
-            f"Blended efficiency too low: {blended:.2f} "
-            f"(token: {eff.token_reduction_pct}%, calls: {eff.call_reduction_pct}%)"
+        assert eff.call_reduction_pct > 0, (
+            f"Plan review should still cut tool calls: call reduction "
+            f"{eff.call_reduction_pct}% (tokens are denser by design)"
         )
-        assert eff.call_reduction_pct > 0
 
 
 class TestCodebaseOrientation:
@@ -377,7 +383,7 @@ class TestCodeSearch:
         with p1, p2, p3:
             search_result = _dispatch_tool(
                 "scaffold_search",
-                {"query": "risk management", "mode": "cypher", "top_k": 10},
+                {"query": "risk management", "mode": "keyword", "top_k": 10},
             )
         graph_text = json.dumps(search_result, default=str)
         graph_tokens = estimate_tokens(graph_text)

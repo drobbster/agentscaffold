@@ -90,6 +90,19 @@ def run_cursor_setup() -> None:
 
     write_cursor_reviewer_rules(config, cursor_dir)
 
+    if config.enforcement.platform_enabled("cursor"):
+        from agentscaffold.hooks.generators.cursor import (
+            resolve_scaffold_bin,
+            write_cursor_hooks,
+        )
+
+        for path in write_cursor_hooks(
+            config.enforcement,
+            project_root,
+            scaffold_bin=resolve_scaffold_bin(),
+        ):
+            console.print(f"[green]Wrote[/green] {path.relative_to(project_root)}")
+
 
 def generate_cursor_reviewer_rule(reviewer: ReviewerConfig, prompt_body: str = "") -> str:
     """Render a Cursor agent-requested rule file for a reviewer."""

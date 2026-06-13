@@ -75,7 +75,7 @@ class TestScaffoldStats:
 
 
 class TestScaffoldQuery:
-    """Scenario: scaffold_query executes Cypher and returns results."""
+    """Scenario: scaffold_query executes SQL and returns results."""
 
     @timed
     def test_query_returns_results(self, indexed_sim):
@@ -87,7 +87,6 @@ class TestScaffoldQuery:
             result_data = _dispatch_tool(
                 "scaffold_query",
                 {
-                    "cypher": "MATCH (f:File) RETURN f.path LIMIT 5",
                     "sql": 'SELECT path AS "f.path" FROM File LIMIT 5',
                 },
             )

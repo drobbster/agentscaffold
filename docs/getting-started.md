@@ -193,7 +193,7 @@ After scaffolding, build the knowledge graph to enable search, reviews, and sess
 scaffold index
 ```
 
-This indexes your codebase into a local graph database (`.scaffold/graph.db`). For subsequent updates, use `--incremental` (only re-indexes changed files).
+This indexes your codebase into a local DuckDB + DuckPGQ graph database (`.scaffold/graph.duckdb`). For subsequent updates, use `--incremental` (only re-indexes changed files).
 
 For semantic and hybrid search, first install the `[search]` extra, then pass `--embeddings`:
 
@@ -281,13 +281,13 @@ section in the [User Guide](user-guide.md).
 
 ### `scaffold index` fails with "No language" warnings
 
-Tree-sitter grammar warnings like `No language_c() in tree_sitter_c` are harmless — the indexer skips unsupported files and continues. If a language you care about is not parsed, install the grammar:
+Warnings like `No language_c() in tree_sitter_c` or `No language_cpp() in tree_sitter_cpp` were a bug in agentscaffold 0.3.0 (wrong grammar function name lookup for C and C++) and are fixed in 0.3.1+. Upgrade to resolve them:
 
 ```bash
-pip install "agentscaffold[graph]"
+pip install --upgrade "agentscaffold[graph]"
 ```
 
-All eight bundled grammars (Python, JavaScript, TypeScript, Go, Rust, Java, C, C++) are included in the `[graph]` extra.
+If a different language you care about is still not parsed, ensure the grammar extra is installed. All eight bundled grammars (Python, JavaScript, TypeScript, Go, Rust, Java, C, C++) are included in the `[graph]` extra.
 
 ### Semantic search returns no results
 
@@ -308,12 +308,12 @@ scaffold index
 
 Incremental indexing (`--incremental`) only processes changed files. After moving, deleting, or renaming many files, a full re-index is more reliable.
 
-### graph.db is corrupted or locked
+### graph.duckdb is corrupted or locked
 
 If you see DuckDB errors on startup, delete the graph and rebuild:
 
 ```bash
-rm .scaffold/graph.db
+rm .scaffold/graph.duckdb
 scaffold index
 ```
 

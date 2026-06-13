@@ -16,19 +16,16 @@ def _node_counts(store) -> dict[str, int]:
     return {
         "File": ql_scalar(
             store,
-            cypher="MATCH (f:File) RETURN count(f)",
             sql="SELECT count(*) FROM File",
         )
         or 0,
         "Function": ql_scalar(
             store,
-            cypher="MATCH (fn:Function) RETURN count(fn)",
             sql="SELECT count(*) FROM Function",
         )
         or 0,
         "Class": ql_scalar(
             store,
-            cypher="MATCH (c:Class) RETURN count(c)",
             sql="SELECT count(*) FROM Class",
         )
         or 0,
@@ -77,43 +74,36 @@ class TestDuckPGQConsistency:
 
         canonical_queries = [
             (
-                "MATCH (f:File) WHERE f.language = 'python' RETURN f.path ORDER BY f.path LIMIT 5",
-                (
-                    'SELECT path AS "f.path" FROM File'
-                    " WHERE language = 'python' ORDER BY path LIMIT 5"
-                ),
+                'SELECT path AS "f.path" FROM File'
+                " WHERE language = 'python' ORDER BY path LIMIT 5",
                 "f.path",
             ),
             (
-                "MATCH (fn:Function) RETURN fn.name ORDER BY fn.name LIMIT 5",
                 'SELECT name AS "fn.name" FROM Function ORDER BY name LIMIT 5',
                 "fn.name",
             ),
             (
-                "MATCH (c:Class) RETURN c.name ORDER BY c.name LIMIT 5",
                 'SELECT name AS "c.name" FROM Class ORDER BY name LIMIT 5',
                 "c.name",
             ),
             (
-                "MATCH (p:Plan) RETURN p.number ORDER BY p.number LIMIT 5",
                 'SELECT number AS "p.number" FROM Plan ORDER BY number LIMIT 5',
                 "p.number",
             ),
             (
-                "MATCH (c:Contract) RETURN c.name ORDER BY c.name LIMIT 5",
                 'SELECT name AS "c.name" FROM Contract ORDER BY name LIMIT 5',
                 "c.name",
             ),
         ]
 
         divergences: list[str] = []
-        for cypher, sql, key in canonical_queries:
-            rows_a = ql(store_a, cypher=cypher, sql=sql)
-            rows_b = ql(store_b, cypher=cypher, sql=sql)
+        for sql, key in canonical_queries:
+            rows_a = ql(store_a, sql=sql)
+            rows_b = ql(store_b, sql=sql)
             vals_a = sorted(str(r.get(key, "")) for r in rows_a)
             vals_b = sorted(str(r.get(key, "")) for r in rows_b)
             if vals_a != vals_b:
-                divergences.append(f"Query diverged on '{cypher[:50]}...': A={vals_a}, B={vals_b}")
+                divergences.append(f"Query diverged on '{sql[:50]}...': A={vals_a}, B={vals_b}")
 
         passed = len(divergences) == 0
         collect_result(
@@ -138,13 +128,10 @@ class TestDuckPGQConsistency:
 
         from agentscaffold.graph.query_compat import ql
 
-        cypher = (
-            "MATCH (f:File) WHERE f.path CONTAINS 'router' RETURN f.path ORDER BY f.path LIMIT 5"
-        )
         sql = "SELECT path AS \"f.path\" FROM File WHERE path LIKE '%router%' ORDER BY path LIMIT 5"
 
-        rows_a = ql(store_a, cypher=cypher, sql=sql)
-        rows_b = ql(store_b, cypher=cypher, sql=sql)
+        rows_a = ql(store_a, sql=sql)
+        rows_b = ql(store_b, sql=sql)
 
         paths_a = sorted(r.get("f.path", "") for r in rows_a)
         paths_b = sorted(r.get("f.path", "") for r in rows_b)

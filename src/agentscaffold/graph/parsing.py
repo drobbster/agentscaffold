@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -45,8 +46,14 @@ _LANGUAGE_FUNC_MAP: dict[str, str] = {
 }
 
 
+@cache
 def _load_language(language: str) -> Language | None:
-    """Load a tree-sitter Language object for the given language."""
+    """Load a tree-sitter Language object for the given language.
+
+    Cached per language: the grammar is immutable, so the Language object is
+    built once and reused across every file instead of being reconstructed on
+    each call (previously once per parsed file).
+    """
     if ts is None:
         return None
 

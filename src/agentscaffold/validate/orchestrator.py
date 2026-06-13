@@ -17,6 +17,7 @@ def run_validate(
     check_safety_boundaries: bool = False,
     check_session_summary: bool = False,
     pre_edit: bool = False,
+    warn_only: bool = False,
 ) -> None:
     """Run validation checks (integration, prohibitions, secrets, optionally safety).
 
@@ -147,14 +148,24 @@ def run_validate(
 
     # Print details for failures
     if has_failures:
-        console.print("\n[bold red]Validation failures:[/bold red]\n")
-        for name, issues in results:
-            if not issues:
-                continue
-            console.print(f"[bold]{name}:[/bold]")
-            for issue in issues:
-                console.print(f"  - {issue}")
-            console.print()
-        sys.exit(1)
+        if warn_only:
+            console.print("\n[bold yellow]Validation warnings (--warn-only):[/bold yellow]\n")
+            for name, issues in results:
+                if not issues:
+                    continue
+                console.print(f"[bold]{name}:[/bold]")
+                for issue in issues:
+                    console.print(f"  - WARN: {issue}")
+                console.print()
+        else:
+            console.print("\n[bold red]Validation failures:[/bold red]\n")
+            for name, issues in results:
+                if not issues:
+                    continue
+                console.print(f"[bold]{name}:[/bold]")
+                for issue in issues:
+                    console.print(f"  - {issue}")
+                console.print()
+            sys.exit(1)
     else:
         console.print("\n[bold green]All validation checks passed.[/bold green]\n")

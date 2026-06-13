@@ -188,17 +188,17 @@ class TestEmbeddings:
 
 
 class TestHybridSearch:
-    """Test hybrid search combining Cypher and semantic modes."""
+    """Test hybrid search combining keyword and semantic modes."""
 
-    def test_cypher_search(self, indexed_store):
+    def test_keyword_search(self, indexed_store):
         store, _config = indexed_store
 
         from agentscaffold.graph.search import hybrid_search
 
-        results = hybrid_search(store, "router", mode="cypher", top_k=5)
+        results = hybrid_search(store, "router", mode="keyword", top_k=5)
         assert isinstance(results, list)
         assert len(results) > 0
-        assert results[0].source == "cypher"
+        assert results[0].source == "keyword"
 
     @_skip_no_st
     def test_semantic_search(self, indexed_store):
@@ -225,7 +225,7 @@ class TestHybridSearch:
 
         from agentscaffold.graph.search import hybrid_search
 
-        results = hybrid_search(store, "data", mode="cypher", top_k=5)
+        results = hybrid_search(store, "data", mode="keyword", top_k=5)
         if results:
             r = results[0]
             assert r.node_id
@@ -238,7 +238,7 @@ class TestHybridSearch:
 
         from agentscaffold.graph.search import format_search_results, hybrid_search
 
-        results = hybrid_search(store, "router", mode="cypher", top_k=3)
+        results = hybrid_search(store, "router", mode="keyword", top_k=3)
         md = format_search_results(results)
         assert "Search Results" in md
         assert "|" in md
@@ -252,8 +252,8 @@ class TestHybridSearch:
         from agentscaffold.graph.search import SearchResult, _reciprocal_rank_fusion
 
         list_a = [
-            SearchResult("id1", "foo", "a.py", "Function", 1.0, "cypher"),
-            SearchResult("id2", "bar", "b.py", "Function", 0.5, "cypher"),
+            SearchResult("id1", "foo", "a.py", "Function", 1.0, "keyword"),
+            SearchResult("id2", "bar", "b.py", "Function", 0.5, "keyword"),
         ]
         list_b = [
             SearchResult("id2", "bar", "b.py", "Function", 0.9, "semantic"),

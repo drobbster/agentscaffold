@@ -35,7 +35,7 @@ pip install agentscaffold
 See [Installation](getting-started.md#1-installation) in the Getting Started guide for a
 full breakdown of what each extra includes.
 
-After this, your project has `AGENTS.md` at the root and `.scaffold/graph.db` with the indexed knowledge graph. The agent rules in `AGENTS.md` work immediately with any agent that reads project files.
+After this, your project has `AGENTS.md` at the root and `.scaffold/graph.duckdb` (a DuckDB + DuckPGQ database) with the indexed knowledge graph. The agent rules in `AGENTS.md` work immediately with any agent that reads project files.
 
 ## Isolated Install: Two Venvs
 
@@ -516,6 +516,70 @@ This should return a JSON response listing all available tools.
 
 ---
 
+## Lightweight Mode: Graph + MCP Only (No Hooks or Lifecycle Tools)
+
+If you want the knowledge graph and MCP query tools without any automated hooks or lifecycle enforcement, strip the hooks from your settings and use the tools on demand.
+
+### What to remove
+
+1. **Delete all hooks from `.claude/settings.json`** (or your platform's equivalent):
+
+```json
+{
+  "hooks": {}
+}
+```
+
+This removes `PreToolUse`, `PostToolUse`, and `SessionStart` automation. No more auto-indexing, auto-orient, or pre-edit validation.
+
+2. **Set `gate_strict: false`** in `scaffold.yaml` (this is already the default):
+
+```yaml
+freshness:
+  gate_strict: false
+```
+
+### What still works
+
+All graph intelligence and MCP query tools work independently with no hooks:
+
+| Tool | What it does |
+|------|-------------|
+| `scaffold_orient` | Project status, blockers, recent plans |
+| `scaffold_context` | Symbol context (callers, layer, plan history) |
+| `scaffold_impact` | Blast radius for a file or symbol |
+| `scaffold_search` | Keyword/semantic/hybrid search |
+| `scaffold_query` | Raw SQL against the knowledge graph |
+| `scaffold_stats` | Codebase health dashboard |
+| `scaffold_prepare_review` | Pre-review for a plan |
+| `scaffold_prepare_retro` | Post-implementation retro |
+| `scaffold_find_adrs` | Search ADRs |
+| `scaffold_decision_context` | Full decision chain for a plan |
+
+You call these when you want them. Nothing runs automatically.
+
+### What you lose
+
+- Auto-indexing after edits (run `scaffold index --incremental` manually when you want a fresh graph)
+- Pre-edit validation (run `scaffold validate` manually when you want checks)
+- Session orientation on startup (call `scaffold_orient` yourself)
+- `scaffold_begin_plan` / `scaffold_complete_plan` lifecycle enforcement (use individual tools directly)
+
+### Recommended workflow
+
+```bash
+# Index when you want fresh graph data
+scaffold index --incremental
+
+# Query the graph as needed via MCP or CLI
+scaffold graph search "risk management"
+scaffold graph stats
+```
+
+The MCP tools remain available in your IDE -- just call them explicitly instead of relying on hooks to trigger them.
+
+---
+
 ## Troubleshooting
 
 ### MCP server fails to start
@@ -531,7 +595,7 @@ If using a virtual environment, make sure the MCP command in your platform confi
 
 ### MCP tools return "graph not available"
 
-The MCP server requires an indexed graph. If `.scaffold/graph.db` does not exist:
+The MCP server requires an indexed graph. If `.scaffold/graph.duckdb` does not exist:
 
 ```bash
 scaffold index

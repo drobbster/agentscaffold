@@ -84,6 +84,15 @@ def generate_brief(store: GraphBackend, plan_number: int) -> dict[str, Any]:
                 "direct_importers": len(importers),
                 "transitive_consumers": len(transitive),
                 "external_callers": len(callers),
+                "top_importers": [i.get("a.path", "") for i in importers[:10] if i.get("a.path")],
+                "top_callers": [
+                    {
+                        "name": c.get("caller.name", ""),
+                        "file": c.get("caller.filePath", ""),
+                    }
+                    for c in callers[:10]
+                    if c.get("caller.name")
+                ],
                 "prior_plan_count": len(
                     [p for p in prior_plans if p.get("p.number") != plan_number]
                 ),
@@ -180,6 +189,19 @@ def format_brief_markdown(brief: dict[str, Any]) -> str:
                 f"{fp['transitive_consumers']} transitive consumers"
             )
             lines.append(f"  - {fp['external_callers']} external callers")
+            if fp.get("top_importers"):
+                shown = ", ".join(fp["top_importers"])
+                more = fp["direct_importers"] - len(fp["top_importers"])
+                suffix = f" (+{more} more)" if more > 0 else ""
+                lines.append(f"  - Imported by: {shown}{suffix}")
+            if fp.get("top_callers"):
+                shown = ", ".join(
+                    f"{c['name']} ({c['file']})" if c.get("file") else c["name"]
+                    for c in fp["top_callers"]
+                )
+                more = fp["external_callers"] - len(fp["top_callers"])
+                suffix = f" (+{more} more)" if more > 0 else ""
+                lines.append(f"  - Called by: {shown}{suffix}")
             if fp["layer"]:
                 lines.append(f"  - Layer: {fp['layer']}")
             if fp["contracts"]:
