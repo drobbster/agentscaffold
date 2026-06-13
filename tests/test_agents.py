@@ -160,6 +160,28 @@ def test_prompt_export(tmp_project: Path, cli_runner: CliRunner) -> None:
         os.chdir(orig_cwd)
 
 
+def test_generate_all_writes_cursor_routing_doc(tmp_project: Path, cli_runner: CliRunner) -> None:
+    """generate-all must emit .cursor/rules/agentscaffold.md in parity with
+    `agents cursor` (the MCP routing + graph trust-discipline policy)."""
+    orig_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_project)
+        intent_md = tmp_project / ".cursor" / "rules" / "agentscaffold.md"
+        if intent_md.exists():
+            intent_md.unlink()
+
+        result = cli_runner.invoke(app, ["agents", "generate-all"])
+        assert result.exit_code == 0
+
+        assert intent_md.is_file()
+        content = intent_md.read_text().lower()
+        assert "tool selection policy" in content
+        assert "graph trust discipline" in content
+        assert "intent map" in content
+    finally:
+        os.chdir(orig_cwd)
+
+
 def test_agents_generate_no_config(tmp_path: Path, cli_runner: CliRunner) -> None:
     """agents generate without scaffold.yaml fails gracefully."""
     orig_cwd = os.getcwd()

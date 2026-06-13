@@ -98,28 +98,36 @@ We report three views so the headline is not the optimistic one:
 
 Behavioral and quality-adjusted values come from replay traces (observed tool-call sequences + quality parity checks), not phrase-level intent matching. They are lower because agents do not always route to the tool — the graph does not help if the agent reads files directly instead. Replay-observed tool-first adherence in the latest run was ~80% (20% bypass), and the Cursor/Claude rule taxonomy added in this release is aimed at closing that gap.
 
-> **Note**: Numbers above are from the most recent evaluation run (`eval/reports/latest.md`). Run `python -m pytest eval/ -q` in `packages/agentscaffold` to reproduce against the current codebase.
+> **Note**: Numbers above are from the most recent evaluation run (`eval/reports/latest.md`). Run `python -m pytest eval/ -q` from the package root to reproduce against the current codebase.
 
 ## Quick Start
 
 ```bash
 pip install agentscaffold
 cd my-project
-scaffold init
+scaffold init           # Scaffolds docs + generates the full rule set
 scaffold index          # Build the knowledge graph
-scaffold agents generate-all  # Generate IDE/agent rule files
+scaffold agents generate-all  # Re-generate rules with graph context (after indexing)
 scaffold mcp            # Start MCP server for tool access
 ```
 
-The `init` command scaffolds your project with:
+The `init` command scaffolds your project and, on a fresh init, generates the
+complete rule set for every supported platform:
 
 - `docs/ai/` — templates, prompts, standards, state files
-- `AGENTS.md` — rules your AI agent follows automatically
-- `.cursor/rules/agentscaffold.md` — Cursor-specific rules
-- `.claude/agents/` — Claude Code subagent files per reviewer
 - `scaffold.yaml` — your project's framework configuration
-- `justfile` + `Makefile` — task runner shortcuts
-- `.github/workflows/` — CI with security scanning
+- `AGENTS.md` — rules your AI agent follows automatically
+- `.cursor/rules.md` + `.cursor/rules/agentscaffold.md` — Cursor process rules and the MCP routing / graph trust-discipline policy
+- `.cursor/mcp.json` — Cursor MCP server registration
+- `CLAUDE.md` and `.claude/agents/` — Claude Code rules and one subagent file per configured reviewer
+- `.windsurfrules` — Windsurf rules
+- Lifecycle hooks for each enabled platform
+
+Re-running `scaffold init` is idempotent and never overwrites hand-edited rules.
+Run `scaffold agents generate-all` to regenerate the rule set on an existing
+project — for example after `scaffold index` so `AGENTS.md` picks up graph
+context (hot spots, volatile modules, active contracts), or after editing
+`scaffold.yaml`.
 
 The `index` command builds the knowledge graph (a DuckDB + DuckPGQ database at `.scaffold/graph.duckdb`), enabling search, reviews, impact analysis, and session memory.
 

@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to semantic versioning (pre-1.0: minor versions may
 introduce additive features and small behavior changes).
 
+## [0.5.0] - 2026-06-12
+
+### Added
+- `scaffold init` now generates the complete platform rule set on a fresh init
+  (previously it only wrote the static `AGENTS.md` and `.cursor/rules.md`).
+  A fresh init now also emits `.cursor/rules/agentscaffold.md` (the MCP routing +
+  graph trust-discipline policy, including the Plan 214 context-blindness
+  mitigations), `.cursor/mcp.json`, `CLAUDE.md`, per-reviewer subagent files,
+  `.windsurfrules`, and lifecycle hooks. Generation is gated on a fresh init
+  (when `scaffold.yaml` is first created) so re-running `scaffold init` stays
+  idempotent and never clobbers hand-edited rules.
+- Generated `AGENTS.md` template gains three generalizable governance rules:
+  a worked "When NOT to fix F841" linter example, a "verify integration points
+  early" execution rule, and a smoke-test "Plan Template Addition" checklist for
+  plans that cross integration boundaries.
+
+### Fixed
+- `scaffold agents generate-all` now writes `.cursor/rules/agentscaffold.md` in
+  parity with `scaffold agents cursor`. Previously the MCP routing / graph
+  trust-discipline doc was only produced by `scaffold agents cursor`, so
+  `generate-all` left Cursor without the routing policy.
+- `scaffold agents generate-all` now writes `.windsurfrules` (previously it only
+  wrote Windsurf agent stubs and hooks, never the main rules file).
+- `generate-all` no longer depends on the current working directory: `CLAUDE.md`
+  and `.windsurfrules` generation now use the project config passed to
+  `run_agents_generate_all_platforms` instead of re-discovering `scaffold.yaml`
+  via `find_config()`. This previously caused `scaffold init <dir>` (run from a
+  different cwd) to abort rule generation after `AGENTS.md`.
+- README "what init creates" list corrected to match actual output.
+
 ## [0.4.1] - 2026-06-12
 
 ### Fixed

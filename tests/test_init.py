@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import yaml
@@ -101,6 +102,39 @@ def test_init_creates_templated_files(tmp_path: Path, cli_runner: CliRunner) -> 
     ]
     for f in expected_files:
         assert (tmp_path / f).is_file(), f"Missing file: {f}"
+
+
+def test_init_generates_full_rule_set(tmp_path: Path, cli_runner: CliRunner) -> None:
+    """A fresh init generates the complete platform rule set, including the
+    MCP routing / graph trust-discipline doc that drives context-blindness
+    mitigation.
+
+    The init target is a subdirectory and the process cwd is an isolated,
+    config-free directory. This guards against generation paths that rely on
+    ``find_config()``/cwd instead of the project root passed by init.
+    """
+    target = tmp_path / "proj"
+    orig_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = cli_runner.invoke(app, ["init", str(target), "-y"])
+        assert result.exit_code == 0
+    finally:
+        os.chdir(orig_cwd)
+
+    for rel in (
+        ".cursor/rules.md",
+        ".cursor/rules/agentscaffold.md",
+        ".cursor/mcp.json",
+        "CLAUDE.md",
+        ".windsurfrules",
+    ):
+        assert (target / rel).is_file(), f"Missing generated rule file: {rel}"
+
+    intent = (target / ".cursor/rules/agentscaffold.md").read_text().lower()
+    assert "graph trust discipline" in intent
+    assert "tool selection policy" in intent
+    assert "intent map" in intent
 
 
 def test_init_creates_new_directory(tmp_path: Path, cli_runner: CliRunner) -> None:

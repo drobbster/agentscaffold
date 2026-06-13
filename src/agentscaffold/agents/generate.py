@@ -76,7 +76,13 @@ def run_agents_generate_all_platforms(
         write_cursor_mcp_json,
         write_cursor_reviewer_rules,
     )
-    from agentscaffold.agents.windsurf import write_windsurf_agent_stubs  # noqa: PLC0415
+    from agentscaffold.agents.rule_policy import (  # noqa: PLC0415
+        generate_rule_policy_document,
+    )
+    from agentscaffold.agents.windsurf import (  # noqa: PLC0415
+        generate_windsurf_rules,
+        write_windsurf_agent_stubs,
+    )
     from agentscaffold.hooks.generators.claude_code import write_claude_code_hooks  # noqa: PLC0415
     from agentscaffold.hooks.generators.cursor import (  # noqa: PLC0415
         generate_cursor_enforcement_files,
@@ -107,7 +113,7 @@ def run_agents_generate_all_platforms(
     # Claude Code: CLAUDE.md + subagents
     claude_md = project_root / "CLAUDE.md"
     if not dry_run:
-        claude_md.write_text(generate_claude_rules())
+        claude_md.write_text(generate_claude_rules(config))
         console.print("[green]Wrote[/green] CLAUDE.md")
     else:
         console.print("[dim]dry-run[/dim] would write CLAUDE.md")
@@ -124,6 +130,25 @@ def run_agents_generate_all_platforms(
     if not dry_run:
         cursor_dir.mkdir(parents=True, exist_ok=True)
     write_cursor_mcp_json(cursor_dir)
+    # MCP routing + graph trust discipline doc (kept in parity with `agents cursor`).
+    intent_dest = cursor_dir / "rules" / "agentscaffold.md"
+    if not dry_run:
+        intent_dest.parent.mkdir(parents=True, exist_ok=True)
+        intent_dest.write_text(
+            generate_rule_policy_document(
+                config=config,
+                title="AgentScaffold MCP Rule Routing",
+                intro_lines=[
+                    "Use this file for MCP routing behavior and fallback discipline.",
+                    "For full process governance, also follow `.cursor/rules.md` and `AGENTS.md`.",
+                ],
+                quote_intents=True,
+            )
+        )
+        console.print("[green]Wrote[/green] .cursor/rules/agentscaffold.md")
+    else:
+        console.print("[dim]dry-run[/dim] would write .cursor/rules/agentscaffold.md")
+    written["cursor"].append(intent_dest)
     written["cursor"].extend(write_cursor_reviewer_rules(config, cursor_dir, dry_run=dry_run))
     if config.enforcement.platform_enabled("cursor"):
         written["cursor"].extend(
@@ -141,6 +166,13 @@ def run_agents_generate_all_platforms(
         )
 
     # Windsurf: .windsurfrules + agent stubs
+    windsurf_rules = project_root / ".windsurfrules"
+    if not dry_run:
+        windsurf_rules.write_text(generate_windsurf_rules(config))
+        console.print("[green]Wrote[/green] .windsurfrules")
+    else:
+        console.print("[dim]dry-run[/dim] would write .windsurfrules")
+    written["windsurf"].append(windsurf_rules)
     written["windsurf"].extend(write_windsurf_agent_stubs(config, project_root, dry_run=dry_run))
     if config.enforcement.platform_enabled("windsurf"):
         p = write_windsurf_hooks(config.enforcement, project_root, dry_run=dry_run)

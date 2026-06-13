@@ -77,8 +77,14 @@ After init, your project contains:
 ```
 my-project/
   AGENTS.md              # Rules your AI agent follows
+  CLAUDE.md              # Claude Code rules
+  .windsurfrules         # Windsurf rules
   scaffold.yaml          # Framework configuration
-  .cursor/rules.md       # Cursor-specific rules
+  .cursor/
+    rules.md             # Cursor process rules
+    rules/agentscaffold.md  # MCP routing + graph trust-discipline policy
+    mcp.json             # Cursor MCP server registration
+  .claude/agents/        # One subagent file per configured reviewer
   docs/
     ai/
       templates/         # Plan templates (feature/bugfix/refactor), plus spike and study
@@ -95,6 +101,7 @@ my-project/
 ```
 
 - **AGENTS.md**: The agent reads this file to learn the plan lifecycle, gates, and collaboration protocol.
+- **Platform rule files** (`CLAUDE.md`, `.windsurfrules`, `.cursor/rules/`, `.claude/agents/`): generated automatically on a fresh init. Regenerate them after editing `scaffold.yaml` with `scaffold agents generate-all`.
 - **scaffold.yaml**: Edit this to change rigor, gates, domains, or semi-autonomous settings.
 - **docs/ai/**: Source of truth for templates, prompts, and state. The agent references these paths.
 - **Plan templates included**: `docs/ai/templates/plan_template.md`,

@@ -286,11 +286,14 @@ def _print_summary(
     console.print("Next steps:")
     console.print("  1. Review scaffold.yaml and adjust settings")
     console.print("  2. Edit docs/ai/system_architecture.md to define your layers")
-    console.print("  3. Run [bold]scaffold agents generate[/bold] to regenerate AGENTS.md")
-    console.print("  4. Run [bold]scaffold agents cursor[/bold] to regenerate .cursor/rules.md")
     console.print(
-        "  5. Run [bold]scaffold index[/bold] to build the knowledge graph"
+        "  3. Run [bold]scaffold index[/bold] to build the knowledge graph"
         " (enables search, reviews, and session memory)"
+    )
+    console.print(
+        "  4. Rule files (AGENTS.md, .cursor/rules/, CLAUDE.md, .windsurfrules) were"
+        " generated automatically; run [bold]scaffold agents generate-all[/bold] to"
+        " regenerate them after changing scaffold.yaml"
     )
 
 
@@ -337,4 +340,33 @@ def run_init(directory: Path, non_interactive: bool = False) -> None:
     if yaml_written:
         written += 1
 
+    # On a fresh init (scaffold.yaml was just created) generate the full,
+    # platform-specific rule set: the MCP routing + graph trust discipline doc
+    # (.cursor/rules/agentscaffold.md), .cursor/mcp.json, per-reviewer rules,
+    # lifecycle hooks, CLAUDE.md + .claude/agents, and Windsurf artifacts.
+    # This is gated on a fresh init so that re-running `scaffold init` stays
+    # idempotent and never clobbers hand-edited rules. Use
+    # `scaffold agents generate-all` to regenerate on an existing project.
+    if yaml_written:
+        _generate_platform_rules(directory, config)
+
     _print_summary(directory, options, written, skipped, dirs_created)
+
+
+def _generate_platform_rules(directory: Path, config) -> None:  # type: ignore[no-untyped-def]
+    """Generate the full platform rule set for a freshly initialized project.
+
+    Failures here are non-fatal: the core scaffold has already been written, so
+    we warn and point the user at ``scaffold agents generate-all`` rather than
+    aborting init.
+    """
+    try:
+        from agentscaffold.agents.generate import run_agents_generate_all_platforms
+
+        console.print("\n[dim]Generating platform rule files (Cursor, Claude, Windsurf)...[/dim]")
+        run_agents_generate_all_platforms(config, directory)
+    except Exception as exc:  # noqa: BLE001 - generation is best-effort during init
+        console.print(
+            f"[yellow]Rule generation skipped:[/yellow] {exc}\n"
+            "  Run [bold]scaffold agents generate-all[/bold] to generate platform rules."
+        )

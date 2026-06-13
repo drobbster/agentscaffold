@@ -285,6 +285,12 @@ Add/update smoke tests when completing plans that:
 - Add new integration boundaries
 - Modify critical paths through the system
 
+### Plan Template Addition
+
+For plans that cross integration boundaries, add these items to the plan's Tests section:
+- [ ] Smoke test added/updated in `tests/smoke/`
+- [ ] `pytest -m smoke` passes
+
 ### Not Required For
 
 - Internal module refactors (no cross-boundary changes)
@@ -381,6 +387,7 @@ To request approval:
 - Check off steps as completed
 - Update the plan if deviation is required (with rationale)
 - Follow implementation standards for all code
+- Verify integration points early (after creating contracts/interfaces, before writing tests) to catch gaps while they are cheap to fix
 
 **Escalate (pause and discuss with human) if:**
 - Estimated effort exceeds plan by >50% - requires scope review
@@ -442,6 +449,19 @@ Linters catch syntax issues but can suggest fixes that break **semantic correctn
 3. For F841 (unused variable), ask: "Is this state that future code or the next loop iteration needs?"
 4. Only use `--fix` for safe categories above
 5. If uncertain, leave the warning and add a `# noqa` comment with rationale
+
+### Example: When NOT to fix F841
+
+A variable flagged as "assigned but never used" may be state that later code,
+a subsequent loop iteration, or error/debugging paths depend on. Removing it can
+silently change behavior.
+
+```python
+# Linter says: F841 Local variable `previous_value` is assigned to but never used
+# WRONG: delete the assignment.
+# RIGHT: keep it - the next loop iteration compares against it.
+previous_value = current_value  # noqa: F841 - read on the next iteration
+```
 {% if config.gates.in_progress_to_complete.retrospective %}
 ## Retrospective Requirements (Mandatory)
 
