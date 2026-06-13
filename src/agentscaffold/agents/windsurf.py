@@ -13,12 +13,17 @@ from agentscaffold.rendering import render_template
 console = Console()
 
 
-def generate_windsurf_rules() -> str:
-    """Build .windsurfrules content from MCP-first policy + intents."""
-    config_path = find_config()
-    if config_path is None:
-        raise RuntimeError("No scaffold.yaml found")
-    config = load_config(config_path)
+def generate_windsurf_rules(config: ScaffoldConfig | None = None) -> str:
+    """Build .windsurfrules content from MCP-first policy + intents.
+
+    When *config* is provided it is used directly; otherwise the nearest
+    ``scaffold.yaml`` is discovered from the current working directory.
+    """
+    if config is None:
+        config_path = find_config()
+        if config_path is None:
+            raise RuntimeError("No scaffold.yaml found")
+        config = load_config(config_path)
     return generate_rule_policy_document(
         config=config,
         title="AgentScaffold MCP Rule Routing",
