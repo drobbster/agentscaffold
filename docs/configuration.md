@@ -240,6 +240,31 @@ metadata and schedule eligible refreshes asynchronously.
 
 ---
 
+## Retrieval and Search
+
+`scaffold graph search` and the MCP `scaffold_search` tool support three retrieval modes:
+
+| Mode | What it does | Requires |
+|------|--------------|----------|
+| keyword | Structural term-overlap match on names/paths/signatures (custom, not BM25) | nothing beyond the graph |
+| semantic | Vector cosine similarity against code embeddings | `agentscaffold[search]` + embeddings indexed (`scaffold index --embeddings`) |
+| hybrid | Keyword + semantic merged via reciprocal rank fusion (default) | best with both; falls back to keyword |
+
+Retrieval can degrade gracefully. A capability oracle reports one of three statuses, surfaced
+in MCP responses under `meta` (`retrieval_status`, `retrieval_effective_mode`,
+`retrieval_requested_mode`, `retrieval_reason`) and printed as a warning by the CLI:
+
+| Status | Meaning |
+|--------|---------|
+| available | Requested mode can run fully |
+| degraded | Runs in a reduced form (e.g. `hybrid` with no embeddings runs keyword-only) |
+| unavailable | Cannot run (pure `semantic` requested but `sentence-transformers` is not installed) |
+
+Keyword search is intentionally a lightweight custom term-overlap matcher; the project does
+not depend on `rank-bm25`.
+
+---
+
 ## How Gates Interact with Lifecycle
 
 ```

@@ -33,6 +33,63 @@ class SearchResult:
     context: dict[str, Any] = field(default_factory=dict)
 
 
+def evaluate_retrieval(store: GraphBackend, mode: str = "hybrid") -> dict[str, str]:
+    """Classify retrieval capability for a requested search mode.
+
+    Returns a dict with prefixed keys so it can be merged directly into an MCP
+    ``meta`` block or consumed by the CLI:
+
+    - ``retrieval_status``: ``available`` | ``degraded`` | ``unavailable``
+    - ``retrieval_effective_mode``: the mode that will actually run
+      (``keyword`` | ``semantic`` | ``hybrid`` | ``none``)
+    - ``retrieval_requested_mode``: the mode that was asked for
+    - ``retrieval_reason``: human-readable explanation
+
+    Semantics:
+    - keyword: always ``available``.
+    - semantic/hybrid with sentence-transformers missing: pure ``semantic`` is
+      ``unavailable`` (no fallback); ``hybrid`` is ``degraded`` (keyword still runs).
+    - semantic/hybrid installed but no embeddings indexed: ``degraded``.
+    - both the library and embeddings present: ``available``.
+    """
+    requested = (mode or "hybrid").lower()
+
+    def _result(status: str, effective: str, reason: str) -> dict[str, str]:
+        return {
+            "retrieval_status": status,
+            "retrieval_effective_mode": effective,
+            "retrieval_requested_mode": requested,
+            "retrieval_reason": reason,
+        }
+
+    if requested not in ("semantic", "hybrid"):
+        return _result("available", "keyword", "keyword search needs no optional dependencies")
+
+    from agentscaffold.graph import embeddings as _embeddings
+
+    if not _embeddings._st_available:
+        if requested == "semantic":
+            return _result(
+                "unavailable",
+                "none",
+                "sentence-transformers not installed; install agentscaffold[search]",
+            )
+        return _result(
+            "degraded",
+            "keyword",
+            "sentence-transformers not installed; using keyword search only",
+        )
+
+    if not _embeddings.embeddings_available(store):
+        return _result(
+            "degraded",
+            "keyword" if requested == "hybrid" else "semantic",
+            "no embeddings indexed; run 'scaffold index --embeddings'",
+        )
+
+    return _result("available", requested, "semantic and keyword retrieval available")
+
+
 def hybrid_search(
     store: GraphBackend,
     query: str,

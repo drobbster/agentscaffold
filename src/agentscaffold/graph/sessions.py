@@ -263,3 +263,17 @@ def format_session_context_markdown(ctx: dict[str, Any]) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def delete_session(store: GraphBackend, session_id: str) -> None:
+    """Delete a Session and its SESSION_MODIFIED edges.
+
+    Used by selective pruning. Removes the session's edges first (src = id),
+    then the node itself.
+    """
+    sid = session_id.replace("'", "''")
+    try:
+        store.execute(f"DELETE FROM SESSION_MODIFIED WHERE src = '{sid}'")
+    except Exception:  # noqa: BLE001 - edge table may be absent
+        pass
+    store.execute(f"DELETE FROM Session WHERE id = '{sid}'")

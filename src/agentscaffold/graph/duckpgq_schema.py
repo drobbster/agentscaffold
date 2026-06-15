@@ -1,25 +1,33 @@
 """DuckPGQ schema DDL for the AgentScaffold knowledge graph.
 
-COUPLING WARNING
-================
-The ``CREATE_PROPERTY_GRAPH_SQL`` constant at the bottom of this module MUST
-list every node table and every edge table by name.  DuckPGQ does not discover
-tables automatically.  Any time a new node or edge type is added to the schema,
-you must:
+SINGLE SOURCE OF TRUTH
+======================
+Edge identity lives in one place: the ``EDGE_DEFS`` list below.  The edge DDL
+(``EDGE_TABLES``), the edge-name tuple (``EDGE_TABLE_NAMES``), and the
+``EDGE TABLES`` clause of ``CREATE_PROPERTY_GRAPH_SQL`` are all generated from
+it, so they cannot drift.  To add or change an edge, edit ``EDGE_DEFS`` only.
 
-  1. Add the SQL ``CREATE TABLE`` statement to ``NODE_TABLES`` or
-     ``EDGE_TABLES`` below.
-  2. Add the corresponding ``VERTEX TABLE`` or ``EDGE TABLE`` clause to
-     ``CREATE_PROPERTY_GRAPH_SQL``.
-  3. Bump ``SCHEMA_VERSION``.
+Node tables are still authored as ``CREATE TABLE`` strings in ``NODE_TABLES``;
+their names (``NODE_TABLE_NAMES``) and the ``VERTEX TABLES`` clause of the
+property graph are derived from that single list.
 
-Failure to update ``CREATE_PROPERTY_GRAPH_SQL`` will silently omit the new
-type from all ``GRAPH_TABLE`` queries.
+To add a node:
+  1. Add the ``CREATE TABLE`` statement to ``NODE_TABLES``.
+  2. Bump ``SCHEMA_VERSION``.
+
+To add an edge:
+  1. Add an ``EdgeDef`` entry to ``EDGE_DEFS``.
+  2. Bump ``SCHEMA_VERSION``.
+
+DuckPGQ does not discover tables automatically, but because the property graph
+statement is generated from these two lists there is no separate clause to keep
+in sync.  A guardrail test (``tests/test_duckpgq_schema.py``) fails if the
+derived names, DDL, and property-graph statement ever disagree.
 
 If you are writing a plan that changes the graph schema, add this checklist
 item to the plan's implementation steps:
-  - [ ] Update ``duckpgq_schema.py``: NODE_TABLES / EDGE_TABLES DDL +
-        CREATE_PROPERTY_GRAPH_SQL vertex/edge clauses + SCHEMA_VERSION bump.
+  - [ ] Update ``duckpgq_schema.py``: NODE_TABLES DDL and/or EDGE_DEFS +
+        SCHEMA_VERSION bump.
 
 Edge table convention
 ---------------------
@@ -43,7 +51,7 @@ PASS on DuckDB 1.4.4 + duckpgq community extension).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     import duckdb
@@ -279,255 +287,141 @@ NODE_TABLES: list[str] = [
 ]
 
 # ---------------------------------------------------------------------------
-# Edge table DDL (35 tables)
-# All edge tables use ``src`` and ``dst`` FK columns (spike convention).
+# Derived node-table names
+#
+# Node names are extracted from the CREATE TABLE statements above so the
+# property graph's VERTEX TABLES clause and the clear/delete helpers never
+# drift from the authoritative DDL.
 # ---------------------------------------------------------------------------
 
-EDGE_TABLES: list[str] = [
+
+def _table_name(create_table_ddl: str) -> str:
+    """Extract the table name from a ``CREATE TABLE IF NOT EXISTS <name> (...)`` string."""
+    return create_table_ddl.strip().split("(")[0].split()[-1]
+
+
+NODE_TABLE_NAMES: tuple[str, ...] = tuple(_table_name(stmt) for stmt in NODE_TABLES)
+
+
+# ---------------------------------------------------------------------------
+# Edge definitions (single source of truth)
+#
+# Every edge's DDL, name, and property-graph clause is generated from this
+# list. Each edge has the two fixed FK columns ``src``/``dst`` plus any extra
+# property columns declared in ``properties`` as (column_name, sql_type).
+# ---------------------------------------------------------------------------
+
+
+class EdgeDef(NamedTuple):
+    """A single property-graph edge: its name, FK node tables, and extra columns."""
+
+    name: str
+    src: str
+    dst: str
+    properties: tuple[tuple[str, str], ...] = ()
+
+
+EDGE_DEFS: list[EdgeDef] = [
     # --- Code edges ---
-    "CREATE TABLE IF NOT EXISTS CONTAINS (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS CONTAINS_FOLDER (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS DEFINES_FUNCTION (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS DEFINES_CLASS (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS DEFINES_INTERFACE (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS HAS_METHOD (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    """
-    CREATE TABLE IF NOT EXISTS IMPORTS (
-        src           VARCHAR NOT NULL,
-        dst           VARCHAR NOT NULL,
-        importedNames VARCHAR
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS CALLS (
-        src        VARCHAR NOT NULL,
-        dst        VARCHAR NOT NULL,
-        confidence DOUBLE,
-        reason     VARCHAR
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS METHOD_CALLS (
-        src        VARCHAR NOT NULL,
-        dst        VARCHAR NOT NULL,
-        confidence DOUBLE,
-        reason     VARCHAR
-    )
-    """,
-    "CREATE TABLE IF NOT EXISTS EXTENDS (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS IMPLEMENTS (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS MEMBER_OF_COMMUNITY (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    """
-    CREATE TABLE IF NOT EXISTS STEP_IN_PROCESS (
-        src  VARCHAR NOT NULL,
-        dst  VARCHAR NOT NULL,
-        step BIGINT
-    )
-    """,
+    EdgeDef("CONTAINS", "Folder", "File"),
+    EdgeDef("CONTAINS_FOLDER", "Folder", "Folder"),
+    EdgeDef("DEFINES_FUNCTION", "File", "Function"),
+    EdgeDef("DEFINES_CLASS", "File", "Class"),
+    EdgeDef("DEFINES_INTERFACE", "File", "Interface"),
+    EdgeDef("HAS_METHOD", "Class", "Method"),
+    EdgeDef("IMPORTS", "File", "File", (("importedNames", "VARCHAR"),)),
+    EdgeDef("CALLS", "Function", "Function", (("confidence", "DOUBLE"), ("reason", "VARCHAR"))),
+    EdgeDef(
+        "METHOD_CALLS",
+        "Method",
+        "Function",
+        (("confidence", "DOUBLE"), ("reason", "VARCHAR")),
+    ),
+    EdgeDef("EXTENDS", "Class", "Class"),
+    EdgeDef("IMPLEMENTS", "Class", "Interface"),
+    EdgeDef("MEMBER_OF_COMMUNITY", "File", "Community"),
+    EdgeDef("STEP_IN_PROCESS", "Function", "Process", (("step", "BIGINT"),)),
     # --- Governance edges ---
-    "CREATE TABLE IF NOT EXISTS BELONGS_TO_LAYER (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    """
-    CREATE TABLE IF NOT EXISTS PLAN_IMPACTS (
-        src        VARCHAR NOT NULL,
-        dst        VARCHAR NOT NULL,
-        changeType VARCHAR
-    )
-    """,
-    "CREATE TABLE IF NOT EXISTS PLAN_INTRODUCES_FUNC (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS PLAN_INTRODUCES_CLASS (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    """
-    CREATE TABLE IF NOT EXISTS CONTRACT_DECLARES_FUNC (
-        src               VARCHAR NOT NULL,
-        dst               VARCHAR NOT NULL,
-        declaredSignature VARCHAR
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS CONTRACT_DECLARES_CLASS (
-        src               VARCHAR NOT NULL,
-        dst               VARCHAR NOT NULL,
-        declaredSignature VARCHAR
-    )
-    """,
-    "CREATE TABLE IF NOT EXISTS LEARNING_RELATES_TO_FILE"
-    " (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS LEARNING_RELATES_TO_FUNC"
-    " (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS FINDING_ABOUT_FILE (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS FINDING_ABOUT_FUNC (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS FINDING_LED_TO (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS FINDING_ADDRESSED_BY (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS SESSION_MODIFIED (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS DEPENDS_ON_PLAN (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS STUDY_REFERENCES_PLAN (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS STUDY_REFERENCES_FILE (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS ADR_GOVERNS (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS ADR_SUPERSEDES (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS ADR_CITES_STUDY (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS ADR_CITES_SPIKE (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS SPIKE_FOR_PLAN (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS BACKLOG_ITEM_OF (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)",
+    EdgeDef("BELONGS_TO_LAYER", "File", "ArchitectureLayer"),
+    EdgeDef("PLAN_IMPACTS", "Plan", "File", (("changeType", "VARCHAR"),)),
+    EdgeDef("PLAN_INTRODUCES_FUNC", "Plan", "Function"),
+    EdgeDef("PLAN_INTRODUCES_CLASS", "Plan", "Class"),
+    EdgeDef("CONTRACT_DECLARES_FUNC", "Contract", "Function", (("declaredSignature", "VARCHAR"),)),
+    EdgeDef("CONTRACT_DECLARES_CLASS", "Contract", "Class", (("declaredSignature", "VARCHAR"),)),
+    EdgeDef("LEARNING_RELATES_TO_FILE", "Learning", "File"),
+    EdgeDef("LEARNING_RELATES_TO_FUNC", "Learning", "Function"),
+    EdgeDef("FINDING_ABOUT_FILE", "ReviewFinding", "File"),
+    EdgeDef("FINDING_ABOUT_FUNC", "ReviewFinding", "Function"),
+    EdgeDef("FINDING_LED_TO", "ReviewFinding", "Learning"),
+    EdgeDef("FINDING_ADDRESSED_BY", "ReviewFinding", "Plan"),
+    EdgeDef("SESSION_MODIFIED", "Session", "File"),
+    EdgeDef("DEPENDS_ON_PLAN", "Plan", "Plan"),
+    EdgeDef("STUDY_REFERENCES_PLAN", "Study", "Plan"),
+    EdgeDef("STUDY_REFERENCES_FILE", "Study", "File"),
+    EdgeDef("ADR_GOVERNS", "ADR", "Plan"),
+    EdgeDef("ADR_SUPERSEDES", "ADR", "ADR"),
+    EdgeDef("ADR_CITES_STUDY", "ADR", "Study"),
+    EdgeDef("ADR_CITES_SPIKE", "ADR", "Spike"),
+    EdgeDef("SPIKE_FOR_PLAN", "Spike", "Plan"),
+    EdgeDef("BACKLOG_ITEM_OF", "BacklogItem", "Plan"),
     # Config-driven wiring: a config File (YAML/JSON/TOML) references a code File
     # via a fully-qualified dotted path under an allowlisted key (e.g. ``class:
     # libs.strategies.momentum.MomentumStrategy``). ``symbol`` is the trailing
-    # Class/Function name when one resolved, else empty; ``confidence`` is 0.9 when
-    # the symbol resolved in the target file, 0.7 for a file-only resolution.
-    """
-    CREATE TABLE IF NOT EXISTS CONFIG_REFERENCES (
-        src        VARCHAR NOT NULL,
-        dst        VARCHAR NOT NULL,
-        confidence DOUBLE,
-        refKey     VARCHAR,
-        symbol     VARCHAR
-    )
-    """,
+    # Class/Function name when one resolved, else empty; ``confidence`` is 0.9
+    # when the symbol resolved in the target file, 0.7 for a file-only resolution.
+    EdgeDef(
+        "CONFIG_REFERENCES",
+        "File",
+        "File",
+        (("confidence", "DOUBLE"), ("refKey", "VARCHAR"), ("symbol", "VARCHAR")),
+    ),
 ]
 
+
+def _edge_ddl(edge: EdgeDef) -> str:
+    """Render the ``CREATE TABLE`` DDL for an edge from its definition."""
+    columns = ["src VARCHAR NOT NULL", "dst VARCHAR NOT NULL"]
+    columns += [f"{name} {sql_type}" for name, sql_type in edge.properties]
+    if edge.properties:
+        body = ",\n    ".join(columns)
+        return f"CREATE TABLE IF NOT EXISTS {edge.name} (\n    {body}\n)"
+    return f"CREATE TABLE IF NOT EXISTS {edge.name} ({columns[0]}, {columns[1]})"
+
+
+# Edge DDL (executed by init_schema) and edge names (used by the backend for
+# cascade/clear operations) -- both generated from EDGE_DEFS.
+EDGE_TABLES: list[str] = [_edge_ddl(edge) for edge in EDGE_DEFS]
+EDGE_TABLE_NAMES: tuple[str, ...] = tuple(edge.name for edge in EDGE_DEFS)
+
 # ---------------------------------------------------------------------------
-# CREATE PROPERTY GRAPH DDL
+# CREATE PROPERTY GRAPH DDL (generated)
 #
-# COUPLING: This statement lists every node and edge table by name.
-# Update this statement whenever NODE_TABLES or EDGE_TABLES changes.
-# See the module docstring for the full update checklist.
+# The VERTEX TABLES clause is generated from NODE_TABLE_NAMES and the EDGE
+# TABLES clause from EDGE_DEFS, so this statement can never drift from the
+# table definitions above.
 # ---------------------------------------------------------------------------
 
 DROP_PROPERTY_GRAPH_SQL = "DROP PROPERTY GRAPH IF EXISTS agentscaffold_graph"
 
-CREATE_PROPERTY_GRAPH_SQL = """\
-CREATE PROPERTY GRAPH agentscaffold_graph
-VERTEX TABLES (
-    File,
-    Folder,
-    Function,
-    Class,
-    Method,
-    Interface,
-    Community,
-    Process,
-    ArchitectureLayer,
-    Plan,
-    Contract,
-    Learning,
-    ReviewFinding,
-    BacklogItem,
-    Session,
-    Study,
-    ADR,
-    Spike,
-    GraphMeta,
-    ParsingWarning
-)
-EDGE TABLES (
-    CONTAINS
-        SOURCE KEY (src) REFERENCES Folder (id)
-        DESTINATION KEY (dst) REFERENCES File (id),
-    CONTAINS_FOLDER
-        SOURCE KEY (src) REFERENCES Folder (id)
-        DESTINATION KEY (dst) REFERENCES Folder (id),
-    DEFINES_FUNCTION
-        SOURCE KEY (src) REFERENCES File (id)
-        DESTINATION KEY (dst) REFERENCES Function (id),
-    DEFINES_CLASS
-        SOURCE KEY (src) REFERENCES File (id)
-        DESTINATION KEY (dst) REFERENCES Class (id),
-    DEFINES_INTERFACE
-        SOURCE KEY (src) REFERENCES File (id)
-        DESTINATION KEY (dst) REFERENCES Interface (id),
-    HAS_METHOD
-        SOURCE KEY (src) REFERENCES Class (id)
-        DESTINATION KEY (dst) REFERENCES Method (id),
-    IMPORTS
-        SOURCE KEY (src) REFERENCES File (id)
-        DESTINATION KEY (dst) REFERENCES File (id),
-    CALLS
-        SOURCE KEY (src) REFERENCES Function (id)
-        DESTINATION KEY (dst) REFERENCES Function (id),
-    METHOD_CALLS
-        SOURCE KEY (src) REFERENCES Method (id)
-        DESTINATION KEY (dst) REFERENCES Function (id),
-    EXTENDS
-        SOURCE KEY (src) REFERENCES Class (id)
-        DESTINATION KEY (dst) REFERENCES Class (id),
-    IMPLEMENTS
-        SOURCE KEY (src) REFERENCES Class (id)
-        DESTINATION KEY (dst) REFERENCES Interface (id),
-    MEMBER_OF_COMMUNITY
-        SOURCE KEY (src) REFERENCES File (id)
-        DESTINATION KEY (dst) REFERENCES Community (id),
-    STEP_IN_PROCESS
-        SOURCE KEY (src) REFERENCES Function (id)
-        DESTINATION KEY (dst) REFERENCES Process (id),
-    BELONGS_TO_LAYER
-        SOURCE KEY (src) REFERENCES File (id)
-        DESTINATION KEY (dst) REFERENCES ArchitectureLayer (id),
-    PLAN_IMPACTS
-        SOURCE KEY (src) REFERENCES Plan (id)
-        DESTINATION KEY (dst) REFERENCES File (id),
-    PLAN_INTRODUCES_FUNC
-        SOURCE KEY (src) REFERENCES Plan (id)
-        DESTINATION KEY (dst) REFERENCES Function (id),
-    PLAN_INTRODUCES_CLASS
-        SOURCE KEY (src) REFERENCES Plan (id)
-        DESTINATION KEY (dst) REFERENCES Class (id),
-    CONTRACT_DECLARES_FUNC
-        SOURCE KEY (src) REFERENCES Contract (id)
-        DESTINATION KEY (dst) REFERENCES Function (id),
-    CONTRACT_DECLARES_CLASS
-        SOURCE KEY (src) REFERENCES Contract (id)
-        DESTINATION KEY (dst) REFERENCES Class (id),
-    LEARNING_RELATES_TO_FILE
-        SOURCE KEY (src) REFERENCES Learning (id)
-        DESTINATION KEY (dst) REFERENCES File (id),
-    LEARNING_RELATES_TO_FUNC
-        SOURCE KEY (src) REFERENCES Learning (id)
-        DESTINATION KEY (dst) REFERENCES Function (id),
-    FINDING_ABOUT_FILE
-        SOURCE KEY (src) REFERENCES ReviewFinding (id)
-        DESTINATION KEY (dst) REFERENCES File (id),
-    FINDING_ABOUT_FUNC
-        SOURCE KEY (src) REFERENCES ReviewFinding (id)
-        DESTINATION KEY (dst) REFERENCES Function (id),
-    FINDING_LED_TO
-        SOURCE KEY (src) REFERENCES ReviewFinding (id)
-        DESTINATION KEY (dst) REFERENCES Learning (id),
-    FINDING_ADDRESSED_BY
-        SOURCE KEY (src) REFERENCES ReviewFinding (id)
-        DESTINATION KEY (dst) REFERENCES Plan (id),
-    SESSION_MODIFIED
-        SOURCE KEY (src) REFERENCES Session (id)
-        DESTINATION KEY (dst) REFERENCES File (id),
-    DEPENDS_ON_PLAN
-        SOURCE KEY (src) REFERENCES Plan (id)
-        DESTINATION KEY (dst) REFERENCES Plan (id),
-    STUDY_REFERENCES_PLAN
-        SOURCE KEY (src) REFERENCES Study (id)
-        DESTINATION KEY (dst) REFERENCES Plan (id),
-    STUDY_REFERENCES_FILE
-        SOURCE KEY (src) REFERENCES Study (id)
-        DESTINATION KEY (dst) REFERENCES File (id),
-    ADR_GOVERNS
-        SOURCE KEY (src) REFERENCES ADR (id)
-        DESTINATION KEY (dst) REFERENCES Plan (id),
-    ADR_SUPERSEDES
-        SOURCE KEY (src) REFERENCES ADR (id)
-        DESTINATION KEY (dst) REFERENCES ADR (id),
-    ADR_CITES_STUDY
-        SOURCE KEY (src) REFERENCES ADR (id)
-        DESTINATION KEY (dst) REFERENCES Study (id),
-    ADR_CITES_SPIKE
-        SOURCE KEY (src) REFERENCES ADR (id)
-        DESTINATION KEY (dst) REFERENCES Spike (id),
-    SPIKE_FOR_PLAN
-        SOURCE KEY (src) REFERENCES Spike (id)
-        DESTINATION KEY (dst) REFERENCES Plan (id),
-    BACKLOG_ITEM_OF
-        SOURCE KEY (src) REFERENCES BacklogItem (id)
-        DESTINATION KEY (dst) REFERENCES Plan (id),
-    CONFIG_REFERENCES
-        SOURCE KEY (src) REFERENCES File (id)
-        DESTINATION KEY (dst) REFERENCES File (id)
-)
-"""
+
+def _build_create_property_graph_sql() -> str:
+    """Generate the CREATE PROPERTY GRAPH statement from the table definitions."""
+    vertices = ",\n    ".join(NODE_TABLE_NAMES)
+    edge_clauses = [
+        f"    {edge.name}\n"
+        f"        SOURCE KEY (src) REFERENCES {edge.src} (id)\n"
+        f"        DESTINATION KEY (dst) REFERENCES {edge.dst} (id)"
+        for edge in EDGE_DEFS
+    ]
+    edges = ",\n".join(edge_clauses)
+    return (
+        "CREATE PROPERTY GRAPH agentscaffold_graph\n"
+        f"VERTEX TABLES (\n    {vertices}\n)\n"
+        f"EDGE TABLES (\n{edges}\n)"
+    )
+
+
+CREATE_PROPERTY_GRAPH_SQL = _build_create_property_graph_sql()
 
 
 # ---------------------------------------------------------------------------

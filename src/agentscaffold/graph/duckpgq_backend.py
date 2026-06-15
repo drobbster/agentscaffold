@@ -14,11 +14,16 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from agentscaffold.graph.duckpgq_schema import SCHEMA_VERSION
+from agentscaffold.graph.duckpgq_schema import (
+    EDGE_TABLE_NAMES,
+    NODE_TABLE_NAMES,
+    SCHEMA_VERSION,
+)
 from agentscaffold.graph.duckpgq_schema import init_schema as _duckpgq_init_schema
 
 logger = logging.getLogger(__name__)
@@ -31,49 +36,56 @@ except ImportError:
 _EXTRAS_MSG = "DuckPGQ backend requires duckdb: pip install agentscaffold[graph-duckpgq]"
 _EXT_MSG = (
     "DuckPGQ backend requires the duckpgq community extension. "
-    "Run: INSTALL duckpgq FROM community; LOAD duckpgq in DuckDB."
+    "Run: INSTALL duckpgq FROM community; LOAD duckpgq in DuckDB. "
+    "If you are offline, the extension must already be installed in the DuckDB "
+    "extension cache."
+)
+_LOCK_MSG = (
+    "Could not open the knowledge graph at {path}: another process -- likely the "
+    "MCP server or a running 'scaffold index' -- holds a write lock on it. "
+    "Close the other AgentScaffold process (or stop the MCP server) and retry."
 )
 
-# Edge table names — mirrors EDGE_TABLES in duckpgq_schema.py.
-# Keep in sync with duckpgq_schema.EDGE_TABLES when adding new edge types.
-_EDGE_TABLE_NAMES: tuple[str, ...] = (
-    "CONTAINS",
-    "CONTAINS_FOLDER",
-    "DEFINES_FUNCTION",
-    "DEFINES_CLASS",
-    "DEFINES_INTERFACE",
-    "HAS_METHOD",
-    "IMPORTS",
-    "CALLS",
-    "METHOD_CALLS",
-    "EXTENDS",
-    "IMPLEMENTS",
-    "MEMBER_OF_COMMUNITY",
-    "STEP_IN_PROCESS",
-    "BELONGS_TO_LAYER",
-    "PLAN_IMPACTS",
-    "PLAN_INTRODUCES_FUNC",
-    "PLAN_INTRODUCES_CLASS",
-    "CONTRACT_DECLARES_FUNC",
-    "CONTRACT_DECLARES_CLASS",
-    "LEARNING_RELATES_TO_FILE",
-    "LEARNING_RELATES_TO_FUNC",
-    "FINDING_ABOUT_FILE",
-    "FINDING_ABOUT_FUNC",
-    "FINDING_LED_TO",
-    "FINDING_ADDRESSED_BY",
-    "SESSION_MODIFIED",
-    "DEPENDS_ON_PLAN",
-    "STUDY_REFERENCES_PLAN",
-    "STUDY_REFERENCES_FILE",
-    "ADR_GOVERNS",
-    "ADR_SUPERSEDES",
-    "ADR_CITES_STUDY",
-    "ADR_CITES_SPIKE",
-    "SPIKE_FOR_PLAN",
-    "BACKLOG_ITEM_OF",
-    "CONFIG_REFERENCES",
-)
+
+class GraphLockError(RuntimeError):
+    """Raised when the graph database is locked by another process."""
+
+
+def _is_lock_error(exc: Exception) -> bool:
+    """Return True if *exc* looks like a DuckDB file-lock contention error."""
+    message = str(exc).lower()
+    if "could not set lock" in message or "conflicting lock" in message:
+        return True
+    io_exc = getattr(duckdb, "IOException", None) if duckdb is not None else None
+    if io_exc is not None and isinstance(exc, io_exc):
+        return "lock" in message
+    return False
+
+
+def _connect(db_str: str, *, retries: int = 4, backoff: float = 0.2):
+    """Open a DuckDB connection, retrying briefly on lock contention.
+
+    Non-lock errors propagate immediately. After the bounded retry budget is
+    exhausted a :class:`GraphLockError` is raised with actionable guidance.
+    In-memory databases never lock, so they are returned on the first try.
+    """
+    if duckdb is None:
+        raise ImportError(_EXTRAS_MSG)
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        try:
+            return duckdb.connect(db_str)
+        except Exception as exc:
+            if not _is_lock_error(exc):
+                raise
+            last_exc = exc
+            if attempt < retries - 1:
+                time.sleep(backoff * (2**attempt))
+    raise GraphLockError(_LOCK_MSG.format(path=db_str)) from last_exc
+
+
+# Edge and node table names are imported from duckpgq_schema (single source of
+# truth, derived from EDGE_DEFS / NODE_TABLES) so they cannot drift here.
 
 # Governance artifacts derived from docs/ (plans, contracts, learnings, etc.).
 # These are re-ingested wholesale by process_governance(); clearing them before
@@ -106,6 +118,24 @@ _GOVERNANCE_EDGE_TABLES: tuple[str, ...] = (
     "SPIKE_FOR_PLAN",
 )
 
+# Preserved user/agent knowledge -- survives a schema-version rebuild via
+# export_governance()/import_governance() rather than being wiped by clear_all().
+# Mirrors clear_derived()'s preservation policy.
+_PRESERVED_NODE_TABLES: tuple[str, ...] = (
+    "ReviewFinding",
+    "BacklogItem",
+    "Session",
+    "GraphMeta",
+)
+_PRESERVED_EDGE_TABLES: tuple[str, ...] = (
+    "FINDING_ABOUT_FILE",
+    "FINDING_ABOUT_FUNC",
+    "FINDING_LED_TO",
+    "FINDING_ADDRESSED_BY",
+    "SESSION_MODIFIED",
+    "BACKLOG_ITEM_OF",
+)
+
 
 class DuckPGQBackend:
     """DuckDB + DuckPGQ implementation of the GraphBackend protocol.
@@ -123,18 +153,21 @@ class DuckPGQBackend:
         if str(db_path) != ":memory:":
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self._conn = duckdb.connect(str(db_path))
+        self._conn = _connect(str(db_path))
         self._load_extension()
 
     def _load_extension(self) -> None:
         """Install and load the duckpgq community extension."""
         try:
             self._conn.execute("INSTALL duckpgq FROM community")
-        except Exception:
-            pass  # already installed or offline; try to load anyway
+        except Exception as exc:
+            # Already installed or offline; try to load from cache anyway, but
+            # record the cause so a later LOAD failure is explainable.
+            logger.debug("INSTALL duckpgq failed (continuing to LOAD from cache): %s", exc)
         try:
             self._conn.execute("LOAD duckpgq")
         except Exception as exc:
+            logger.warning("Failed to LOAD duckpgq extension: %s", exc)
             raise RuntimeError(_EXT_MSG) from exc
         self._load_vss_extension()
 
@@ -152,7 +185,8 @@ class DuckPGQBackend:
         try:
             self._conn.execute("LOAD vss")
             self._vss_available = True
-        except Exception:
+        except Exception as exc:
+            logger.debug("vss extension unavailable (semantic search still works): %s", exc)
             self._vss_available = False
 
     # ------------------------------------------------------------------
@@ -342,7 +376,7 @@ class DuckPGQBackend:
         Iterates all edge tables and deletes rows whose src or dst references
         the given node table, then deletes all rows from the node table itself.
         """
-        for edge_table in _EDGE_TABLE_NAMES:
+        for edge_table in EDGE_TABLE_NAMES:
             try:
                 self._conn.execute(
                     f"DELETE FROM {edge_table}"
@@ -366,7 +400,7 @@ class DuckPGQBackend:
             if wal.exists():
                 wal.unlink()
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = duckdb.connect(db_str)
+        self._conn = _connect(db_str)
         self._load_extension()
         _duckpgq_init_schema(self._conn, force_recreate_graph=True)
         self._ensure_meta()
@@ -401,7 +435,7 @@ class DuckPGQBackend:
             pass
 
         # Clear derived edge tables
-        for edge_table in _EDGE_TABLE_NAMES:
+        for edge_table in EDGE_TABLE_NAMES:
             if edge_table not in preserve_edges:
                 try:
                     self._conn.execute(f"DELETE FROM {edge_table}")
@@ -409,11 +443,7 @@ class DuckPGQBackend:
                     pass
 
         # Clear derived node tables
-        from agentscaffold.graph.duckpgq_schema import NODE_TABLES
-
-        for stmt in NODE_TABLES:
-            # Extract table name from CREATE TABLE IF NOT EXISTS <name>
-            table_name = stmt.strip().split("(")[0].split()[-1]
+        for table_name in NODE_TABLE_NAMES:
             if table_name not in preserve_nodes:
                 try:
                     self._conn.execute(f"DELETE FROM {table_name}")
@@ -455,6 +485,128 @@ class DuckPGQBackend:
                 self._conn.execute(f"DELETE FROM {node_table}")
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------
+    # Governance export / import (schema migration safety)
+    # ------------------------------------------------------------------
+
+    def _table_columns(self, table: str) -> list[str]:
+        """Return the column names of a table, or [] if it does not exist."""
+        try:
+            rows = self._conn.execute(f"PRAGMA table_info('{table}')").fetchall()
+        except Exception:
+            return []
+        # PRAGMA table_info columns: (cid, name, type, notnull, dflt_value, pk)
+        return [row[1] for row in rows]
+
+    def export_governance(self) -> dict[str, Any]:
+        """Export preserved user/agent knowledge to a plain dict.
+
+        Covers the preserved node tables (ReviewFinding, BacklogItem, Session,
+        GraphMeta) and preserved edges (FINDING_*, SESSION_MODIFIED,
+        BACKLOG_ITEM_OF). Each table records its column list so
+        ``import_governance`` can perform per-table compatibility checks. Tables
+        that do not exist in the current (old) schema are skipped.
+
+        This is the data-preservation step run *before* a destructive
+        schema-version rebuild. It must succeed before any rebuild proceeds.
+        """
+        nodes: dict[str, Any] = {}
+        edges: dict[str, Any] = {}
+
+        for table in _PRESERVED_NODE_TABLES:
+            columns = self._table_columns(table)
+            if not columns:
+                continue
+            nodes[table] = {
+                "columns": columns,
+                "rows": self.query(f"SELECT * FROM {table}"),
+            }
+
+        for table in _PRESERVED_EDGE_TABLES:
+            columns = self._table_columns(table)
+            if not columns:
+                continue
+            edges[table] = {
+                "columns": columns,
+                "rows": self.query(f"SELECT * FROM {table}"),
+            }
+
+        return {
+            "export_schema_version": self.schema_version(),
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "nodes": nodes,
+            "edges": edges,
+        }
+
+    def import_governance(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Re-import governance previously produced by ``export_governance``.
+
+        Performs a per-table column compatibility check: only columns present in
+        BOTH the export and the current schema are inserted. A table whose
+        primary key (``id`` for nodes, ``src``/``dst`` for edges) is missing from
+        the current schema is skipped and reported, and the overall result is
+        marked ``compatible=False`` so the caller can keep the export file and
+        warn the user. GraphMeta inserts are idempotent no-ops (the freshly
+        initialized singleton already exists), so the new schema version is
+        never reverted.
+
+        Returns a summary dict: ``imported`` (per-table counts), ``skipped``
+        (per-table reasons), and ``compatible`` (bool).
+        """
+        imported: dict[str, int] = {}
+        skipped: dict[str, str] = {}
+        compatible = True
+
+        node_data = data.get("nodes", {})
+        for table, payload in node_data.items():
+            current_cols = set(self._table_columns(table))
+            if not current_cols:
+                skipped[table] = "table absent from current schema"
+                compatible = False
+                continue
+            if "id" not in current_cols:
+                skipped[table] = "primary key 'id' absent from current schema"
+                compatible = False
+                continue
+            usable = [c for c in payload.get("columns", []) if c in current_cols]
+            count = 0
+            for row in payload.get("rows", []):
+                props = {c: row.get(c) for c in usable}
+                if not props.get("id"):
+                    continue
+                self.create_node(table, props)
+                count += 1
+            imported[table] = count
+
+        edge_data = data.get("edges", {})
+        for table, payload in edge_data.items():
+            current_cols = set(self._table_columns(table))
+            if not current_cols:
+                skipped[table] = "edge table absent from current schema"
+                compatible = False
+                continue
+            if not {"src", "dst"} <= current_cols:
+                skipped[table] = "src/dst columns absent from current schema"
+                compatible = False
+                continue
+            prop_cols = [
+                c
+                for c in payload.get("columns", [])
+                if c in current_cols and c not in ("src", "dst")
+            ]
+            count = 0
+            for row in payload.get("rows", []):
+                src = row.get("src")
+                dst = row.get("dst")
+                if not src or not dst:
+                    continue
+                props = {c: row.get(c) for c in prop_cols}
+                self.create_edge(table, "", src, "", dst, props or None)
+                count += 1
+            imported[table] = count
+
+        return {"imported": imported, "skipped": skipped, "compatible": compatible}
 
     # ------------------------------------------------------------------
     # Pipeline state management
@@ -544,6 +696,7 @@ class DuckPGQBackend:
             "spikes": self.node_count("Spike"),
             "review_findings": self.node_count("ReviewFinding"),
             "backlog_items": self.node_count("BacklogItem"),
+            "sessions": self.node_count("Session"),
             "parsing_warnings": self.node_count("ParsingWarning"),
         }
 

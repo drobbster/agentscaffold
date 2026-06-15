@@ -291,3 +291,67 @@ class TestPipelineWithCommunities:
 
         summary = run_pipeline(FIXTURE_REPO, config)
         assert "communities" in summary
+
+
+# ---------------------------------------------------------------------------
+# Retrieval capability oracle (Plan 220)
+# ---------------------------------------------------------------------------
+
+
+class TestRetrievalOracle:
+    """evaluate_retrieval classifies retrieval capability per requested mode."""
+
+    @pytest.fixture()
+    def empty_store(self):
+        store = DuckPGQBackend(":memory:")
+        store.init_schema()
+        yield store
+        store.close()
+
+    def test_keyword_always_available(self, empty_store):
+        from agentscaffold.graph.search import evaluate_retrieval
+
+        result = evaluate_retrieval(empty_store, "keyword")
+        assert result["retrieval_status"] == "available"
+        assert result["retrieval_effective_mode"] == "keyword"
+        assert result["retrieval_requested_mode"] == "keyword"
+
+    def test_semantic_unavailable_without_sentence_transformers(self, empty_store, monkeypatch):
+        import agentscaffold.graph.embeddings as emb
+        from agentscaffold.graph.search import evaluate_retrieval
+
+        monkeypatch.setattr(emb, "_st_available", False)
+        result = evaluate_retrieval(empty_store, "semantic")
+        assert result["retrieval_status"] == "unavailable"
+        assert result["retrieval_effective_mode"] == "none"
+
+    def test_hybrid_degrades_to_keyword_without_sentence_transformers(
+        self, empty_store, monkeypatch
+    ):
+        import agentscaffold.graph.embeddings as emb
+        from agentscaffold.graph.search import evaluate_retrieval
+
+        monkeypatch.setattr(emb, "_st_available", False)
+        result = evaluate_retrieval(empty_store, "hybrid")
+        assert result["retrieval_status"] == "degraded"
+        assert result["retrieval_effective_mode"] == "keyword"
+
+    def test_degraded_when_no_embeddings_indexed(self, empty_store, monkeypatch):
+        import agentscaffold.graph.embeddings as emb
+        from agentscaffold.graph.search import evaluate_retrieval
+
+        monkeypatch.setattr(emb, "_st_available", True)
+        monkeypatch.setattr(emb, "embeddings_available", lambda _store: False)
+        result = evaluate_retrieval(empty_store, "hybrid")
+        assert result["retrieval_status"] == "degraded"
+        assert result["retrieval_effective_mode"] == "keyword"
+
+    def test_available_when_library_and_embeddings_present(self, empty_store, monkeypatch):
+        import agentscaffold.graph.embeddings as emb
+        from agentscaffold.graph.search import evaluate_retrieval
+
+        monkeypatch.setattr(emb, "_st_available", True)
+        monkeypatch.setattr(emb, "embeddings_available", lambda _store: True)
+        result = evaluate_retrieval(empty_store, "hybrid")
+        assert result["retrieval_status"] == "available"
+        assert result["retrieval_effective_mode"] == "hybrid"
