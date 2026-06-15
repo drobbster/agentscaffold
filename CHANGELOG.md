@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to semantic versioning (pre-1.0: minor versions may
 introduce additive features and small behavior changes).
 
+## [0.6.0] - 2026-06-14
+
+Trust & Safety Hardening batch (Plans 217-220).
+
+### Added
+- **Schema-migration export safety** (Plan 219): when the graph schema version
+  changes, `scaffold index` now preserves governance (review findings, backlog
+  items, sessions, and their edges) instead of silently wiping it. It exports to
+  `.scaffold/graph_export_v{old}.json` before the rebuild and re-imports the
+  schema-compatible data afterward (per-table column-intersection check;
+  incompatible data is kept in the export file and reported rather than dropped).
+  The migration is **fail-closed**: if the export step fails, the rebuild is
+  aborted and the existing graph is left intact, so knowledge is never lost.
+- **`scaffold index --force-rebuild`**: opt-in escape hatch that rebuilds anyway
+  when an export error is unrecoverable. This permanently discards the preserved
+  governance and is never the default.
+- **`scaffold graph prune`** (Plan 219): selectively prune old governance
+  (resolved findings, archived backlog items, and sessions past an age cutoff).
+  Status-aware and **dry-run by default**; requires `--apply` to delete.
+- **Retrieval degradation contract** (Plan 220): a capability oracle reports
+  retrieval status (`available` / `degraded` / `unavailable`) plus the effective
+  vs requested search mode. MCP tool `meta` and `scaffold graph search` now
+  surface when semantic search has degraded to keyword (e.g. embeddings missing
+  or `sentence-transformers` not installed) instead of failing silently.
+- **Backend connection diagnostics** (Plan 218): a clearer `GraphLockError` with
+  bounded retry/backoff on DuckDB lock contention, and explicit logging when the
+  `duckpgq` / `vss` extensions fail to install or load. The MCP server now
+  returns a clean `graph_locked` error instead of crashing when the graph file
+  is held by another process. README and user guide document the single-writer
+  model for teams.
+
+### Changed
+- **Single source of truth for the graph schema** (Plan 217): edges are defined
+  once in `EDGE_DEFS`; the property-graph DDL, edge/node table-name lists, and
+  the clear/governance helpers are all derived from it, eliminating schema drift
+  between definitions. No on-disk schema change -- `SCHEMA_VERSION` remains 7.
+- Removed the unused `rank-bm25` dependency from the `[search]` extra.
+
 ## [0.5.0] - 2026-06-12
 
 ### Added

@@ -265,6 +265,20 @@ def get_backlog_items_for_plan(
     return rows
 
 
+def delete_backlog_item(store: GraphBackend, item_id: str) -> None:
+    """Delete a BacklogItem and its BACKLOG_ITEM_OF edges.
+
+    Used by selective pruning. Removes the item's edges first (src = id), then
+    the node itself.
+    """
+    iid = _esc(item_id)
+    try:
+        store.execute(f"DELETE FROM BACKLOG_ITEM_OF WHERE src = '{iid}'")
+    except Exception:  # noqa: BLE001 - edge table may be absent
+        pass
+    store.execute(f"DELETE FROM BacklogItem WHERE id = '{iid}'")
+
+
 def _esc(s: str) -> str:
     """Minimal SQL string escaping (single-quote doubling)."""
     return s.replace("'", "''")
