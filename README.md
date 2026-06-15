@@ -48,7 +48,7 @@ A DuckDB + DuckPGQ-backed graph that indexes your codebase once and serves it to
 - **Code structure**: Functions, classes, methods, interfaces, import chains, call graphs — across Python, TypeScript, Go, Rust, Java, C, and C++
 - **Governance artifacts**: Plans, contracts, learnings, and review findings linked to the code they reference
 - **Community detection**: Leiden algorithm clustering identifies tightly coupled modules
-- **Semantic search**: Hybrid search combining structural graph queries with vector embeddings
+- **Semantic search**: Hybrid search combining structural graph queries with vector embeddings, with explicit `available`/`degraded`/`unavailable` status when embeddings or `sentence-transformers` are missing (graceful keyword fallback)
 - **Incremental indexing**: SHA-256 content hashing means only changed files are re-processed
 - **Contract drift detection**: Automatically surfaces methods declared in contracts but missing from code
 - **Review finding write-back**: Findings recorded during plan reviews are persisted as graph nodes and surfaced in every future review of the same plan
@@ -152,6 +152,8 @@ freshness:
   background_queue_enabled: true
 ```
 
+**Single-writer model (teams):** the graph is one DuckDB file (`.scaffold/graph.duckdb`) and only one process may write it at a time. The async refresh serializes refresh *scheduling* per workspace, but it does not make concurrent writers safe. Each developer should keep their own local graph rather than sharing a single file over a network mount; running `scaffold index` while the MCP server holds the graph open raises a clear `GraphLockError` (after a short retry) and MCP tool calls return `{"graph_locked": true}` instead of crashing.
+
 ### Install with language support
 
 ```bash
@@ -234,7 +236,7 @@ scaffold plugins package trading           # Package a domain pack as a wheel
 scaffold import chat.json --format chatgpt # Import conversation
 scaffold ci setup                          # Generate CI workflows
 scaffold metrics                           # Plan analytics
-scaffold graph search "data routing"       # Hybrid search
+scaffold graph search "data routing"       # Hybrid search (keyword + semantic)
 scaffold graph verify                      # Graph accuracy check
 scaffold review brief 42                   # Pre-review brief for plan 42
 scaffold review challenges 42              # Adversarial challenges with evidence

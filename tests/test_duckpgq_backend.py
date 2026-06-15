@@ -344,3 +344,73 @@ def test_open_graph_duckpgq_returns_graphbackend(tmp_path: Path) -> None:
         assert isinstance(store, GraphBackend)
     finally:
         store.close()
+
+
+# ---------------------------------------------------------------------------
+# Connection robustness (Plan 218)
+# ---------------------------------------------------------------------------
+
+
+def test_is_lock_error_classifies_lock_messages() -> None:
+    from agentscaffold.graph.duckpgq_backend import _is_lock_error
+
+    assert _is_lock_error(Exception("Could not set lock on file foo.db")) is True
+    assert _is_lock_error(Exception("Conflicting lock is held in another process")) is True
+    assert _is_lock_error(Exception("some unrelated parse error")) is False
+
+
+def test_connect_retries_then_raises_graph_lock_error(monkeypatch) -> None:
+    """A persistent lock error is retried then surfaced as GraphLockError."""
+    import agentscaffold.graph.duckpgq_backend as backend_mod
+    from agentscaffold.graph.duckpgq_backend import GraphLockError
+
+    calls = {"n": 0}
+
+    def _always_locked(_db_str):
+        calls["n"] += 1
+        raise RuntimeError("Could not set lock on file graph.duckdb")
+
+    monkeypatch.setattr(backend_mod.duckdb, "connect", _always_locked)
+    monkeypatch.setattr(backend_mod.time, "sleep", lambda _s: None)
+
+    with pytest.raises(GraphLockError) as exc_info:
+        backend_mod._connect("graph.duckdb", retries=3, backoff=0.0)
+
+    assert calls["n"] == 3
+    assert "another process" in str(exc_info.value)
+
+
+def test_connect_does_not_retry_non_lock_errors(monkeypatch) -> None:
+    import agentscaffold.graph.duckpgq_backend as backend_mod
+
+    calls = {"n": 0}
+
+    def _other_error(_db_str):
+        calls["n"] += 1
+        raise RuntimeError("disk is on fire")
+
+    monkeypatch.setattr(backend_mod.duckdb, "connect", _other_error)
+
+    with pytest.raises(RuntimeError, match="disk is on fire"):
+        backend_mod._connect("graph.duckdb", retries=4, backoff=0.0)
+    assert calls["n"] == 1
+
+
+def test_connect_succeeds_for_fresh_path(tmp_path: Path) -> None:
+    """The retry wrapper opens a normal file DB on the first attempt."""
+    import agentscaffold.graph.duckpgq_backend as backend_mod
+
+    db_path = tmp_path / "fresh.duckdb"
+    conn = backend_mod._connect(str(db_path))
+    try:
+        assert conn.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_graph_lock_error_is_exported() -> None:
+    """GraphLockError is part of the graph package public API."""
+    from agentscaffold.graph import GraphLockError as ExportedLockError
+    from agentscaffold.graph.duckpgq_backend import GraphLockError
+
+    assert ExportedLockError is GraphLockError

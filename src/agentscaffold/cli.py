@@ -631,6 +631,12 @@ def index_cmd(
     update_rules: bool = typer.Option(
         False, "--update-rules", help="Regenerate agent rule files after indexing."
     ),
+    force_rebuild: bool = typer.Option(
+        False,
+        "--force-rebuild",
+        help="On a schema-version rebuild, proceed even if preserving existing "
+        "findings/sessions/backlog fails. WARNING: discards that data permanently.",
+    ),
 ) -> None:
     """Build or rebuild the knowledge graph."""
     from agentscaffold.config import load_config
@@ -647,6 +653,7 @@ def index_cmd(
         incremental=incremental,
         embeddings=embeddings,
         audit=audit,
+        force_rebuild=force_rebuild,
     )
 
     if update_rules:
@@ -744,7 +751,11 @@ def graph_search(
     """Search the knowledge graph using natural language."""
     from agentscaffold.config import load_config
     from agentscaffold.graph import graph_available, open_graph
-    from agentscaffold.graph.search import format_search_results, hybrid_search
+    from agentscaffold.graph.search import (
+        evaluate_retrieval,
+        format_search_results,
+        hybrid_search,
+    )
 
     config = load_config()
     if not graph_available(config):
@@ -753,23 +764,15 @@ def graph_search(
 
     store = open_graph(config)
 
-    if mode in ("semantic", "hybrid"):
-        from agentscaffold.graph.embeddings import _st_available, embeddings_available
-
-        if not _st_available:
-            console.print(
-                "[yellow]Warning: sentence-transformers not installed. "
-                "Falling back to keyword search only.[/yellow]\n"
-                "[dim]Install with: pip install agentscaffold[search][/dim]\n"
-            )
-            mode = "keyword"
-        elif not embeddings_available(store):
-            console.print(
-                "[yellow]Warning: No embeddings found in graph. "
-                "Falling back to keyword search only.[/yellow]\n"
-                "[dim]Generate embeddings with: scaffold index --embeddings[/dim]\n"
-            )
-            mode = "keyword"
+    retrieval = evaluate_retrieval(store, mode)
+    if retrieval["retrieval_status"] != "available":
+        console.print(
+            f"[yellow]Retrieval {retrieval['retrieval_status']}: "
+            f"{retrieval['retrieval_reason']}.[/yellow]\n"
+        )
+    effective_mode = retrieval["retrieval_effective_mode"]
+    if effective_mode in ("keyword", "semantic", "hybrid"):
+        mode = effective_mode
 
     tables = [table] if table else None
     results = hybrid_search(store, query, mode=mode, top_k=top_k, tables=tables)
@@ -890,6 +893,96 @@ def graph_verify(
     report = verify_graph(store, Path.cwd(), deep=deep)
     store.close()
     print_verification_report(report)
+
+
+@graph_app.command("prune")
+def graph_prune(
+    resolved_findings_before: str | None = typer.Option(
+        None,
+        "--resolved-findings-before",
+        help="Prune resolved review findings (age spec like '30d'; findings have no"
+        " timestamp, so all resolved findings are selected).",
+    ),
+    sessions_before: str | None = typer.Option(
+        None,
+        "--sessions-before",
+        help="Prune sessions older than this age (e.g. '90d').",
+    ),
+    archived_backlog_before: str | None = typer.Option(
+        None,
+        "--archived-backlog-before",
+        help="Prune archived backlog items older than this age (e.g. '90d').",
+    ),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Actually delete the selected rows. Without this flag, runs a dry run.",
+    ),
+) -> None:
+    """Selectively prune old governance knowledge (dry-run by default).
+
+    Only status-eligible rows are ever selected: resolved findings, archived
+    backlog items, and sessions past the cutoff. Nothing is deleted unless
+    --apply is given.
+    """
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+    from agentscaffold.graph.prune import apply_prune, select_prunable
+
+    if not any([resolved_findings_before, sessions_before, archived_backlog_before]):
+        console.print(
+            "[yellow]Nothing to prune: specify at least one of "
+            "--resolved-findings-before, --sessions-before, --archived-backlog-before.[/yellow]"
+        )
+        raise SystemExit(1)
+
+    config = load_config()
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found. Run 'scaffold index' first.[/red]")
+        raise SystemExit(1)
+
+    store = open_graph(config)
+    try:
+        try:
+            selection = select_prunable(
+                store,
+                resolved_findings_before=resolved_findings_before,
+                sessions_before=sessions_before,
+                archived_backlog_before=archived_backlog_before,
+            )
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise SystemExit(1) from exc
+
+        totals = {k: len(v) for k, v in selection.items()}
+        grand_total = sum(totals.values())
+
+        console.print("[bold]Prune selection:[/bold]")
+        console.print(f"  resolved findings: {totals['resolved_findings']}")
+        console.print(f"  sessions:          {totals['sessions']}")
+        console.print(f"  archived backlog:  {totals['archived_backlog']}")
+        if resolved_findings_before is not None:
+            console.print(
+                "[dim]Note: ReviewFinding has no timestamp; all resolved findings are"
+                " selected regardless of the age value.[/dim]"
+            )
+
+        if grand_total == 0:
+            console.print("[green]Nothing eligible for pruning.[/green]")
+            return
+
+        if not apply:
+            console.print(
+                f"\n[yellow]Dry run: {grand_total} record(s) would be deleted. "
+                "Re-run with --apply to delete.[/yellow]"
+            )
+            return
+
+        counts = apply_prune(store, selection)
+        deleted = sum(counts.values())
+        console.print(f"\n[green]Pruned {deleted} record(s).[/green]")
+    finally:
+        store.close()
 
 
 # ---------------------------------------------------------------------------

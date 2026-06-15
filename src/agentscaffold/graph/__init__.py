@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agentscaffold.graph.backend import GraphBackend
-from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
+from agentscaffold.graph.duckpgq_backend import DuckPGQBackend, GraphLockError
 
 if TYPE_CHECKING:
     from agentscaffold.config import ScaffoldConfig
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DuckPGQBackend",
     "GraphBackend",
+    "GraphLockError",
     "graph_available",
     "index",
     "open_graph",
@@ -59,6 +60,7 @@ def index(
     incremental: bool = False,
     embeddings: bool = False,
     audit: bool = False,
+    force_rebuild: bool = False,
 ) -> dict:
     """Build or rebuild the knowledge graph.
 
@@ -72,6 +74,7 @@ def index(
         incremental=incremental,
         embeddings=embeddings,
         audit=audit,
+        force_rebuild=force_rebuild,
     )
 
 

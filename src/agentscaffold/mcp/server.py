@@ -997,13 +997,18 @@ def _get_resource_definitions() -> list:
 def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Dispatch a tool call to the appropriate handler."""
     from agentscaffold.config import load_config
-    from agentscaffold.graph import graph_available, open_graph
+    from agentscaffold.graph import GraphLockError, graph_available, open_graph
 
     config = load_config()
     if not graph_available(config):
         return {"error": "No knowledge graph found. Run 'scaffold index' first."}
 
-    store = open_graph(config)
+    try:
+        store = open_graph(config)
+    except GraphLockError as exc:
+        return {"error": str(exc), "graph_locked": True}
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        return {"error": f"Failed to open knowledge graph: {exc}"}
     root = Path.cwd()
     freshness_meta: dict[str, Any] = {}
     try:
@@ -1146,6 +1151,12 @@ def _build_meta(
     }
     if freshness_meta:
         meta.update(freshness_meta)
+    try:
+        from agentscaffold.graph.search import evaluate_retrieval
+
+        meta.update(evaluate_retrieval(store, "hybrid"))
+    except Exception:  # pragma: no cover - retrieval capability is best-effort
+        pass
     return meta
 
 
@@ -1443,11 +1454,19 @@ def _tool_impact(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str,
 
 def _tool_search(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
     """Handle scaffold_search tool call (hybrid search)."""
-    from agentscaffold.graph.search import format_search_results, hybrid_search
+    from agentscaffold.graph.search import (
+        evaluate_retrieval,
+        format_search_results,
+        hybrid_search,
+    )
 
     query_text = arguments.get("query", "")
     mode = arguments.get("mode", "hybrid")
     top_k = arguments.get("top_k", 10)
+
+    # Recompute retrieval status for the actually-requested mode so the search
+    # response reflects what ran (the meta snapshot used the default mode).
+    meta = {**meta, **evaluate_retrieval(store, mode)}
 
     results = hybrid_search(store, query_text, mode=mode, top_k=top_k)
 

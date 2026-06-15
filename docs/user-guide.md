@@ -1230,12 +1230,93 @@ freshness:
 
 ### DuckDB file locked or corrupted
 
-Stop any running MCP server first (`Ctrl-C` or kill the process), then:
+The knowledge graph is a single DuckDB file with a **single-writer** model:
+only one process may hold it open for writing at a time. The MCP server holds
+the graph open, and `scaffold index` opens it for writing, so running an index
+while the MCP server (or another `scaffold` command) is using the same
+`.scaffold/graph.duckdb` will fail.
+
+As of 0.6.0 a lock conflict raises a clear `GraphLockError` after a short
+automatic retry (instead of a raw DuckDB `IOException`), and MCP tool calls
+return `{"error": ..., "graph_locked": true}` rather than crashing. The async
+freshness refresh serializes *scheduling* per workspace, but it does not make
+concurrent writers safe -- it still assumes a single writer.
+
+To resolve a lock, stop any running MCP server first (`Ctrl-C` or kill the
+process) and ensure no other `scaffold` command is running, then re-run your
+command. If the file is genuinely corrupted, rebuild it:
 
 ```bash
 rm .scaffold/graph.duckdb
 scaffold index
 ```
+
+### Schema upgrades preserve your findings and sessions
+
+When AgentScaffold's graph schema version changes (after an upgrade), the next
+`scaffold index` rebuilds the graph. As of 0.6.0 this is a **safe, recoverable**
+operation: before the rebuild, preserved governance (review findings, backlog
+items, sessions and their edges) is exported to
+`.scaffold/graph_export_v{old}.json`, and after the rebuild the compatible data
+is re-imported automatically.
+
+The migration is **fail-closed**: if the export step fails, the rebuild is
+aborted and the existing graph is left intact, so your knowledge is never lost.
+If some data is schema-incompatible and cannot be re-imported, the export file
+is kept and a message tells you where it is. The export file contains only
+project governance text (no secrets) and is safe to delete once you have
+confirmed the rebuild succeeded.
+
+**If you see "Aborting schema rebuild ... failed to export preserved governance":**
+the rebuild was halted and nothing was deleted. The message includes the graph
+file path and the underlying error; the full traceback is in the logs (logged at
+ERROR). The cause is almost always a transient I/O problem:
+
+1. **Disk full** -- free up space, then re-run `scaffold index`.
+2. **`.scaffold/` is read-only** -- fix directory permissions, then re-run.
+3. **Graph file open in another process** -- close other AgentScaffold
+   processes / editors holding the DuckDB file, then re-run.
+
+Once the underlying cause is fixed, simply re-run `scaffold index` -- the
+migration retries from scratch.
+
+If the export error is unrecoverable and you do not need the existing findings,
+sessions, and backlog items, you can force the rebuild:
+
+```bash
+scaffold index --force-rebuild
+```
+
+With `--force-rebuild`, an export failure is downgraded from an abort to a
+warning and the graph is rebuilt anyway. This **permanently discards** the
+preserved governance, so it is opt-in and never the default. (Deleting the graph
+file shown in the error is the equivalent manual alternative.)
+
+### Pruning old governance data
+
+Over time, resolved findings, archived backlog items, and old sessions
+accumulate. Use `scaffold graph prune` to trim them. It is **dry-run by
+default** and only ever selects status-eligible rows (resolved findings,
+archived backlog, sessions past the cutoff):
+
+```bash
+# Preview what would be deleted (no changes made)
+scaffold graph prune --sessions-before 90d --archived-backlog-before 180d
+
+# Actually delete the selected rows
+scaffold graph prune --sessions-before 90d --archived-backlog-before 180d --apply
+```
+
+Options:
+
+- `--resolved-findings-before <Nd>`: select resolved findings. (Findings carry
+  no timestamp, so all resolved findings are selected regardless of the age value.)
+- `--sessions-before <Nd>`: select sessions older than `N` days.
+- `--archived-backlog-before <Nd>`: select archived backlog items older than `N` days.
+- `--apply`: required to actually delete; without it the command only reports
+  what it would remove.
+
+There is no automatic TTL -- pruning is always explicit.
 
 ### Tree-sitter grammar not loading for a language
 

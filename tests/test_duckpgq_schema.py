@@ -6,7 +6,10 @@ import pytest
 
 from agentscaffold.graph.duckpgq_schema import (
     CREATE_PROPERTY_GRAPH_SQL,
+    EDGE_DEFS,
+    EDGE_TABLE_NAMES,
     EDGE_TABLES,
+    NODE_TABLE_NAMES,
     NODE_TABLES,
     SCHEMA_VERSION,
     all_edge_ddl,
@@ -63,72 +66,60 @@ def test_all_edge_ddl_returns_copy():
 
 def test_create_property_graph_sql_lists_all_node_tables():
     """Every node table name must appear in the CREATE PROPERTY GRAPH statement."""
-    expected_nodes = [
-        "File",
-        "Folder",
-        "Function",
-        "Class",
-        "Method",
-        "Interface",
-        "Community",
-        "Process",
-        "ArchitectureLayer",
-        "Plan",
-        "Contract",
-        "Learning",
-        "ReviewFinding",
-        "Session",
-        "Study",
-        "ADR",
-        "Spike",
-        "GraphMeta",
-        "ParsingWarning",
-    ]
-    for name in expected_nodes:
+    assert len(NODE_TABLE_NAMES) == 20
+    for name in NODE_TABLE_NAMES:
         assert name in CREATE_PROPERTY_GRAPH_SQL, f"Missing vertex: {name}"
 
 
 def test_create_property_graph_sql_lists_all_edge_tables():
     """Every edge type must appear in the CREATE PROPERTY GRAPH statement."""
-    expected_edges = [
-        "CONTAINS",
-        "CONTAINS_FOLDER",
-        "DEFINES_FUNCTION",
-        "DEFINES_CLASS",
-        "DEFINES_INTERFACE",
-        "HAS_METHOD",
-        "IMPORTS",
-        "CALLS",
-        "METHOD_CALLS",
-        "EXTENDS",
-        "IMPLEMENTS",
-        "MEMBER_OF_COMMUNITY",
-        "STEP_IN_PROCESS",
-        "BELONGS_TO_LAYER",
-        "PLAN_IMPACTS",
-        "PLAN_INTRODUCES_FUNC",
-        "PLAN_INTRODUCES_CLASS",
-        "CONTRACT_DECLARES_FUNC",
-        "CONTRACT_DECLARES_CLASS",
-        "LEARNING_RELATES_TO_FILE",
-        "LEARNING_RELATES_TO_FUNC",
-        "FINDING_ABOUT_FILE",
-        "FINDING_ABOUT_FUNC",
-        "FINDING_LED_TO",
-        "FINDING_ADDRESSED_BY",
-        "SESSION_MODIFIED",
-        "DEPENDS_ON_PLAN",
-        "STUDY_REFERENCES_PLAN",
-        "STUDY_REFERENCES_FILE",
-        "ADR_GOVERNS",
-        "ADR_SUPERSEDES",
-        "ADR_CITES_STUDY",
-        "ADR_CITES_SPIKE",
-        "SPIKE_FOR_PLAN",
-        "CONFIG_REFERENCES",
-    ]
-    for name in expected_edges:
+    assert len(EDGE_TABLE_NAMES) == 36
+    for name in EDGE_TABLE_NAMES:
         assert name in CREATE_PROPERTY_GRAPH_SQL, f"Missing edge: {name}"
+
+
+# ---------------------------------------------------------------------------
+# Drift guardrails: edge names, edge DDL, and the property-graph statement are
+# all generated from EDGE_DEFS, so they can never disagree. These tests fail
+# loudly if that invariant is ever broken.
+# ---------------------------------------------------------------------------
+
+
+def test_edge_names_derive_consistently():
+    """EDGE_DEFS, EDGE_TABLE_NAMES, and EDGE_TABLES all describe the same edges."""
+    def_names = [edge.name for edge in EDGE_DEFS]
+    assert list(EDGE_TABLE_NAMES) == def_names
+    assert len(EDGE_TABLES) == len(EDGE_DEFS)
+    for name, ddl in zip(def_names, EDGE_TABLES):
+        assert f"CREATE TABLE IF NOT EXISTS {name} (" in ddl
+
+
+def test_edge_names_unique():
+    assert len(EDGE_TABLE_NAMES) == len(set(EDGE_TABLE_NAMES))
+
+
+def test_node_names_unique():
+    assert len(NODE_TABLE_NAMES) == len(set(NODE_TABLE_NAMES))
+
+
+def test_edge_ddl_includes_extra_property_columns():
+    """Edges with extra columns render them in the generated DDL."""
+    ddl_by_name = dict(zip(EDGE_TABLE_NAMES, EDGE_TABLES))
+    assert "importedNames VARCHAR" in ddl_by_name["IMPORTS"]
+    assert "confidence DOUBLE" in ddl_by_name["CALLS"]
+    assert "refKey VARCHAR" in ddl_by_name["CONFIG_REFERENCES"]
+    assert "symbol VARCHAR" in ddl_by_name["CONFIG_REFERENCES"]
+
+
+def test_governance_subsets_are_valid():
+    """The backend governance tuples must be subsets of the derived names."""
+    from agentscaffold.graph.duckpgq_backend import (
+        _GOVERNANCE_EDGE_TABLES,
+        _GOVERNANCE_NODE_TABLES,
+    )
+
+    assert set(_GOVERNANCE_EDGE_TABLES) <= set(EDGE_TABLE_NAMES)
+    assert set(_GOVERNANCE_NODE_TABLES) <= set(NODE_TABLE_NAMES)
 
 
 # ---------------------------------------------------------------------------
@@ -144,64 +135,9 @@ def test_init_schema_creates_all_tables(conn):
             "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
         ).fetchall()
     }
-    node_names = [
-        "File",
-        "Folder",
-        "Function",
-        "Class",
-        "Method",
-        "Interface",
-        "Community",
-        "Process",
-        "ArchitectureLayer",
-        "Plan",
-        "Contract",
-        "Learning",
-        "ReviewFinding",
-        "Session",
-        "Study",
-        "ADR",
-        "Spike",
-        "GraphMeta",
-        "ParsingWarning",
-    ]
-    edge_names = [
-        "CONTAINS",
-        "CONTAINS_FOLDER",
-        "DEFINES_FUNCTION",
-        "DEFINES_CLASS",
-        "DEFINES_INTERFACE",
-        "HAS_METHOD",
-        "IMPORTS",
-        "CALLS",
-        "METHOD_CALLS",
-        "EXTENDS",
-        "IMPLEMENTS",
-        "MEMBER_OF_COMMUNITY",
-        "STEP_IN_PROCESS",
-        "BELONGS_TO_LAYER",
-        "PLAN_IMPACTS",
-        "PLAN_INTRODUCES_FUNC",
-        "PLAN_INTRODUCES_CLASS",
-        "CONTRACT_DECLARES_FUNC",
-        "CONTRACT_DECLARES_CLASS",
-        "LEARNING_RELATES_TO_FILE",
-        "LEARNING_RELATES_TO_FUNC",
-        "FINDING_ABOUT_FILE",
-        "FINDING_ABOUT_FUNC",
-        "FINDING_LED_TO",
-        "FINDING_ADDRESSED_BY",
-        "SESSION_MODIFIED",
-        "DEPENDS_ON_PLAN",
-        "STUDY_REFERENCES_PLAN",
-        "STUDY_REFERENCES_FILE",
-        "ADR_GOVERNS",
-        "ADR_SUPERSEDES",
-        "ADR_CITES_STUDY",
-        "ADR_CITES_SPIKE",
-        "SPIKE_FOR_PLAN",
-    ]
-    for name in node_names + edge_names:
+    # Derived from the single source of truth -- asserts completeness, not a
+    # hand-maintained subset, so this test cannot silently drift.
+    for name in list(NODE_TABLE_NAMES) + list(EDGE_TABLE_NAMES):
         assert name in tables, f"Table not created: {name}"
 
 

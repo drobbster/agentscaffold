@@ -264,6 +264,29 @@ def record_findings_batch(
     }
 
 
+_FINDING_EDGE_TABLES: tuple[str, ...] = (
+    "FINDING_ABOUT_FILE",
+    "FINDING_ABOUT_FUNC",
+    "FINDING_LED_TO",
+    "FINDING_ADDRESSED_BY",
+)
+
+
+def delete_finding(store: GraphBackend, finding_id: str) -> None:
+    """Delete a ReviewFinding and its outgoing edges.
+
+    Used by selective pruning. Removes the finding's edges first (src = id),
+    then the node itself. Edge tables that do not exist are ignored.
+    """
+    fid = _esc(finding_id)
+    for edge_table in _FINDING_EDGE_TABLES:
+        try:
+            store.execute(f"DELETE FROM {edge_table} WHERE src = '{fid}'")
+        except Exception:  # noqa: BLE001 - edge table may be absent
+            pass
+    store.execute(f"DELETE FROM ReviewFinding WHERE id = '{fid}'")
+
+
 def _esc(s: str) -> str:
     """Minimal SQL string escaping (single-quote doubling)."""
     return s.replace("'", "''")

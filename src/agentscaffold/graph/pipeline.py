@@ -6,6 +6,7 @@ Reports a quality summary on completion.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from pathlib import Path
@@ -16,12 +17,102 @@ from rich.table import Table
 
 from agentscaffold.graph.backend import GraphBackend
 from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
+from agentscaffold.graph.duckpgq_schema import SCHEMA_VERSION
 from agentscaffold.graph.symbol_table import SymbolTable
 
 
 def _open_store_for_pipeline(db_path: Path, backend_name: str) -> GraphBackend:
     """Instantiate the backend for pipeline writes."""
     return DuckPGQBackend(db_path)
+
+
+def _migrate_on_version_change(
+    store: GraphBackend,
+    db_path: Path,
+    stored_version: int,
+    *,
+    force: bool = False,
+) -> None:
+    """Preserve governance across a schema-version rebuild (fail-closed).
+
+    Exports preserved governance (review findings, backlog items, sessions and
+    their edges) to ``.scaffold/graph_export_v{old}.json`` BEFORE the
+    destructive rebuild. If the export fails, the rebuild is aborted and the
+    existing graph is left intact so user/agent knowledge is never lost. After a
+    successful export + rebuild, compatible governance is re-imported; if the
+    columns are schema-incompatible the export file is kept and the user is
+    warned rather than silently dropping data.
+
+    If ``force`` is True (``scaffold index --force-rebuild``), an export failure
+    no longer aborts: a prominent warning is emitted and the rebuild proceeds,
+    discarding the preserved governance. This is the explicit, opt-in escape
+    hatch for an unrecoverable export error.
+    """
+    console.print(
+        f"[yellow]Graph schema changed (v{stored_version} -> v{SCHEMA_VERSION}). "
+        "Rebuilding...[/yellow]"
+    )
+
+    # Backends without governance export/import fall back to the legacy rebuild.
+    if not (hasattr(store, "export_governance") and hasattr(store, "import_governance")):
+        store.clear_all()
+        return
+
+    export_path = db_path.parent / f"graph_export_v{stored_version}.json"
+
+    # Fail-closed by default: the export must succeed before we destroy anything.
+    try:
+        data = store.export_governance()
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        export_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception as exc:
+        logger.error("Governance export failed before schema rebuild: %s", exc, exc_info=True)
+        if force:
+            logger.warning("Proceeding with forced rebuild despite export failure: %s", exc)
+            console.print(
+                f"[red]WARNING: governance export failed ({exc}), but --force-rebuild was "
+                "given. Rebuilding anyway -- preserved findings, sessions, and backlog items "
+                "will be permanently discarded.[/red]"
+            )
+            store.clear_all()
+            return
+        raise RuntimeError(
+            f"Aborting schema rebuild (v{stored_version} -> v{SCHEMA_VERSION}): failed to "
+            "export preserved governance. The existing graph was left intact -- no data was "
+            f"deleted.\n"
+            f"  Graph file:       {db_path}\n"
+            f"  Underlying error: {exc}\n"
+            "How to resolve:\n"
+            "  1. This is usually a transient I/O problem: the disk is full, "
+            f"'{db_path.parent}' is read-only, or the graph file is open in another process. "
+            "Fix the underlying cause (see the full traceback in the logs) and re-run "
+            "'scaffold index'.\n"
+            "  2. If you do not need the existing findings, sessions, and backlog items, "
+            "re-run with 'scaffold index --force-rebuild' to rebuild anyway (this discards "
+            f"that preserved governance), or delete the graph file ('{db_path}') manually."
+        ) from exc
+
+    # Knowledge is safely on disk -- now rebuild from scratch.
+    store.clear_all()
+
+    try:
+        result = store.import_governance(data)
+    except Exception as exc:
+        logger.error("Governance re-import failed after rebuild: %s", exc)
+        console.print(
+            f"[yellow]Rebuilt the graph, but governance re-import failed ({exc}). "
+            f"Preserved data kept at {export_path}.[/yellow]"
+        )
+        return
+
+    if result.get("compatible", True):
+        restored = sum(result.get("imported", {}).values())
+        console.print(f"[green]Preserved {restored} governance records across the rebuild.[/green]")
+    else:
+        console.print(
+            "[yellow]Some governance was schema-incompatible and was not re-imported; "
+            f"export kept at {export_path}. Skipped: {result.get('skipped')}[/yellow]"
+        )
 
 
 if TYPE_CHECKING:
@@ -38,6 +129,7 @@ def run_pipeline(
     incremental: bool = False,
     embeddings: bool = False,
     audit: bool = False,
+    force_rebuild: bool = False,
 ) -> dict[str, Any]:
     """Execute the full indexing pipeline.
 
@@ -59,10 +151,7 @@ def run_pipeline(
     if not store.schema_current():
         stored_version = store.schema_version()
         if stored_version is not None:
-            console.print(
-                f"[yellow]Graph schema changed (v{stored_version}). Rebuilding...[/yellow]"
-            )
-            store.clear_all()
+            _migrate_on_version_change(store, db_path, stored_version, force=force_rebuild)
 
     store.init_schema()
     phases_completed: list[str] = []
