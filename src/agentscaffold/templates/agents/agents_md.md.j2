@@ -710,6 +710,29 @@ All reviews must be **readable in markdown**:
 
 **Correct pattern**: Use a heading + prose paragraph for each finding, then optionally a summary table with short cell values.
 
+## Review Terminology (Human-Readable)
+
+The governed lifecycle is driven by MCP tools (for example `scaffold_begin_plan`,
+`scaffold_complete_plan`, `scaffold_prepare_retro`). Those tool names are an
+implementation detail of how work is invoked -- they are NOT the words to use as
+the primary description in human-facing artifacts.
+
+In plans, plan appendices, study notes, the architecture changelog,
+`workflow_state.md`, commit messages, and PR descriptions, describe the activity
+in plain review language:
+
+| Use this human-readable phrasing | Not the raw tool name |
+|----------------------------------|------------------------|
+| Pre-implementation review (devil's advocate + expansion + gap analysis) | `scaffold_begin_plan` |
+| Post-implementation review / retrospective | `scaffold_complete_plan`, `scaffold_prepare_retro` |
+| Plan review / critique | `scaffold_prepare_review` |
+| Orientation / status check | `scaffold_orient` |
+
+A raw tool name may appear only as light provenance inside a parenthetical (for
+example "pre-implementation review (begin-plan chain), 2026-06-17"), never as the
+primary description of what happened. Checklist entries, headings, and summaries
+must read naturally to a human who does not know the tool surface.
+
 ## Execution Mode
 
 Determine your execution mode before starting any work:

@@ -635,7 +635,13 @@ def agents_hooks(
             continue
 
         if plat == "claude-code":
-            path = write_claude_code_hooks(enforcement, root, dry_run=dry_run)
+            path = write_claude_code_hooks(
+                enforcement,
+                root,
+                scaffold_bin=resolve_scaffold_bin(),
+                min_interval_seconds=config.graph.incremental_min_interval_seconds,
+                dry_run=dry_run,
+            )
             label = "Would write" if dry_run else "Wrote"
             console.print(f"[green]{label}[/green] {path.relative_to(root)}")
         elif plat == "cursor":
@@ -644,6 +650,7 @@ def agents_hooks(
                 enforcement,
                 root,
                 scaffold_bin=resolve_scaffold_bin(),
+                min_interval_seconds=config.graph.incremental_min_interval_seconds,
                 dry_run=dry_run,
             )
             label = "Would write" if dry_run else "Wrote"

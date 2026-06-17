@@ -14,14 +14,17 @@ from agentscaffold.hooks.generators.claude_code import (
     write_claude_code_hooks,
 )
 from agentscaffold.hooks.generators.cursor import (
+    EMBED_COMMIT_HOOK_REL_PATHS,
     INDEX_HOOK_REL_PATH,
     CursorRuleClass,
     _build_frontmatter,
     generate_cursor_enforcement_files,
     generate_cursor_hooks_config,
     generate_enforcement_rule_file,
+    render_embedding_commit_hook_script,
     render_index_hook_script,
     write_cursor_hooks,
+    write_embedding_commit_hooks,
 )
 from agentscaffold.hooks.generators.windsurf import (
     generate_windsurf_enforcement_section,
@@ -45,7 +48,7 @@ def test_generate_claude_code_hooks_builtins_freshness() -> None:
     assert "PostToolUse" in result["hooks"]
     entries = result["hooks"]["PostToolUse"]
     commands = [e["hooks"][0]["command"] for e in entries]
-    assert any("scaffold index" in c for c in commands)
+    assert commands == ["./.cursor/hooks/scaffold-index.sh"]
 
 
 def test_generate_claude_code_hooks_builtins_orient() -> None:
@@ -90,6 +93,9 @@ def test_write_claude_code_hooks_creates_file(tmp_path: Path) -> None:
     assert path.exists()
     data = json.loads(path.read_text())
     assert "hooks" in data
+    script = tmp_path / INDEX_HOOK_REL_PATH
+    assert script.exists()
+    assert script.stat().st_mode & 0o111
 
 
 def test_write_claude_code_hooks_dry_run(tmp_path: Path) -> None:
@@ -233,14 +239,33 @@ def test_render_index_hook_script_uses_scaffold_bin() -> None:
 
 
 def test_render_index_hook_script_is_single_flight_and_nonblocking() -> None:
-    script = render_index_hook_script("scaffold")
+    script = render_index_hook_script("scaffold", min_interval_seconds=30)
     # Single-flight lock + coalesced trailing run + backgrounded so the hook
     # returns immediately and rapid edits never stack.
     assert 'mkdir "$lock_dir"' in script
     assert "index.request" in script
+    assert "index.last_success" in script
+    assert "min_interval_seconds=30" in script
     assert "disown" in script
     # Honors an explicit disable switch.
     assert "SCAFFOLD_HOOK_DISABLE" in script
+
+
+def test_render_embedding_commit_hook_script_is_nonblocking_and_lock_aware() -> None:
+    script = render_embedding_commit_hook_script("/tmp/scaffold", min_interval_seconds=45)
+    assert 'scaffold_bin="/tmp/scaffold"' in script
+    assert "min_interval_seconds=45" in script
+    assert "structural_lock_dir" in script
+    assert "index --incremental --embeddings" in script
+    assert ") >/dev/null 2>&1 &" in script
+
+
+def test_write_embedding_commit_hooks_creates_executable_git_hooks(tmp_path: Path) -> None:
+    paths = write_embedding_commit_hooks(tmp_path, scaffold_bin="/tmp/scaffold")
+    assert [p.relative_to(tmp_path).as_posix() for p in paths] == list(EMBED_COMMIT_HOOK_REL_PATHS)
+    for path in paths:
+        assert path.exists()
+        assert path.stat().st_mode & 0o111
 
 
 def test_write_cursor_hooks_creates_script_and_json(tmp_path: Path) -> None:

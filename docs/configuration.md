@@ -326,6 +326,37 @@ Knowledge-graph backend, indexing, and governance paths.
 | governance_artifact | str | `docs/ai/state/governance.json` | Git-committed system of record for findings/sessions/backlog (see below) |
 | embeddings | bool | false | Generate code embeddings during indexing |
 | communities | bool | true | Detect module communities during indexing |
+| incremental_community_refresh | `"structure" \| "always" \| "threshold"` | `structure` | Controls when incremental indexing refreshes community clusters. `structure` refreshes on add/delete only; `always` preserves old per-run behavior; `threshold` refreshes when the changed-file count reaches `incremental_community_threshold` |
+| incremental_community_threshold | int | `25` | Changed-file threshold used when `incremental_community_refresh: threshold` |
+| incremental_min_interval_seconds | int | `0` | Minimum seconds between generated async structural-index hook runs. `0` disables the interval guard; the hook remains single-flight/coalesced |
+| embedding_min_interval_seconds | int | `0` | Minimum seconds between async embedding refreshes. `0` disables the interval guard; requests remain single-flight/coalesced |
+| async_embeddings | `"off" \| "idle" \| "interval" \| "commit"` | `off` | Controls whether AgentScaffold schedules background embedding refreshes. `off` preserves historical behavior and never loads the embedding model |
+
+### Incremental index policy
+
+Generated edit hooks run `scaffold index --incremental` in the background using a
+single-flight lock and a coalesced trailing run. `incremental_min_interval_seconds`
+adds an optional interval guard for very high-edit-volume sessions; leave it at
+`0` to run after every coalesced edit burst.
+
+Incremental indexing keeps embeddings out of the per-edit hot path. If you pass
+`--embeddings` explicitly with `--incremental`, AgentScaffold scopes embedding
+work to the changed-file neighborhood and preserves the existing content-hash
+skip. If there are no structural changes, an incremental embedding run performs a
+content-hash reconcile so missing embeddings can be backfilled asynchronously.
+Run a full `scaffold index --embeddings` when you want an authoritative
+semantic-search reconcile.
+
+`async_embeddings` controls automatic background embedding refresh:
+
+- `off`: default. No background embedding work and no embedding model load.
+- `idle`: MCP may schedule one background embedding refresh when retrieval is
+  degraded and the structural index lock is idle.
+- `interval`: same as `idle`, additionally bounded by
+  `embedding_min_interval_seconds`.
+- `commit`: generated git `post-commit` and `post-merge` hooks request a
+  non-blocking embedding refresh at commit boundaries; MCP degradation repair can
+  still schedule a single background refresh when needed.
 
 ### Project-root resolution
 

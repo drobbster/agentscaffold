@@ -44,7 +44,8 @@ def process_imports(
     store: GraphBackend,
     root: Path,
     symbol_table: SymbolTable,
-) -> dict:
+    file_paths: set[str] | None = None,
+) -> dict[str, int]:
     """Resolve imports and create IMPORTS edges.
 
     Returns summary with resolved/unresolved counts.
@@ -58,13 +59,23 @@ def process_imports(
     unresolved = 0
 
     file_id_map: dict[str, str] = {}
+    scope = set(file_paths) if file_paths is not None else None
+    scoped_file_ids: list[str] = []
     for row in file_rows:
         file_id_map[row["f.path"]] = row["f.id"]
+        if scope is None or row["f.path"] in scope:
+            scoped_file_ids.append(row["f.id"])
+
+    if scope is not None:
+        _clear_import_edges(store, scoped_file_ids)
 
     for row in file_rows:
         file_id = row["f.id"]
         file_path = row["f.path"]
         language = row["f.language"]
+
+        if scope is not None and file_path not in scope:
+            continue
 
         full_path = root / file_path
 
@@ -98,6 +109,14 @@ def process_imports(
         unresolved += u
 
     return {"resolved": resolved, "unresolved": unresolved}
+
+
+def _clear_import_edges(store: GraphBackend, file_ids: list[str]) -> None:
+    """Delete existing IMPORTS edges owned by *file_ids*."""
+    if not file_ids:
+        return
+    ids_lit = ", ".join("'" + fid.replace("'", "''") + "'" for fid in file_ids)
+    store.execute(f"DELETE FROM IMPORTS WHERE src IN ({ids_lit})")
 
 
 def _resolve_python_imports(
