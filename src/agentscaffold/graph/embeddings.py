@@ -127,8 +127,7 @@ def warm_model(model_name: str | None = None, cache_dir: str | None = None) -> s
     """
     if not _st_available:
         raise ImportError(
-            "Model provisioning requires sentence-transformers: "
-            "pip install 'agentscaffold[search]'"
+            "Model provisioning requires sentence-transformers: pip install 'agentscaffold[search]'"
         )
     _get_model(model_name, cache_dir)
     return _active_model_name(model_name)
@@ -563,6 +562,7 @@ def generate_embeddings(
     tables: list[str] | None = None,
     batch_size: int = 64,
     root: Any = None,
+    file_paths: set[str] | None = None,
 ) -> dict[str, int]:
     """Generate embeddings for code definitions in the graph.
 
@@ -587,8 +587,9 @@ def generate_embeddings(
             root = None
 
     active_model = _active_model_name(model_name)
-    model = _get_model(active_model, cache_dir)
+    model = None
     target_tables = tables or list(_TEXT_BUILDERS.keys())
+    scope = set(file_paths) if file_paths is not None else None
     result: dict[str, int] = {}
 
     for table in target_tables:
@@ -599,6 +600,8 @@ def generate_embeddings(
         _ensure_embedding_column(store, table)
 
         rows = store.query(_NODE_SELECT[table])
+        if scope is not None:
+            rows = [row for row in rows if _row_file_path(row) in scope]
         if not rows:
             result[table] = 0
             continue
@@ -639,6 +642,8 @@ def generate_embeddings(
             if not pending_texts:
                 continue
 
+            if model is None:
+                model = _get_model(active_model, cache_dir)
             vectors = model.encode(pending_texts, show_progress_bar=False)
 
             for node_id, text_hash, vec in zip(pending_ids, pending_hashes, vectors):
@@ -660,6 +665,17 @@ def generate_embeddings(
         ensure_hnsw()
 
     return result
+
+
+def _row_file_path(row: dict[str, Any]) -> str:
+    """Return the source/governance file path carried by an embedding row."""
+    return str(
+        row.get("n.filePath")
+        or row.get("n.path")
+        or row.get("n.target")
+        or row.get("n.source")
+        or ""
+    )
 
 
 def search_similar(

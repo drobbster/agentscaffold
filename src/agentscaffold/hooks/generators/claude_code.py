@@ -38,7 +38,7 @@ _BUILTIN_HOOKS: list[dict[str, Any]] = [
     {
         "event": HookEvent.POST_TOOL_USE,
         "matcher": "Edit|Write|NotebookEdit",
-        "command": "scaffold index --incremental",
+        "command": "./.cursor/hooks/scaffold-index.sh",
         "description": "Keep graph fresh after every file edit",
     },
     {
@@ -92,7 +92,7 @@ def generate_claude_code_hooks(
             _add(
                 HookEvent.POST_TOOL_USE,
                 "Edit|Write|NotebookEdit",
-                "scaffold index --incremental",
+                "./.cursor/hooks/scaffold-index.sh",
             )
         if config.auto_orient:
             _add(HookEvent.SESSION_START, "", "scaffold orient")
@@ -105,6 +105,8 @@ def write_claude_code_hooks(
     output_dir: Path,
     *,
     include_builtins: bool = True,
+    scaffold_bin: str = "scaffold",
+    min_interval_seconds: int = 0,
     dry_run: bool = False,
 ) -> Path:
     """Write ``.claude/settings.json`` with generated hooks.
@@ -125,6 +127,17 @@ def write_claude_code_hooks(
 
     if dry_run:
         return settings_path
+
+    if include_builtins and config.freshness_trigger:
+        from agentscaffold.hooks.generators.cursor import (
+            INDEX_HOOK_REL_PATH,
+            render_index_hook_script,
+        )
+
+        script_path = output_dir / INDEX_HOOK_REL_PATH
+        script_path.parent.mkdir(parents=True, exist_ok=True)
+        script_path.write_text(render_index_hook_script(scaffold_bin, min_interval_seconds))
+        script_path.chmod(0o755)
 
     hooks_payload = generate_claude_code_hooks(config, include_builtins=include_builtins)
 

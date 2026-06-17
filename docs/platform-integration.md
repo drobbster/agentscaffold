@@ -501,12 +501,13 @@ This blocks and communicates over stdin/stdout. The client launches this as a su
 | `scaffold_stats` | Codebase health dashboard (files, functions, edges, governance) |
 | `scaffold_query` | Execute raw SQL queries against the knowledge graph |
 | `scaffold_search` | Hybrid search (keyword, semantic, or hybrid mode) |
+| `scaffold_recall_governance` | Semantic recall across plans, findings, learnings, ADRs, studies, spikes, backlog |
 | `scaffold_context` | Full context for a symbol (definition, callers, layer, plan history) |
 | `scaffold_impact` | Blast radius analysis for a file or symbol |
 | `scaffold_validate` | Validation checks (layers, contracts, staleness) |
 | `scaffold_review_context` | Low-level review context for a plan (brief, challenges, gaps, verify, retro) |
 
-**Governance & Lifecycle Tools** — composite workflows triggered by natural language:
+**Governance & Review Tools** — composite workflows triggered by natural language:
 
 | Tool | NL Trigger | Description |
 |------|-----------|-------------|
@@ -523,6 +524,16 @@ This blocks and communicates over stdin/stdout. The client launches this as a su
 | `scaffold_decision_context` | "decision history for plan X" / "trace decisions" | Full decision chain: ADRs, spikes, studies, dependency status |
 | `scaffold_record_finding` | "record finding" / "log this review finding" | Persist a ReviewFinding in the graph, linked to plan + files + functions |
 | `scaffold_resolve_finding` | "mark finding resolved" / "resolve this finding" | Mark a finding resolved; retained in graph for audit |
+| `scaffold_record_findings_batch` | "record all findings" / "log these findings" | Persist multiple ReviewFindings in a single transaction |
+| `scaffold_record_backlog_item` | "add backlog item" / "track backlog item" | Persist one or more BacklogItem nodes (additive to `backlog.md`) |
+| `scaffold_resolve_backlog_item` | "resolve backlog item" / "archive backlog item" | Mark a BacklogItem archived; retained for retrospective queries |
+
+**Governed Lifecycle Tools** — the two-phase chain that wraps implementation:
+
+| Tool | NL Trigger | Description |
+|------|-----------|-------------|
+| `scaffold_begin_plan` | "begin plan X" / "kick off plan X" | Phase 1: orient + full pre-review, writes findings, stamps `reviewedAt` |
+| `scaffold_complete_plan` | "wrap up plan X" / "close out plan X" | Phase 2: retro, writes retro findings, optional backlog items |
 
 ### Testing the Connection
 

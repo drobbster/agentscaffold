@@ -55,6 +55,16 @@ def test_load_config_from_yaml(tmp_path: Path) -> None:
     assert cfg.freshness.debounce_seconds == 45
 
 
+def test_graph_async_embeddings_normalizes_yaml_bool_off(tmp_path: Path) -> None:
+    """Unquoted YAML 'off' parses as False; normalize it to the string policy."""
+    yaml_path = tmp_path / "scaffold.yaml"
+    yaml_path.write_text("graph:\n  async_embeddings: off\n")
+
+    cfg = load_config(yaml_path)
+
+    assert cfg.graph.async_embeddings == "off"
+
+
 def test_rigor_minimal_preset() -> None:
     """apply_rigor_preset with 'minimal' disables many gates."""
     cfg = ScaffoldConfig(rigor="minimal")

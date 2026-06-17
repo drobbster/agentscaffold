@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Gate configuration
@@ -381,6 +381,24 @@ class GraphConfig(BaseModel):
     governance_artifact: str = "docs/ai/state/governance.json"
     embeddings: bool = False
     communities: bool = True
+    incremental_community_refresh: str = "structure"
+    incremental_community_threshold: int = 25
+    incremental_min_interval_seconds: int = 0
+    embedding_min_interval_seconds: int = 0
+    async_embeddings: str = "off"
+
+    @field_validator("async_embeddings", mode="before")
+    @classmethod
+    def normalize_async_embeddings(cls, value: Any) -> str:
+        """Normalize YAML booleans from unquoted on/off-like policy values."""
+        if isinstance(value, bool):
+            return "idle" if value else "off"
+        if value is None:
+            return "off"
+        policy = str(value).lower()
+        if policy not in {"off", "idle", "interval", "commit"}:
+            raise ValueError("async_embeddings must be one of: off, idle, interval, commit")
+        return policy
 
 
 # ---------------------------------------------------------------------------

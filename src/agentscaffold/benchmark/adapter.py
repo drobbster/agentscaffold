@@ -85,6 +85,7 @@ class MiniSweAgentExecutor:
         plan: TaskEnvironmentPlan,
     ) -> dict[str, Any]:
         model_factory, environment_class, agent_class = _load_mini_swe_agent_classes()
+        _ensure_supported_environment_api(environment_class)
         model = model_factory(config=_model_config(request))
         env = environment_class(image=self.config.docker_image)
         agent = None
@@ -151,6 +152,18 @@ def _load_mini_swe_agent_classes() -> tuple[Callable[..., Any], type[Any], type[
     environment_class = import_module("minisweagent.environments.docker").DockerEnvironment
     agent_class = import_module("minisweagent.agents.default").DefaultAgent
     return model_factory, environment_class, agent_class
+
+
+def _ensure_supported_environment_api(environment_class: type[Any]) -> None:
+    """Fail closed when mini-swe-agent's Docker API has drifted."""
+    missing = [name for name in ("start", "execute") if not hasattr(environment_class, name)]
+    if missing:
+        joined = ", ".join(f"DockerEnvironment.{name}" for name in missing)
+        raise BenchmarkDependencyError(
+            "Docker execution is not implemented yet for the installed mini-swe-agent API. "
+            f"Missing expected methods: {joined}. Use a custom executor or a compatible "
+            "mini-swe-agent release."
+        )
 
 
 def _model_config(request: BenchmarkRunRequest) -> dict[str, Any]:

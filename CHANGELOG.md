@@ -8,6 +8,52 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-16
+
+### Added (Plan 232 - async embedding lane and resident embedder)
+- Added `graph.async_embeddings` (`off | idle | interval | commit`, default
+  `off`) so projects can opt into background embedding refresh without changing
+  historical behavior. With `off`, AgentScaffold schedules nothing and never
+  loads the embedding model.
+- MCP responses now include async embedding lane state and can schedule a
+  single-flight background embedding refresh when retrieval is degraded (for
+  example, no embeddings are indexed) and the structural index lock is idle.
+- The embedding scheduler reuses the existing process-level model cache, making
+  the resident model lazy and opt-in, and honors
+  `graph.embedding_min_interval_seconds` for debounce.
+- Generated git `post-commit` and `post-merge` hooks can request a non-blocking
+  `scaffold index --incremental --embeddings` reconcile for the `commit` policy.
+- Incremental `--embeddings` can now reconcile missing embeddings even when
+  there are no structural changes, while changed-file runs remain scoped to the
+  affected neighborhood.
+- Tightened the scoped Plan 232 validation target by typing legacy MCP
+  decorator/helper signatures and isolating the governance migration test from
+  the repo-level governance artifact; the package suite is back to all-green.
+- Live benchmark execution now validates the expected mini-swe-agent Docker API
+  before constructing a live environment, so unsupported mini-swe-agent releases
+  fail closed instead of starting a container and then crashing on a missing
+  method.
+
+### Changed (Plan 231 - incremental indexer scoping and hook debounce)
+- `scaffold index --incremental` now keeps per-edit work proportional to the
+  changed-file neighborhood: unchanged files use an `(mtime, size)` metadata
+  prefilter before hashing; empty changesets exit as explicit no-ops; import and
+  call re-resolution are scoped to changed files plus direct importers; config
+  references refresh only for changed configs or configs that referenced refreshed
+  code; and community detection is skipped on content-only edits by default.
+- Incremental `--embeddings` runs now pass the changed-file scope into
+  `generate_embeddings`, preserving the existing content-hash skip while avoiding
+  per-node existence checks across the whole store.
+- Generated edit hooks remain non-blocking and single-flight, and now honor
+  `graph.incremental_min_interval_seconds` as an optional interval guard. Claude
+  Code built-in freshness hooks route through the same wrapper script instead of
+  launching a blocking raw `scaffold index --incremental` command.
+- Generated collaboration protocol docs are richer out of the box: prompting
+  patterns, communication patterns, quality checkpoints, future-regret triage,
+  escalation triggers, anti-patterns, and human-readable review terminology now
+  ship in the package template. Domain review sessions render only when domains
+  are configured.
+
 ## [0.7.0] - 2026-06-16
 
 Phase 1 foundation chain (Plans 221-223) plus Phase 2 (Plans 224-229):

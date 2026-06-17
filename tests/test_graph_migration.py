@@ -131,7 +131,10 @@ def test_pipeline_migration_preserves_governance(tmp_path):
 
     db = tmp_path / ".scaffold" / "graph.duckdb"
     config = ScaffoldConfig()
-    config.graph = GraphConfig(db_path=str(db))
+    config.graph = GraphConfig(
+        db_path=str(db),
+        governance_artifact=str(tmp_path / "governance.json"),
+    )
 
     run_pipeline(FIXTURE_REPO, config)
 

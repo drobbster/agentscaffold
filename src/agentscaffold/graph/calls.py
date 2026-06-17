@@ -40,7 +40,8 @@ def process_calls(
     store: GraphBackend,
     root: Path,
     symbol_table: SymbolTable,
-) -> dict:
+    file_paths: set[str] | None = None,
+) -> dict[str, int]:
     """Resolve call sites and create CALLS / METHOD_CALLS edges.
 
     Function callers produce ``CALLS`` edges (Function -> Function); method
@@ -55,14 +56,20 @@ def process_calls(
         ),
     )
 
+    scope = set(file_paths) if file_paths is not None else None
     counters = {"total": 0, "high": 0, "medium": 0, "low": 0, "method_calls": 0}
 
     # Build a map of file imports for type-aware resolution
     import_map = _build_import_map(store)
 
+    if scope is not None:
+        _clear_call_edges_for_files(store, scope)
+
     for row in file_rows:
         file_id = row["f.id"]
         file_path = row["f.path"]
+        if scope is not None and file_path not in scope:
+            continue
 
         full_path = root / file_path
 
@@ -137,6 +144,24 @@ def process_calls(
         "low_confidence": counters["low"],
         "method_calls": counters["method_calls"],
     }
+
+
+def _clear_call_edges_for_files(store: GraphBackend, file_paths: set[str]) -> None:
+    """Delete CALLS/METHOD_CALLS edges owned by definitions in *file_paths*."""
+    if not file_paths:
+        return
+    paths_lit = ", ".join("'" + path.replace("'", "''") + "'" for path in sorted(file_paths))
+    fn_rows = store.query(f"SELECT id FROM Function WHERE filePath IN ({paths_lit})")
+    fn_ids = [row["id"] for row in fn_rows if row.get("id")]
+    if fn_ids:
+        ids_lit = ", ".join("'" + fid.replace("'", "''") + "'" for fid in fn_ids)
+        store.execute(f"DELETE FROM CALLS WHERE src IN ({ids_lit})")
+
+    method_rows = store.query(f"SELECT id FROM Method WHERE filePath IN ({paths_lit})")
+    method_ids = [row["id"] for row in method_rows if row.get("id")]
+    if method_ids:
+        ids_lit = ", ".join("'" + mid.replace("'", "''") + "'" for mid in method_ids)
+        store.execute(f"DELETE FROM METHOD_CALLS WHERE src IN ({ids_lit})")
 
 
 def _process_caller_body(

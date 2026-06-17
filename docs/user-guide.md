@@ -31,6 +31,35 @@ choreography. Instead of naming each tool, describe the outcome:
 Use explicit commands when you need deterministic verification, reproducible outputs, or
 platform fallback.
 
+### The Two-Phase Governed Lifecycle
+
+The canonical flow above is wrapped by two composite lifecycle tools that the agent
+should run at the start and end of implementation. They bundle the review and retro
+work into a single governed step and write their results to the knowledge graph so
+nothing is lost between sessions.
+
+**Phase 1 -- Pre-implementation (`scaffold_begin_plan`).** Triggered by "begin plan X",
+"kick off plan X", or "follow the collab protocol to begin plan X". The tool chain runs
+orient, then the full pre-review (devil's advocate, expansion, and gap analysis),
+auto-writes the challenges and gaps as `ReviewFinding` nodes, and stamps
+`Plan.reviewedAt`. The agent then presents the three perspectives, writes the review
+summary to the plan appendix, and asks for explicit confirmation before coding.
+
+**Phase 2 -- Post-implementation (`scaffold_complete_plan`).** Triggered by "wrap up
+plan X", "close out plan X", or "follow the collab protocol to close plan X". The tool
+chain runs the retro, auto-writes retro insights as findings, and optionally records
+backlog items. The agent then updates `learnings_tracker.md`, `backlog.md`,
+`workflow_state.md`, marks completed steps, and writes the retro summary to the plan
+appendix.
+
+**Strict-mode gate.** When `freshness.gate_strict: true` in `scaffold.yaml`,
+`scaffold_prepare_implementation` checks that `scaffold_begin_plan` has run
+(`Plan.reviewedAt` is set) and defers implementation until the pre-review is complete.
+
+The boundary is deliberate: the lifecycle tools own graph state (findings, backlog
+items, review stamps); the agent owns file state (plan appendix, `backlog.md`,
+`learnings_tracker.md`, `workflow_state.md`).
+
 ---
 
 ## Greenfield Onboarding: Starting from Scratch
@@ -795,6 +824,12 @@ or understand what context each workflow produces.
 | "context for symbol X" / "what calls X" / "what does X depend on" | `scaffold_context` | Full symbol context: definition, callers, callees, layer, plan history, contracts |
 | "blast radius for file X" / "who imports X" / "impact of changing X" | `scaffold_impact` | Transitive consumers, affected layers, governance context |
 | "search for X" / "find code related to X" | `scaffold_search` | Hybrid search results (keyword + semantic, configurable mode) |
+| "what did we decide about X" / "recall prior work on X" / "have we discussed X before" | `scaffold_recall_governance` | Semantic recall across plans, findings, learnings, ADRs, studies, spikes, backlog |
+| "begin plan X" / "kick off plan X" / "follow the collab protocol to begin plan X" | `scaffold_begin_plan` | Phase 1 lifecycle: orient + full pre-review, writes findings, stamps `reviewedAt`, returns a proceed prompt |
+| "wrap up plan X" / "close out plan X" / "follow the collab protocol to close plan X" | `scaffold_complete_plan` | Phase 2 lifecycle: retro, writes retro findings, optional backlog items, returns completion checklist |
+| "record all findings" / "log these findings" / "save all review findings" | `scaffold_record_findings_batch` | Creates multiple ReviewFinding nodes in one transaction |
+| "add backlog item" / "record backlog item" / "track backlog item" | `scaffold_record_backlog_item` | Creates one or more BacklogItem nodes (graph-side, additive to `backlog.md`) |
+| "resolve backlog item" / "mark backlog item done" / "archive backlog item" | `scaffold_resolve_backlog_item` | Marks a BacklogItem archived; retained in graph for retrospective queries |
 
 ### Configuring Intent Routing in CLAUDE.md
 
@@ -843,6 +878,32 @@ pip install agentscaffold[graph-all-languages]  # All language grammars
 pip install agentscaffold[all]            # Everything
 ```
 
+### Multi-Project Workspaces
+
+If you work across several repos that share one graph, register them as a workspace.
+A `workspace.yaml` at the workspace root lists the projects; manage it with:
+
+```bash
+scaffold workspace onboard ../market-data-service --name market-data-service
+scaffold workspace list
+```
+
+Once registered, reads default to the **current** project (resolved from the working
+directory), so plan numbers and file paths from a sibling project never leak into your
+results. To look elsewhere, pass `--project <name>`; to federate across all of them,
+pass `--all-projects` (federated results carry a `project` provenance field):
+
+```bash
+scaffold graph search "symbol normalization" --project market-data-service
+scaffold graph search "symbol normalization" --all-projects
+scaffold graph duplicates --table Function   # cross-project near-duplicate definitions
+```
+
+Scoping is a relevance boundary within one trust domain, not a security boundary. When
+unsure which project you are in, run `scaffold workspace list`. Full semantics are in
+[Configuration](configuration.md). A lone repo (no multi-project `workspace.yaml`) is
+unaffected — everything is implicitly the single current project.
+
 ### Incremental Indexing
 
 After the first full index, use `--incremental` for fast re-indexing:
@@ -851,7 +912,28 @@ After the first full index, use `--incremental` for fast re-indexing:
 scaffold index --incremental
 ```
 
-Incremental mode compares SHA-256 content hashes of files on disk against those stored in the graph. Only files that were added, modified, or deleted since the last index are processed. On a large codebase where only a handful of files changed, this is dramatically faster than a full re-index.
+Incremental mode keeps per-edit work proportional to what actually changed:
+
+- **`(mtime, size)` prefilter.** Files whose modification time and size match the
+  stored metadata are skipped without re-hashing. Only candidates that look changed
+  are SHA-256 hashed to confirm.
+- **Empty-changeset early exit.** If nothing changed, the run exits as an explicit
+  no-op instead of walking the whole graph.
+- **Scoped re-resolution.** Import, call, and config-reference edges are recomputed
+  only for changed files plus their direct importers — not the entire repo. Community
+  detection is skipped on content-only edits by default.
+
+The changeset output shows exactly what changed:
+
+```
+Incremental index -- computing changeset...
+  3 added, 2 modified, 1 deleted, 847 unchanged
+```
+
+On a large codebase where only a handful of files changed, this is dramatically faster
+than a full re-index. Tuning knobs (`incremental_community_refresh`,
+`incremental_min_interval_seconds`) are documented in
+[Configuration](configuration.md#incremental-index-policy).
 
 ### Async Freshness for MCP (Large-Repo UX)
 
@@ -876,11 +958,30 @@ freshness:
 If you need strict lifecycle control, set `gate_strict: true` so gate transitions defer
 when graph freshness is stale or unknown.
 
-The changeset output shows exactly what changed:
+### Async Embeddings (Semantic Freshness)
+
+Structural freshness (above) and embedding freshness are **two separate lanes**. The
+`freshness.*` settings keep the structural graph current; `graph.async_embeddings`
+controls whether embedding vectors are refreshed in the background so semantic and
+hybrid search stay fresh without blocking the per-edit hot path.
+
+```yaml
+graph:
+  async_embeddings: "off"        # off | idle | interval | commit
+  embedding_min_interval_seconds: 0
 ```
-Incremental index -- computing changeset...
-  3 added, 2 modified, 1 deleted, 847 unchanged
-```
+
+- `off` (default): no background embedding work, and the embedding model is never
+  loaded. Historical behavior is preserved.
+- `idle` / `interval` / `commit`: opt into background refresh. The MCP server can then
+  schedule a single-flight, debounced embedding reconcile when retrieval is degraded
+  (for example, no embeddings are indexed yet) and the structural index lock is idle.
+  For the `commit` policy, generated `post-commit` / `post-merge` git hooks request a
+  non-blocking reconcile.
+
+See [Configuration](configuration.md#incremental-index-policy) for the full policy
+semantics. If you only ever index from the CLI, leaving this `off` and running
+`scaffold index --embeddings` when you want to refresh embeddings is perfectly fine.
 
 ### Supported Languages
 
@@ -1066,7 +1167,7 @@ This helps identify natural module boundaries, tightly coupled clusters that sho
 
 ### MCP Integration
 
-When running the MCP server (`scaffold mcp`), 20 tools are available to AI agents across two groups.
+When running the MCP server (`scaffold mcp`), 26 tools are available to AI agents across three groups.
 
 **Graph Intelligence Tools** — direct codebase queries:
 
@@ -1075,12 +1176,13 @@ When running the MCP server (`scaffold mcp`), 20 tools are available to AI agent
 | `scaffold_stats` | Codebase health dashboard (files, functions, edges, governance) |
 | `scaffold_query` | Execute raw SQL queries against the knowledge graph |
 | `scaffold_search` | Hybrid search (keyword, semantic, or hybrid mode) |
+| `scaffold_recall_governance` | Semantic recall across plans, findings, learnings, ADRs, studies, spikes, backlog |
 | `scaffold_context` | Full context for a symbol (definition, callers, layer, plan history) |
 | `scaffold_impact` | Blast radius analysis for a file or symbol |
 | `scaffold_validate` | Validation checks (layers, contracts, staleness) |
 | `scaffold_review_context` | Low-level review context (brief, challenges, gaps, verify, retro) for a plan |
 
-**Governance & Lifecycle Tools** — composite workflows triggered by natural language:
+**Governance & Review Tools** — composite workflows triggered by natural language:
 
 | Tool | NL Trigger | What It Does |
 |------|-----------|-------------|
@@ -1097,6 +1199,16 @@ When running the MCP server (`scaffold mcp`), 20 tools are available to AI agent
 | `scaffold_decision_context` | "decision history for plan X" / "trace the decisions for plan X" | Full decision chain: governing ADRs, validation spikes, supporting studies, dependency status |
 | `scaffold_record_finding` | "record finding" / "log this review finding" | Create a ReviewFinding node linked to a plan, files, and functions — persists across sessions |
 | `scaffold_resolve_finding` | "mark finding resolved" / "resolve this finding" | Mark a finding as resolved; retained in graph for audit trail |
+| `scaffold_record_findings_batch` | "record all findings" / "log these findings" | Create multiple ReviewFinding nodes in a single transaction (efficient for post-review batches) |
+| `scaffold_record_backlog_item` | "add backlog item" / "track backlog item" | Create one or more BacklogItem nodes (additive to `backlog.md`; enables backlog queries in orient/prepare_review) |
+| `scaffold_resolve_backlog_item` | "resolve backlog item" / "archive backlog item" | Mark a BacklogItem archived; retained in graph for retrospective queries |
+
+**Governed Lifecycle Tools** — the two-phase chain that wraps implementation:
+
+| Tool | NL Trigger | What It Does |
+|------|-----------|-------------|
+| `scaffold_begin_plan` | "begin plan X" / "kick off plan X" | Phase 1: orient + full pre-review, auto-writes findings, stamps `Plan.reviewedAt`, returns a proceed prompt |
+| `scaffold_complete_plan` | "wrap up plan X" / "close out plan X" | Phase 2: retro, auto-writes retro findings, optional backlog items, returns a completion checklist |
 
 The MCP tools return both structured JSON and formatted markdown, so agents can parse the data programmatically or display it directly.
 
@@ -1320,16 +1432,8 @@ There is no automatic TTL -- pruning is always explicit.
 
 ### Tree-sitter grammar not loading for a language
 
-Warnings like `No language_c() in tree_sitter_c` or `No language_cpp() in tree_sitter_cpp` were
-a bug in agentscaffold 0.3.0 (wrong function name lookup for C and C++). Upgrade to 0.3.1+ to
-resolve them:
-
-```bash
-pip install --upgrade agentscaffold
-```
-
-If you see similar warnings for other languages on 0.3.1+, the grammar package for that language
-may not be installed. Install it with the appropriate extra:
+A warning like `No language_c() in tree_sitter_c` usually means the grammar package for
+that language is not installed. Install it with the appropriate extra:
 
 ```bash
 pip install "agentscaffold[graph-c]"    # C

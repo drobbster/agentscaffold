@@ -158,5 +158,14 @@ freshness:
   gate_strict: false
   background_queue_enabled: true
 
+graph:
+  db_path: ".scaffold/graph.duckdb"
+  backend: duckpgq
+  incremental_community_refresh: structure
+  incremental_community_threshold: 25
+  incremental_min_interval_seconds: 0
+  embedding_min_interval_seconds: 0
+  async_embeddings: "off"
+
 import:
   conversation_dir: "data/conversations"

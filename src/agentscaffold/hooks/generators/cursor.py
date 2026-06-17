@@ -32,6 +32,7 @@ from agentscaffold.hooks.events import HookEvent
 # output on stderr and prints "{}" so Cursor treats it as a clean success.
 CURSOR_HOOKS_VERSION = 1
 INDEX_HOOK_REL_PATH = ".cursor/hooks/scaffold-index.sh"
+EMBED_COMMIT_HOOK_REL_PATHS = (".git/hooks/post-commit", ".git/hooks/post-merge")
 
 
 def resolve_scaffold_bin() -> str:
@@ -80,10 +81,20 @@ scaffold_bin="__SCAFFOLD_BIN__"
 state_dir=".scaffold"
 lock_dir="$state_dir/index.lock"
 req_stamp="$state_dir/index.request"
+success_stamp="$state_dir/index.last_success"
 log_file="$state_dir/index-hook.log"
+min_interval_seconds=__MIN_INTERVAL_SECONDS__
 mkdir -p "$state_dir" 2>/dev/null || true
 
 now=$(date +%s)
+
+if [ "$min_interval_seconds" -gt 0 ] && [ ! -d "$lock_dir" ] && [ -f "$success_stamp" ]; then
+  last_success=$(cat "$success_stamp" 2>/dev/null || echo 0)
+  if [ $((now - last_success)) -lt "$min_interval_seconds" ]; then
+    emit
+    exit 0
+  fi
+fi
 
 # Record this edit as an index request (used to coalesce a trailing run).
 printf '%s\\n' "$now" > "$req_stamp" 2>/dev/null || true
@@ -104,6 +115,7 @@ if mkdir "$lock_dir" 2>/dev/null; then
     while :; do
       start=$(date +%s)
       "$scaffold_bin" index --incremental >> "$log_file" 2>&1 || true
+      date +%s > "$success_stamp" 2>/dev/null || true
       req=$(cat "$req_stamp" 2>/dev/null || echo 0)
       [ "$req" -le "$start" ] && break
     done
@@ -115,8 +127,55 @@ emit
 exit 0
 """
 
+_EMBED_COMMIT_HOOK_TEMPLATE = """#!/usr/bin/env bash
+# AgentScaffold git hook: refresh embeddings after commit/merge.
+#
+# Non-blocking + single-flight. This runs outside the per-edit structural hook
+# and exits immediately, so git operations are not delayed.
+set -uo pipefail
 
-def render_index_hook_script(scaffold_bin: str = "scaffold") -> str:
+if [ "${SCAFFOLD_HOOK_DISABLE:-0}" = "1" ]; then
+  exit 0
+fi
+
+scaffold_bin="__SCAFFOLD_BIN__"
+state_dir=".scaffold"
+lock_dir="$state_dir/embedding.lock"
+structural_lock_dir="$state_dir/index.lock"
+success_stamp="$state_dir/embedding.last_success"
+log_file="$state_dir/embedding-hook.log"
+min_interval_seconds=__MIN_INTERVAL_SECONDS__
+mkdir -p "$state_dir" 2>/dev/null || true
+
+now=$(date +%s)
+
+if [ -d "$structural_lock_dir" ]; then
+  printf '%s %s\\n' "$now" "deferred: structural index lock active" \\
+    >> "$log_file" 2>/dev/null || true
+  exit 0
+fi
+
+if [ "$min_interval_seconds" -gt 0 ] && [ -f "$success_stamp" ]; then
+  last_success=$(cat "$success_stamp" 2>/dev/null || echo 0)
+  if [ $((now - last_success)) -lt "$min_interval_seconds" ]; then
+    exit 0
+  fi
+fi
+
+if mkdir "$lock_dir" 2>/dev/null; then
+  (
+    trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+    "$scaffold_bin" index --incremental --embeddings >> "$log_file" 2>&1 || true
+    date +%s > "$success_stamp" 2>/dev/null || true
+  ) >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+fi
+
+exit 0
+"""
+
+
+def render_index_hook_script(scaffold_bin: str = "scaffold", min_interval_seconds: int = 0) -> str:
     """Return the bash wrapper that refreshes the graph on afterFileEdit.
 
     The wrapper is non-blocking and single-flight: it backgrounds the
@@ -124,7 +183,39 @@ def render_index_hook_script(scaffold_bin: str = "scaffold") -> str:
     indexers, and coalesces a trailing run so the last edit of a burst is still
     captured. ``scaffold_bin`` is the executable invoked for indexing.
     """
-    return _INDEX_HOOK_TEMPLATE.replace("__SCAFFOLD_BIN__", scaffold_bin)
+    return _INDEX_HOOK_TEMPLATE.replace("__SCAFFOLD_BIN__", scaffold_bin).replace(
+        "__MIN_INTERVAL_SECONDS__", str(max(0, int(min_interval_seconds)))
+    )
+
+
+def render_embedding_commit_hook_script(
+    scaffold_bin: str = "scaffold",
+    min_interval_seconds: int = 0,
+) -> str:
+    """Return the non-blocking git hook wrapper for commit-boundary embeddings."""
+    return _EMBED_COMMIT_HOOK_TEMPLATE.replace("__SCAFFOLD_BIN__", scaffold_bin).replace(
+        "__MIN_INTERVAL_SECONDS__", str(max(0, int(min_interval_seconds)))
+    )
+
+
+def write_embedding_commit_hooks(
+    output_dir: Path,
+    *,
+    scaffold_bin: str = "scaffold",
+    min_interval_seconds: int = 0,
+    dry_run: bool = False,
+) -> list[Path]:
+    """Write git post-commit/post-merge hooks for async embedding refresh."""
+    paths = [output_dir / rel for rel in EMBED_COMMIT_HOOK_REL_PATHS]
+    if dry_run:
+        return paths
+
+    content = render_embedding_commit_hook_script(scaffold_bin, min_interval_seconds)
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        path.chmod(0o755)
+    return paths
 
 
 def generate_cursor_hooks_config(
@@ -145,6 +236,7 @@ def write_cursor_hooks(
     output_dir: Path,
     *,
     scaffold_bin: str = "scaffold",
+    min_interval_seconds: int = 0,
     dry_run: bool = False,
 ) -> list[Path]:
     """Write ``.cursor/hooks.json`` + the index wrapper script.
@@ -166,7 +258,7 @@ def write_cursor_hooks(
         return [script_path, hooks_path]
 
     script_path.parent.mkdir(parents=True, exist_ok=True)
-    script_path.write_text(render_index_hook_script(scaffold_bin))
+    script_path.write_text(render_index_hook_script(scaffold_bin, min_interval_seconds))
     script_path.chmod(0o755)
 
     payload = generate_cursor_hooks_config(config)

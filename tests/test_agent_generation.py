@@ -397,6 +397,45 @@ def test_all_platforms_real_write_creates_artifacts(tmp_path: Path):
     assert (tmp_path / ".cursor" / "rules" / "security_reviewer.md").exists()
 
 
+def test_agents_md_template_contains_human_readable_review_terminology():
+    from agentscaffold.rendering import get_default_context, render_template
+
+    content = render_template("agents/agents_md.md.j2", get_default_context(ScaffoldConfig()))
+
+    assert "## Review Terminology (Human-Readable)" in content
+    assert "Pre-implementation review" in content
+    assert "Those tool names are an" in content
+    assert "implementation detail" in content
+    assert "never as the" in content
+    assert "primary description" in content
+
+
+def test_collaboration_protocol_template_contains_enriched_sections():
+    from agentscaffold.rendering import get_default_context, render_template
+
+    content = render_template(
+        "project/collaboration_protocol.md.j2",
+        get_default_context(ScaffoldConfig()),
+    )
+
+    assert "## Prompting Patterns" in content
+    assert "### Devil's Advocate" in content
+    assert "## Future Regret Evaluation" in content
+    assert "## Communication Patterns" in content
+    assert "## Review Terminology (Human-Readable)" in content
+    assert "Quant Architect" not in content
+
+
+def test_collaboration_protocol_template_renders_domain_reviews_conditionally():
+    from agentscaffold.rendering import get_default_context, render_template
+
+    config = ScaffoldConfig()
+    config.gates.review_to_ready.domain_reviews = ["Quant Architect Review"]
+    content = render_template("project/collaboration_protocol.md.j2", get_default_context(config))
+
+    assert "Quant Architect Review" in content
+
+
 # ---------------------------------------------------------------------------
 # write_managed_block — never-clobber managed-section writer
 # ---------------------------------------------------------------------------

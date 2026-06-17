@@ -84,6 +84,38 @@ def test_container_setup_commands_include_wrappers_for_equipped_arm(tmp_path) ->
     assert any("scaffold-search" in command for command in commands)
 
 
+def test_executor_fails_closed_for_unsupported_mini_swe_agent_api(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(adapter, "ensure_live_dependencies", lambda: None)
+
+    class UnsupportedEnv:
+        def __init__(self, image: str):
+            raise AssertionError("environment should not be constructed")
+
+    def fake_get_model(config: dict):
+        raise AssertionError("model should not be constructed")
+
+    monkeypatch.setattr(
+        adapter,
+        "_load_mini_swe_agent_classes",
+        lambda: (fake_get_model, UnsupportedEnv, object),
+    )
+    root = tmp_path / "package"
+    repo = root / "tests/fixtures/sample_repo"
+    repo.mkdir(parents=True)
+    (repo / "router.py").write_text("# sample")
+    task = select_tasks("0:1")[0]
+    plan = create_workspace_plan(
+        task=task,
+        arm=adapter.BenchmarkArm(name="baseline", description="test", scaffold_enabled=False),
+        seed=1,
+        package_root=root,
+        output_root=tmp_path / "out",
+    )
+
+    with pytest.raises(adapter.BenchmarkDependencyError, match="installed mini-swe-agent API"):
+        adapter.MiniSweAgentExecutor()(_request(), plan)
+
+
 def test_executor_runs_fake_mini_swe_agent_flow(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(adapter, "ensure_live_dependencies", lambda: None)
     monkeypatch.setattr(adapter, "_copy_workspace_to_container", lambda _env, _workspace: None)
