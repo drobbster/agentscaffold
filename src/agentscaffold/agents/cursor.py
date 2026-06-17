@@ -9,7 +9,7 @@ from rich.console import Console
 
 from agentscaffold.agents.rule_policy import generate_rule_policy_document
 from agentscaffold.config import ReviewerConfig, ScaffoldConfig, find_config, load_config
-from agentscaffold.rendering import get_default_context, render_template
+from agentscaffold.rendering import get_default_context, render_template, write_managed_block
 
 console = Console()
 
@@ -50,8 +50,16 @@ def write_cursor_mcp_json(cursor_dir: Path) -> None:
     console.print(f"[green]Wrote[/green] {_display(mcp_path)}")
 
 
-def run_cursor_setup() -> None:
-    """Generate Cursor rule files from scaffold.yaml config."""
+def run_cursor_setup(force: bool = False) -> None:
+    """Generate Cursor rule files from scaffold.yaml config.
+
+    ``.cursor/rules.md`` is a project-owned document: the generated guidance is
+    written into a managed block, so an existing/hand-authored file is never
+    clobbered (created, block-refreshed, or appended). *force* rewrites it whole,
+    keeping a ``.bak`` snapshot. The machine-owned routing/trust policy
+    ``.cursor/rules/agentscaffold.md`` and the per-reviewer rules are always
+    regenerated so policy updates land.
+    """
     config_path = find_config()
     if config_path is None:
         console.print("[red]No scaffold.yaml found. Run 'scaffold init' first.[/red]")
@@ -67,8 +75,21 @@ def run_cursor_setup() -> None:
     cursor_dir.mkdir(parents=True, exist_ok=True)
 
     dest = cursor_dir / "rules.md"
-    dest.write_text(content)
-    console.print(f"[green]Wrote[/green] {dest.relative_to(Path.cwd())}")
+    status = write_managed_block(dest, content, force=force)
+    label = str(dest.relative_to(Path.cwd()))
+    if status == "created":
+        console.print(f"[green]Wrote[/green] {label}")
+    elif status == "block-updated":
+        console.print(f"[green]Updated[/green] AgentScaffold managed section in {label}")
+    elif status == "appended":
+        console.print(
+            f"[green]Appended[/green] AgentScaffold managed section to {label} "
+            "[dim](existing content preserved)[/dim]"
+        )
+    elif status == "overwritten":
+        console.print(f"[yellow]Overwrote[/yellow] {label} [dim](.bak saved)[/dim]")
+    else:
+        console.print(f"[dim]Unchanged[/dim] {label}")
 
     rules_dir = cursor_dir / "rules"
     rules_dir.mkdir(parents=True, exist_ok=True)

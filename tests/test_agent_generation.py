@@ -395,3 +395,160 @@ def test_all_platforms_real_write_creates_artifacts(tmp_path: Path):
     assert (tmp_path / ".claude" / "agents" / "security_reviewer.md").exists()
     assert (tmp_path / ".windsurf" / "agents" / "security_reviewer.md").exists()
     assert (tmp_path / ".cursor" / "rules" / "security_reviewer.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# write_managed_block — never-clobber managed-section writer
+# ---------------------------------------------------------------------------
+
+
+def test_managed_block_creates_when_missing(tmp_path: Path):
+    from agentscaffold.rendering import (
+        MANAGED_BLOCK_BEGIN,
+        MANAGED_BLOCK_END,
+        write_managed_block,
+    )
+
+    dest = tmp_path / "AGENTS.md"
+    status = write_managed_block(dest, "generated guidance")
+    assert status == "created"
+    text = dest.read_text()
+    assert MANAGED_BLOCK_BEGIN in text
+    assert MANAGED_BLOCK_END in text
+    assert "generated guidance" in text
+
+
+def test_managed_block_appends_to_unmarked_file(tmp_path: Path):
+    """An org/user-owned file (no markers) is preserved; the block is appended."""
+    from agentscaffold.rendering import MANAGED_BLOCK_BEGIN, write_managed_block
+
+    dest = tmp_path / "AGENTS.md"
+    dest.write_text("MY CUSTOM GOVERNANCE\n")
+    status = write_managed_block(dest, "generated guidance")
+    assert status == "appended"
+    text = dest.read_text()
+    # Every byte of the user's content survives, at the top of the file.
+    assert text.startswith("MY CUSTOM GOVERNANCE\n")
+    assert MANAGED_BLOCK_BEGIN in text
+    assert "generated guidance" in text
+    assert not dest.with_suffix(".md.bak").exists()  # append never needs a backup
+
+
+def test_managed_block_refreshes_only_the_block(tmp_path: Path):
+    """A second run replaces just the managed region, leaving user content intact."""
+    from agentscaffold.rendering import write_managed_block
+
+    dest = tmp_path / "AGENTS.md"
+    dest.write_text("USER PREAMBLE\n")
+    write_managed_block(dest, "version one")
+    # User edits content OUTSIDE the block after the first generation.
+    text = dest.read_text() + "\nUSER APPENDIX\n"
+    dest.write_text(text)
+
+    status = write_managed_block(dest, "version two")
+    assert status == "block-updated"
+    final = dest.read_text()
+    assert "USER PREAMBLE" in final
+    assert "USER APPENDIX" in final
+    assert "version two" in final
+    assert "version one" not in final  # stale managed content replaced
+    assert final.count("BEGIN AGENTSCAFFOLD MANAGED SECTION") == 1  # idempotent, no duplication
+
+
+def test_managed_block_unchanged_when_identical(tmp_path: Path):
+    from agentscaffold.rendering import write_managed_block
+
+    dest = tmp_path / "AGENTS.md"
+    write_managed_block(dest, "stable")
+    status = write_managed_block(dest, "stable")
+    assert status == "unchanged"
+
+
+def test_managed_block_force_overwrites_whole_file_with_backup(tmp_path: Path):
+    from agentscaffold.rendering import write_managed_block
+
+    dest = tmp_path / "AGENTS.md"
+    dest.write_text("MY CUSTOM GOVERNANCE")
+    status = write_managed_block(dest, "generated guidance", force=True)
+    assert status == "overwritten"
+    assert "MY CUSTOM GOVERNANCE" not in dest.read_text()
+    backup = dest.with_suffix(".md.bak")
+    assert backup.exists()
+    assert backup.read_text() == "MY CUSTOM GOVERNANCE"
+
+
+# ---------------------------------------------------------------------------
+# Project-owned doc preservation in generate-all (the trust/safety fix)
+# ---------------------------------------------------------------------------
+
+
+def _generate_all_with_stubbed_claude(config, tmp_path: Path, force: bool = False) -> None:
+    from unittest.mock import patch
+
+    from agentscaffold.agents.generate import run_agents_generate_all_platforms
+
+    with patch(
+        "agentscaffold.agents.claude.generate_claude_rules",
+        return_value="# CLAUDE.md (generated)",
+    ):
+        run_agents_generate_all_platforms(config, tmp_path, dry_run=False, force=force)
+
+
+def test_generate_all_preserves_org_owned_docs(tmp_path: Path):
+    config = _make_config([])
+    # Simulate an org/user that already owns these agent docs (no markers).
+    (tmp_path / "AGENTS.md").write_text("MY CUSTOM AGENTS")
+    (tmp_path / "CLAUDE.md").write_text("MY CUSTOM CLAUDE")
+    (tmp_path / ".windsurfrules").write_text("MY CUSTOM WINDSURF")
+
+    _generate_all_with_stubbed_claude(config, tmp_path)
+
+    # Existing content is never destroyed -- the managed block is appended after it.
+    agents = (tmp_path / "AGENTS.md").read_text()
+    assert agents.startswith("MY CUSTOM AGENTS")
+    assert "BEGIN AGENTSCAFFOLD MANAGED SECTION" in agents
+    claude = (tmp_path / "CLAUDE.md").read_text()
+    assert claude.startswith("MY CUSTOM CLAUDE")
+    assert "# CLAUDE.md (generated)" in claude
+    assert (tmp_path / ".windsurfrules").read_text().startswith("MY CUSTOM WINDSURF")
+    # ... while the machine-owned routing policy is still regenerated.
+    assert (tmp_path / ".cursor" / "rules" / "agentscaffold.md").exists()
+
+
+def test_generate_all_refreshes_managed_block_idempotently(tmp_path: Path):
+    config = _make_config([])
+    (tmp_path / "AGENTS.md").write_text("MY CUSTOM AGENTS\n")
+
+    _generate_all_with_stubbed_claude(config, tmp_path)
+    _generate_all_with_stubbed_claude(config, tmp_path)
+
+    agents = (tmp_path / "AGENTS.md").read_text()
+    # User content preserved and the managed block is not duplicated on re-run.
+    assert agents.startswith("MY CUSTOM AGENTS")
+    assert agents.count("BEGIN AGENTSCAFFOLD MANAGED SECTION") == 1
+
+
+def test_generate_all_force_overwrites_docs_with_backup(tmp_path: Path):
+    config = _make_config([])
+    (tmp_path / "AGENTS.md").write_text("MY CUSTOM AGENTS")
+
+    _generate_all_with_stubbed_claude(config, tmp_path, force=True)
+
+    # Forced: rewritten whole, but the original is preserved as a .bak snapshot.
+    assert "MY CUSTOM AGENTS" not in (tmp_path / "AGENTS.md").read_text()
+    backup = tmp_path / "AGENTS.md.bak"
+    assert backup.exists()
+    assert backup.read_text() == "MY CUSTOM AGENTS"
+
+
+def test_generate_all_writes_docs_when_absent(tmp_path: Path):
+    config = _make_config([])
+
+    _generate_all_with_stubbed_claude(config, tmp_path)
+
+    # Fresh project: docs are created (managed block wraps the generated content).
+    assert (tmp_path / "AGENTS.md").exists()
+    claude = (tmp_path / "CLAUDE.md").read_text()
+    assert "# CLAUDE.md (generated)" in claude
+    assert "BEGIN AGENTSCAFFOLD MANAGED SECTION" in claude
+    assert (tmp_path / ".windsurfrules").exists()

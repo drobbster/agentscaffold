@@ -72,6 +72,8 @@ class TestIntentAdoption:
             ("show me studies about X", "scaffold_find_studies"),
             ("any ADRs about X", "scaffold_find_adrs"),
             ("what's the decision history for plan X", "scaffold_decision_context"),
+            ("search the workspace for X", "scaffold_search"),
+            ("find duplicates across projects", "scaffold_search"),
             ("retro on plan X", "scaffold_prepare_retro"),
             # E.6: new exact cases for finding tools
             ("record finding for plan X", "scaffold_record_finding"),
@@ -97,6 +99,8 @@ class TestIntentAdoption:
             ("Has plan X changed enough to require a refresh?", "scaffold_staleness_check"),
             ("Show decision lineage for plan X from ADR to spike", "scaffold_decision_context"),
             ("Any experiments or studies on this approach already?", "scaffold_find_studies"),
+            ("Look across every project for similar router implementations", "scaffold_search"),
+            ("Find duplicate code in sibling workspace projects", "scaffold_search"),
             # E.6: new paraphrase cases for finding tools
             (
                 "note that the quant review found a contract gap in plan 42",

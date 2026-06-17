@@ -144,6 +144,15 @@ TOOL_INTENTS: dict[str, list[str]] = {
         "trace the rationale chain for plan X",
         "why was this plan decided this way",
     ],
+    "scaffold_search": [
+        "search the workspace for X",
+        "search across all projects for X",
+        "find code related to X",
+        "find duplicates across projects",
+        "look for duplicate code in the workspace",
+        "search all projects for similar implementations",
+        "look across every project for similar implementations",
+    ],
     "scaffold_record_finding": [
         "record finding",
         "log finding",
@@ -285,6 +294,7 @@ _TOOL_SIGNAL_TOKENS: dict[str, set[str]] = {
     "scaffold_prior_experiments": {"prior", "experiments", "evidence", "tested"},
     "scaffold_find_adrs": {"adr", "architecture", "decision", "governs"},
     "scaffold_decision_context": {"decision", "history", "chain", "spike", "intent", "adr"},
+    "scaffold_search": {"search", "find", "workspace", "projects", "duplicate", "similar"},
     "scaffold_record_finding": {"record", "log", "finding", "discovered", "issue", "capture"},
     "scaffold_resolve_finding": {"resolve", "resolved", "close", "fixed", "addressed"},
     "scaffold_record_findings_batch": {"batch", "all", "findings", "multiple", "appendix"},
@@ -452,6 +462,63 @@ def _get_tool_definitions() -> list:
                         "type": "integer",
                         "description": "Number of results (default: 10)",
                         "default": 10,
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": ["code", "governance", "all"],
+                        "description": "Search corpus (default: code)",
+                        "default": "code",
+                    },
+                    "rerank": {
+                        "type": "boolean",
+                        "description": "Rerank final results with the configured cross-encoder",
+                        "default": False,
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": (
+                            "Target a specific project in a multi-project workspace "
+                            "(defaults to the current project)"
+                        ),
+                    },
+                    "all_projects": {
+                        "type": "boolean",
+                        "description": "Search across every project in the workspace",
+                        "default": False,
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="scaffold_recall_governance",
+            description=(
+                "Semantically recall prior governance knowledge (plans, findings, "
+                "learnings, ADRs, studies, spikes, backlog) for a natural-language query."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Natural language recall query"},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["keyword", "semantic", "hybrid"],
+                        "description": "Search mode (default: hybrid)",
+                        "default": "hybrid",
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "description": "Number of results (default: 10)",
+                        "default": 10,
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Target a specific project in a multi-project workspace",
+                    },
+                    "all_projects": {
+                        "type": "boolean",
+                        "description": "Search governance across every project in the workspace",
+                        "default": False,
                     },
                 },
                 "required": ["query"],
@@ -1069,7 +1136,18 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             return _tool_impact(store, arguments, meta)
 
         elif name == "scaffold_search":
+            if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
+                from agentscaffold.graph.embeddings import configure_embeddings
+
+                configure_embeddings(config.search.embedding_model, config.search.cache_dir)
             return _tool_search(store, arguments, meta)
+
+        elif name == "scaffold_recall_governance":
+            if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
+                from agentscaffold.graph.embeddings import configure_embeddings
+
+                configure_embeddings(config.search.embedding_model, config.search.cache_dir)
+            return _tool_search(store, {**arguments, "kind": "governance"}, meta)
 
         elif name == "scaffold_validate":
             return _tool_validate(store, arguments, meta)
@@ -1455,6 +1533,8 @@ def _tool_impact(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str,
 def _tool_search(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
     """Handle scaffold_search tool call (hybrid search)."""
     from agentscaffold.graph.search import (
+        CODE_TABLES,
+        GOVERNANCE_TABLES,
         evaluate_retrieval,
         format_search_results,
         hybrid_search,
@@ -1463,12 +1543,36 @@ def _tool_search(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str,
     query_text = arguments.get("query", "")
     mode = arguments.get("mode", "hybrid")
     top_k = arguments.get("top_k", 10)
+    kind = arguments.get("kind", "code")
+    rerank = bool(arguments.get("rerank", False))
+    # Scope (Plan 225): defaults to the current project in a multi-project
+    # workspace; clients may pass project / all_projects to retarget or federate.
+    project = arguments.get("project") or None
+    all_projects = bool(arguments.get("all_projects", False))
 
     # Recompute retrieval status for the actually-requested mode so the search
     # response reflects what ran (the meta snapshot used the default mode).
     meta = {**meta, **evaluate_retrieval(store, mode)}
 
-    results = hybrid_search(store, query_text, mode=mode, top_k=top_k)
+    if kind == "code":
+        tables = CODE_TABLES
+    elif kind == "governance":
+        tables = GOVERNANCE_TABLES
+    elif kind == "all":
+        tables = [*CODE_TABLES, *GOVERNANCE_TABLES]
+    else:
+        tables = CODE_TABLES
+
+    results = hybrid_search(
+        store,
+        query_text,
+        mode=mode,
+        top_k=top_k,
+        tables=tables,
+        rerank=rerank,
+        project=project,
+        all_projects=all_projects,
+    )
 
     return {
         "results": [

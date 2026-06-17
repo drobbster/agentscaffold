@@ -8,6 +8,7 @@ from pathlib import Path
 from rich.console import Console
 
 from agentscaffold.config import load_config
+from agentscaffold.paths import ResolvedPaths, resolve_root
 from agentscaffold.rendering import get_default_context, get_graph_context, render_template
 
 console = Console()
@@ -48,7 +49,7 @@ def run_plan_create(name: str, plan_type: str) -> None:
         raise SystemExit(1)
 
     config = load_config()
-    plans_dir = Path("docs/ai/plans")
+    plans_dir = ResolvedPaths(config, resolve_root()).plans_dir
 
     if not plans_dir.is_dir():
         console.print(f"[yellow]Warning: {plans_dir} does not exist, creating it.[/yellow]")

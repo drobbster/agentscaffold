@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
 
 from agentscaffold.config import load_config
+from agentscaffold.paths import ResolvedPaths, resolve_root
 
 console = Console()
 
@@ -48,7 +48,7 @@ def run_validate(
 
         skip_statuses = {"complete", "superseded", "future", "blocked", "abandoned"}
 
-        plans_dir = Path("docs/ai/plans")
+        plans_dir = ResolvedPaths(config, resolve_root()).plans_dir
         if plans_dir.is_dir():
             plan_issues: list[str] = []
             for pf in sorted(plans_dir.glob("*.md")):

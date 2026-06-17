@@ -29,7 +29,7 @@ def store_with_plan(store):
     """Store with a Plan node pre-inserted."""
     store.execute(
         "INSERT INTO Plan VALUES ('plan::152', 152, 'Governed Plan Lifecycle',"
-        " 'in_progress', 'feature', '', '2026-03-17', '2026-03-17', NULL)"
+        " 'in_progress', 'feature', '', '2026-03-17', '2026-03-17', NULL, '')"
     )
     return store
 

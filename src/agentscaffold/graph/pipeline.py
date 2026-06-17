@@ -137,10 +137,20 @@ def run_pipeline(
     """
     root = root.resolve()
     graph_config = config.graph if config else None
-    db_path = Path(graph_config.db_path) if graph_config else Path(".scaffold/graph.duckdb")
 
-    if not db_path.is_absolute():
-        db_path = root / db_path
+    # Resolve the DB path against the project root (Plan 221) so the index-time
+    # location matches what open_graph uses at query time. A relative db_path
+    # anchors to the nearest scaffold.yaml/.git (falling back to the scan root)
+    # rather than the bare working directory; an absolute db_path is honored.
+    from agentscaffold.paths import resolve_db_path
+
+    db_path = resolve_db_path(config, start=root)
+
+    # Plan 223: note whether the cache exists before we build. On an ephemeral
+    # box (no cache) the governance phase restores findings/sessions/backlog from
+    # the committed artifact; we surface that so the operator sees the rebuild
+    # reconstructed durable knowledge from git rather than starting empty.
+    cache_existed = db_path.is_file()
 
     backend_name = (graph_config.backend if graph_config else None) or "duckpgq"
     t0 = time.monotonic()
@@ -157,6 +167,19 @@ def run_pipeline(
     phases_completed: list[str] = []
     summary: dict[str, Any] = {}
 
+    # Plan 225: in a multi-project workspace, tag every write with this project
+    # and scope clears to it so re-indexing one project never touches siblings.
+    # Single-project repos resolve to None -- the choke point is a no-op.
+    from agentscaffold.paths import load_workspace as _load_workspace
+
+    _workspace = _load_workspace(root)
+    write_project: str | None = None
+    if _workspace.is_multi_project:
+        from agentscaffold.graph.scoping import current_project_name
+
+        write_project = current_project_name(root)
+    store.set_write_project(write_project)
+
     # Incremental mode: compute changeset and only process changed files
     if incremental and store.schema_current():
         return _run_incremental(store, root, graph_config, t0, embeddings, config=config)
@@ -171,13 +194,13 @@ def run_pipeline(
                 "Clearing derived data and starting fresh "
                 "(review findings and sessions preserved)...[/yellow]"
             )
-            store.clear_derived()
+            store.clear_derived(project=write_project)
         elif pipeline_state["state"] == "complete":
             console.print(
                 "[dim]Full re-index: clearing derived data "
                 "(review findings and sessions preserved)...[/dim]"
             )
-            store.clear_derived()
+            store.clear_derived(project=write_project)
         elif pipeline_state["state"] == "partial":
             phases_completed = pipeline_state["phases_completed"]
             console.print(
@@ -376,7 +399,7 @@ def run_pipeline(
         try:
             from agentscaffold.graph.embeddings import generate_embeddings
 
-            emb_result = generate_embeddings(store)
+            emb_result = generate_embeddings(store, root=root)
             summary["embeddings"] = emb_result
             phases_completed.append("embeddings")
             total = sum(emb_result.values())
@@ -396,6 +419,16 @@ def run_pipeline(
     elapsed = time.monotonic() - t0
     summary["elapsed_seconds"] = round(elapsed, 1)
     summary["phases_completed"] = phases_completed
+
+    # Plan 223: report governance restored from the committed artifact on a fresh
+    # build (e.g. ephemeral devbox or after a deleted cache).
+    restored = summary.get("governance", {}).get("governance_restored", 0)
+    summary["restored_from_artifact"] = (not cache_existed) and restored > 0
+    if summary["restored_from_artifact"]:
+        console.print(
+            f"[green]Restored {restored} governance record(s) "
+            "(findings/sessions/backlog) from the committed artifact.[/green]"
+        )
 
     # Print final summary
     _print_summary(summary, store)
@@ -554,7 +587,7 @@ def _run_incremental(
         try:
             from agentscaffold.graph.governance import process_governance
 
-            store.clear_governance()
+            store.clear_governance(project=store.write_project)
             gov_result = process_governance(store, root, config=config)
             summary["governance"] = gov_result
             console.print(
@@ -588,7 +621,7 @@ def _run_incremental(
         try:
             from agentscaffold.graph.embeddings import generate_embeddings
 
-            emb_result = generate_embeddings(store)
+            emb_result = generate_embeddings(store, root=root)
             summary["embeddings"] = emb_result
         except ImportError:
             pass

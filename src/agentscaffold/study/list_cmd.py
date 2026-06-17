@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
+
+from agentscaffold.paths import ResolvedPaths
 
 console = Console()
 
@@ -24,7 +25,7 @@ def _extract_field(fm_text: str, field: str) -> str:
 
 def run_study_list() -> None:
     """List study files with optional filtering."""
-    studies_dir = Path("docs/studies")
+    studies_dir = ResolvedPaths.discover().studies_dir
 
     if not studies_dir.is_dir():
         console.print(f"[yellow]Warning: {studies_dir} does not exist.[/yellow]")

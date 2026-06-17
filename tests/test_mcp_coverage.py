@@ -133,6 +133,15 @@ def test_rule_policy_includes_graph_trust_discipline() -> None:
     assert "grep" in doc
 
 
+def test_rule_policy_includes_multiproject_scope_discipline() -> None:
+    doc = generate_rule_policy_document(config=ScaffoldConfig(), title="Test Rules")
+    assert "Multi-Project Workspace Discipline" in doc
+    # Teaches the current-project default and the explicit widening flags.
+    assert "--all-projects" in doc
+    assert "--project" in doc
+    assert "scaffold workspace list" in doc
+
+
 # --- P2: edge confidence surfacing ---
 
 

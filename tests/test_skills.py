@@ -105,6 +105,84 @@ def test_generate_skills_empty_dir(tmp_path: Path):
     assert written == []
 
 
+def test_generate_skill_md_has_managed_marker():
+    from agentscaffold.skills.generator import generate_skill_md
+
+    content = generate_skill_md("testing", "Testing standards", "body")
+    assert "managed_by: agentscaffold" in content
+
+
+def test_is_agentscaffold_managed_detects_marker(tmp_path: Path):
+    from agentscaffold.skills.generator import generate_skill_md, is_agentscaffold_managed
+
+    managed = tmp_path / "testing.md"
+    managed.write_text(generate_skill_md("testing", "Testing standards", "body"))
+    assert is_agentscaffold_managed(managed) is True
+
+    user_authored = tmp_path / "custom.md"
+    user_authored.write_text("---\nname: custom\n---\n# Hand authored\n")
+    assert is_agentscaffold_managed(user_authored) is False
+
+    no_frontmatter = tmp_path / "plain.md"
+    no_frontmatter.write_text("# Just markdown\n")
+    assert is_agentscaffold_managed(no_frontmatter) is False
+
+
+def test_generate_skills_preserves_user_authored(tmp_path: Path):
+    """A user/org-authored skill with the same name is never overwritten."""
+    from agentscaffold.skills.generator import generate_skills_from_standards_dir
+
+    std_dir = tmp_path / "standards"
+    std_dir.mkdir()
+    (std_dir / "testing.md").write_text("# Testing Standards\n\nGenerated body.\n")
+
+    out_dir = tmp_path / "skills"
+    out_dir.mkdir()
+    user_skill = out_dir / "testing.md"
+    user_skill.write_text("---\nname: testing\n---\n# Org-owned skill\n")
+
+    written = generate_skills_from_standards_dir(std_dir, out_dir)
+    assert written == []  # nothing written -- existing user skill preserved
+    assert user_skill.read_text() == "---\nname: testing\n---\n# Org-owned skill\n"
+
+
+def test_generate_skills_overwrites_own_managed_files(tmp_path: Path):
+    """A previously AgentScaffold-generated skill is refreshed in place."""
+    from agentscaffold.skills.generator import generate_skill_md, generate_skills_from_standards_dir
+
+    std_dir = tmp_path / "standards"
+    std_dir.mkdir()
+    (std_dir / "testing.md").write_text("# Testing Standards\n\nNew body.\n")
+
+    out_dir = tmp_path / "skills"
+    out_dir.mkdir()
+    (out_dir / "testing.md").write_text(generate_skill_md("testing", "old", "old body"))
+
+    written = generate_skills_from_standards_dir(std_dir, out_dir)
+    assert (out_dir / "testing.md") in written
+    assert "New body." in (out_dir / "testing.md").read_text()
+
+
+def test_generate_skills_force_overwrites_user_authored_with_backup(tmp_path: Path):
+    from agentscaffold.skills.generator import generate_skills_from_standards_dir
+
+    std_dir = tmp_path / "standards"
+    std_dir.mkdir()
+    (std_dir / "testing.md").write_text("# Testing Standards\n\nGenerated body.\n")
+
+    out_dir = tmp_path / "skills"
+    out_dir.mkdir()
+    user_skill = out_dir / "testing.md"
+    user_skill.write_text("# Org-owned skill\n")
+
+    written = generate_skills_from_standards_dir(std_dir, out_dir, force=True)
+    assert user_skill in written
+    assert "managed_by: agentscaffold" in user_skill.read_text()
+    backup = out_dir / "testing.md.bak"
+    assert backup.exists()
+    assert backup.read_text() == "# Org-owned skill\n"
+
+
 def test_parse_skill_frontmatter(tmp_path: Path):
     from agentscaffold.skills.generator import generate_skill_md, parse_skill_frontmatter
 

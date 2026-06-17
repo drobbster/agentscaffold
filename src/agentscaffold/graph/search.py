@@ -19,6 +19,9 @@ from agentscaffold.graph.query_compat import ql
 
 logger = logging.getLogger(__name__)
 
+CODE_TABLES = ["Function", "Class", "Method", "File"]
+GOVERNANCE_TABLES = ["Plan", "Learning", "ReviewFinding", "Study", "ADR", "Spike", "BacklogItem"]
+
 
 @dataclass
 class SearchResult:
@@ -80,12 +83,31 @@ def evaluate_retrieval(store: GraphBackend, mode: str = "hybrid") -> dict[str, s
             "sentence-transformers not installed; using keyword search only",
         )
 
+    if _embeddings.embeddings_model_mismatch(store):
+        return _result(
+            "degraded",
+            "keyword" if requested == "hybrid" else "semantic",
+            "embeddings were built with a different model; run 'scaffold index --embeddings'",
+        )
+
     if not _embeddings.embeddings_available(store):
         return _result(
             "degraded",
             "keyword" if requested == "hybrid" else "semantic",
             "no embeddings indexed; run 'scaffold index --embeddings'",
         )
+
+    if not _embeddings.model_ready():
+        # Package + embeddings present, but the model weights are not cached and
+        # may need a network download. Degrade gracefully with an actionable hint
+        # instead of letting a load fail mid-query.
+        reason = (
+            "embedding model weights not provisioned; run 'scaffold graph warm' "
+            "(or connect to a network) to download them once"
+        )
+        if requested == "semantic":
+            return _result("unavailable", "none", reason)
+        return _result("degraded", "keyword", reason)
 
     return _result("available", requested, "semantic and keyword retrieval available")
 
@@ -98,6 +120,11 @@ def hybrid_search(
     top_k: int = 10,
     tables: list[str] | None = None,
     rrf_k: int = 60,
+    rerank: bool = False,
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    project: str | None = None,
+    all_projects: bool = False,
+    start: Any = None,
 ) -> list[SearchResult]:
     """Execute a hybrid search across the knowledge graph.
 
@@ -108,27 +135,45 @@ def hybrid_search(
         top_k: Number of results to return
         tables: Node tables to search (default: Function, Class, Method, File)
         rrf_k: Reciprocal rank fusion constant (higher = more weight to lower ranks)
+        rerank: Optionally rerank the fused top-k with a sentence-transformers CrossEncoder.
+        rerank_model: CrossEncoder model id used when rerank is enabled.
+        project: Target a specific project (multi-project workspace only)
+        all_projects: Search federated across the workspace (overrides ``project``)
+        start: Working directory hint for current-project resolution
+
+    Scope (Plan 225): in a multi-project workspace both the keyword and semantic
+    halves default to the current project; ``project=``/``all_projects=`` widen
+    or retarget. Single-project repos ignore scope entirely.
 
     Returns:
         Ranked list of SearchResult objects
     """
-    target_tables = tables or ["Function", "Class", "Method", "File"]
+    from agentscaffold.graph.scoping import resolve_scope
+
+    scope = resolve_scope(project=project, all_projects=all_projects, start=start)
+
+    target_tables = tables or CODE_TABLES
 
     keyword_results: list[SearchResult] = []
     semantic_results: list[SearchResult] = []
 
     if mode in ("keyword", "hybrid"):
-        keyword_results = _keyword_search(store, query, target_tables, top_k * 2)
+        keyword_results = _keyword_search(store, query, target_tables, top_k * 2, scope)
 
     if mode in ("semantic", "hybrid"):
-        semantic_results = _semantic_search(store, query, target_tables, top_k * 2)
+        semantic_results = _semantic_search(
+            store, query, target_tables, top_k * 2, project=project, all_projects=all_projects
+        )
 
     if mode == "keyword":
-        return keyword_results[:top_k]
+        results = keyword_results[:top_k]
+        return _rerank_results(query, results, rerank_model) if rerank else results
     if mode == "semantic":
-        return semantic_results[:top_k]
+        results = semantic_results[:top_k]
+        return _rerank_results(query, results, rerank_model) if rerank else results
 
-    return _reciprocal_rank_fusion(keyword_results, semantic_results, top_k, rrf_k)
+    fused = _reciprocal_rank_fusion(keyword_results, semantic_results, top_k, rrf_k)
+    return _rerank_results(query, fused, rerank_model) if rerank else fused
 
 
 def _keyword_search(
@@ -136,10 +181,19 @@ def _keyword_search(
     query: str,
     tables: list[str],
     limit: int,
+    scope: Any = None,
 ) -> list[SearchResult]:
-    """Search using graph structure: name matching, path matching."""
+    """Search using graph structure: name matching, path matching.
+
+    When *scope* targets a single project (multi-project workspace), a
+    ``WHERE project = '<name>'`` predicate is appended to each table scan.
+    Project names are validated to a safe charset so inlining is injection-safe.
+    """
     results: list[SearchResult] = []
     terms = query.lower().split()
+    where = ""
+    if scope is not None and not getattr(scope, "is_noop", True):
+        where = f" WHERE project = '{scope.project}'"
 
     for table in tables:
         if table == "Function":
@@ -148,7 +202,7 @@ def _keyword_search(
                 sql=(
                     f'SELECT id AS "n.id", name AS "n.name", '
                     f'filePath AS "n.filePath", signature AS "n.signature" '
-                    f"FROM Function LIMIT {limit * 2}"
+                    f"FROM Function{where} LIMIT {limit * 2}"
                 ),
             )
             for row in rows:
@@ -176,7 +230,7 @@ def _keyword_search(
                 store,
                 sql=(
                     f'SELECT id AS "n.id", name AS "n.name", '
-                    f'filePath AS "n.filePath" FROM Class LIMIT {limit * 2}'
+                    f'filePath AS "n.filePath" FROM Class{where} LIMIT {limit * 2}'
                 ),
             )
             for row in rows:
@@ -199,7 +253,7 @@ def _keyword_search(
                 sql=(
                     f'SELECT id AS "n.id", name AS "n.name", className AS "n.className",'
                     f' filePath AS "n.filePath", signature AS "n.signature"'
-                    f" FROM Method LIMIT {limit * 2}"
+                    f" FROM Method{where} LIMIT {limit * 2}"
                 ),
             )
             for row in rows:
@@ -228,7 +282,7 @@ def _keyword_search(
                 store,
                 sql=(
                     f'SELECT id AS "n.id", path AS "n.path", '
-                    f'language AS "n.language" FROM File LIMIT {limit * 2}'
+                    f'language AS "n.language" FROM File{where} LIMIT {limit * 2}'
                 ),
             )
             for row in rows:
@@ -245,6 +299,35 @@ def _keyword_search(
                         )
                     )
 
+        elif table in GOVERNANCE_TABLES:
+            sql = f"SELECT {_governance_keyword_cols(table)} FROM {table}{where} LIMIT {limit * 2}"
+            rows = ql(
+                store,
+                sql=sql,
+            )
+            for row in rows:
+                name = row.get("n.name", row.get("n.id", ""))
+                path = row.get("n.filePath", "")
+                description = row.get("n.description", "")
+                status = row.get("n.status", "")
+                score = _text_match_score(terms, name, path, description, status)
+                if score > 0:
+                    results.append(
+                        SearchResult(
+                            node_id=row.get("n.id", ""),
+                            name=name,
+                            path=path,
+                            node_type=table,
+                            score=score,
+                            source="keyword",
+                            context={
+                                k.removeprefix("n."): v
+                                for k, v in row.items()
+                                if k.startswith("n.")
+                            },
+                        )
+                    )
+
     results.sort(key=lambda r: r.score, reverse=True)
     return results[:limit]
 
@@ -254,8 +337,11 @@ def _semantic_search(
     query: str,
     tables: list[str],
     limit: int,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
 ) -> list[SearchResult]:
-    """Search using vector similarity."""
+    """Search using vector similarity (scope-aware via search_similar)."""
     try:
         from agentscaffold.graph.embeddings import search_similar
     except ImportError:
@@ -265,11 +351,18 @@ def _semantic_search(
     results: list[SearchResult] = []
 
     for table in tables:
-        if table not in ("Function", "Class", "Method", "File"):
+        if table not in (*CODE_TABLES, *GOVERNANCE_TABLES):
             continue
 
         try:
-            hits = search_similar(store, query, table=table, top_k=limit)
+            hits = search_similar(
+                store,
+                query,
+                table=table,
+                top_k=limit,
+                project=project,
+                all_projects=all_projects,
+            )
         except Exception:
             logger.debug("Semantic search failed for %s", table, exc_info=True)
             continue
@@ -286,6 +379,7 @@ def _semantic_search(
                     node_type=table,
                     score=hit.get("similarity", 0.0),
                     source="semantic",
+                    context={k.removeprefix("n."): v for k, v in hit.items() if k.startswith("n.")},
                 )
             )
 
@@ -329,6 +423,35 @@ def _reciprocal_rank_fusion(
     return results
 
 
+def _rerank_results(
+    query: str,
+    results: list[SearchResult],
+    model_name: str,
+) -> list[SearchResult]:
+    """Best-effort CrossEncoder rerank (optional, off by default)."""
+    if not results:
+        return results
+    try:
+        from sentence_transformers import CrossEncoder  # noqa: PLC0415
+    except Exception:
+        logger.debug("CrossEncoder unavailable; returning pre-rerank results", exc_info=True)
+        return results
+    try:
+        model = CrossEncoder(model_name)
+        pairs = [(query, f"{r.node_type} {r.name} {r.path}") for r in results]
+        scores = model.predict(pairs)
+    except Exception:
+        logger.debug("CrossEncoder rerank failed; returning pre-rerank results", exc_info=True)
+        return results
+
+    reranked: list[SearchResult] = []
+    for result, score in zip(results, scores):
+        result.score = round(float(score), 6)
+        reranked.append(result)
+    reranked.sort(key=lambda r: r.score, reverse=True)
+    return reranked
+
+
 def _text_match_score(terms: list[str], *fields: str) -> float:
     """Score a node based on term overlap with its fields."""
     if not terms:
@@ -352,6 +475,44 @@ def _text_match_score(terms: list[str], *fields: str) -> float:
                 exact_bonus += 0.3
 
     return matches / len(terms) + exact_bonus
+
+
+def _governance_keyword_cols(table: str) -> str:
+    """Return a normalized SELECT list for governance keyword search."""
+    if table == "Plan":
+        return (
+            'id AS "n.id", title AS "n.name", filePath AS "n.filePath",'
+            ' status AS "n.status", CAST(number AS VARCHAR) AS "n.description"'
+        )
+    if table == "Learning":
+        return (
+            'id AS "n.id", learningId AS "n.name", target AS "n.filePath",'
+            ' status AS "n.status", description AS "n.description"'
+        )
+    if table == "ReviewFinding":
+        return (
+            'id AS "n.id", category AS "n.name", finding AS "n.description",'
+            ' status AS "n.status", severity AS "n.filePath"'
+        )
+    if table == "Study":
+        return (
+            'id AS "n.id", title AS "n.name", filePath AS "n.filePath",'
+            ' status AS "n.status", outcome AS "n.description"'
+        )
+    if table == "ADR":
+        return (
+            'id AS "n.id", title AS "n.name", filePath AS "n.filePath",'
+            ' status AS "n.status", CAST(number AS VARCHAR) AS "n.description"'
+        )
+    if table == "Spike":
+        return (
+            'id AS "n.id", title AS "n.name", filePath AS "n.filePath",'
+            ' status AS "n.status", parentPlan AS "n.description"'
+        )
+    return (
+        'id AS "n.id", title AS "n.name", source AS "n.filePath",'
+        ' status AS "n.status", priority AS "n.description"'
+    )
 
 
 def format_search_results(results: list[SearchResult]) -> str:

@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agentscaffold.config import PROJECT_DELIMITER
 from agentscaffold.graph.duckpgq_schema import (
     EDGE_TABLE_NAMES,
     NODE_TABLE_NAMES,
@@ -27,6 +28,11 @@ from agentscaffold.graph.duckpgq_schema import (
 from agentscaffold.graph.duckpgq_schema import init_schema as _duckpgq_init_schema
 
 logger = logging.getLogger(__name__)
+
+# Node tables that carry no ``project`` column (Plan 225): GraphMeta is
+# workspace-global and Project is the namespace itself. Mirrors
+# duckpgq_schema._PROJECT_SCOPED_EXCLUDE.
+_NO_PROJECT_COLUMN: frozenset[str] = frozenset({"GraphMeta", "Project"})
 
 try:
     import duckdb
@@ -49,6 +55,18 @@ _LOCK_MSG = (
 
 class GraphLockError(RuntimeError):
     """Raised when the graph database is locked by another process."""
+
+
+class GraphCorruptionError(RuntimeError):
+    """Raised when a multi-project write would corrupt cross-project isolation.
+
+    The choke-point check-before-insert (Plan 225) raises this if a node ID is
+    about to be written under one project while it already exists under another
+    -- a signal that ID-prefixing or project stamping has gone wrong. Prefixing
+    structurally prevents cross-project collisions, so this should never fire in
+    practice; it is a fail-loud safety net (the spike showed a post-index
+    invariant cannot see a silently-dropped row).
+    """
 
 
 def _is_lock_error(exc: Exception) -> bool:
@@ -154,6 +172,11 @@ class DuckPGQBackend:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
         self._conn = _connect(str(db_path))
+        # Active write project (Plan 225). None == single-project mode: writes
+        # are unprefixed and unstamped, exactly as before. When set (multi-project
+        # indexing of one project), create_node/create_edge/store_embedding
+        # project-qualify IDs and stamp the project column at this choke point.
+        self._write_project: str | None = None
         self._load_extension()
 
     def _load_extension(self) -> None:
@@ -305,14 +328,69 @@ class DuckPGQBackend:
     # CRUD helpers
     # ------------------------------------------------------------------
 
+    # -- Multi-project write scope (Plan 225) -------------------------------
+
+    @property
+    def write_project(self) -> str | None:
+        """The active write project, or None in single-project mode."""
+        return self._write_project
+
+    def set_write_project(self, project: str | None) -> None:
+        """Set the active write project for subsequent create_* calls.
+
+        ``None`` restores single-project behavior (no prefixing/stamping). A
+        string switches the choke point into multi-project mode for that project:
+        IDs are qualified as ``{project}::{raw_id}`` and the ``project`` column is
+        stamped. The indexing pipeline sets this per project.
+        """
+        self._write_project = project
+
+    def _qualify(self, raw_id: str) -> str:
+        """Project-qualify a raw ID under the active write project (idempotent)."""
+        wp = self._write_project
+        if wp is None:
+            return raw_id
+        prefix = f"{wp}{PROJECT_DELIMITER}"
+        return raw_id if raw_id.startswith(prefix) else f"{prefix}{raw_id}"
+
+    def _guard_collision(self, table: str, node_id: str, project: str) -> None:
+        """Check-before-insert guard: fail loud on a cross-project ID collision.
+
+        Cheap PK lookup, multi-project mode only. Prefixing makes a true
+        collision structurally impossible, so this only fires if stamping and
+        prefixing disagree (a logic error), which a post-index invariant could
+        not detect once a row was silently dropped.
+        """
+        try:
+            row = self._conn.execute(
+                f"SELECT project FROM {table} WHERE id = ?", [node_id]
+            ).fetchone()
+        except Exception:
+            return
+        if row is not None and row[0] not in (None, "", project):
+            raise GraphCorruptionError(
+                f"Node id {node_id!r} already exists in {table} under project "
+                f"{row[0]!r}; refusing to write it under {project!r}."
+            )
+
     def create_node(self, table: str, props: dict[str, Any]) -> None:
         """Insert a single node (row) into the given table.
 
         Silently ignores duplicate ``id`` values (ON CONFLICT DO NOTHING).
-        None values are stored as empty strings.
+        None values are stored as empty strings. In multi-project mode the node
+        ID is project-qualified and the ``project`` column is stamped at this
+        choke point (with a check-before-insert collision guard).
         """
         if not props:
             return
+        wp = self._write_project
+        if wp is not None and table not in _NO_PROJECT_COLUMN:
+            props = dict(props)
+            if props.get("id") is not None:
+                props["id"] = self._qualify(str(props["id"]))
+            props["project"] = wp
+            if props.get("id"):
+                self._guard_collision(table, str(props["id"]), wp)
         cols = list(props.keys())
         placeholders = ", ".join(["?" for _ in cols])
         sql = (
@@ -346,6 +424,12 @@ class DuckPGQBackend:
         ``(src, dst)`` is semantically correct; edge properties (confidence,
         importedNames, changeType) are retained from the first insert.
         """
+        # Multi-project: qualify both endpoints under the active write project so
+        # the edge references the same prefixed node IDs create_node produced.
+        # Cross-project edges are a non-goal, so both endpoints share the prefix.
+        if self._write_project is not None:
+            from_id = self._qualify(from_id)
+            to_id = self._qualify(to_id)
         cols = ["src", "dst"]
         vals: list[Any] = [from_id, to_id]
         if props:
@@ -370,22 +454,28 @@ class DuckPGQBackend:
         val = self.query_scalar(f"SELECT COUNT(*) FROM {rel_table}")
         return int(val) if val is not None else 0
 
-    def clear_table(self, table: str) -> None:
-        """Delete all rows from a node table, cascading to referencing edges.
+    def clear_table(self, table: str, project: str | None = None) -> None:
+        """Delete rows from a node table, cascading to referencing edges.
 
         Iterates all edge tables and deletes rows whose src or dst references
-        the given node table, then deletes all rows from the node table itself.
+        the given node table, then deletes from the node table itself. When
+        *project* is given (multi-project), only that project's rows (and the
+        edges referencing them) are deleted, leaving sibling projects intact;
+        when None, all rows are deleted (single-project behavior).
         """
+        node_filter = "" if project is None else " WHERE project = ?"
+        node_params: list[Any] = [] if project is None else [project]
         for edge_table in EDGE_TABLE_NAMES:
             try:
                 self._conn.execute(
                     f"DELETE FROM {edge_table}"
-                    f" WHERE src IN (SELECT id FROM {table})"
-                    f" OR dst IN (SELECT id FROM {table})"
+                    f" WHERE src IN (SELECT id FROM {table}{node_filter})"
+                    f" OR dst IN (SELECT id FROM {table}{node_filter})",
+                    node_params + node_params,
                 )
             except Exception:
                 pass  # Edge table may not reference this node type
-        self._conn.execute(f"DELETE FROM {table}")
+        self._conn.execute(f"DELETE FROM {table}{node_filter}", node_params)
 
     def clear_all(self) -> None:
         """Close the database, delete the file, and reinitialize from scratch."""
@@ -405,7 +495,7 @@ class DuckPGQBackend:
         _duckpgq_init_schema(self._conn, force_recreate_graph=True)
         self._ensure_meta()
 
-    def clear_derived(self) -> None:
+    def clear_derived(self, project: str | None = None) -> None:
         """Clear index-derived data while preserving user-generated knowledge.
 
         Keeps: ReviewFinding (+ edges), Session (+ edges)
@@ -413,6 +503,11 @@ class DuckPGQBackend:
 
         This is the correct method for full re-indexing -- learned knowledge
         (review findings, sessions) survives while derived data is rebuilt.
+
+        When *project* is given (multi-project), only that project's derived data
+        is cleared, leaving siblings intact: node/auxiliary rows are filtered by
+        the ``project`` column and edges by their project-prefixed endpoints
+        (``{project}::%``). When None, everything is cleared (single-project).
         """
         # Tables that represent knowledge gained through work, not derived from code
         preserve_nodes = {"ReviewFinding", "BacklogItem", "Session", "GraphMeta"}
@@ -424,6 +519,10 @@ class DuckPGQBackend:
             "SESSION_MODIFIED",
         }
 
+        node_filter = "" if project is None else " WHERE project = ?"
+        node_params: list[Any] = [] if project is None else [project]
+        like = None if project is None else f"{project}{PROJECT_DELIMITER}%"
+
         # Drop and recreate the property graph (required before table changes)
         from agentscaffold.graph.duckpgq_schema import (
             DROP_PROPERTY_GRAPH_SQL,
@@ -434,29 +533,31 @@ class DuckPGQBackend:
         except Exception:
             pass
 
-        # Clear derived edge tables
+        # Clear derived edge tables (scoped by prefixed endpoints in multi-project)
         for edge_table in EDGE_TABLE_NAMES:
             if edge_table not in preserve_edges:
                 try:
-                    self._conn.execute(f"DELETE FROM {edge_table}")
+                    if like is None:
+                        self._conn.execute(f"DELETE FROM {edge_table}")
+                    else:
+                        self._conn.execute(
+                            f"DELETE FROM {edge_table} WHERE src LIKE ? OR dst LIKE ?",
+                            [like, like],
+                        )
                 except Exception:
                     pass
 
-        # Clear derived node tables
+        # Clear derived node tables (scoped by project column in multi-project)
         for table_name in NODE_TABLE_NAMES:
             if table_name not in preserve_nodes:
                 try:
-                    self._conn.execute(f"DELETE FROM {table_name}")
+                    self._conn.execute(f"DELETE FROM {table_name}{node_filter}", node_params)
                 except Exception:
                     pass
 
         # Clear auxiliary tables except GraphMeta
         try:
-            self._conn.execute("DELETE FROM EmbeddingStore")
-        except Exception:
-            pass
-        try:
-            self._conn.execute("DELETE FROM ParsingWarning")
+            self._conn.execute(f"DELETE FROM EmbeddingStore{node_filter}", node_params)
         except Exception:
             pass
 
@@ -465,7 +566,7 @@ class DuckPGQBackend:
 
         self._conn.execute(CREATE_PROPERTY_GRAPH_SQL)
 
-    def clear_governance(self) -> None:
+    def clear_governance(self, project: str | None = None) -> None:
         """Delete governance nodes and edges so they can be re-ingested cleanly.
 
         Used before re-running ``process_governance`` (notably in incremental
@@ -473,18 +574,152 @@ class DuckPGQBackend:
         governance document changes. Preserves ReviewFinding, BacklogItem and
         Session knowledge, matching ``clear_derived``'s preservation policy.
 
-        Uses plain DELETE (DML), so the registered property graph is unaffected.
+        When *project* is given (multi-project), only that project's governance
+        is cleared (nodes by ``project`` column, edges by prefixed endpoints),
+        leaving siblings intact. Uses plain DELETE (DML), so the registered
+        property graph is unaffected.
         """
+        node_filter = "" if project is None else " WHERE project = ?"
+        node_params: list[Any] = [] if project is None else [project]
+        like = None if project is None else f"{project}{PROJECT_DELIMITER}%"
         for edge_table in _GOVERNANCE_EDGE_TABLES:
             try:
-                self._conn.execute(f"DELETE FROM {edge_table}")
+                if like is None:
+                    self._conn.execute(f"DELETE FROM {edge_table}")
+                else:
+                    self._conn.execute(
+                        f"DELETE FROM {edge_table} WHERE src LIKE ? OR dst LIKE ?",
+                        [like, like],
+                    )
             except Exception:
                 pass
         for node_table in _GOVERNANCE_NODE_TABLES:
             try:
-                self._conn.execute(f"DELETE FROM {node_table}")
+                self._conn.execute(f"DELETE FROM {node_table}{node_filter}", node_params)
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------
+    # Single -> multi-project mode flip (Plan 225)
+    # ------------------------------------------------------------------
+
+    def migrate_to_multi_project(self, project: str) -> dict[str, int]:
+        """Atomically re-key the existing single-project graph into *project*.
+
+        When a lone repo gains a sibling, the rows already in the shared cache
+        are unprefixed (id ``plan::1``, ``project = ''``) and must be rewritten
+        to ``{project}::plan::1`` with the ``project`` column stamped, so the new
+        sibling's identically-named nodes cannot collide. Node ids, every edge
+        endpoint, and embedding ``node_id``s are rewritten inside one
+        transaction; any failure rolls the whole thing back so the cache is never
+        left half-migrated (the spike showed a partial migration is the worst
+        outcome). Idempotent: rows already prefixed for *project* are skipped, so
+        re-running is a safe no-op. Returns per-category rewrite counts.
+
+        The property graph is dropped before and recreated after the structural
+        id rewrites (CREATE PROPERTY GRAPH is not transactional), and is always
+        recreated even on rollback so the graph is never left unregistered.
+        """
+        from agentscaffold.config import validate_project_name
+        from agentscaffold.graph.duckpgq_schema import (
+            CREATE_PROPERTY_GRAPH_SQL,
+            DROP_PROPERTY_GRAPH_SQL,
+        )
+
+        validate_project_name(project)
+        prefix = f"{project}{PROJECT_DELIMITER}"
+        like = f"{prefix}%"
+        counts = {"nodes": 0, "edges": 0, "embeddings": 0}
+
+        # Pre-count the rows that will actually be rewritten (project='' and not
+        # already prefixed), so the return value is meaningful and idempotent.
+        for table in NODE_TABLE_NAMES:
+            if table in _NO_PROJECT_COLUMN:
+                continue
+            counts["nodes"] += int(
+                self.query_scalar(
+                    f"SELECT COUNT(*) FROM {table} WHERE project = '' AND id NOT LIKE ?",
+                    {"like": like},
+                )
+                or 0
+            )
+        counts["embeddings"] = int(
+            self.query_scalar(
+                "SELECT COUNT(*) FROM EmbeddingStore WHERE project = '' AND node_id NOT LIKE ?",
+                {"like": like},
+            )
+            or 0
+        )
+        for edge_table in EDGE_TABLE_NAMES:
+            counts["edges"] += int(
+                self.query_scalar(
+                    f"SELECT COUNT(*) FROM {edge_table} WHERE src NOT LIKE ?",
+                    {"like": like},
+                )
+                or 0
+            )
+
+        try:
+            self._conn.execute(DROP_PROPERTY_GRAPH_SQL)
+        except Exception:
+            pass
+
+        self._conn.execute("BEGIN TRANSACTION")
+        try:
+            for table in NODE_TABLE_NAMES:
+                if table in _NO_PROJECT_COLUMN:
+                    continue
+                self._conn.execute(
+                    f"UPDATE {table} SET id = ? || id, project = ?"
+                    " WHERE project = '' AND id NOT LIKE ?",
+                    [prefix, project, like],
+                )
+            for edge_table in EDGE_TABLE_NAMES:
+                self._conn.execute(
+                    f"UPDATE {edge_table} SET src = ? || src WHERE src NOT LIKE ?",
+                    [prefix, like],
+                )
+                self._conn.execute(
+                    f"UPDATE {edge_table} SET dst = ? || dst WHERE dst NOT LIKE ?",
+                    [prefix, like],
+                )
+            self._conn.execute(
+                "UPDATE EmbeddingStore SET node_id = ? || node_id, project = ?"
+                " WHERE project = '' AND node_id NOT LIKE ?",
+                [prefix, project, like],
+            )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+        finally:
+            self._conn.execute(CREATE_PROPERTY_GRAPH_SQL)
+        return counts
+
+    def verify_integrity(self) -> list[str]:
+        """Return multi-project invariant violations (empty list == healthy).
+
+        Invariant: any project-stamped node row must carry the matching
+        ``{project}::`` id prefix, and no row may be stamped with a project while
+        its id is bare. This is the post-migration / post-index safety net the
+        spike recommended; the CLI runs it after a mode flip.
+        """
+        problems: list[str] = []
+        for table in NODE_TABLE_NAMES:
+            if table in _NO_PROJECT_COLUMN:
+                continue
+            try:
+                rows = self._conn.execute(
+                    f"SELECT id, project FROM {table}"
+                    f" WHERE project <> '' AND id NOT LIKE project || '{PROJECT_DELIMITER}' || '%'"
+                ).fetchall()
+            except Exception:
+                continue
+            for r in rows:
+                problems.append(
+                    f"{table}: id {r[0]!r} is stamped project {r[1]!r} but lacks its id prefix"
+                )
+        return problems
 
     # ------------------------------------------------------------------
     # Governance export / import (schema migration safety)
@@ -709,6 +944,9 @@ class DuckPGQBackend:
         node_id: str,
         node_type: str,
         vector: list[float],
+        *,
+        model: str = "",
+        text_hash: str = "",
     ) -> None:
         """Insert or replace a float-array embedding for a node.
 
@@ -716,13 +954,36 @@ class DuckPGQBackend:
             node_id:   The node's ``id`` value.
             node_type: The node table name (e.g. ``"Function"``).
             vector:    Embedding as a plain Python list of floats.
+            model:     Embedding model that produced the vector.
+            text_hash: Stable hash of the embedded text, used for incremental skips.
+
+        In multi-project mode the ``node_id`` is project-qualified to match the
+        node tables and the ``project`` column is stamped, so embedding search
+        can be scoped/federated and scoped-cleared like the rest of the graph.
         """
-        self._conn.execute(
-            "INSERT INTO EmbeddingStore (node_id, node_type, embedding)"
-            " VALUES (?, ?, ?)"
-            " ON CONFLICT (node_id, node_type) DO UPDATE SET embedding = excluded.embedding",
-            [node_id, node_type, vector],
-        )
+        model = model or "all-MiniLM-L6-v2"
+        if self._write_project is not None:
+            self._conn.execute(
+                "INSERT INTO EmbeddingStore"
+                " (node_id, node_type, embedding, project, model, text_hash)"
+                " VALUES (?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT (node_id, node_type) DO UPDATE SET"
+                " embedding = excluded.embedding,"
+                " project = excluded.project,"
+                " model = excluded.model,"
+                " text_hash = excluded.text_hash",
+                [self._qualify(node_id), node_type, vector, self._write_project, model, text_hash],
+            )
+        else:
+            self._conn.execute(
+                "INSERT INTO EmbeddingStore (node_id, node_type, embedding, model, text_hash)"
+                " VALUES (?, ?, ?, ?, ?)"
+                " ON CONFLICT (node_id, node_type) DO UPDATE SET"
+                " embedding = excluded.embedding,"
+                " model = excluded.model,"
+                " text_hash = excluded.text_hash",
+                [node_id, node_type, vector, model, text_hash],
+            )
 
     def embeddings_count(self, node_type: str) -> int:
         """Return the number of stored embeddings for a given node type."""
@@ -731,11 +992,34 @@ class DuckPGQBackend:
         )
         return int(val) if val is not None else 0
 
+    def ensure_embedding_hnsw_index(self) -> bool:
+        """Best-effort HNSW index for EmbeddingStore when DuckDB vss is available.
+
+        Exact cosine search is always correct and remains the fallback. This
+        method only wires the optional acceleration path; failures are logged at
+        debug level because many offline/minimal installs cannot install/load
+        the community ``vss`` extension.
+        """
+        if not getattr(self, "_vss_available", False):
+            return False
+        try:
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_embedding_store_hnsw"
+                " ON EmbeddingStore USING HNSW (embedding)"
+                " WITH (metric = 'cosine')"
+            )
+            return True
+        except Exception as exc:
+            logger.debug("HNSW embedding index unavailable; exact cosine remains active: %s", exc)
+            return False
+
     def search_similar_vss(
         self,
         node_type: str,
         query_vector: list[float],
         top_k: int = 10,
+        project: str | None = None,
+        model: str = "all-MiniLM-L6-v2",
     ) -> list[dict[str, Any]]:
         """Approximate nearest-neighbour search using DuckDB list functions.
 
@@ -743,17 +1027,26 @@ class DuckPGQBackend:
         EmbeddingStore.  When the vss extension is loaded, the same table can
         be accelerated with an HNSW index; query syntax is unchanged.
 
-        Returns a list of dicts with ``node_id`` and ``similarity`` keys,
-        ordered by similarity descending.
+        When *project* is given (multi-project), results are filtered to that
+        project; when None, the search spans all projects (single-project, or an
+        explicit federated query). The ``project`` column is always returned for
+        per-hit provenance. Results are ordered by similarity descending.
         """
+        project_filter = "" if project is None else " AND project = ?"
+        params: list[Any] = [query_vector, node_type, model]
+        if project is not None:
+            params.append(project)
+        params.append(top_k)
         result = self._conn.execute(
-            "SELECT node_id,"
+            "SELECT node_id, project,"
             " list_cosine_similarity(embedding, ?) AS similarity"
             " FROM EmbeddingStore"
             " WHERE node_type = ?"
+            " AND model = ?"
+            f"{project_filter}"
             " ORDER BY similarity DESC"
             " LIMIT ?",
-            [query_vector, node_type, top_k],
+            params,
         )
         if result is None or result.description is None:
             return []

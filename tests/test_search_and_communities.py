@@ -233,6 +233,37 @@ class TestHybridSearch:
             assert r.node_type in ("Function", "Class", "Method", "File")
             assert r.score > 0
 
+    def test_governance_keyword_search(self):
+        from agentscaffold.graph.search import hybrid_search
+
+        store = DuckPGQBackend(":memory:")
+        store.init_schema()
+        try:
+            store.create_node(
+                "ReviewFinding",
+                {
+                    "id": "finding::tests",
+                    "reviewType": "devil",
+                    "planNumber": 227,
+                    "severity": "high",
+                    "category": "missing tests",
+                    "finding": "Governance recall needs a regression test.",
+                    "resolution": "Add keyword and semantic search coverage.",
+                    "status": "open",
+                },
+            )
+            results = hybrid_search(
+                store,
+                "governance recall regression",
+                mode="keyword",
+                tables=["ReviewFinding"],
+            )
+            assert results
+            assert results[0].node_type == "ReviewFinding"
+            assert results[0].node_id == "finding::tests"
+        finally:
+            store.close()
+
     def test_format_search_results(self, indexed_store):
         store, _config = indexed_store
 
@@ -341,6 +372,7 @@ class TestRetrievalOracle:
         from agentscaffold.graph.search import evaluate_retrieval
 
         monkeypatch.setattr(emb, "_st_available", True)
+        monkeypatch.setattr(emb, "embeddings_model_mismatch", lambda _store: False)
         monkeypatch.setattr(emb, "embeddings_available", lambda _store: False)
         result = evaluate_retrieval(empty_store, "hybrid")
         assert result["retrieval_status"] == "degraded"
@@ -351,7 +383,20 @@ class TestRetrievalOracle:
         from agentscaffold.graph.search import evaluate_retrieval
 
         monkeypatch.setattr(emb, "_st_available", True)
+        monkeypatch.setattr(emb, "embeddings_model_mismatch", lambda _store: False)
         monkeypatch.setattr(emb, "embeddings_available", lambda _store: True)
+        monkeypatch.setattr(emb, "model_ready", lambda *args, **kwargs: True)
         result = evaluate_retrieval(empty_store, "hybrid")
         assert result["retrieval_status"] == "available"
         assert result["retrieval_effective_mode"] == "hybrid"
+
+    def test_model_mismatch_degrades_to_keyword(self, empty_store, monkeypatch):
+        import agentscaffold.graph.embeddings as emb
+        from agentscaffold.graph.search import evaluate_retrieval
+
+        monkeypatch.setattr(emb, "_st_available", True)
+        monkeypatch.setattr(emb, "embeddings_model_mismatch", lambda _store: True)
+        result = evaluate_retrieval(empty_store, "hybrid")
+        assert result["retrieval_status"] == "degraded"
+        assert result["retrieval_effective_mode"] == "keyword"
+        assert "different model" in result["retrieval_reason"]
