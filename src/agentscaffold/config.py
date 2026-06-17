@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -197,6 +199,150 @@ class ImportConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Collaboration ergonomics configuration (Plan 226)
+# ---------------------------------------------------------------------------
+
+
+class CollabConfig(BaseModel):
+    """Opt-in sharding of high-contention governance files + plan ownership.
+
+    When ``sharded`` is false (default), ``workflow_state.md`` / ``backlog.md``
+    behave exactly as today. When true, those files are stored as per-entry
+    fragments and assembled by ``scaffold state render``, so concurrent writers
+    touch different files and merge conflicts are rare.
+    """
+
+    sharded: bool = False
+    workflow_fragments_dir: str = "docs/ai/state/workflow_state/"
+    backlog_items_dir: str = "docs/ai/state/backlog_items/"
+    claims_dir: str = "docs/ai/state/claims/"
+
+
+# ---------------------------------------------------------------------------
+# Workspace configuration (Plan 225 - namespaced multi-project workspace)
+# ---------------------------------------------------------------------------
+
+#: Filename of the optional outer workspace manifest. Its presence is what
+#: switches a tree from single-project (today's behavior) to a multi-project
+#: workspace; a lone repo never has one and is byte-for-byte unchanged.
+WORKSPACE_FILENAME = "workspace.yaml"
+
+#: Delimiter that separates a project prefix from a raw node ID
+#: (``{project}::{raw_id}``). Raw IDs already contain ``::`` (e.g. ``plan::224``),
+#: so qualify/unqualify split on the FIRST delimiter only and project names are
+#: validated to exclude it (and whitespace) -- see :func:`validate_project_name`.
+PROJECT_DELIMITER = "::"
+
+
+class ProjectEntry(BaseModel):
+    """A single project registered in a workspace manifest.
+
+    ``path`` is the project root (the directory containing its ``scaffold.yaml``);
+    relative values resolve against the workspace root. ``name`` is the stable,
+    user-facing namespace used to qualify node IDs and scope reads.
+    """
+
+    name: str
+    path: str
+
+
+class WorkspaceConfig(BaseModel):
+    """Outer workspace manifest listing the projects sharing one graph cache.
+
+    A single-project tree has no manifest; one is synthesized with exactly one
+    project (see :func:`agentscaffold.paths.load_workspace`). ``is_multi_project``
+    is the single switch that gates ID-prefixing and read scoping everywhere.
+    """
+
+    projects: list[ProjectEntry] = Field(default_factory=list)
+
+    @property
+    def is_multi_project(self) -> bool:
+        return len(self.projects) > 1
+
+    def project_names(self) -> list[str]:
+        return [p.name for p in self.projects]
+
+    def find_by_name(self, name: str) -> ProjectEntry | None:
+        for p in self.projects:
+            if p.name == name:
+                return p
+        return None
+
+
+#: Project names are restricted to this safe charset so they can be inlined
+#: into SQL/GRAPH_TABLE predicates without escaping and stay unambiguous as an
+#: ID prefix. Excludes whitespace, quotes, and the ``::`` delimiter by
+#: construction.
+_PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def validate_project_name(name: str) -> str:
+    """Validate a project name and return it unchanged, or raise ConfigError.
+
+    Names must be non-empty and match ``[A-Za-z0-9._-]+`` -- which excludes
+    whitespace, quotes, and the ``::`` delimiter, so ``{project}::{raw_id}``
+    stays unambiguously splittable on the first delimiter and project names are
+    safe to inline into SQL predicates. (Uniqueness is checked at the workspace
+    level by :func:`validate_workspace`.)
+    """
+    if not name or not name.strip():
+        raise ConfigError("Project name must be a non-empty string.")
+    if not _PROJECT_NAME_RE.match(name):
+        raise ConfigError(
+            f"Project name {name!r} is invalid; use only letters, digits, '.', '_', '-' "
+            "(no whitespace, quotes, or '::')."
+        )
+    return name
+
+
+def validate_workspace(workspace: WorkspaceConfig) -> WorkspaceConfig:
+    """Validate every project name and reject duplicate (colliding) names."""
+    seen: set[str] = set()
+    for entry in workspace.projects:
+        validate_project_name(entry.name)
+        if entry.name in seen:
+            raise ConfigError(
+                f"Duplicate project name {entry.name!r} in workspace; names must be unique "
+                "(explicit --name resolves basename collisions)."
+            )
+        seen.add(entry.name)
+    return workspace
+
+
+def derive_project_name(root: Path, explicit: str | None = None) -> str:
+    """Derive a stable, delimiter-safe project name for a project root.
+
+    Prefers an explicit name; otherwise the root directory basename (stable and
+    filesystem-safe). The result is validated so a single-project default and an
+    onboarded project share the same naming rules.
+    """
+    if explicit is not None:
+        return validate_project_name(explicit)
+    name = root.resolve().name or "project"
+    # Basenames can contain spaces; normalize to keep the name delimiter-safe.
+    name = "-".join(name.split())
+    return validate_project_name(name)
+
+
+def find_workspace_config(start: Path | None = None) -> Path | None:
+    """Walk up from *start* looking for workspace.yaml. Return path or None."""
+    current = (start or Path.cwd()).resolve()
+    for parent in [current, *current.parents]:
+        candidate = parent / WORKSPACE_FILENAME
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def load_workspace_manifest(path: Path) -> WorkspaceConfig:
+    """Load and validate a workspace.yaml manifest from *path*."""
+    raw = _read_raw(path)
+    workspace = WorkspaceConfig.model_validate(raw or {})
+    return validate_workspace(workspace)
+
+
+# ---------------------------------------------------------------------------
 # Graph (knowledge graph) configuration
 # ---------------------------------------------------------------------------
 
@@ -219,6 +365,20 @@ class GraphConfig(BaseModel):
     adrs_dir: str = "docs/ai/adrs/"
     spikes_dir: str = "docs/ai/spikes/"
     workflow_state_file: str = "docs/ai/state/workflow_state.md"
+    # Additive governance path fields (Plan 221). Defaults equal the literals
+    # that the CLI / domain-pack installer previously hardcoded, so an
+    # uncustomized repo is unaffected.
+    backlog_file: str = "docs/ai/backlog.md"
+    backlog_archive_file: str = "docs/ai/backlog_archive.md"
+    standards_dir: str = "docs/ai/standards/"
+    prompts_dir: str = "docs/ai/prompts/"
+    templates_dir: str = "docs/ai/templates/"
+    plan_completion_log_file: str = "docs/ai/state/plan_completion_log.md"
+    security_dir: str = "docs/security/"
+    # Git-committed governance system of record (Plan 222). Findings, sessions,
+    # and backlog items are serialized here so the graph can be rebuilt from
+    # git. Relative values resolve against the project root.
+    governance_artifact: str = "docs/ai/state/governance.json"
     embeddings: bool = False
     communities: bool = True
 
@@ -233,6 +393,34 @@ class FreshnessConfig(BaseModel):
     debounce_seconds: int = 120
     gate_strict: bool = False
     background_queue_enabled: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Semantic search / embedding configuration (Plan 227)
+# ---------------------------------------------------------------------------
+
+
+class SearchConfig(BaseModel):
+    """Semantic-search / embedding model settings (Plan 227, Tier 2a).
+
+    The embedding model is configurable and its weights cache is pinned to a
+    workspace-local directory by default, so once provisioned (``scaffold graph
+    warm``) the model loads deterministically and offline -- no surprise download
+    during ``scaffold index`` / ``scaffold graph search``.
+    """
+
+    # protected_namespaces=() avoids pydantic's "model_" namespace warning while
+    # keeping the field name explicit.
+    model_config = {"protected_namespaces": ()}
+
+    embedding_model: str = "all-MiniLM-L6-v2"
+    # Directory where embedding model weights are cached. A relative path resolves
+    # against the project root; keeping it inside the workspace makes provisioning
+    # deterministic and offline-capable after a single warm. Set to empty/null to
+    # use the default Hugging Face cache (~/.cache/huggingface).
+    cache_dir: str = ".scaffold/models"
+    rerank: bool = False
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +446,11 @@ class ScaffoldConfig(BaseModel):
     """Root configuration loaded from scaffold.yaml."""
 
     framework: FrameworkMeta = Field(default_factory=FrameworkMeta)
+    # Config inheritance (Plan 224): inherit shared policy from a base config.
+    # A filesystem path (absolute, or relative to this file's directory) or the
+    # literal "home" (the org/user home config: $AGENTSCAFFOLD_HOME or
+    # ~/.agentscaffold/scaffold.yaml). Values in this file override the base.
+    extends: str | None = None
     profile: str = "interactive"
     rigor: str = "standard"
     gates: GatesConfig = Field(default_factory=GatesConfig)
@@ -272,7 +465,9 @@ class ScaffoldConfig(BaseModel):
     ci: CIConfig = Field(default_factory=CIConfig)
     graph: GraphConfig = Field(default_factory=GraphConfig)
     freshness: FreshnessConfig = Field(default_factory=FreshnessConfig)
+    search: SearchConfig = Field(default_factory=SearchConfig)
     import_config: ImportConfig = Field(default_factory=ImportConfig, alias="import")
+    collab: CollabConfig = Field(default_factory=CollabConfig)
     enforcement: EnforcementConfig = Field(default_factory=lambda: _get_enforcement_default())
 
     model_config = {"populate_by_name": True}
@@ -358,6 +553,10 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> None:
 CONFIG_FILENAME = "scaffold.yaml"
 
 
+class ConfigError(Exception):
+    """Raised when scaffold.yaml inheritance (``extends``) cannot be resolved."""
+
+
 def find_config(start: Path | None = None) -> Path | None:
     """Walk up from *start* looking for scaffold.yaml. Return path or None."""
     current = (start or Path.cwd()).resolve()
@@ -368,15 +567,106 @@ def find_config(start: Path | None = None) -> Path | None:
     return None
 
 
+def _read_raw(path: Path) -> dict[str, Any]:
+    with open(path) as fh:
+        return yaml.safe_load(fh) or {}
+
+
+def _resolve_extends_target(value: str, project_dir: Path) -> Path | None:
+    """Resolve an ``extends`` value to a base config path (Plan 224).
+
+    ``home`` resolves to the org/user home config, or None when no home config
+    exists (a deliberate no-op so a repo with ``extends: home`` still works on a
+    machine without shared config). Any other value is a filesystem path:
+    absolute as-is, otherwise relative to the directory of the config that
+    declared ``extends``. A bare directory resolves to ``<dir>/scaffold.yaml``.
+    """
+    from agentscaffold.config_home import HOME_SENTINEL, resolve_home_config  # noqa: PLC0415
+
+    if value == HOME_SENTINEL:
+        return resolve_home_config()
+
+    candidate = Path(os.path.expanduser(value))
+    if not candidate.is_absolute():
+        candidate = (project_dir / candidate).resolve()
+    if candidate.is_dir():
+        candidate = candidate / CONFIG_FILENAME
+    return candidate
+
+
+def _load_raw_with_extends(path: Path, _seen: list[Path] | None = None) -> dict[str, Any]:
+    """Load a raw config dict, recursively merging any ``extends`` base under it.
+
+    Precedence: a child's values override its base's (deep-merged; lists are
+    replaced wholesale, not concatenated). Cycles raise :class:`ConfigError`; an
+    explicit (non-``home``) base that does not exist raises :class:`ConfigError`;
+    an absent ``home`` base is a no-op.
+    """
+    if _seen is None:
+        _seen = []
+    resolved = path.resolve()
+    if resolved in _seen:
+        chain = " -> ".join(str(p) for p in [*_seen, resolved])
+        raise ConfigError(f"Circular 'extends' detected: {chain}")
+    _seen = [*_seen, resolved]
+
+    raw = _read_raw(path)
+    extends = raw.get("extends")
+    if not extends:
+        return raw
+    if not isinstance(extends, str):
+        raise ConfigError(f"'extends' in {path} must be a string, got {type(extends).__name__}")
+
+    base_path = _resolve_extends_target(extends, path.parent)
+    if base_path is None:
+        # extends: home, but no home config present -> behave as if no extends.
+        return raw
+    if not base_path.is_file():
+        raise ConfigError(f"'extends: {extends}' referenced by {path} was not found at {base_path}")
+
+    merged = _load_raw_with_extends(base_path, _seen)
+    _deep_merge(merged, raw)  # child (raw) overrides base (merged)
+    return merged
+
+
+def resolve_config_chain(path: Path) -> list[Path]:
+    """Return the ordered config files contributing to *path*, base-first (Plan 224).
+
+    Used by ``scaffold config show`` to display inheritance provenance. Skips
+    missing/cyclic bases rather than raising (display must not crash).
+    """
+    chain: list[Path] = []
+
+    def _walk(p: Path, seen: list[Path]) -> None:
+        resolved = p.resolve()
+        if resolved in seen:
+            return
+        seen = [*seen, resolved]
+        raw = _read_raw(p)
+        extends = raw.get("extends")
+        if isinstance(extends, str) and extends:
+            base = _resolve_extends_target(extends, p.parent)
+            if base is not None and base.is_file():
+                _walk(base, seen)
+        chain.append(resolved)
+
+    _walk(path, [])
+    return chain
+
+
 def load_config(path: Path | None = None) -> ScaffoldConfig:
-    """Load and validate scaffold.yaml, applying rigor presets."""
+    """Load and validate scaffold.yaml, applying inheritance then rigor presets.
+
+    Resolution precedence (low -> high): built-in defaults, then any ``extends``
+    base chain (recursively), then this file's values. Environment overrides
+    (e.g. ``AGENTSCAFFOLD_DB_PATH``, Plan 223) apply later at path-resolution
+    time, so they sit above all of these.
+    """
     if path is None:
         path = find_config()
     if path is None or not path.is_file():
         return apply_rigor_preset(ScaffoldConfig())
 
-    with open(path) as fh:
-        raw = yaml.safe_load(fh) or {}
-
+    raw = _load_raw_with_extends(path)
     config = ScaffoldConfig.model_validate(raw)
     return apply_rigor_preset(config)

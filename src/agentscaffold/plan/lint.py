@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from agentscaffold.config import load_config
+from agentscaffold.paths import ResolvedPaths, resolve_root
 
 console = Console()
 
@@ -66,8 +67,8 @@ def _lint_plan(path: Path) -> list[str]:
 
 def run_plan_lint(plan: str | None) -> None:
     """Lint a plan file for cohesion and template compliance."""
-    load_config()
-    plans_dir = Path("docs/ai/plans")
+    config = load_config()
+    plans_dir = ResolvedPaths(config, resolve_root()).plans_dir
 
     if not plans_dir.is_dir():
         console.print(f"[yellow]Warning: {plans_dir} does not exist. Nothing to lint.[/yellow]")

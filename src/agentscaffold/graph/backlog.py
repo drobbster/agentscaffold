@@ -24,6 +24,13 @@ _VALID_STATUSES = frozenset({"open", "blocked", "unblockable", "archived"})
 _VALID_PRIORITIES = frozenset({"P1", "P2", "P3", "P4", "P5"})
 
 
+def _sync_governance(store: GraphBackend) -> None:
+    """Re-serialize governance to the git-backed artifact if write-through is on."""
+    from agentscaffold.graph.governance_store import sync_if_enabled  # noqa: PLC0415
+
+    sync_if_enabled(store)
+
+
 def _backlog_id(plan_number: int, title: str) -> str:
     """Derive a deterministic ID from plan number + title."""
     key = f"backlog::{plan_number}::{title[:64]}"
@@ -79,6 +86,8 @@ def record_backlog_item(
     plan_rows = store.query(f"SELECT id FROM Plan WHERE number = {plan_number}")
     if plan_rows:
         store.create_edge("BACKLOG_ITEM_OF", "BacklogItem", item_id, "Plan", plan_rows[0]["id"])
+
+    _sync_governance(store)
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {
@@ -149,6 +158,8 @@ def record_backlog_items_batch(
         store.execute("ROLLBACK")
         raise
 
+    _sync_governance(store)
+
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {
         "ids": ids,
@@ -185,6 +196,8 @@ def resolve_backlog_item(
         f"UPDATE BacklogItem SET status = 'archived', archivedAt = '{now}'"
         f" WHERE id = '{_esc(item_id)}'"
     )
+
+    _sync_governance(store)
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {

@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from agentscaffold.config import CONFIG_FILENAME
+from agentscaffold.paths import ResolvedPaths
 
 console = Console()
 
@@ -34,26 +35,32 @@ def _load_manifest(pack: str) -> dict:
         return yaml.safe_load(fh)
 
 
-def _copy_pack_files(pack: str, project_dir: Path) -> list[str]:
-    """Copy domain pack files into the project directory.
+def _copy_pack_files(pack: str, paths: ResolvedPaths) -> list[str]:
+    """Copy domain pack files into the project's resolved governance dirs.
 
-    Returns a list of relative paths that were written.
+    Destination directories come from ``GraphConfig`` (prompts_dir,
+    standards_dir, security_dir) joined to the project root, so a repo that has
+    customized those paths installs into the right place. Returns a list of
+    root-relative paths that were written.
     """
     pack_dir = _DOMAINS_DIR / pack
     written: list[str] = []
 
     dir_map = {
-        "prompts": "docs/ai/prompts",
-        "standards": "docs/ai/standards",
-        "security": "docs/security",
+        "prompts": paths.prompts_dir,
+        "standards": paths.standards_dir,
+        "security": paths.security_dir,
     }
 
-    for src_subdir, dest_rel in dir_map.items():
+    for src_subdir, dest_path in dir_map.items():
         src_path = pack_dir / src_subdir
         if not src_path.is_dir():
             continue
-        dest_path = project_dir / dest_rel
         dest_path.mkdir(parents=True, exist_ok=True)
+        try:
+            dest_rel = dest_path.relative_to(paths.root).as_posix()
+        except ValueError:
+            dest_rel = str(dest_path)
 
         for src_file in sorted(src_path.iterdir()):
             if not src_file.is_file():
@@ -134,9 +141,9 @@ def run_domain_add(pack: str) -> None:
     console.print(f"\nInstalling domain pack: [bold]{display_name}[/bold]")
     console.print(f"  {manifest.get('description', '')}\n")
 
-    project_dir = Path.cwd()
-    written = _copy_pack_files(pack, project_dir)
-    _update_scaffold_yaml(pack, manifest, project_dir)
+    paths = ResolvedPaths.discover()
+    written = _copy_pack_files(pack, paths)
+    _update_scaffold_yaml(pack, manifest, paths.root)
 
     console.print()
     table = Table(title="Installation Summary")

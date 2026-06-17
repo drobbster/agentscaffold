@@ -187,8 +187,7 @@ class TestCommunities:
         communities = ql(
             store,
             sql=(
-                'SELECT id AS "c.id", label AS "c.label",'
-                ' fileCount AS "c.fileCount" FROM Community'
+                'SELECT id AS "c.id", label AS "c.label", fileCount AS "c.fileCount" FROM Community'
             ),
         )
 

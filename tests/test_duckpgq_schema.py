@@ -43,11 +43,11 @@ def conn():
 
 
 def test_schema_version():
-    assert SCHEMA_VERSION == 7  # bumped in Plan 216 (CONFIG_REFERENCES edge added)
+    assert SCHEMA_VERSION == 9  # bumped in Plan 227 (EmbeddingStore model/text_hash)
 
 
 def test_node_table_count():
-    assert len(NODE_TABLES) == 20
+    assert len(NODE_TABLES) == 21  # +Project (Plan 225)
 
 
 def test_edge_table_count():
@@ -66,7 +66,7 @@ def test_all_edge_ddl_returns_copy():
 
 def test_create_property_graph_sql_lists_all_node_tables():
     """Every node table name must appear in the CREATE PROPERTY GRAPH statement."""
-    assert len(NODE_TABLE_NAMES) == 20
+    assert len(NODE_TABLE_NAMES) == 21
     for name in NODE_TABLE_NAMES:
         assert name in CREATE_PROPERTY_GRAPH_SQL, f"Missing vertex: {name}"
 
@@ -151,11 +151,11 @@ def test_graph_table_plan_impacts_query(conn):
     """Basic GRAPH_TABLE traversal over PLAN_IMPACTS edge returns correct rows."""
     init_schema(conn)
     conn.execute(
-        "INSERT INTO File VALUES ('f:1', 'src/main.py', 'python', 100, '2026-01-01', 50, 'abc')"
+        "INSERT INTO File VALUES ('f:1', 'src/main.py', 'python', 100, '2026-01-01', 50, 'abc', '')"
     )
     conn.execute(
         "INSERT INTO Plan VALUES ('p:1', 1, 'Test Plan', 'COMPLETE', 'feature',"
-        " 'docs/plans/1.md', '2026-01-01', '2026-01-01', NULL)"
+        " 'docs/plans/1.md', '2026-01-01', '2026-01-01', NULL, '')"
     )
     conn.execute("INSERT INTO PLAN_IMPACTS VALUES ('p:1', 'f:1', 'MODIFY')")
 
@@ -175,9 +175,9 @@ def test_graph_table_transitive_imports(conn):
     """Variable-length IMPORTS path pattern works."""
     init_schema(conn)
     conn.execute(
-        "INSERT INTO File VALUES ('f:a', 'a.py', 'python', 10, '', 5, ''), "
-        "                        ('f:b', 'b.py', 'python', 10, '', 5, ''), "
-        "                        ('f:c', 'c.py', 'python', 10, '', 5, '')"
+        "INSERT INTO File VALUES ('f:a', 'a.py', 'python', 10, '', 5, '', ''), "
+        "                        ('f:b', 'b.py', 'python', 10, '', 5, '', ''), "
+        "                        ('f:c', 'c.py', 'python', 10, '', 5, '', '')"
     )
     conn.execute("INSERT INTO IMPORTS (src, dst) VALUES ('f:a', 'f:b'), ('f:b', 'f:c')")
 
@@ -200,13 +200,14 @@ def test_graph_table_transitive_imports(conn):
 def test_graph_table_adr_governs_two_hop(conn):
     """Two-hop ADR -> Plan -> File traversal works."""
     init_schema(conn)
-    conn.execute("INSERT INTO File VALUES ('f:1', 'src/a.py', 'python', 10, '', 5, '')")
+    conn.execute("INSERT INTO File VALUES ('f:1', 'src/a.py', 'python', 10, '', 5, '', '')")
     conn.execute(
         "INSERT INTO Plan VALUES"
-        " ('p:1', 1, 'Plan One', 'COMPLETE', 'feature', '', '2026-01-01', '', NULL)"
+        " ('p:1', 1, 'Plan One', 'COMPLETE', 'feature', '', '2026-01-01', '', NULL, '')"
     )
     conn.execute(
-        "INSERT INTO ADR VALUES ('adr:1', 1, 'ADR One', 'Accepted', '2026-01-01', '', '', '', '')"
+        "INSERT INTO ADR VALUES"
+        " ('adr:1', 1, 'ADR One', 'Accepted', '2026-01-01', '', '', '', '', '')"
     )
     conn.execute("INSERT INTO PLAN_IMPACTS (src, dst, changeType) VALUES ('p:1', 'f:1', 'MODIFY')")
     conn.execute("INSERT INTO ADR_GOVERNS (src, dst) VALUES ('adr:1', 'p:1')")

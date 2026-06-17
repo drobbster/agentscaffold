@@ -9,6 +9,8 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
+from agentscaffold.paths import ResolvedPaths
+
 console = Console()
 
 PLAN_FILENAME_RE = re.compile(r"^(\d{3})-(.+)\.md$")
@@ -37,8 +39,9 @@ def _referenced_in_learnings(plan_number: str, learnings_path: Path) -> bool:
 
 def run_retro_check() -> None:
     """Check for missing retrospectives across completed plans."""
-    plans_dir = Path("docs/ai/plans")
-    learnings_path = Path("docs/ai/state/learnings_tracker.md")
+    paths = ResolvedPaths.discover()
+    plans_dir = paths.plans_dir
+    learnings_path = paths.learnings_file
 
     if not plans_dir.is_dir():
         console.print(f"[yellow]Warning: {plans_dir} does not exist.[/yellow]")

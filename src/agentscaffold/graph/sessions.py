@@ -19,6 +19,13 @@ from agentscaffold.graph.query_compat import ql, ql_execute, ql_scalar
 logger = logging.getLogger(__name__)
 
 
+def _sync_governance(store: GraphBackend) -> None:
+    """Re-serialize governance to the git-backed artifact if write-through is on."""
+    from agentscaffold.graph.governance_store import sync_if_enabled  # noqa: PLC0415
+
+    sync_if_enabled(store)
+
+
 def start_session(
     store: GraphBackend,
     *,
@@ -45,6 +52,7 @@ def start_session(
         },
     )
 
+    _sync_governance(store)
     logger.info("Started session %s", session_id)
     return session_id
 
@@ -101,6 +109,7 @@ def record_modification(
                 store,
                 sql=(f"UPDATE Session SET filesModified = '{escaped}' WHERE id = '{session_id}'"),
             )
+            _sync_governance(store)
 
 
 def end_session(
@@ -119,6 +128,7 @@ def end_session(
             store,
             sql=f"UPDATE Session SET summary = '{escaped}' WHERE id = '{session_id}'",
         )
+        _sync_governance(store)
 
     return get_session(store, session_id)
 

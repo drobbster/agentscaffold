@@ -715,6 +715,23 @@ def process_governance(
         adrs_dir = root / "docs" / "ai" / "adrs"
         spikes_dir = root / "docs" / "ai" / "spikes"
 
+    # Restore git-backed governance (Plan 222): findings, sessions, and backlog
+    # items recorded at runtime live in a committed artifact, not in code. On a
+    # fresh build the graph has none of them, so ingest the artifact (idempotent)
+    # before parsing code-derived governance. A missing artifact is a no-op; a
+    # corrupt one is logged and skipped so indexing still completes.
+    governance_restored: dict[str, Any] = {}
+    try:
+        from agentscaffold.graph.governance_store import (
+            ingest_governance,
+            resolve_governance_artifact,
+        )
+
+        artifact_path = resolve_governance_artifact(config, start=root)
+        governance_restored = ingest_governance(store, artifact_path)
+    except Exception as exc:  # noqa: BLE001 - artifact restore must not break indexing
+        logger.warning("Governance artifact restore failed: %s", exc)
+
     plan_count = 0
     contract_count = 0
     learning_count = 0
@@ -1042,4 +1059,9 @@ def process_governance(
         "adrs": adr_count,
         "spikes": spike_count,
         "dependency_edges": dep_edge_count,
+        "governance_restored": (
+            sum(governance_restored.get("imported", {}).values())
+            if governance_restored.get("present")
+            else 0
+        ),
     }

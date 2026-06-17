@@ -11,6 +11,7 @@ import typer
 from rich.console import Console
 
 from agentscaffold import __version__
+from agentscaffold.benchmark.cli import app as benchmark_app
 
 app = typer.Typer(
     name="scaffold",
@@ -51,6 +52,17 @@ app.add_typer(review_app, name="review")
 
 session_app = typer.Typer(help="Cross-session memory management.")
 app.add_typer(session_app, name="session")
+
+config_app = typer.Typer(help="Configuration inspection.")
+app.add_typer(config_app, name="config")
+
+state_app = typer.Typer(help="Sharded governance-state operations (Plan 226).")
+app.add_typer(state_app, name="state")
+
+workspace_app = typer.Typer(help="Multi-project workspace management (Plan 225).")
+app.add_typer(workspace_app, name="workspace")
+
+app.add_typer(benchmark_app, name="benchmark")
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +165,38 @@ def metrics() -> None:
     run_metrics()
 
 
+@config_app.command("show")
+def config_show() -> None:
+    """Show the effective merged config and its inheritance provenance.
+
+    Surfaces the resolution order from `extends:` (Plan 224): which files
+    contributed, base-first, and the final merged values after inheritance and
+    the rigor preset are applied.
+    """
+    import yaml as _yaml
+
+    from agentscaffold.config import find_config, load_config, resolve_config_chain
+
+    path = find_config()
+    if path is None:
+        console.print("[yellow]No scaffold.yaml found; showing built-in defaults.[/yellow]")
+        config = load_config()
+        console.print(_yaml.safe_dump(config.model_dump(by_alias=True), sort_keys=False))
+        return
+
+    chain = resolve_config_chain(path)
+    console.print("[bold]Config inheritance (base first, project last):[/bold]")
+    for entry in chain:
+        marker = " [dim](this file)[/dim]" if entry == path.resolve() else ""
+        console.print(f"  - {entry}{marker}")
+    if len(chain) == 1:
+        console.print("  [dim](no 'extends'; single config)[/dim]")
+
+    config = load_config(path)
+    console.print("\n[bold]Effective configuration:[/bold]")
+    console.print(_yaml.safe_dump(config.model_dump(by_alias=True), sort_keys=False))
+
+
 @app.command()
 def version() -> None:
     """Show AgentScaffold version."""
@@ -203,6 +247,112 @@ def plan_status() -> None:
     from agentscaffold.plan.status import run_plan_status
 
     run_plan_status()
+
+
+@plan_app.command("claim")
+def plan_claim(
+    number: str = typer.Argument(..., help="Plan number to claim (e.g. 225)."),
+    owner: str = typer.Option(..., "--owner", "-o", help="Who is claiming the plan."),
+) -> None:
+    """Record advisory, git-backed ownership of an in-flight plan (Plan 226)."""
+    from agentscaffold import collab
+    from agentscaffold.config import load_config
+    from agentscaffold.paths import ResolvedPaths, resolve_root
+
+    paths = ResolvedPaths(load_config(), resolve_root())
+    try:
+        record = collab.claim_plan(paths.claims_dir, number, owner)
+    except collab.CollabError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    console.print(
+        f"[green]Plan {record['plan']} claimed by '{record['owner']}'"
+        f" at {record['claimed_at']}.[/green]"
+    )
+    console.print("[dim]Claim is advisory (git-backed visibility, not a hard lock).[/dim]")
+
+
+@plan_app.command("release")
+def plan_release(
+    number: str = typer.Argument(..., help="Plan number to release."),
+) -> None:
+    """Clear an advisory plan claim (Plan 226)."""
+    from agentscaffold import collab
+    from agentscaffold.config import load_config
+    from agentscaffold.paths import ResolvedPaths, resolve_root
+
+    paths = ResolvedPaths(load_config(), resolve_root())
+    if collab.release_plan(paths.claims_dir, number):
+        console.print(f"[green]Released claim on plan {number}.[/green]")
+    else:
+        console.print(f"[yellow]No claim found for plan {number}.[/yellow]")
+
+
+@state_app.command("render")
+def state_render() -> None:
+    """Assemble sharded fragments into canonical workflow_state.md / backlog.md."""
+    from agentscaffold import collab
+    from agentscaffold.config import load_config
+    from agentscaffold.paths import ResolvedPaths, resolve_root
+
+    config = load_config()
+    if not config.collab.sharded:
+        console.print(
+            "[yellow]collab.sharded is false; nothing to render."
+            " Enable sharding in scaffold.yaml first.[/yellow]"
+        )
+        raise typer.Exit(code=0)
+
+    paths = ResolvedPaths(config, resolve_root())
+    targets = [
+        (paths.workflow_fragments_dir, paths.workflow_state_file),
+        (paths.backlog_items_dir, paths.backlog_file),
+    ]
+    any_written = False
+    for frag_dir, target in targets:
+        if not frag_dir.is_dir():
+            continue
+        if collab.render_to_file(frag_dir, target):
+            console.print(f"[green]Rendered {target}[/green]")
+            any_written = True
+        else:
+            console.print(f"[dim]{target} already up to date.[/dim]")
+    if not any_written:
+        console.print("[dim]No fragment directories found; nothing rendered.[/dim]")
+
+
+@state_app.command("split")
+def state_split(
+    target: str = typer.Argument(
+        "workflow_state",
+        help="Which file to shard: 'workflow_state' or 'backlog'.",
+    ),
+) -> None:
+    """Shard an existing governance file into per-entry fragments (reversible)."""
+    from agentscaffold import collab
+    from agentscaffold.config import load_config
+    from agentscaffold.paths import ResolvedPaths, resolve_root
+
+    paths = ResolvedPaths(load_config(), resolve_root())
+    mapping = {
+        "workflow_state": (
+            paths.workflow_state_file,
+            paths.workflow_fragments_dir,
+            collab.WORKFLOW_STATE_BOUNDARY,
+        ),
+        "backlog": (paths.backlog_file, paths.backlog_items_dir, collab.BACKLOG_BOUNDARY),
+    }
+    if target not in mapping:
+        console.print(f"[red]Unknown target '{target}'. Use 'workflow_state' or 'backlog'.[/red]")
+        raise typer.Exit(code=1)
+    source, frag_dir, boundary = mapping[target]
+    try:
+        written = collab.split_file(source, frag_dir, boundary)
+    except collab.CollabError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    console.print(f"[green]Split {source} into {len(written)} fragments under {frag_dir}.[/green]")
+    console.print("[dim]Reverse with 'scaffold state render'.[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -393,19 +543,40 @@ def domain_list() -> None:
 
 
 @agents_app.command("generate")
-def agents_generate() -> None:
-    """Generate AGENTS.md from scaffold.yaml config."""
+def agents_generate(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Rewrite the entire AGENTS.md instead of updating its managed block (.bak kept).",
+    ),
+) -> None:
+    """Generate AGENTS.md from scaffold.yaml config.
+
+    AGENTS.md is project-owned: generated guidance is written into a managed block,
+    so existing/hand-authored content is preserved. --force rewrites the whole file.
+    """
     from agentscaffold.agents.generate import run_agents_generate
 
-    run_agents_generate()
+    run_agents_generate(force=force)
 
 
 @agents_app.command("cursor")
-def agents_cursor() -> None:
-    """Generate .cursor/rules.md and intent mapping from config."""
+def agents_cursor(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Rewrite the whole .cursor/rules.md instead of its managed block (.bak kept).",
+    ),
+) -> None:
+    """Generate .cursor/rules.md and intent mapping from config.
+
+    The machine-owned .cursor/rules/agentscaffold.md routing policy is always
+    regenerated; .cursor/rules.md is project-owned and updated via a managed block
+    (existing content preserved). --force rewrites the whole file.
+    """
     from agentscaffold.agents.cursor import run_cursor_setup
 
-    run_cursor_setup()
+    run_cursor_setup(force=force)
 
 
 @agents_app.command("windsurf")
@@ -496,8 +667,20 @@ def agents_skills(
         "--if-standards-changed",
         help="Only regenerate if standards files are newer than existing skills.",
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help=(
+            "Overwrite skill files even if they look user/org-authored "
+            "(no managed_by marker). A .bak snapshot is kept."
+        ),
+    ),
 ) -> None:
-    """Generate SKILL.md files into .claude/skills/ and .cursor/skills/."""
+    """Generate SKILL.md files into .claude/skills/ and .cursor/skills/.
+
+    User/org-authored skill files (those without a ``managed_by: agentscaffold``
+    frontmatter marker) are preserved and never overwritten unless ``--force``.
+    """
     from agentscaffold.skills.catalog import write_catalog
     from agentscaffold.skills.generator import generate_skills_from_standards_dir
 
@@ -517,7 +700,9 @@ def agents_skills(
 
     written: list[Path] = []
     for output_dir in (claude_skills, cursor_skills):
-        paths = generate_skills_from_standards_dir(standards_dir, output_dir, dry_run=dry_run)
+        paths = generate_skills_from_standards_dir(
+            standards_dir, output_dir, dry_run=dry_run, force=force
+        )
         written.extend(paths)
         label = "Would write" if dry_run else "Wrote"
         for p in paths:
@@ -549,13 +734,28 @@ def agents_skills(
 @agents_app.command("generate-all")
 def agents_generate_all(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print paths without writing files."),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help=(
+            "Rewrite project-owned docs (AGENTS.md, CLAUDE.md, .windsurfrules) whole "
+            "instead of updating their managed block; a .bak snapshot is kept for each."
+        ),
+    ),
 ) -> None:
-    """Generate all platform artifacts (AGENTS.md, CLAUDE.md, Cursor rules, Windsurf, hooks)."""
+    """Generate all platform artifacts (AGENTS.md, CLAUDE.md, Cursor rules, Windsurf, hooks).
+
+    Project-owned docs (AGENTS.md, CLAUDE.md, .windsurfrules) are never clobbered:
+    generated guidance is written into a managed block (created/refreshed/appended)
+    so existing content is preserved. --force rewrites them whole. Machine-owned
+    files (.cursor/rules/agentscaffold.md, reviewer rules, enforcement hooks) are
+    always regenerated.
+    """
     from agentscaffold.agents.generate import run_agents_generate_all_platforms
     from agentscaffold.config import load_config
 
     config = load_config()
-    run_agents_generate_all_platforms(config, Path.cwd(), dry_run=dry_run)
+    run_agents_generate_all_platforms(config, Path.cwd(), dry_run=dry_run, force=force)
 
 
 # ---------------------------------------------------------------------------
@@ -647,7 +847,13 @@ def index_cmd(
     # so embeddings can be enabled repo-wide via scaffold.yaml without requiring
     # --embeddings on every index invocation (including the PostToolUse hook).
     embeddings = with_embeddings or bool(getattr(config.graph, "embeddings", False))
-    index(
+    if embeddings:
+        # Pin the embedding model + weights cache before indexing so the model
+        # loads from the deterministic, offline-capable location (Plan 227).
+        from agentscaffold.graph.embeddings import configure_embeddings
+
+        configure_embeddings(config.search.embedding_model, config.search.cache_dir)
+    summary = index(
         path=path,
         config=config,
         incremental=incremental,
@@ -655,6 +861,17 @@ def index_cmd(
         audit=audit,
         force_rebuild=force_rebuild,
     )
+
+    # Plan 223: on a fresh/ephemeral cache, governance is rebuilt from the
+    # committed artifact. Point the operator at where the durable record lives.
+    if summary.get("restored_from_artifact"):
+        from agentscaffold.graph.governance_store import resolve_governance_artifact
+
+        artifact = resolve_governance_artifact(config)
+        console.print(
+            f"[dim]Governance system of record: {artifact} "
+            "(committed to git; rebuilt the cache from it).[/dim]"
+        )
 
     if update_rules:
         console.print("\n[bold]Regenerating agent rule files...[/bold]")
@@ -744,14 +961,37 @@ def graph_search(
         "hybrid", "--mode", "-m", help="Search mode: keyword, semantic, hybrid."
     ),
     top_k: int = typer.Option(10, "--top", "-k", help="Number of results."),
+    kind: str = typer.Option("code", "--kind", help="Search corpus: code, governance, or all."),
+    rerank: bool = typer.Option(
+        False, "--rerank", help="Rerank final results with the configured cross-encoder."
+    ),
     table: str = typer.Option(
-        "", "--table", "-t", help="Limit to specific table (Function, Class, Method, File)."
+        "",
+        "--table",
+        "-t",
+        help=(
+            "Limit to a specific table (Function, Class, Method, File, Plan, "
+            "Learning, ReviewFinding, Study, ADR, Spike, BacklogItem)."
+        ),
+    ),
+    project: str = typer.Option(
+        "", "--project", "-p", help="Target a specific project (multi-project workspace)."
+    ),
+    all_projects: bool = typer.Option(
+        False, "--all-projects", help="Search across every project in the workspace."
     ),
 ) -> None:
-    """Search the knowledge graph using natural language."""
+    """Search the knowledge graph using natural language.
+
+    In a multi-project workspace results default to the current project; use
+    ``--project NAME`` to target a sibling or ``--all-projects`` to federate.
+    """
     from agentscaffold.config import load_config
     from agentscaffold.graph import graph_available, open_graph
+    from agentscaffold.graph.scoping import ScopingError
     from agentscaffold.graph.search import (
+        CODE_TABLES,
+        GOVERNANCE_TABLES,
         evaluate_retrieval,
         format_search_results,
         hybrid_search,
@@ -761,6 +1001,13 @@ def graph_search(
     if not graph_available(config):
         console.print("[red]No knowledge graph found. Run 'scaffold index' first.[/red]")
         raise SystemExit(1)
+
+    if (mode or "hybrid").lower() in ("semantic", "hybrid"):
+        # Pin model + cache before any semantic load so query-time and index-time
+        # use the same weights location (Plan 227).
+        from agentscaffold.graph.embeddings import configure_embeddings
+
+        configure_embeddings(config.search.embedding_model, config.search.cache_dir)
 
     store = open_graph(config)
 
@@ -774,10 +1021,172 @@ def graph_search(
     if effective_mode in ("keyword", "semantic", "hybrid"):
         mode = effective_mode
 
-    tables = [table] if table else None
-    results = hybrid_search(store, query, mode=mode, top_k=top_k, tables=tables)
+    if table:
+        tables = [table]
+    elif kind == "code":
+        tables = CODE_TABLES
+    elif kind == "governance":
+        tables = GOVERNANCE_TABLES
+    elif kind == "all":
+        tables = [*CODE_TABLES, *GOVERNANCE_TABLES]
+    else:
+        store.close()
+        console.print("[red]--kind must be one of: code, governance, all[/red]")
+        raise SystemExit(1)
+    try:
+        results = hybrid_search(
+            store,
+            query,
+            mode=mode,
+            top_k=top_k,
+            tables=tables,
+            rerank=rerank or config.search.rerank,
+            rerank_model=config.search.rerank_model,
+            project=project or None,
+            all_projects=all_projects,
+        )
+    except ScopingError as exc:
+        store.close()
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
     store.close()
     console.print(format_search_results(results))
+
+
+@graph_app.command("warm")
+def graph_warm() -> None:
+    """Provision (download + cache) the embedding model so search works offline.
+
+    Installing ``agentscaffold[search]`` gets the library but NOT the model
+    weights, which are otherwise downloaded lazily on first index/search (a
+    runtime failure when offline). Run this once, with network access, to cache
+    the configured model into the workspace-pinned cache dir.
+    """
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import embeddings as _embeddings
+
+    config = load_config()
+    _embeddings.configure_embeddings(config.search.embedding_model, config.search.cache_dir)
+
+    if not _embeddings._st_available:
+        console.print(
+            "[red]sentence-transformers is not installed.[/red] "
+            "Install it with: [bold]pip install 'agentscaffold\\[search]'[/bold]"
+        )
+        raise SystemExit(1)
+
+    model = config.search.embedding_model
+    cache = _embeddings._active_cache_dir() or "default Hugging Face cache (~/.cache/huggingface)"
+    console.print(f"[dim]Provisioning embedding model '{model}' into {cache} ...[/dim]")
+    try:
+        _embeddings.warm_model()
+    except Exception as exc:  # noqa: BLE001 - report any download/load failure cleanly
+        console.print(
+            f"[red]Could not provision the model:[/red] {exc}\n"
+            "Check your network connection and try again."
+        )
+        raise SystemExit(1) from exc
+    console.print(f"[green]Model ready[/green] -- '{model}' is cached and loads offline.")
+
+
+@graph_app.command("model-status")
+def graph_model_status() -> None:
+    """Report embedding-search readiness: package installed and weights cached."""
+    from rich.table import Table
+
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import embeddings as _embeddings
+
+    config = load_config()
+    _embeddings.configure_embeddings(config.search.embedding_model, config.search.cache_dir)
+
+    package_ok = _embeddings._st_available
+    weights_ok = _embeddings.model_ready() if package_ok else False
+    cache = _embeddings._active_cache_dir() or "~/.cache/huggingface (default)"
+
+    table = Table(title="Semantic search readiness")
+    table.add_column("Check")
+    table.add_column("Status")
+    table.add_row(
+        "sentence-transformers package",
+        "[green]installed[/green]" if package_ok else "[red]missing[/red]",
+    )
+    table.add_row("embedding model", config.search.embedding_model)
+    table.add_row("weights cache dir", str(cache))
+    table.add_row(
+        "model weights cached (offline-ready)",
+        "[green]yes[/green]" if weights_ok else "[yellow]no[/yellow]",
+    )
+    console.print(table)
+
+    if not package_ok:
+        console.print(
+            "\nInstall search support: [bold]pip install 'agentscaffold\\[search]'[/bold]"
+        )
+    elif not weights_ok:
+        console.print(
+            "\nProvision the weights once (needs network): [bold]scaffold graph warm[/bold]\n"
+            "Until then, semantic/hybrid search degrades to keyword-only."
+        )
+
+
+@graph_app.command("duplicates")
+def graph_duplicates(
+    table: str = typer.Option(
+        "Function", "--table", "-t", help="Definition type (Function, Class, Method, File)."
+    ),
+    threshold: float = typer.Option(
+        0.92, "--threshold", help="Minimum cosine similarity to report (0-1)."
+    ),
+    top_n: int = typer.Option(50, "--top", "-n", help="Maximum pairs to show."),
+) -> None:
+    """Surface cross-project near-duplicate definitions to drive shared-library reuse.
+
+    Only meaningful in a multi-project workspace; a single-project repo has no
+    cross-project pairs and reports nothing. Requires embeddings
+    ('scaffold index --embeddings'). Quality is bounded by embedding text;
+    Plan 227 improves precision.
+    """
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+    from agentscaffold.graph.embeddings import configure_embeddings, find_duplicates
+
+    config = load_config()
+    configure_embeddings(config.search.embedding_model, config.search.cache_dir)
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found. Run 'scaffold index' first.[/red]")
+        raise SystemExit(1)
+
+    store = open_graph(config)
+    try:
+        pairs = find_duplicates(store, table=table, threshold=threshold, top_n=top_n)
+    finally:
+        store.close()
+
+    if not pairs:
+        console.print(
+            "No cross-project duplicates found "
+            "(single-project workspace, no embeddings, or none above threshold)."
+        )
+        return
+
+    from rich.table import Table
+
+    tbl = Table(title=f"Cross-project {table} duplicates", show_header=True)
+    tbl.add_column("Similarity", justify="right", style="cyan")
+    tbl.add_column("Project A", style="green")
+    tbl.add_column("Definition A")
+    tbl.add_column("Project B", style="green")
+    tbl.add_column("Definition B")
+    for p in pairs:
+        tbl.add_row(
+            f"{p['similarity']:.4f}",
+            p.get("project_a", ""),
+            p.get("id_a", ""),
+            p.get("project_b", ""),
+            p.get("id_b", ""),
+        )
+    console.print(tbl)
 
 
 @graph_app.command("communities")
@@ -1415,3 +1824,144 @@ def mcp_cmd() -> None:
     from agentscaffold.mcp.server import run_mcp_server
 
     run_mcp_server()
+
+
+# ---------------------------------------------------------------------------
+# Workspace commands (Plan 225)
+# ---------------------------------------------------------------------------
+
+
+@workspace_app.command("list")
+def workspace_list() -> None:
+    """List the projects in the current workspace.
+
+    A lone repo with no ``workspace.yaml`` shows a single synthesized project
+    (its directory basename), so the command always works.
+    """
+    from rich.table import Table
+
+    from agentscaffold.paths import load_workspace, resolve_workspace_root
+
+    ws = load_workspace()
+    root = resolve_workspace_root()
+    mode = "multi-project" if ws.is_multi_project else "single-project"
+    tbl = Table(title=f"Workspace ({mode}) at {root}", show_header=True)
+    tbl.add_column("Project", style="green")
+    tbl.add_column("Path")
+    for entry in ws.projects:
+        tbl.add_row(entry.name, entry.path)
+    console.print(tbl)
+
+
+@workspace_app.command("onboard")
+def workspace_onboard(
+    path: str = typer.Argument(..., help="Project directory to register (relative to cwd)."),
+    name: str = typer.Option("", "--name", help="Project name (defaults to directory basename)."),
+    migrate_existing: str = typer.Option(
+        "",
+        "--migrate-existing",
+        help=(
+            "Re-key the existing shared graph cache in place into the named project "
+            "(the single->multi flip). Destructive; prefer re-indexing if unsure."
+        ),
+    ),
+) -> None:
+    """Register a project into the workspace manifest (creating it if needed).
+
+    The manifest lives at the workspace root (cwd, or the nearest existing
+    ``workspace.yaml``). Once a second project is registered the workspace
+    becomes multi-project: every node is ID-prefixed by project and reads scope
+    to the current project. An existing single-project cache can be re-keyed in
+    place with ``--migrate-existing NAME`` (atomic); otherwise re-index.
+    """
+    import yaml
+
+    from agentscaffold.config import (
+        ProjectEntry,
+        WorkspaceConfig,
+        derive_project_name,
+        find_workspace_config,
+        load_workspace_manifest,
+        validate_workspace,
+    )
+
+    cwd = Path.cwd().resolve()
+    ws_path = find_workspace_config(cwd)
+    ws_root = ws_path.parent.resolve() if ws_path is not None else cwd
+    manifest_path = ws_path if ws_path is not None else (ws_root / "workspace.yaml")
+
+    workspace = load_workspace_manifest(manifest_path) if ws_path is not None else WorkspaceConfig()
+
+    project_dir = (cwd / path).resolve()
+    if not project_dir.is_dir():
+        console.print(f"[red]Project directory not found: {project_dir}[/red]")
+        raise SystemExit(1)
+
+    try:
+        proj_name = derive_project_name(project_dir, explicit=name or None)
+    except Exception as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+
+    if workspace.find_by_name(proj_name) is not None:
+        console.print(f"[yellow]Project {proj_name!r} is already registered.[/yellow]")
+        raise SystemExit(0)
+
+    # Store the path relative to the workspace root when possible (portable).
+    try:
+        rel = project_dir.relative_to(ws_root)
+        stored_path = str(rel)
+    except ValueError:
+        stored_path = str(project_dir)
+
+    workspace.projects.append(ProjectEntry(name=proj_name, path=stored_path))
+    try:
+        validate_workspace(workspace)
+    except Exception as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+
+    manifest_path.write_text(
+        yaml.safe_dump(
+            {"projects": [{"name": p.name, "path": p.path} for p in workspace.projects]},
+            sort_keys=False,
+        )
+    )
+    console.print(f"[green]Registered project {proj_name!r} at {stored_path}.[/green]")
+    console.print(f"Workspace manifest: {manifest_path}")
+    if workspace.is_multi_project:
+        console.print("[cyan]Workspace is now multi-project.[/cyan]")
+
+    if migrate_existing:
+        _onboard_migrate(ws_root, migrate_existing)
+
+
+def _onboard_migrate(ws_root: Path, project: str) -> None:
+    """Atomically re-key the shared cache at *ws_root* into *project* + verify."""
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+
+    config = load_config()
+    if not graph_available(config):
+        console.print(
+            "[yellow]No shared graph cache to migrate; run 'scaffold index' "
+            "from each project instead.[/yellow]"
+        )
+        return
+    store = open_graph(config)
+    try:
+        counts = store.migrate_to_multi_project(project)
+        problems = store.verify_integrity()
+    finally:
+        store.close()
+    console.print(
+        f"[green]Re-keyed graph into {project!r}: "
+        f"{counts['nodes']} nodes, {counts['edges']} edges, "
+        f"{counts['embeddings']} embeddings.[/green]"
+    )
+    if problems:
+        console.print(f"[red]Integrity check found {len(problems)} issue(s):[/red]")
+        for p in problems[:10]:
+            console.print(f"  - {p}")
+        raise SystemExit(1)
+    console.print("[green]Integrity check passed.[/green]")

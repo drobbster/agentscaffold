@@ -10,8 +10,11 @@ from eval.runner import (
     get_all_adoption,
     get_all_benchmarks,
     get_all_efficiency,
+    get_all_multi_project,
     get_all_replay,
     get_all_results,
+    get_all_rigor_cost,
+    get_all_search_quality,
 )
 
 
@@ -22,6 +25,9 @@ def generate_report(output_path: Path | None = None) -> str:
     efficiency = get_all_efficiency()
     adoption = get_all_adoption()
     replay = get_all_replay()
+    multi_project = get_all_multi_project()
+    search_quality = get_all_search_quality()
+    rigor_cost = get_all_rigor_cost()
 
     if not results:
         return "# Evaluation Report\n\nNo results collected.\n"
@@ -62,6 +68,9 @@ def generate_report(output_path: Path | None = None) -> str:
         "cli",
         "benchmark",
         "efficiency",
+        "multi_project",
+        "search_quality",
+        "rigor",
         "adoption",
         "replay",
         "readability",
@@ -74,9 +83,9 @@ def generate_report(output_path: Path | None = None) -> str:
         if not cat_results:
             continue
 
-        cat_passed = sum(1 for r in cat_results if r.passed)
+        cat_passed = sum(1 for result_item in cat_results if result_item.passed)
         cat_total = len(cat_results)
-        cat_score = sum(r.score for r in cat_results) / cat_total
+        cat_score = sum(result_item.score for result_item in cat_results) / cat_total
 
         lines.append(f"## {cat.replace('_', ' ').title()} ({cat_passed}/{cat_total})")
         lines.append("")
@@ -85,25 +94,112 @@ def generate_report(output_path: Path | None = None) -> str:
         lines.append("| Scenario | Passed | Score | Time (ms) |")
         lines.append("|----------|--------|-------|-----------|")
 
-        for r in cat_results:
-            status = "PASS" if r.passed else "FAIL"
-            lines.append(f"| {r.scenario} | {status} | {r.score:.2f} | {r.elapsed_ms:.0f} |")
+        for result_item in cat_results:
+            status = "PASS" if result_item.passed else "FAIL"
+            lines.append(
+                f"| {result_item.scenario} | {status} | "
+                f"{result_item.score:.2f} | {result_item.elapsed_ms:.0f} |"
+            )
 
         lines.append("")
 
         # Detail section for failures
-        failures = [r for r in cat_results if not r.passed]
+        failures = [result_item for result_item in cat_results if not result_item.passed]
         if failures:
             lines.append("### Failures")
             lines.append("")
-            for r in failures:
-                lines.append(f"**{r.scenario}**")
-                lines.append(f"- Expected: {r.expected}")
-                lines.append(f"- Actual: {r.actual}")
-                if r.observations:
-                    for obs in r.observations:
+            for failure in failures:
+                lines.append(f"**{failure.scenario}**")
+                lines.append(f"- Expected: {failure.expected}")
+                lines.append(f"- Actual: {failure.actual}")
+                if failure.observations:
+                    for obs in failure.observations:
                         lines.append(f"- {obs}")
                 lines.append("")
+
+    # Multi-project correctness section
+    if multi_project:
+        lines.append("## Multi-Project Correctness")
+        lines.append("")
+        lines.append(
+            "Validates project-scoped defaults, federated provenance, cross-project duplicate "
+            "surfacing, and single-to-multi migration integrity."
+        )
+        lines.append("")
+        lines.append("| Scenario | Passed | Scoped Count | Federated Count | Projects Seen |")
+        lines.append("|----------|--------|--------------|-----------------|---------------|")
+        for m in multi_project:
+            status = "PASS" if m.passed else "FAIL"
+            projects = ", ".join(m.projects_seen) if m.projects_seen else "-"
+            lines.append(
+                f"| {m.scenario} | {status} | {m.scoped_count} | {m.federated_count} | {projects} |"
+            )
+        lines.append("")
+
+        for m in multi_project:
+            if m.observations:
+                lines.append(f"**{m.scenario} observations**:")
+                for obs in m.observations[:5]:
+                    lines.append(f"- {obs}")
+                lines.append("")
+
+    # Search-quality section
+    if search_quality:
+        lines.append("## Search Quality")
+        lines.append("")
+        lines.append(
+            "Small fixed labeled-query regression baseline for keyword vs hybrid retrieval. "
+            "Model-dependent rows are marked skipped when the local embedding cache is not "
+            "provisioned; this keeps the eval suite deterministic and offline."
+        )
+        lines.append("")
+        lines.append("| Mode | Queries | Precision@K | MRR | Status |")
+        lines.append("|------|---------|-------------|-----|--------|")
+        for s in search_quality:
+            status = f"SKIPPED: {s.reason}" if s.skipped else "MEASURED"
+            lines.append(
+                f"| {s.mode} | {s.queries} | {s.precision_at_k:.3f} | {s.mrr:.3f} | {status} |"
+            )
+        lines.append("")
+
+    # Rigor cost-benefit section
+    if rigor_cost:
+        lines.append("## Rigor Cost-Benefit")
+        lines.append("")
+        lines.append(
+            "Measures existing rigor presets as a deterministic proxy: token volume and review "
+            "call count against graph-derived challenge, gap, verification, and finding counts. "
+            "This is not caught-bug efficacy; live ground-truth benchmarking is deferred to the "
+            "AgentScaffold Benchmark work."
+        )
+        lines.append("")
+        lines.append(
+            "| Rigor | Tokens | Review Calls | Challenges | Gaps | Verification | "
+            "Findings | Thoroughness | Marginal / 1k Tokens |"
+        )
+        lines.append(
+            "|-------|--------|--------------|------------|------|--------------|"
+            "----------|--------------|-----------------------|"
+        )
+        ordered = sorted(
+            rigor_cost,
+            key=lambda cost: ("minimal", "standard", "strict").index(cost.rigor),
+        )
+        previous = None
+        for cost in ordered:
+            marginal = "-"
+            if previous is not None:
+                delta_tokens = cost.artifact_tokens - previous.artifact_tokens
+                delta_thoroughness = cost.thoroughness - previous.thoroughness
+                if delta_tokens > 0:
+                    marginal = f"{(delta_thoroughness / delta_tokens) * 1000:.2f}"
+            lines.append(
+                f"| {cost.rigor} | {cost.artifact_tokens:,} | {cost.review_calls} | "
+                f"{cost.challenges} | {cost.gaps} | {cost.verification_items} | "
+                f"{cost.findings} | {cost.thoroughness} | {marginal} |"
+            )
+            previous = cost
+        lines.append("")
 
     # Benchmarks section
     if benchmarks:
@@ -252,19 +348,26 @@ def generate_report(output_path: Path | None = None) -> str:
             "|-------|-------|-----------------|----------------------|-------------|"
             "-------------------|----------------------|"
         )
-        for r in replay:
+        for replay_result in replay:
             lines.append(
-                f"| {r.suite} | {r.total_turns} | {r.intent_eligible_turns} | "
-                f"{r.tool_first_adherence_pct:.1f}% | {r.bypass_rate_pct:.1f}% | "
-                f"{r.fallback_validity_pct:.1f}% | {r.quality_noninferior_pct:.1f}% |"
+                f"| {replay_result.suite} | {replay_result.total_turns} | "
+                f"{replay_result.intent_eligible_turns} | "
+                f"{replay_result.tool_first_adherence_pct:.1f}% | "
+                f"{replay_result.bypass_rate_pct:.1f}% | "
+                f"{replay_result.fallback_validity_pct:.1f}% | "
+                f"{replay_result.quality_noninferior_pct:.1f}% |"
             )
         lines.append("")
 
         if efficiency:
             avg_token_reduction = sum(e.token_reduction_pct for e in efficiency) / len(efficiency)
             avg_call_reduction = sum(e.call_reduction_pct for e in efficiency) / len(efficiency)
-            avg_observed_adherence = sum(r.tool_first_adherence_pct for r in replay) / len(replay)
-            avg_quality_noninferior = sum(r.quality_noninferior_pct for r in replay) / len(replay)
+            avg_observed_adherence = sum(
+                replay_result.tool_first_adherence_pct for replay_result in replay
+            ) / len(replay)
+            avg_quality_noninferior = sum(
+                replay_result.quality_noninferior_pct for replay_result in replay
+            ) / len(replay)
 
             behavioral_token = avg_token_reduction * avg_observed_adherence / 100
             behavioral_call = avg_call_reduction * avg_observed_adherence / 100
@@ -293,25 +396,30 @@ def generate_report(output_path: Path | None = None) -> str:
             )
             lines.append("")
 
-        for r in replay:
-            if r.notes:
-                lines.append(f"**{r.suite} notes**:")
-                for note in r.notes:
+        for replay_result in replay:
+            if replay_result.notes:
+                lines.append(f"**{replay_result.suite} notes**:")
+                for note in replay_result.notes:
                     lines.append(f"- {note}")
                 lines.append("")
 
     # Timing section
-    if any(r.elapsed_ms > 0 for r in results):
+    if any(result_item.elapsed_ms > 0 for result_item in results):
         lines.append("## Performance")
         lines.append("")
-        sorted_by_time = sorted(results, key=lambda r: r.elapsed_ms, reverse=True)
+        sorted_by_time = sorted(
+            results, key=lambda result_item: result_item.elapsed_ms, reverse=True
+        )
         lines.append("Slowest scenarios:")
         lines.append("")
         lines.append("| Scenario | Time (ms) | Category |")
         lines.append("|----------|-----------|----------|")
-        for r in sorted_by_time[:10]:
-            if r.elapsed_ms > 0:
-                lines.append(f"| {r.scenario} | {r.elapsed_ms:.0f} | {r.category} |")
+        for result_item in sorted_by_time[:10]:
+            if result_item.elapsed_ms > 0:
+                lines.append(
+                    f"| {result_item.scenario} | {result_item.elapsed_ms:.0f} | "
+                    f"{result_item.category} |"
+                )
         lines.append("")
 
     report = "\n".join(lines)

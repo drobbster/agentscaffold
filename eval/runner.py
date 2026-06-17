@@ -90,6 +90,47 @@ class ReplayResult:
     notes: list[str] = field(default_factory=list)
 
 
+@dataclass
+class MultiProjectResult:
+    """Result from a multi-project correctness scenario."""
+
+    scenario: str
+    passed: bool
+    scoped_count: int
+    federated_count: int
+    projects_seen: list[str] = field(default_factory=list)
+    observations: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SearchQualityResult:
+    """Retrieval-quality metrics for a labeled query set."""
+
+    mode: str
+    precision_at_k: float
+    mrr: float
+    queries: int
+    skipped: bool = False
+    reason: str = ""
+
+
+@dataclass
+class RigorCostResult:
+    """Cost and thoroughness proxy metrics for one rigor level."""
+
+    rigor: str
+    artifact_tokens: int
+    review_calls: int
+    challenges: int
+    gaps: int
+    verification_items: int
+    findings: int
+
+    @property
+    def thoroughness(self) -> int:
+        return self.challenges + self.gaps + self.verification_items + self.findings
+
+
 def estimate_tokens(text: str) -> int:
     """Rough token estimate: chars / 4 (standard GPT approximation for code)."""
     return max(len(text) // 4, 1)
@@ -101,6 +142,9 @@ _benchmarks: list[BenchmarkResult] = []
 _efficiency: list[EfficiencyResult] = []
 _adoption: list[AdoptionResult] = []
 _replay: list[ReplayResult] = []
+_multi_project: list[MultiProjectResult] = []
+_search_quality: list[SearchQualityResult] = []
+_rigor_cost: list[RigorCostResult] = []
 
 
 def collect_result(result: EvalResult) -> None:
@@ -128,6 +172,21 @@ def collect_replay(result: ReplayResult) -> None:
     _replay.append(result)
 
 
+def collect_multi_project(result: MultiProjectResult) -> None:
+    """Add a multi-project correctness result to the global collector."""
+    _multi_project.append(result)
+
+
+def collect_search_quality(result: SearchQualityResult) -> None:
+    """Add a search-quality result to the global collector."""
+    _search_quality.append(result)
+
+
+def collect_rigor_cost(result: RigorCostResult) -> None:
+    """Add a rigor cost-benefit result to the global collector."""
+    _rigor_cost.append(result)
+
+
 def get_all_results() -> list[EvalResult]:
     return list(_results)
 
@@ -148,12 +207,27 @@ def get_all_replay() -> list[ReplayResult]:
     return list(_replay)
 
 
+def get_all_multi_project() -> list[MultiProjectResult]:
+    return list(_multi_project)
+
+
+def get_all_search_quality() -> list[SearchQualityResult]:
+    return list(_search_quality)
+
+
+def get_all_rigor_cost() -> list[RigorCostResult]:
+    return list(_rigor_cost)
+
+
 def clear_results() -> None:
     _results.clear()
     _benchmarks.clear()
     _efficiency.clear()
     _adoption.clear()
     _replay.clear()
+    _multi_project.clear()
+    _search_quality.clear()
+    _rigor_cost.clear()
 
 
 def timed(func):

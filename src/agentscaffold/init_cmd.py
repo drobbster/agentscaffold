@@ -345,8 +345,12 @@ def run_init(directory: Path, non_interactive: bool = False) -> None:
     # (.cursor/rules/agentscaffold.md), .cursor/mcp.json, per-reviewer rules,
     # lifecycle hooks, CLAUDE.md + .claude/agents, and Windsurf artifacts.
     # This is gated on a fresh init so that re-running `scaffold init` stays
-    # idempotent and never clobbers hand-edited rules. Use
-    # `scaffold agents generate-all` to regenerate on an existing project.
+    # idempotent. Project-owned docs (AGENTS.md, CLAUDE.md, .windsurfrules) are
+    # written via write_managed_block with force=False: a pre-existing org/user
+    # copy is never clobbered -- the generated guidance is appended as a managed
+    # block (or refreshed in place if markers already exist). Only machine-owned
+    # rule files are regenerated outright. Use `scaffold agents generate-all
+    # [--force]` to fully rewrite on an existing project.
     if yaml_written:
         _generate_platform_rules(directory, config)
 

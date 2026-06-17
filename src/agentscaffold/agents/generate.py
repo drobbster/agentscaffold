@@ -7,17 +7,53 @@ from pathlib import Path
 from rich.console import Console
 
 from agentscaffold.config import ScaffoldConfig, find_config, load_config
-from agentscaffold.rendering import get_default_context, get_graph_context, render_template
+from agentscaffold.rendering import (
+    get_default_context,
+    get_graph_context,
+    render_template,
+    write_managed_block,
+)
 
 console = Console()
 
+# Project-owned documents (AGENTS.md, CLAUDE.md, .windsurfrules, .cursor/rules.md)
+# may already be curated by an organization or user, so AgentScaffold NEVER
+# overwrites them wholesale. The generated guidance is written into a delimited
+# "managed block" instead: when the file is absent the block is created, when the
+# file already contains the markers only that region is refreshed, and when the
+# file exists WITHOUT markers (fully user-owned) a fresh block is appended without
+# touching existing content. Machine-owned files (.cursor/rules/agentscaffold.md,
+# per-reviewer rules, enforcement hooks, agent stubs) are still regenerated via
+# write_text so policy/config updates always land; mcp.json stays skip-if-exists.
 
-def run_agents_generate() -> None:
+
+def _report_managed_write(status: str, label: str) -> None:
+    """Emit a consistent console message for a managed-block write result."""
+    if status == "created":
+        console.print(f"[green]Wrote[/green] {label}")
+    elif status == "block-updated":
+        console.print(f"[green]Updated[/green] AgentScaffold managed section in {label}")
+    elif status == "appended":
+        console.print(
+            f"[green]Appended[/green] AgentScaffold managed section to {label} "
+            "[dim](existing content preserved)[/dim]"
+        )
+    elif status == "overwritten":
+        console.print(f"[yellow]Overwrote[/yellow] {label} [dim](.bak saved)[/dim]")
+    else:  # unchanged
+        console.print(f"[dim]Unchanged[/dim] {label}")
+
+
+def run_agents_generate(force: bool = False) -> None:
     """Generate AGENTS.md from scaffold.yaml config.
 
     When a knowledge graph is available, the generated AGENTS.md includes
     a Codebase Intelligence section with hot spots, volatile modules,
     architecture layers, and active contracts.
+
+    AGENTS.md is a project-owned document: the generated guidance is written into
+    a managed block so existing/hand-authored content is never destroyed. *force*
+    rewrites the whole file (a ``.bak`` snapshot is kept).
     """
     config_path = find_config()
     if config_path is None:
@@ -36,12 +72,18 @@ def run_agents_generate() -> None:
     content = render_template("agents/agents_md.md.j2", context)
 
     dest = project_root / "AGENTS.md"
-    dest.write_text(content)
-    console.print(f"[green]Wrote[/green] {dest.relative_to(Path.cwd())}")
+    status = write_managed_block(dest, content, force=force)
+    _report_managed_write(status, str(dest.relative_to(Path.cwd())))
 
 
-def run_agents_generate_to(project_root: Path, config_path: Path | None = None) -> None:
-    """Generate AGENTS.md into a specific directory (used by init)."""
+def run_agents_generate_to(
+    project_root: Path, config_path: Path | None = None, force: bool = False
+) -> None:
+    """Generate AGENTS.md into a specific directory (used by init).
+
+    AGENTS.md is project-owned: generated guidance lands in a managed block, so an
+    existing/hand-authored AGENTS.md is never clobbered unless *force* is set.
+    """
     config = load_config(config_path)
     context = get_default_context(config)
     graph_ctx = get_graph_context(config)
@@ -49,13 +91,14 @@ def run_agents_generate_to(project_root: Path, config_path: Path | None = None) 
         context.update(graph_ctx)
     content = render_template("agents/agents_md.md.j2", context)
     dest = project_root / "AGENTS.md"
-    dest.write_text(content)
+    write_managed_block(dest, content, force=force)
 
 
 def run_agents_generate_all_platforms(
     config: ScaffoldConfig,
     project_root: Path,
     dry_run: bool = False,
+    force: bool = False,
 ) -> dict[str, list[Path]]:
     """Generate all platform artifacts from a single config.
 
@@ -65,6 +108,14 @@ def run_agents_generate_all_platforms(
     - .cursor/rules/*.md + .cursor/mcp.json (Cursor)
     - .windsurfrules + .windsurf/agents/*.md (Windsurf)
     - Lifecycle hooks for all configured platforms
+
+    Project-owned documents (AGENTS.md, CLAUDE.md, .windsurfrules) are never
+    overwritten: the generated guidance is written into a managed block (created,
+    block-refreshed, or appended) so org/user content is always preserved. *force*
+    rewrites those files wholesale, keeping a ``.bak`` snapshot. Machine-owned files
+    (.cursor/rules/agentscaffold.md, per-reviewer rules, enforcement hooks, agent
+    stubs) are always regenerated so policy/config updates land; mcp.json remains
+    skip-if-exists.
 
     Returns a dict mapping platform -> list of written paths.
     """
@@ -100,23 +151,29 @@ def run_agents_generate_all_platforms(
         "hooks": [],
     }
 
-    # AGENTS.md
+    # AGENTS.md (project-owned -- managed block, never clobbered unless force)
     context = get_default_context(config)
     agents_md_path = project_root / "AGENTS.md"
     if not dry_run:
-        agents_md_path.write_text(render_template("agents/agents_md.md.j2", context))
-        console.print("[green]Wrote[/green] AGENTS.md")
+        status = write_managed_block(
+            agents_md_path, render_template("agents/agents_md.md.j2", context), force=force
+        )
+        _report_managed_write(status, "AGENTS.md")
     else:
-        console.print("[dim]dry-run[/dim] would write AGENTS.md")
+        console.print(
+            "[dim]dry-run[/dim] would update AGENTS.md managed block (existing content preserved)"
+        )
     written["claude_code"].append(agents_md_path)
 
-    # Claude Code: CLAUDE.md + subagents
+    # Claude Code: CLAUDE.md (project-owned -- managed block) + subagents
     claude_md = project_root / "CLAUDE.md"
     if not dry_run:
-        claude_md.write_text(generate_claude_rules(config))
-        console.print("[green]Wrote[/green] CLAUDE.md")
+        status = write_managed_block(claude_md, generate_claude_rules(config), force=force)
+        _report_managed_write(status, "CLAUDE.md")
     else:
-        console.print("[dim]dry-run[/dim] would write CLAUDE.md")
+        console.print(
+            "[dim]dry-run[/dim] would update CLAUDE.md managed block (existing content preserved)"
+        )
     written["claude_code"].append(claude_md)
     written["claude_code"].extend(write_claude_agents(config, project_root, dry_run=dry_run))
 
@@ -165,13 +222,15 @@ def run_agents_generate_all_platforms(
             )
         )
 
-    # Windsurf: .windsurfrules + agent stubs
+    # Windsurf: .windsurfrules (project-owned -- managed block) + agent stubs
     windsurf_rules = project_root / ".windsurfrules"
     if not dry_run:
-        windsurf_rules.write_text(generate_windsurf_rules(config))
-        console.print("[green]Wrote[/green] .windsurfrules")
+        status = write_managed_block(windsurf_rules, generate_windsurf_rules(config), force=force)
+        _report_managed_write(status, ".windsurfrules")
     else:
-        console.print("[dim]dry-run[/dim] would write .windsurfrules")
+        console.print(
+            "[dim]dry-run[/dim] would update .windsurfrules managed block (content preserved)"
+        )
     written["windsurf"].append(windsurf_rules)
     written["windsurf"].extend(write_windsurf_agent_stubs(config, project_root, dry_run=dry_run))
     if config.enforcement.platform_enabled("windsurf"):

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 SIM_PROJECT = Path(__file__).parent / "sim_project"
+SIM_PROJECT_B = Path(__file__).parent / "sim_project_b"
 
 _GRAPH_CONFIG_KWARGS = dict(
     plans_dir="docs/ai/plans/",
@@ -52,6 +53,7 @@ def indexed_sim(sim_project_path) -> tuple:
     config = ScaffoldConfig()
     config.graph = GraphConfig(
         db_path=str(db_path),
+        governance_artifact=str(sim_project_path / "docs/ai/state/governance.json"),
         backend="duckpgq",
         **_GRAPH_CONFIG_KWARGS,
     )
@@ -77,6 +79,7 @@ def indexed_sim_duckdb(sim_project_path_duckdb) -> tuple:
     config = ScaffoldConfig()
     config.graph = GraphConfig(
         db_path=str(db_path),
+        governance_artifact=str(sim_project_path_duckdb / "docs/ai/state/governance.json"),
         backend="duckpgq",
         **_GRAPH_CONFIG_KWARGS,
     )
@@ -88,6 +91,50 @@ def indexed_sim_duckdb(sim_project_path_duckdb) -> tuple:
 
     store = open_graph(config)
     yield sim_project_path_duckdb, store, config
+    store.close()
+
+
+@pytest.fixture(scope="session")
+def indexed_two_project_workspace(tmp_path_factory) -> tuple:
+    """Index two sibling projects into one shared workspace graph cache."""
+    from agentscaffold.config import GraphConfig, ScaffoldConfig
+    from agentscaffold.graph import open_graph
+    from agentscaffold.graph.pipeline import run_pipeline
+
+    workspace = tmp_path_factory.mktemp("multi_project")
+    project_a = workspace / "sim_project"
+    project_b = workspace / "sim_project_b"
+    shutil.copytree(SIM_PROJECT, project_a)
+    shutil.copytree(SIM_PROJECT_B, project_b)
+    (workspace / "workspace.yaml").write_text(
+        "\n".join(
+            [
+                "projects:",
+                "  - name: sim_project",
+                "    path: sim_project",
+                "  - name: sim_project_b",
+                "    path: sim_project_b",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    db_path = workspace / ".scaffold" / "graph.duckdb"
+    config = ScaffoldConfig()
+    config.graph = GraphConfig(
+        db_path=str(db_path),
+        governance_artifact=str(workspace / ".scaffold" / "governance.json"),
+        backend="duckpgq",
+        **_GRAPH_CONFIG_KWARGS,
+    )
+    config.freshness.async_enabled = False
+
+    run_pipeline(project_a, config)
+    run_pipeline(project_b, config)
+
+    store = open_graph(config)
+    yield workspace, project_a, project_b, store, config
     store.close()
 
 

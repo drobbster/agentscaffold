@@ -48,7 +48,7 @@ A DuckDB + DuckPGQ-backed graph that indexes your codebase once and serves it to
 - **Code structure**: Functions, classes, methods, interfaces, import chains, call graphs — across Python, TypeScript, Go, Rust, Java, C, and C++
 - **Governance artifacts**: Plans, contracts, learnings, and review findings linked to the code they reference
 - **Community detection**: Leiden algorithm clustering identifies tightly coupled modules
-- **Semantic search**: Hybrid search combining structural graph queries with vector embeddings, with explicit `available`/`degraded`/`unavailable` status when embeddings or `sentence-transformers` are missing (graceful keyword fallback)
+- **Semantic search**: Hybrid search combining structural graph queries with vector embeddings (fused via reciprocal-rank fusion), with explicit `available`/`degraded`/`unavailable` status when embeddings or `sentence-transformers` are missing (graceful keyword fallback). Embeddings are enriched with each definition's docstring/leading comment (read from source at index time) and L2-normalized at store time, so matches reflect intent rather than identifiers alone
 - **Incremental indexing**: SHA-256 content hashing means only changed files are re-processed
 - **Contract drift detection**: Automatically surfaces methods declared in contracts but missing from code
 - **Review finding write-back**: Findings recorded during plan reviews are persisted as graph nodes and surfaced in every future review of the same plan
@@ -129,6 +129,17 @@ project — for example after `scaffold index` so `AGENTS.md` picks up graph
 context (hot spots, volatile modules, active contracts), or after editing
 `scaffold.yaml`.
 
+**File safety.** AgentScaffold never silently clobbers agent or skill files you
+already own. Project-owned docs (`AGENTS.md`, `CLAUDE.md`, `.windsurfrules`,
+`.cursor/rules.md`) receive generated guidance inside a delimited managed block —
+existing files are appended to (or the block is refreshed in place), never
+overwritten, and anything outside the block is always preserved. User-authored
+skills (`SKILL.md` without a `managed_by: agentscaffold` marker) are left untouched.
+Only machine-owned policy files (`.cursor/rules/agentscaffold.md`, reviewer rules,
+enforcement hooks) are regenerated each run. Pass `--force` to rewrite a file whole;
+a `.bak` snapshot is always kept. See
+[File Safety](docs/platform-integration.md#file-safety-what-agentscaffold-will-and-will-not-overwrite).
+
 The `index` command builds the knowledge graph (a DuckDB + DuckPGQ database at `.scaffold/graph.duckdb`), enabling search, reviews, impact analysis, and session memory.
 
 ### Async freshness (low-latency graph updates for MCP)
@@ -154,13 +165,109 @@ freshness:
 
 **Single-writer model (teams):** the graph is one DuckDB file (`.scaffold/graph.duckdb`) and only one process may write it at a time. The async refresh serializes refresh *scheduling* per workspace, but it does not make concurrent writers safe. Each developer should keep their own local graph rather than sharing a single file over a network mount; running `scaffold index` while the MCP server holds the graph open raises a clear `GraphLockError` (after a short retry) and MCP tool calls return `{"graph_locked": true}` instead of crashing.
 
+**Collaboration ergonomics (opt-in):** for teams where several people (or agents) work the same repo, two features reduce git contention on shared governance files. With `collab.sharded: true`, the high-churn `workflow_state.md` / `backlog.md` can be stored as per-entry fragments so concurrent writers touch different files (`scaffold state split` shards an existing file reversibly; `scaffold state render` reassembles the canonical file deterministically). Advisory plan claims (`scaffold plan claim <n> --owner <who>` / `scaffold plan release`) record git-backed, visible ownership of an in-flight plan — visibility, not an enforced lock. Both default off, so existing repos are unaffected.
+
+### Multi-Project Workspaces
+
+Several projects can share **one** knowledge-graph cache — useful for a monorepo of services or a set of related repos you want an agent to reason across. A `workspace.yaml` at the workspace root lists the member projects:
+
+```yaml
+projects:
+  - name: api
+    path: services/api
+  - name: web
+    path: apps/web
+```
+
+```bash
+scaffold workspace onboard services/api        # register a project (creates workspace.yaml)
+scaffold workspace onboard apps/web             # second project -> workspace is now multi-project
+scaffold workspace list                         # show projects + mode
+```
+
+Once a workspace has more than one project, every node is namespaced by project (`{project}::{raw_id}`) and stamped with a `project` column. **Reads default to the current project**, so an agent working in `api` never misreads `web`'s plans, findings, or learnings (even when both have a `plan 12` or a `src/utils.py`). Widen explicitly when you want to:
+
+```bash
+scaffold graph search "auth flow"                  # current project only (default)
+scaffold graph search "auth flow" --project web    # target a sibling
+scaffold graph search "auth flow" --all-projects   # federate (results carry project provenance)
+scaffold graph duplicates --table Function         # cross-project near-duplicates (reuse candidates)
+```
+
+#### How Agents Resolve The Current Project
+
+In normal agent work you do **not** need to mention the workspace. AgentScaffold
+resolves the active project from the current working directory.
+
+Example:
+
+```text
+~/dev/trading-stack/
+  workspace.yaml
+  market-data-service/
+    scaffold.yaml
+  strategy-engine/
+    scaffold.yaml
+```
+
+If Cursor, Claude Code, or another agent is working from
+`~/dev/trading-stack/market-data-service`, then plain graph/governance reads
+default to the `market-data-service` project:
+
+```bash
+cd ~/dev/trading-stack/market-data-service
+scaffold graph search "symbol normalization"     # market-data-service only
+```
+
+If the agent is working from `~/dev/trading-stack/strategy-engine`, the same
+command defaults to `strategy-engine`:
+
+```bash
+cd ~/dev/trading-stack/strategy-engine
+scaffold graph search "symbol normalization"     # strategy-engine only
+```
+
+Only widen scope when the task is explicitly cross-project:
+
+```bash
+scaffold graph search "symbol normalization" --project market-data-service
+scaffold graph search "symbol normalization" --all-projects
+```
+
+The generated agent rules teach this behavior: default to the current project,
+treat plan numbers and file paths as project-scoped, and preserve project
+provenance when using federated results.
+
+A lone repo with no `workspace.yaml` is completely unaffected: it behaves as a single synthesized project, nothing is ID-prefixed, and every scope predicate is a no-op. An existing single-project cache can be re-keyed into a named project in place with `scaffold workspace onboard <dir> --migrate-existing <name>` (an atomic, rollback-safe rebuild verified by an integrity check); otherwise just re-index.
+
+**Trust model:** a workspace is a single trust domain (all projects belong to the same user/org). Project scoping is a *relevance and correctness* boundary that prevents cross-project misorientation — not a security isolation boundary. Writes are project-scoped at the storage choke point with a check-before-insert collision guard, so re-indexing one project can never corrupt or wipe a sibling.
+
 ### Install with language support
 
 ```bash
 pip install agentscaffold[graph]              # Python, JS, TS
 pip install agentscaffold[graph-all-languages] # + Go, Rust, Java, C, C++
+pip install "agentscaffold[benchmark]"        # Optional live benchmark runner deps
 pip install agentscaffold[all]                # Everything
 ```
+
+### Benchmarking
+
+AgentScaffold includes an opt-in `scaffold benchmark` command group for comparing
+a baseline plain-tools agent arm against an AgentScaffold-equipped arm. The
+initial implementation is preflight/dry-run only:
+
+```bash
+scaffold benchmark models
+scaffold benchmark doctor
+scaffold benchmark run --dry-run --model claude-haiku --task-slice 0:1
+scaffold benchmark compare path/to/summary.json
+scaffold benchmark report path/to/results-dir
+```
+
+Live benchmark runs can spend model-provider credits and will require
+`agentscaffold[benchmark]`, Docker, an API key, `--max-cost-usd`, and
+`--confirm-live`. See [Benchmarking](docs/benchmarking.md).
 
 ## How Agents Use It
 
@@ -237,6 +344,10 @@ scaffold import chat.json --format chatgpt # Import conversation
 scaffold ci setup                          # Generate CI workflows
 scaffold metrics                           # Plan analytics
 scaffold graph search "data routing"       # Hybrid search (keyword + semantic)
+scaffold graph search "data routing" --all-projects  # Federate across a multi-project workspace
+scaffold graph duplicates                  # Cross-project near-duplicate definitions
+scaffold workspace onboard services/api    # Register a project into the workspace
+scaffold workspace list                    # List workspace projects + mode
 scaffold graph verify                      # Graph accuracy check
 scaffold review brief 42                   # Pre-review brief for plan 42
 scaffold review challenges 42              # Adversarial challenges with evidence

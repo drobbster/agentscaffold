@@ -9,6 +9,8 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
+from agentscaffold.paths import ResolvedPaths
+
 console = Console()
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
@@ -56,7 +58,7 @@ def _lint_study(path: Path) -> list[str]:
 
 def run_study_lint() -> None:
     """Lint study files for template compliance."""
-    studies_dir = Path("docs/studies")
+    studies_dir = ResolvedPaths.discover().studies_dir
 
     if not studies_dir.is_dir():
         console.print(f"[yellow]Warning: {studies_dir} does not exist. Nothing to lint.[/yellow]")

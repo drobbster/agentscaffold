@@ -36,6 +36,7 @@ class TestConversationReplay:
         config = ScaffoldConfig()
         config.graph = GraphConfig(
             db_path=str(db_path),
+            governance_artifact=str(dest / "docs/ai/state/governance.json"),
             backend="duckpgq",
             plans_dir="docs/ai/plans/",
             contracts_dir="docs/ai/contracts/",
@@ -210,6 +211,7 @@ class TestConversationReplay:
         config = ScaffoldConfig()
         config.graph = GraphConfig(
             db_path=str(db_path),
+            governance_artifact=str(dest / "docs/ai/state/governance.json"),
             backend="duckpgq",
             plans_dir="docs/ai/plans/",
             contracts_dir="docs/ai/contracts/",

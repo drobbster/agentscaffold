@@ -20,6 +20,13 @@ if TYPE_CHECKING:
 _SEVERITY_ORDER: tuple[str, ...] = ("critical", "high", "medium", "low")
 
 
+def _sync_governance(store: GraphBackend) -> None:
+    """Re-serialize governance to the git-backed artifact if write-through is on."""
+    from agentscaffold.graph.governance_store import sync_if_enabled  # noqa: PLC0415
+
+    sync_if_enabled(store)
+
+
 def _finding_id(plan_number: int, review_type: str, category: str, finding: str) -> str:
     """Derive a deterministic ID from the finding content."""
     key = f"finding::{plan_number}::{review_type}::{category}::{finding[:64]}"
@@ -70,19 +77,26 @@ def record_finding(
         "status": "open",
     }
 
-    store.create_node("ReviewFinding", props)
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
 
-    # Link to files
-    for fp in file_paths or []:
-        rows = store.query(f"SELECT id FROM File WHERE path = '{_esc(fp)}'")
-        file_id = rows[0]["id"] if rows else None
+    with governance_write_lock(store):
+        store.create_node("ReviewFinding", props)
 
-        if file_id:
-            store.create_edge("FINDING_ABOUT_FILE", "ReviewFinding", finding_id, "File", file_id)
+        # Link to files
+        for fp in file_paths or []:
+            rows = store.query(f"SELECT id FROM File WHERE path = '{_esc(fp)}'")
+            file_id = rows[0]["id"] if rows else None
 
-    # Link to functions
-    for fn_id in function_ids or []:
-        store.create_edge("FINDING_ABOUT_FUNC", "ReviewFinding", finding_id, "Function", fn_id)
+            if file_id:
+                store.create_edge(
+                    "FINDING_ABOUT_FILE", "ReviewFinding", finding_id, "File", file_id
+                )
+
+        # Link to functions
+        for fn_id in function_ids or []:
+            store.create_edge("FINDING_ABOUT_FUNC", "ReviewFinding", finding_id, "Function", fn_id)
+
+        _sync_governance(store)
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {
@@ -115,10 +129,15 @@ def resolve_finding(
     """
     t0 = time.monotonic()
 
-    store.execute(
-        f"UPDATE ReviewFinding SET status = 'resolved', resolution = '{_esc(resolution)}'"
-        f" WHERE id = '{_esc(finding_id)}'"
-    )
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
+
+    with governance_write_lock(store):
+        store.execute(
+            f"UPDATE ReviewFinding SET status = 'resolved', resolution = '{_esc(resolution)}'"
+            f" WHERE id = '{_esc(finding_id)}'"
+        )
+
+        _sync_governance(store)
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {
@@ -213,45 +232,50 @@ def record_findings_batch(
     ids: list[str] = []
     now = datetime.now(timezone.utc).isoformat()
 
-    store.execute("BEGIN TRANSACTION")
-    try:
-        for item in findings:
-            category = item.get("category", "general")
-            finding_text = item.get("finding", "")
-            severity = item.get("severity", "medium")
-            finding_id = _finding_id(plan_number, review_type, category, finding_text)
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
 
-            props: dict[str, Any] = {
-                "id": finding_id,
-                "reviewType": review_type,
-                "planNumber": plan_number,
-                "severity": severity,
-                "category": category,
-                "finding": finding_text,
-                "resolution": "",
-                "status": "open",
-            }
-            store.create_node("ReviewFinding", props)
+    with governance_write_lock(store):
+        store.execute("BEGIN TRANSACTION")
+        try:
+            for item in findings:
+                category = item.get("category", "general")
+                finding_text = item.get("finding", "")
+                severity = item.get("severity", "medium")
+                finding_id = _finding_id(plan_number, review_type, category, finding_text)
 
-            for fp in item.get("file_paths") or []:
-                rows = store.query(f"SELECT id FROM File WHERE path = '{_esc(fp)}'")
-                file_id = rows[0]["id"] if rows else None
-                if file_id:
+                props: dict[str, Any] = {
+                    "id": finding_id,
+                    "reviewType": review_type,
+                    "planNumber": plan_number,
+                    "severity": severity,
+                    "category": category,
+                    "finding": finding_text,
+                    "resolution": "",
+                    "status": "open",
+                }
+                store.create_node("ReviewFinding", props)
+
+                for fp in item.get("file_paths") or []:
+                    rows = store.query(f"SELECT id FROM File WHERE path = '{_esc(fp)}'")
+                    file_id = rows[0]["id"] if rows else None
+                    if file_id:
+                        store.create_edge(
+                            "FINDING_ABOUT_FILE", "ReviewFinding", finding_id, "File", file_id
+                        )
+
+                for fn_id in item.get("function_ids") or []:
                     store.create_edge(
-                        "FINDING_ABOUT_FILE", "ReviewFinding", finding_id, "File", file_id
+                        "FINDING_ABOUT_FUNC", "ReviewFinding", finding_id, "Function", fn_id
                     )
 
-            for fn_id in item.get("function_ids") or []:
-                store.create_edge(
-                    "FINDING_ABOUT_FUNC", "ReviewFinding", finding_id, "Function", fn_id
-                )
+                ids.append(finding_id)
 
-            ids.append(finding_id)
+            store.execute("COMMIT")
+        except Exception:
+            store.execute("ROLLBACK")
+            raise
 
-        store.execute("COMMIT")
-    except Exception:
-        store.execute("ROLLBACK")
-        raise
+        _sync_governance(store)
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {
