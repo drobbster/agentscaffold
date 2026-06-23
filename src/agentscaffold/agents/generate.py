@@ -195,7 +195,12 @@ def run_agents_generate_all_platforms(
         cursor_dir.mkdir(parents=True, exist_ok=True)
     write_cursor_mcp_json(cursor_dir)
     # MCP routing + graph trust discipline doc (kept in parity with `agents cursor`).
-    intent_dest = cursor_dir / "rules" / "agentscaffold.md"
+    # Cursor only loads rules with the `.mdc` extension; a plain `.md` in
+    # `.cursor/rules/` is ignored. Emit `.mdc` with `alwaysApply: true` so the
+    # MCP routing + multi-project discipline is always in agent context. Remove a
+    # stale `.md` from older generations so the two do not diverge.
+    intent_dest = cursor_dir / "rules" / "agentscaffold.mdc"
+    legacy_md = cursor_dir / "rules" / "agentscaffold.md"
     if not dry_run:
         intent_dest.parent.mkdir(parents=True, exist_ok=True)
         intent_dest.write_text(
@@ -207,11 +212,14 @@ def run_agents_generate_all_platforms(
                     "For full process governance, also follow `.cursor/rules.md` and `AGENTS.md`.",
                 ],
                 quote_intents=True,
+                always_apply=True,
             )
         )
-        console.print("[green]Wrote[/green] .cursor/rules/agentscaffold.md")
+        if legacy_md.exists():
+            legacy_md.unlink()
+        console.print("[green]Wrote[/green] .cursor/rules/agentscaffold.mdc")
     else:
-        console.print("[dim]dry-run[/dim] would write .cursor/rules/agentscaffold.md")
+        console.print("[dim]dry-run[/dim] would write .cursor/rules/agentscaffold.mdc")
     written["cursor"].append(intent_dest)
     written["cursor"].extend(write_cursor_reviewer_rules(config, cursor_dir, dry_run=dry_run))
     if config.enforcement.platform_enabled("cursor"):

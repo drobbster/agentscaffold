@@ -124,14 +124,14 @@ def test_init_generates_full_rule_set(tmp_path: Path, cli_runner: CliRunner) -> 
 
     for rel in (
         ".cursor/rules.md",
-        ".cursor/rules/agentscaffold.md",
+        ".cursor/rules/agentscaffold.mdc",
         ".cursor/mcp.json",
         "CLAUDE.md",
         ".windsurfrules",
     ):
         assert (target / rel).is_file(), f"Missing generated rule file: {rel}"
 
-    intent = (target / ".cursor/rules/agentscaffold.md").read_text().lower()
+    intent = (target / ".cursor/rules/agentscaffold.mdc").read_text().lower()
     assert "graph trust discipline" in intent
     assert "tool selection policy" in intent
     assert "intent map" in intent

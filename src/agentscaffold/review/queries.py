@@ -809,11 +809,20 @@ def get_open_backlog_items(
     *,
     plan_number: int | None = None,
     limit: int = 20,
+    project: str | None = None,
+    all_projects: bool = False,
 ) -> list[dict[str, Any]]:
-    """Return open BacklogItems, optionally filtered by plan, sorted by priority."""
+    """Return open BacklogItems, optionally filtered by plan, sorted by priority.
+
+    Scoped to the current project by default so a sibling project's backlog does
+    not leak into orientation/recall; ``all_projects`` reads the federation.
+    """
     from agentscaffold.graph.backlog import get_open_backlog_items as _get_open  # noqa: PLC0415
 
-    return _get_open(store, plan_number=plan_number, limit=limit)
+    scope = _resolve_scope(project, all_projects)
+    return _get_open(
+        store, plan_number=plan_number, limit=limit, project=getattr(scope, "project", None)
+    )
 
 
 def get_backlog_items_for_plan(
@@ -821,13 +830,21 @@ def get_backlog_items_for_plan(
     plan_number: int,
     *,
     include_archived: bool = False,
+    project: str | None = None,
+    all_projects: bool = False,
 ) -> list[dict[str, Any]]:
-    """Return all BacklogItems for a specific plan."""
+    """Return all BacklogItems for a specific plan (scoped to the current project)."""
     from agentscaffold.graph.backlog import (  # noqa: PLC0415
         get_backlog_items_for_plan as _get_plan_items,
     )
 
-    return _get_plan_items(store, plan_number, include_archived=include_archived)
+    scope = _resolve_scope(project, all_projects)
+    return _get_plan_items(
+        store,
+        plan_number,
+        include_archived=include_archived,
+        project=getattr(scope, "project", None),
+    )
 
 
 # ---------------------------------------------------------------------------

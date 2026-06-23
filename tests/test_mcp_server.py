@@ -10,13 +10,18 @@ pytest.importorskip("duckdb", reason="duckdb not installed")
 
 def test_dispatch_tool_returns_graph_locked_on_lock(monkeypatch) -> None:
     """A GraphLockError while opening the graph yields a clean error dict."""
+    from pathlib import Path
+
     import agentscaffold.config as config_mod
     import agentscaffold.graph as graph_mod
+    import agentscaffold.mcp.server as server_mod
     from agentscaffold.config import ScaffoldConfig
     from agentscaffold.graph import GraphLockError
     from agentscaffold.mcp.server import _dispatch_tool
 
-    monkeypatch.setattr(config_mod, "load_config", lambda: ScaffoldConfig())
+    # Pin the per-call root so os.chdir is a no-op (no cwd leak across tests).
+    monkeypatch.setattr(server_mod, "_effective_mcp_root", lambda *a, **k: Path.cwd())
+    monkeypatch.setattr(config_mod, "load_config", lambda *a, **k: ScaffoldConfig())
     monkeypatch.setattr(graph_mod, "graph_available", lambda config=None: True)
 
     def _raise_lock(config=None, **kwargs):
@@ -32,12 +37,17 @@ def test_dispatch_tool_returns_graph_locked_on_lock(monkeypatch) -> None:
 
 def test_dispatch_tool_returns_generic_error_on_open_failure(monkeypatch) -> None:
     """A non-lock open failure surfaces as a generic error dict, not a crash."""
+    from pathlib import Path
+
     import agentscaffold.config as config_mod
     import agentscaffold.graph as graph_mod
+    import agentscaffold.mcp.server as server_mod
     from agentscaffold.config import ScaffoldConfig
     from agentscaffold.mcp.server import _dispatch_tool
 
-    monkeypatch.setattr(config_mod, "load_config", lambda: ScaffoldConfig())
+    # Pin the per-call root so os.chdir is a no-op (no cwd leak across tests).
+    monkeypatch.setattr(server_mod, "_effective_mcp_root", lambda *a, **k: Path.cwd())
+    monkeypatch.setattr(config_mod, "load_config", lambda *a, **k: ScaffoldConfig())
     monkeypatch.setattr(graph_mod, "graph_available", lambda config=None: True)
 
     def _raise(config=None, **kwargs):

@@ -93,7 +93,10 @@ def run_cursor_setup(force: bool = False) -> None:
 
     rules_dir = cursor_dir / "rules"
     rules_dir.mkdir(parents=True, exist_ok=True)
-    intent_dest = rules_dir / "agentscaffold.md"
+    # Cursor only loads `.mdc` rules; a plain `.md` here is ignored. Emit `.mdc`
+    # with `alwaysApply: true` and remove any stale `.md` from older runs.
+    intent_dest = rules_dir / "agentscaffold.mdc"
+    legacy_md = rules_dir / "agentscaffold.md"
     intent_dest.write_text(
         generate_rule_policy_document(
             config=config,
@@ -103,8 +106,11 @@ def run_cursor_setup(force: bool = False) -> None:
                 "For full process governance, also follow `.cursor/rules.md` and `AGENTS.md`.",
             ],
             quote_intents=True,
+            always_apply=True,
         )
     )
+    if legacy_md.exists():
+        legacy_md.unlink()
     console.print(f"[green]Wrote[/green] {intent_dest.relative_to(Path.cwd())}")
 
     write_cursor_mcp_json(cursor_dir)
@@ -161,14 +167,20 @@ def write_cursor_reviewer_rules(
     for reviewer in reviewers:
         prompt_body = _load_prompt_body_for_cursor(reviewer, cursor_dir.parent)
         content = generate_cursor_reviewer_rule(reviewer, prompt_body)
-        dest = rules_dir / f"{reviewer.name}.md"
+        # Reviewer rules are agent-requested (`description` frontmatter); Cursor
+        # only honors them with the `.mdc` extension. Emit `.mdc` and clean up a
+        # stale `.md` from older generations.
+        dest = rules_dir / f"{reviewer.name}.mdc"
+        legacy_md = rules_dir / f"{reviewer.name}.md"
         written.append(dest)
         if dry_run:
             console.print(f"[dim]dry-run[/dim] would write {dest}")
         else:
             rules_dir.mkdir(parents=True, exist_ok=True)
             dest.write_text(content)
-            console.print(f"[green]Wrote[/green] .cursor/rules/{reviewer.name}.md")
+            if legacy_md.exists():
+                legacy_md.unlink()
+            console.print(f"[green]Wrote[/green] .cursor/rules/{reviewer.name}.mdc")
 
     return written
 
