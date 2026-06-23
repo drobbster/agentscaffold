@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -376,7 +377,7 @@ async def _serve() -> None:
 
     @server.list_tools()  # type: ignore[no-untyped-call,untyped-decorator]
     async def list_tools() -> list[Tool]:
-        return _get_tool_definitions()
+        return _with_working_path_arg(_get_tool_definitions())
 
     @server.call_tool()  # type: ignore[untyped-decorator]
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
@@ -398,6 +399,35 @@ async def _serve() -> None:
 # ---------------------------------------------------------------------------
 # Tool definitions
 # ---------------------------------------------------------------------------
+
+
+_WORKING_PATH_PROP = {
+    "type": "string",
+    "description": (
+        "Optional. Absolute or workspace-relative path of the file or directory "
+        "you are currently working on. In a multi-project workspace the server "
+        "resolves the owning project from this path and scopes the call to it, so "
+        "reads follow your active project even though the MCP server runs from a "
+        "single fixed directory. Omit to use the server's default project, or pass "
+        "project / all_projects explicitly."
+    ),
+}
+
+
+def _with_working_path_arg(tools: list[Tool]) -> list[Tool]:
+    """Advertise a uniform ``working_path`` arg on every object-schema tool.
+
+    Enables dynamic per-call project scoping (Cursor MCP cannot infer the active
+    project from a fixed server cwd) without each tool schema hand-declaring the
+    field. Mutates the freshly-built inputSchema dicts in place.
+    """
+    for tool in tools:
+        schema = getattr(tool, "inputSchema", None)
+        if isinstance(schema, dict) and schema.get("type") == "object":
+            props = schema.setdefault("properties", {})
+            if isinstance(props, dict):
+                props.setdefault("working_path", dict(_WORKING_PATH_PROP))
+    return tools
 
 
 def _get_tool_definitions() -> list[Tool]:
@@ -1063,12 +1093,130 @@ def _get_resource_definitions() -> list[Resource]:
 # ---------------------------------------------------------------------------
 
 
+def _route_root_for_working_path(working_path: Any) -> Path | None:
+    """Resolve the project root that owns *working_path* (dynamic per-call scoping).
+
+    The Cursor MCP server runs from a single fixed working directory, so it
+    cannot infer which project the agent is actively editing. When a caller
+    passes ``working_path`` (the file or dir it is working on), resolve the
+    owning project root from it so multi-project reads scope to that project
+    instead of the server's launch directory. Absolute or workspace-relative
+    paths are accepted. Returns None when the path is empty or cannot be
+    resolved, so the caller keeps the default root.
+    """
+    if not working_path:
+        return None
+    try:
+        from agentscaffold.paths import resolve_root, resolve_workspace_root
+
+        candidate = Path(str(working_path)).expanduser()
+        if not candidate.is_absolute():
+            candidate = resolve_workspace_root() / candidate
+        candidate = candidate.resolve()
+        if not candidate.exists():
+            return None
+        return resolve_root(candidate)
+    except Exception:
+        return None
+
+
+def _current_project_or_none() -> str | None:
+    """Resolve the active project for a scoped write/read, or None if unscoped.
+
+    Used by the findings write/read handlers so review findings are stamped with
+    (and filtered by) the project the agent is working in. Relies on the cwd,
+    which ``_dispatch_tool`` has already routed via ``working_path``. Returns
+    None in a single-project workspace or when the project cannot be resolved
+    (federated/ambiguous), preserving the pre-multi-project unscoped behavior.
+    """
+    try:
+        from agentscaffold.graph.scoping import resolve_scope
+
+        return resolve_scope().project
+    except Exception:
+        return None
+
+
+def _effective_mcp_root(start: Path | None = None) -> Path:
+    """Resolve the project root for MCP calls launched from a workspace root.
+
+    Cursor can launch MCP servers from a broad IDE workspace rather than the
+    active AgentScaffold project. When the current directory is an AgentScaffold
+    workspace with exactly one registered project, route no-arg tools to that
+    project root so project-local state resolves correctly.
+    """
+    current = (start or Path.cwd()).resolve()
+    try:
+        from agentscaffold.paths import (
+            load_workspace,
+            resolve_root,
+            resolve_workspace_root,
+        )
+
+        workspace_root = resolve_workspace_root(current)
+
+        # Cursor can launch user-level MCP servers from the broad IDE workspace
+        # (for this devbox, /home/drobb) while the AgentScaffold workspace is a
+        # child folder. If there is exactly one child workspace manifest, use it
+        # as the MCP workspace root so no-arg tools still resolve project state.
+        if workspace_root == current and not (current / "workspace.yaml").is_file():
+            child_workspaces = [
+                p.parent
+                for p in current.glob("*/workspace.yaml")
+                if (p.parent / "workspace.yaml").is_file()
+            ]
+            if len(child_workspaces) == 1:
+                workspace_root = child_workspaces[0].resolve()
+                current = workspace_root
+
+        workspace = load_workspace(current)
+        if current == workspace_root and len(workspace.projects) == 1:
+            entry = workspace.projects[0]
+            project_path = Path(entry.path)
+            if not project_path.is_absolute():
+                project_path = workspace_root / project_path
+            if project_path.is_dir():
+                return project_path.resolve()
+        return resolve_root(current)
+    except Exception:
+        return current
+
+
 def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Dispatch a tool call to the appropriate handler."""
     from agentscaffold.config import load_config
     from agentscaffold.graph import GraphLockError, graph_available, open_graph
 
-    config = load_config()
+    root = _effective_mcp_root()
+    # Dynamic per-call project routing for multi-project workspaces: if the caller
+    # tells us the path it is working on, scope the call to that path's project
+    # instead of the server's fixed launch directory. Every project-scoped read
+    # resolves its scope from the cwd, so chdir is sufficient to retarget them.
+    routed_root = _route_root_for_working_path(arguments.get("working_path"))
+    if routed_root is not None:
+        root = routed_root
+    os.chdir(root)
+    config = load_config(root / "scaffold.yaml")
+    # Pin the embedding weights cache from config BEFORE any retrieval-status
+    # probe (the meta build below runs evaluate_retrieval). Without this, cold
+    # tools like scaffold_stats probe the unpinned default HF cache and report
+    # retrieval as 'degraded' even though semantic search works.
+    try:
+        from agentscaffold.graph.embeddings import configure_embeddings
+
+        configure_embeddings(config.search.embedding_model, config.search.cache_dir)
+    except Exception:  # pragma: no cover - defensive; search config optional
+        pass
+    # Robust default: if the effective root is not a registered project and the
+    # caller did not scope explicitly, federate across all projects rather than
+    # failing closed with a ScopingError.
+    if not arguments.get("project") and not arguments.get("all_projects"):
+        try:
+            from agentscaffold.graph.scoping import current_project_name
+
+            current_project_name(root)
+        except Exception:
+            arguments = {**arguments, "all_projects": True}
     if not graph_available(config):
         return {"error": "No knowledge graph found. Run 'scaffold index' first."}
 
@@ -1078,7 +1226,6 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return {"error": str(exc), "graph_locked": True}
     except Exception as exc:  # pragma: no cover - defensive fallback
         return {"error": f"Failed to open knowledge graph: {exc}"}
-    root = Path.cwd()
     freshness_meta: dict[str, Any] = {}
     try:
         from agentscaffold.mcp.freshness import (
@@ -1635,7 +1782,7 @@ def _tool_validate(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) 
     if check == "staleness":
         from agentscaffold.graph.verify import verify_graph
 
-        report = verify_graph(store, Path.cwd())
+        report = verify_graph(store, _effective_mcp_root())
         return {"report": report, "meta": meta}
 
     if check == "contracts":
@@ -1807,12 +1954,15 @@ def _tool_prepare_review(
     # Collect impacted paths from the brief (avoids a redundant graph query)
     impacted_paths = [fp["path"] for fp in brief.get("file_profiles", []) if fp.get("path")]
 
-    # Open findings: plan-scoped first, then file-scoped (deduplicated)
-    plan_findings = get_open_findings(store, plan_number=pn, limit=20)
+    # Open findings: plan-scoped first, then file-scoped (deduplicated).
+    # Scope to the active project so a sibling project's same-numbered plan does
+    # not leak findings into this review.
+    finding_project = _current_project_or_none()
+    plan_findings = get_open_findings(store, plan_number=pn, limit=20, project=finding_project)
     seen_ids: set[str] = {r.get("rf.id", "") for r in plan_findings}
     file_findings: list[dict[str, Any]] = []
     for fpath in impacted_paths[:10]:
-        for row in get_open_findings(store, file_path=fpath, limit=5):
+        for row in get_open_findings(store, file_path=fpath, limit=5, project=finding_project):
             fid = row.get("rf.id", "")
             if fid not in seen_ids:
                 seen_ids.add(fid)
@@ -2150,9 +2300,13 @@ def _tool_orient(store: Any, meta: dict[str, Any], root: Path, config: Any) -> d
     open_backlog = get_open_backlog_items(store, limit=3)
 
     try:
+        _bl_proj = _current_project_or_none()
+        _bl_proj_filter = (
+            f" AND project = '{_bl_proj.replace(chr(39), chr(39) * 2)}'" if _bl_proj else ""
+        )
         count_rows = store.query(
             "SELECT COUNT(*) AS cnt FROM BacklogItem"
-            " WHERE status NOT IN ('archived', 'unblockable')"
+            f" WHERE status NOT IN ('archived', 'unblockable'){_bl_proj_filter}"
         )
         open_backlog_count = count_rows[0]["cnt"] if count_rows else 0
     except Exception:
@@ -2333,6 +2487,7 @@ def _tool_record_finding(
         severity=arguments.get("severity", "medium"),
         file_paths=arguments.get("file_paths") or [],
         function_ids=arguments.get("function_ids") or [],
+        project=_current_project_or_none(),
     )
     result["meta"] = meta
     return result
@@ -2350,7 +2505,9 @@ def _tool_resolve_finding(
     if not finding_id or not resolution:
         return {"error": "finding_id and resolution are required.", "meta": meta}
 
-    result = resolve_finding(store, finding_id, resolution=resolution)
+    result = resolve_finding(
+        store, finding_id, resolution=resolution, project=_current_project_or_none()
+    )
     result["meta"] = meta
     return result
 
@@ -2376,6 +2533,7 @@ def _tool_record_findings_batch(
         plan_number=int(plan_number),
         review_type=review_type,
         findings=findings,
+        project=_current_project_or_none(),
     )
     result["meta"] = meta
     return result
@@ -2403,6 +2561,7 @@ def _tool_record_backlog_item(
             store,
             plan_number=int(plan_number),
             items=items,
+            project=_current_project_or_none(),
         )
         result["meta"] = meta
         return result
@@ -2420,6 +2579,7 @@ def _tool_record_backlog_item(
         effort=arguments.get("effort", ""),
         source=arguments.get("source", ""),
         status=arguments.get("status", "open"),
+        project=_current_project_or_none(),
     )
     result["meta"] = meta
     return result
@@ -2439,6 +2599,7 @@ def _tool_resolve_backlog_item(
         store,
         item_id,
         resolution=arguments.get("resolution", ""),
+        project=_current_project_or_none(),
     )
     result["meta"] = meta
     return result
@@ -2567,6 +2728,7 @@ def _tool_begin_plan(
             plan_number=pn,
             review_type="pre_review",
             findings=findings_to_write,
+            project=_current_project_or_none(),
         )
 
     # --- Stamp Plan.reviewedAt ---
@@ -2657,6 +2819,7 @@ def _tool_complete_plan(
             plan_number=pn,
             review_type="post_retro",
             findings=retro_findings,
+            project=_current_project_or_none(),
         )
 
     # --- Write backlog items if provided ---
@@ -2667,6 +2830,7 @@ def _tool_complete_plan(
             store,
             plan_number=pn,
             items=backlog_items_arg,
+            project=_current_project_or_none(),
         )
 
     # --- Build structured_learnings from retro insights ---

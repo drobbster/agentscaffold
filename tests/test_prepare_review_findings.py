@@ -35,7 +35,7 @@ def _make_store(plan_findings: list[dict], file_findings: dict[str, list[dict]])
     store = MagicMock()
     store.is_duckpgq = True
 
-    def _fake_get_open_findings(s, *, plan_number=None, file_path=None, limit=20):
+    def _fake_get_open_findings(s, *, plan_number=None, file_path=None, limit=20, project=None):
         if file_path is not None:
             return file_findings.get(file_path, [])
         result = plan_findings[:]
@@ -328,7 +328,7 @@ def test_prepare_review_deduplicates_findings(tmp_path: Path):
 
     call_count = {"n": 0}
 
-    def _fake_get_open(s, *, plan_number=None, file_path=None, limit=20):
+    def _fake_get_open(s, *, plan_number=None, file_path=None, limit=20, project=None):
         call_count["n"] += 1
         if file_path == impacted_file:
             # Return the same finding that was already in plan_findings
@@ -381,7 +381,7 @@ def test_prepare_review_findings_sorted_by_severity(tmp_path: Path):
         _make_finding("f3", "medium", plan_number=10),
     ]
 
-    def _fake_get_open(s, *, plan_number=None, file_path=None, limit=20):
+    def _fake_get_open(s, *, plan_number=None, file_path=None, limit=20, project=None):
         if file_path:
             return []
         return findings
@@ -419,7 +419,7 @@ def test_prepare_review_findings_capped_at_20(tmp_path: Path):
     store = MagicMock()
     many_findings = [_make_finding(f"f{i}", "medium", plan_number=10) for i in range(30)]
 
-    def _fake_get_open(s, *, plan_number=None, file_path=None, limit=20):
+    def _fake_get_open(s, *, plan_number=None, file_path=None, limit=20, project=None):
         if file_path:
             return []
         return many_findings

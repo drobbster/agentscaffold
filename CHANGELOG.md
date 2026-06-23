@@ -8,6 +8,59 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-23
+
+Multi-project workspace hardening discovered while running AgentScaffold against
+real multi-project workspaces. Five related fixes; all preserve single-project
+behavior (scoping is a no-op there, and `project=None` reproduces prior IDs and
+queries byte-for-byte).
+
+### Added
+- MCP tools accept an optional `working_path` argument (advertised on every
+  object-schema tool). In a multi-project workspace the server resolves the
+  owning project root from that path and scopes the call to it, so reads follow
+  the file the agent is editing even though the editor launches the MCP server
+  from one fixed directory. Empty/unresolvable `working_path` keeps the default
+  root; explicit `project` / `all_projects` still take precedence.
+- `_route_root_for_working_path` resolves a project root from an absolute or
+  workspace-relative path; `_dispatch_tool` chdir's into it per call so all
+  cwd-derived project scoping retargets without per-tool changes.
+
+### Fixed
+- MCP: a federated fail-open default. When the effective root is not a
+  registered project and the caller did not scope explicitly, the call now
+  federates across all projects instead of raising `ScopingError`.
+- MCP: accurate `retrieval_status` for cold tools (e.g. `scaffold_stats`). The
+  embedding weights cache is now pinned from config in `_dispatch_tool` before
+  the retrieval-status probe, so cold tools no longer report `degraded` while
+  semantic search actually works.
+- Findings: review findings are now project-scoped. `_finding_id` folds the
+  owning project into its hash key (plan numbers are not unique across
+  projects), `record_finding` / `record_findings_batch` stamp the `project`
+  column and scope `File` lookups, and `resolve_finding` / `get_open_findings`
+  accept a `project` filter. MCP finding handlers and `scaffold_prepare_review`
+  resolve the active project via `_current_project_or_none()`.
+- Backlog: same class of fix on the backlog path. `_backlog_id` folds the
+  project into its hash key; `record_backlog_item` / `record_backlog_items_batch`
+  stamp the `project` column and scope the `Plan` lookup; `resolve_backlog_item`,
+  `get_open_backlog_items`, and `get_backlog_items_for_plan` (in both
+  `graph/backlog` and the `review/queries` wrappers) accept `project`. The
+  orient open-backlog count is project-scoped to match the list.
+- Agent rule delivery: the generated Cursor routing rule is now written as
+  `.cursor/rules/agentscaffold.mdc` with `alwaysApply: true` (Cursor only loads
+  `.mdc` rules), per-reviewer rules are written as `<reviewer>.mdc`, and stale
+  `.md` files from older generations are removed. The `AGENTS.md` template gains
+  "AgentScaffold MCP Tools" and "Multi-Project Workspace Discipline" sections so
+  the `working_path` discipline reaches every agent platform.
+
+### Migration
+- Code stamps `project` only on new writes. Graphs that already hold findings or
+  backlog items written before this release will have rows with an empty
+  `project` column; backfill them per project (regenerate the project-scoped ID,
+  rewire the `BACKLOG_ITEM_OF` edges, then re-sync governance write-through) or
+  rebuild with `scaffold index`. Existing projects should re-run
+  `scaffold agents` / `scaffold agents cursor` to adopt the `.mdc` rule outputs.
+
 ## [0.8.0] - 2026-06-16
 
 ### Added (Plan 232 - async embedding lane and resident embedder)

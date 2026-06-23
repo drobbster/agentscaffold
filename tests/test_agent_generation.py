@@ -277,7 +277,7 @@ def test_write_cursor_reviewer_rules_creates_files(tmp_path: Path):
     config = _make_config([r])
     written = write_cursor_reviewer_rules(config, cursor_dir)
     assert len(written) == 1
-    dest = cursor_dir / "rules" / "quant_architect.md"
+    dest = cursor_dir / "rules" / "quant_architect.mdc"
     assert dest.exists()
     content = dest.read_text()
     assert "alwaysApply: false" in content
@@ -292,7 +292,7 @@ def test_write_cursor_reviewer_rules_dry_run(tmp_path: Path):
     config = _make_config([r])
     written = write_cursor_reviewer_rules(config, cursor_dir, dry_run=True)
     assert len(written) == 1
-    assert not (cursor_dir / "rules" / "quant_architect.md").exists()
+    assert not (cursor_dir / "rules" / "quant_architect.mdc").exists()
 
 
 def test_write_cursor_reviewer_rules_description_fallback(tmp_path: Path):
@@ -302,7 +302,7 @@ def test_write_cursor_reviewer_rules_description_fallback(tmp_path: Path):
     r = _make_reviewer(name="quant_architect", cursor_description=None)
     config = _make_config([r])
     write_cursor_reviewer_rules(config, cursor_dir)
-    content = (cursor_dir / "rules" / "quant_architect.md").read_text()
+    content = (cursor_dir / "rules" / "quant_architect.mdc").read_text()
     assert "quant_architect" in content
 
 
@@ -394,7 +394,7 @@ def test_all_platforms_real_write_creates_artifacts(tmp_path: Path):
 
     assert (tmp_path / ".claude" / "agents" / "security_reviewer.md").exists()
     assert (tmp_path / ".windsurf" / "agents" / "security_reviewer.md").exists()
-    assert (tmp_path / ".cursor" / "rules" / "security_reviewer.md").exists()
+    assert (tmp_path / ".cursor" / "rules" / "security_reviewer.mdc").exists()
 
 
 def test_agents_md_template_contains_human_readable_review_terminology():
@@ -551,7 +551,7 @@ def test_generate_all_preserves_org_owned_docs(tmp_path: Path):
     assert "# CLAUDE.md (generated)" in claude
     assert (tmp_path / ".windsurfrules").read_text().startswith("MY CUSTOM WINDSURF")
     # ... while the machine-owned routing policy is still regenerated.
-    assert (tmp_path / ".cursor" / "rules" / "agentscaffold.md").exists()
+    assert (tmp_path / ".cursor" / "rules" / "agentscaffold.mdc").exists()
 
 
 def test_generate_all_refreshes_managed_block_idempotently(tmp_path: Path):

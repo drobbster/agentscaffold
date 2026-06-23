@@ -31,9 +31,16 @@ def _sync_governance(store: GraphBackend) -> None:
     sync_if_enabled(store)
 
 
-def _backlog_id(plan_number: int, title: str) -> str:
-    """Derive a deterministic ID from plan number + title."""
-    key = f"backlog::{plan_number}::{title[:64]}"
+def _backlog_id(plan_number: int, title: str, project: str | None = None) -> str:
+    """Derive a deterministic, project-scoped ID from plan number + title.
+
+    Plan numbers are NOT unique across projects in a multi-project workspace, so
+    the project is folded into the hash key to prevent cross-project backlog-ID
+    collisions. A falsy *project* reproduces the original (unscoped) ID for
+    single-project back-compat.
+    """
+    prefix = f"{project}::" if project else ""
+    key = f"{prefix}backlog::{plan_number}::{title[:64]}"
     return "bi::" + hashlib.sha1(key.encode()).hexdigest()[:12]  # noqa: S324
 
 
@@ -46,6 +53,7 @@ def record_backlog_item(
     effort: str = "",
     source: str = "",
     status: str = "open",
+    project: str | None = None,
 ) -> dict[str, Any]:
     """Record a backlog item in the knowledge graph.
 
@@ -60,13 +68,17 @@ def record_backlog_item(
         effort: Effort estimate string (e.g. "Small (2h)").
         source: Review source reference (e.g. "DA Future Regret", "EX-8").
         status: Initial status -- "open", "blocked", or "unblockable".
+        project: Owning project in a multi-project workspace; stamps the
+            ``project`` column and scopes the deterministic ID and Plan lookup.
+            None (single-project) keeps the original unscoped behavior.
 
     Returns:
         Dict with ``id``, ``status``, and timing info.
     """
     t0 = time.monotonic()
-    item_id = _backlog_id(plan_number, title)
+    item_id = _backlog_id(plan_number, title, project)
     now = datetime.now(timezone.utc).isoformat()
+    proj_filter = f" AND project = '{_esc(project)}'" if project else ""
 
     props: dict[str, Any] = {
         "id": item_id,
@@ -78,12 +90,14 @@ def record_backlog_item(
         "source": source,
         "createdAt": now,
         "archivedAt": "",
+        "project": project or "",
     }
 
     store.create_node("BacklogItem", props)
 
-    # Link to plan
-    plan_rows = store.query(f"SELECT id FROM Plan WHERE number = {plan_number}")
+    # Link to plan (scoped to the owning project: plan numbers are not unique
+    # across projects in a multi-project workspace).
+    plan_rows = store.query(f"SELECT id FROM Plan WHERE number = {plan_number}{proj_filter}")
     if plan_rows:
         store.create_edge("BACKLOG_ITEM_OF", "BacklogItem", item_id, "Plan", plan_rows[0]["id"])
 
@@ -106,6 +120,7 @@ def record_backlog_items_batch(
     *,
     plan_number: int,
     items: list[dict[str, Any]],
+    project: str | None = None,
 ) -> dict[str, Any]:
     """Record multiple BacklogItem nodes in a single transaction.
 
@@ -116,6 +131,8 @@ def record_backlog_items_batch(
         store: Open GraphBackend instance.
         plan_number: Plan number all items relate to.
         items: List of backlog item dicts.
+        project: Owning project in a multi-project workspace; stamps the
+            ``project`` column and scopes the deterministic IDs and Plan lookup.
 
     Returns:
         Dict with ``ids``, ``count``, and timing info.
@@ -126,8 +143,9 @@ def record_backlog_items_batch(
 
     now = datetime.now(timezone.utc).isoformat()
     ids: list[str] = []
+    proj_filter = f" AND project = '{_esc(project)}'" if project else ""
 
-    plan_rows = store.query(f"SELECT id FROM Plan WHERE number = {plan_number}")
+    plan_rows = store.query(f"SELECT id FROM Plan WHERE number = {plan_number}{proj_filter}")
     plan_id = plan_rows[0]["id"] if plan_rows else None
 
     store.execute("BEGIN TRANSACTION")
@@ -136,7 +154,7 @@ def record_backlog_items_batch(
             title = item.get("title", "")
             if not title:
                 continue
-            item_id = _backlog_id(plan_number, title)
+            item_id = _backlog_id(plan_number, title, project)
             props: dict[str, Any] = {
                 "id": item_id,
                 "planNumber": plan_number,
@@ -147,6 +165,7 @@ def record_backlog_items_batch(
                 "source": item.get("source", ""),
                 "createdAt": now,
                 "archivedAt": "",
+                "project": project or "",
             }
             store.create_node("BacklogItem", props)
             if plan_id:
@@ -175,6 +194,7 @@ def resolve_backlog_item(
     item_id: str,
     *,
     resolution: str = "",
+    project: str | None = None,
 ) -> dict[str, Any]:
     """Mark a BacklogItem as archived (completed).
 
@@ -185,16 +205,19 @@ def resolve_backlog_item(
         store: Open GraphBackend instance.
         item_id: The ID of the backlog item to archive.
         resolution: Optional note describing how the item was completed.
+        project: When set, only archives the item if it belongs to this
+            project (defense-in-depth against cross-project resolves).
 
     Returns:
         Dict with ``id``, ``status``, and timing info.
     """
     t0 = time.monotonic()
     now = datetime.now(timezone.utc).isoformat()
+    proj_filter = f" AND project = '{_esc(project)}'" if project else ""
 
     store.execute(
         f"UPDATE BacklogItem SET status = 'archived', archivedAt = '{now}'"
-        f" WHERE id = '{_esc(item_id)}'"
+        f" WHERE id = '{_esc(item_id)}'{proj_filter}"
     )
 
     _sync_governance(store)
@@ -214,6 +237,7 @@ def get_open_backlog_items(
     *,
     plan_number: int | None = None,
     limit: int = 20,
+    project: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return open (non-archived) BacklogItems, optionally filtered by plan.
 
@@ -223,6 +247,8 @@ def get_open_backlog_items(
         store: Open GraphBackend instance.
         plan_number: If provided, filter to items for this plan only.
         limit: Maximum number of items to return.
+        project: When set, only return items stamped with this project
+            (multi-project scoping). None returns items regardless of project.
 
     Returns:
         List of backlog item dicts.
@@ -230,6 +256,7 @@ def get_open_backlog_items(
     from agentscaffold.graph.query_compat import ql  # noqa: PLC0415
 
     plan_filter = f" AND planNumber = {plan_number}" if plan_number is not None else ""
+    proj_filter = f" AND project = '{_esc(project)}'" if project else ""
     rows = ql(
         store,
         sql=(
@@ -237,7 +264,7 @@ def get_open_backlog_items(
             f' title AS "bi.title", priority AS "bi.priority",'
             f' effort AS "bi.effort", status AS "bi.status", source AS "bi.source"'
             f" FROM BacklogItem"
-            f" WHERE status NOT IN ('archived', 'unblockable'){plan_filter}"
+            f" WHERE status NOT IN ('archived', 'unblockable'){plan_filter}{proj_filter}"
             f" ORDER BY priority"
             f" LIMIT {limit}"
         ),
@@ -250,6 +277,7 @@ def get_backlog_items_for_plan(
     plan_number: int,
     *,
     include_archived: bool = False,
+    project: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return all BacklogItems for a specific plan.
 
@@ -257,6 +285,8 @@ def get_backlog_items_for_plan(
         store: Open GraphBackend instance.
         plan_number: Plan number to filter by.
         include_archived: If True, include archived items.
+        project: When set, only return items stamped with this project
+            (multi-project scoping). None returns items regardless of project.
 
     Returns:
         List of backlog item dicts ordered by priority.
@@ -264,6 +294,7 @@ def get_backlog_items_for_plan(
     from agentscaffold.graph.query_compat import ql  # noqa: PLC0415
 
     status_filter = "" if include_archived else " AND status != 'archived'"
+    proj_filter = f" AND project = '{_esc(project)}'" if project else ""
     rows = ql(
         store,
         sql=(
@@ -271,7 +302,7 @@ def get_backlog_items_for_plan(
             f' title AS "bi.title", priority AS "bi.priority",'
             f' effort AS "bi.effort", status AS "bi.status", source AS "bi.source"'
             f" FROM BacklogItem"
-            f" WHERE planNumber = {plan_number}{status_filter}"
+            f" WHERE planNumber = {plan_number}{status_filter}{proj_filter}"
             f" ORDER BY priority"
         ),
     )

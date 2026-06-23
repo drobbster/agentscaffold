@@ -26,6 +26,38 @@
 {% if config.gates.review_to_ready.security_review -%}
 - **Security**: docs/security/ (threat models, security documentation)
 {% endif %}
+## AgentScaffold MCP Tools
+
+Prefer AgentScaffold MCP tools first when a request matches a known intent
+(orientation/status, plan review, decision lineage, symbol context/impact,
+recording findings/backlog). If a tool errors, is stale, or lacks the specific
+detail, fall back to direct reads/search and state one short reason. The full
+intent-to-tool map lives in `.cursor/rules/agentscaffold.mdc`.
+
+## Multi-Project Workspace Discipline
+
+If this repo is part of a multi-project workspace (a `workspace.yaml` at the
+workspace root lists more than one project), several projects share one graph.
+Otherwise this section is a no-op -- there is exactly one project and nothing is
+scoped.
+
+- Reads default to the CURRENT project (resolved from the working directory):
+  search and governance queries (plans, findings, backlog, learnings, studies,
+  ADRs) return only this project's knowledge. Plan numbers and file paths are
+  NOT unique across projects, so do not assume a result belongs to a sibling.
+- VIA MCP TOOLS the server runs from one fixed directory and cannot infer which
+  project you are editing. On every project-scoped tool call, pass `working_path`
+  = the file or dir you are working on; the server resolves the owning project
+  from it and scopes the call accordingly. Omitting it falls back to the
+  server's default project.
+- To look at another project, pass `project=<name>` (tools) / `--project <name>`
+  (CLI); to search across all of them, pass `all_projects=true` / `--all-projects`
+  (federated results carry a `project` provenance field -- always report which
+  project a cross-project hit came from).
+- Scoping is a relevance boundary within a single trust domain, not a security
+  isolation boundary. When unsure which project you are in, run
+  `scaffold workspace list`.
+
 ## Planning Rules (Mandatory)
 
 - Any architectural or refactor work MUST begin with a plan file.
