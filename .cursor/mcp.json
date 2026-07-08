@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "agentscaffold": {
+      "command": "scaffold",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}

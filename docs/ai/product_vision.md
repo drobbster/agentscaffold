@@ -1,0 +1,17 @@
+# Product Vision -- agentscaffold
+
+## Mission
+
+[Your project's mission]
+
+## Current Scope
+
+[What the project does today]
+
+## Future Capabilities
+
+[Planned phases/features]
+
+## Architecture Integration
+
+[How phases build on each other]

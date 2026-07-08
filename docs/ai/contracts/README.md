@@ -1,0 +1,32 @@
+# Interface Contracts Registry
+
+This directory contains interface contracts that define APIs between plans. Contracts ensure that dependent plans are compatible before implementation begins.
+
+---
+
+## Registry
+
+| Module | Version | Provider Plan | Consumers | Status |
+|--------|---------|---------------|-----------|--------|
+| [graph_backend_interface](graph_backend_interface.md) | v1.0 | 149 | graph, mcp, review, pipeline | Active |
+| [mcp_write_tools_interface](mcp_write_tools_interface.md) | v1.0 | 149 | mcp, review | Active |
+
+---
+
+## Versioning Rules
+
+| Change Type | Version Bump |
+|-------------|--------------|
+| Additive (new optional parameters, new methods) | Minor (v1.x) |
+| Breaking (signature changes, removed methods) | Major (v2.0) |
+
+Breaking changes require ADR approval and migration path documentation.
+
+---
+
+## How to Create a Contract
+
+1. When creating a plan that exports interfaces, create a contract file
+2. Document all public classes, functions, and schemas
+3. Reference the contract in the plan's File Impact Map
+4. Add entry to the registry table above
