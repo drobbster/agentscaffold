@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from pathlib import Path
 
 from rich.console import Console
 
 from agentscaffold.config import load_config
+from agentscaffold.paths import ResolvedPaths, resolve_root
 from agentscaffold.rendering import get_default_context, get_graph_context, render_template
 
 console = Console()
@@ -23,7 +23,7 @@ def _sanitize_name(name: str) -> str:
 def run_study_create(name: str) -> None:
     """Create a new study file from the study template."""
     config = load_config()
-    studies_dir = Path("docs/studies")
+    studies_dir = ResolvedPaths(config, resolve_root()).studies_dir
 
     if not studies_dir.is_dir():
         console.print(f"[yellow]Warning: {studies_dir} does not exist, creating it.[/yellow]")

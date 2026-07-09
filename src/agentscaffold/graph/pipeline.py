@@ -23,7 +23,18 @@ from agentscaffold.graph.symbol_table import SymbolTable
 
 def _open_store_for_pipeline(db_path: Path, backend_name: str) -> GraphBackend:
     """Instantiate the backend for pipeline writes."""
-    return DuckPGQBackend(db_path)
+    from agentscaffold.graph.locks import graph_write_lock
+
+    lock_cm = graph_write_lock(db_path, purpose="index", timeout=30.0)
+    lock_cm.__enter__()
+    try:
+        store = DuckPGQBackend(db_path)
+    except Exception:
+        lock_cm.__exit__(None, None, None)
+        raise
+    setattr(store, "_graph_write_lock_cm", lock_cm)
+    setattr(store, "_graph_write_lock_active", True)
+    return store
 
 
 def _migrate_on_version_change(
@@ -137,10 +148,20 @@ def run_pipeline(
     """
     root = root.resolve()
     graph_config = config.graph if config else None
-    db_path = Path(graph_config.db_path) if graph_config else Path(".scaffold/graph.duckdb")
 
-    if not db_path.is_absolute():
-        db_path = root / db_path
+    # Resolve the DB path against the project root (Plan 221) so the index-time
+    # location matches what open_graph uses at query time. A relative db_path
+    # anchors to the nearest scaffold.yaml/.git (falling back to the scan root)
+    # rather than the bare working directory; an absolute db_path is honored.
+    from agentscaffold.paths import resolve_db_path
+
+    db_path = resolve_db_path(config, start=root)
+
+    # Plan 223: note whether the cache exists before we build. On an ephemeral
+    # box (no cache) the governance phase restores findings/sessions/backlog from
+    # the committed artifact; we surface that so the operator sees the rebuild
+    # reconstructed durable knowledge from git rather than starting empty.
+    cache_existed = db_path.is_file()
 
     backend_name = (graph_config.backend if graph_config else None) or "duckpgq"
     t0 = time.monotonic()
@@ -157,6 +178,19 @@ def run_pipeline(
     phases_completed: list[str] = []
     summary: dict[str, Any] = {}
 
+    # Plan 225: in a multi-project workspace, tag every write with this project
+    # and scope clears to it so re-indexing one project never touches siblings.
+    # Single-project repos resolve to None -- the choke point is a no-op.
+    from agentscaffold.paths import load_workspace as _load_workspace
+
+    _workspace = _load_workspace(root)
+    write_project: str | None = None
+    if _workspace.is_multi_project:
+        from agentscaffold.graph.scoping import current_project_name
+
+        write_project = current_project_name(root)
+    store.set_write_project(write_project)
+
     # Incremental mode: compute changeset and only process changed files
     if incremental and store.schema_current():
         return _run_incremental(store, root, graph_config, t0, embeddings, config=config)
@@ -171,13 +205,13 @@ def run_pipeline(
                 "Clearing derived data and starting fresh "
                 "(review findings and sessions preserved)...[/yellow]"
             )
-            store.clear_derived()
+            store.clear_derived(project=write_project)
         elif pipeline_state["state"] == "complete":
             console.print(
                 "[dim]Full re-index: clearing derived data "
                 "(review findings and sessions preserved)...[/dim]"
             )
-            store.clear_derived()
+            store.clear_derived(project=write_project)
         elif pipeline_state["state"] == "partial":
             phases_completed = pipeline_state["phases_completed"]
             console.print(
@@ -376,7 +410,7 @@ def run_pipeline(
         try:
             from agentscaffold.graph.embeddings import generate_embeddings
 
-            emb_result = generate_embeddings(store)
+            emb_result = generate_embeddings(store, root=root)
             summary["embeddings"] = emb_result
             phases_completed.append("embeddings")
             total = sum(emb_result.values())
@@ -396,6 +430,16 @@ def run_pipeline(
     elapsed = time.monotonic() - t0
     summary["elapsed_seconds"] = round(elapsed, 1)
     summary["phases_completed"] = phases_completed
+
+    # Plan 223: report governance restored from the committed artifact on a fresh
+    # build (e.g. ephemeral devbox or after a deleted cache).
+    restored = summary.get("governance", {}).get("governance_restored", 0)
+    summary["restored_from_artifact"] = (not cache_existed) and restored > 0
+    if summary["restored_from_artifact"]:
+        console.print(
+            f"[green]Restored {restored} governance record(s) "
+            "(findings/sessions/backlog) from the committed artifact.[/green]"
+        )
 
     # Print final summary
     _print_summary(summary, store)
@@ -445,6 +489,7 @@ def _run_incremental(
     from agentscaffold.graph.incremental import (
         add_file_node,
         compute_changeset,
+        direct_dependents,
         remove_file_nodes,
     )
 
@@ -482,13 +527,27 @@ def _run_incremental(
             prior_gov_fp = None
     gov_changed = prior_gov_fp != current_gov_fp
 
-    if not added and not modified and not deleted and not gov_changed:
+    structure_unchanged = not added and not modified and not deleted and not gov_changed
+    if structure_unchanged and not embeddings:
         console.print("[green]Graph is up to date. Nothing to do.[/green]")
+        store.update_pipeline_state("complete", ["incremental"])
         elapsed = time.monotonic() - t0
+        summary["noop"] = True
         summary["elapsed_seconds"] = round(elapsed, 1)
-        summary["phases_completed"] = ["incremental"]
+        summary["phases_completed"] = ["incremental", "noop"]
         store.close()
         return summary
+    if structure_unchanged and embeddings:
+        console.print("[green]Graph structure is up to date. Checking embeddings...[/green]")
+
+    changed_or_deleted = set(added) | set(modified) | set(deleted)
+    dependent_files = direct_dependents(store, changed_or_deleted)
+
+    from agentscaffold.graph.config_refs import config_files_referencing
+
+    config_scope = (
+        set(added) | set(modified) | config_files_referencing(store, changed_or_deleted)
+    ) - set(deleted)
 
     # Remove deleted files
     if deleted:
@@ -510,6 +569,8 @@ def _run_incremental(
 
     # Re-parse only changed files
     changed_files = set(added) | set(modified)
+    affected_files = (changed_files | dependent_files) - set(deleted)
+    symbol_table: SymbolTable | None = None
     if changed_files:
         console.print(f"  Re-parsing {len(changed_files)} file(s)...")
         symbol_table = SymbolTable()
@@ -520,22 +581,27 @@ def _run_incremental(
         parse_result = process_parsing(store, root, symbol_table, file_paths=changed_files)
         summary["parsing"] = parse_result
 
+    if affected_files:
+        if symbol_table is None:
+            symbol_table = SymbolTable()
+            _rebuild_symbol_table(store, symbol_table)
+
         from agentscaffold.graph.calls import process_calls
         from agentscaffold.graph.imports import process_imports
 
-        import_result = process_imports(store, root, symbol_table)
+        import_result = process_imports(store, root, symbol_table, file_paths=affected_files)
         summary["imports"] = import_result
 
-        call_result = process_calls(store, root, symbol_table)
+        call_result = process_calls(store, root, symbol_table, file_paths=affected_files)
         summary["calls"] = call_result
 
+    if config_scope:
         # Config references can change when a config file is edited or when a
-        # referenced code file is refreshed (its incoming edges were dropped with
-        # the file node). Reprocessing is cheap and idempotent, so re-run whenever
-        # any file changed.
+        # referenced code file is refreshed/deleted (its incoming edges were
+        # dropped with the file node). Reprocess only the affected config files.
         from agentscaffold.graph.config_refs import process_config_references
 
-        config_ref_result = process_config_references(store, root)
+        config_ref_result = process_config_references(store, root, file_paths=config_scope)
         summary["config_refs"] = config_ref_result
         console.print(
             f"  Config refs: {config_ref_result['edges']} edges "
@@ -554,7 +620,7 @@ def _run_incremental(
         try:
             from agentscaffold.graph.governance import process_governance
 
-            store.clear_governance()
+            store.clear_governance(project=store.write_project)
             gov_result = process_governance(store, root, config=config)
             summary["governance"] = gov_result
             console.print(
@@ -577,18 +643,23 @@ def _run_incremental(
     else:
         console.print("  Governance unchanged; skipping refresh")
 
-    # Re-run communities
-    from agentscaffold.graph.communities import detect_communities
+    # Re-run communities only when the incremental policy says the coarse
+    # orientation clusters need refreshing.
+    if _should_refresh_incremental_communities(graph_config, added, modified, deleted):
+        from agentscaffold.graph.communities import detect_communities
 
-    comm_result = detect_communities(store)
-    summary["communities"] = comm_result
+        comm_result = detect_communities(store)
+        summary["communities"] = comm_result
+    else:
+        console.print("  Communities unchanged; skipping refresh")
 
     # Re-run embeddings if requested
     if embeddings:
         try:
             from agentscaffold.graph.embeddings import generate_embeddings
 
-            emb_result = generate_embeddings(store)
+            emb_scope = None if structure_unchanged else affected_files | config_scope
+            emb_result = generate_embeddings(store, root=root, file_paths=emb_scope)
             summary["embeddings"] = emb_result
         except ImportError:
             pass
@@ -602,6 +673,22 @@ def _run_incremental(
     _print_summary(summary, store)
     store.close()
     return summary
+
+
+def _should_refresh_incremental_communities(
+    graph_config: Any,
+    added: list[str],
+    modified: list[str],
+    deleted: list[str],
+) -> bool:
+    """Return True when incremental community detection should run."""
+    mode = getattr(graph_config, "incremental_community_refresh", "structure")
+    if mode == "always":
+        return True
+    if mode == "threshold":
+        threshold = int(getattr(graph_config, "incremental_community_threshold", 25) or 25)
+        return len(added) + len(modified) + len(deleted) >= threshold
+    return bool(added or deleted)
 
 
 def _rebuild_symbol_table(store: GraphBackend, symbol_table: SymbolTable) -> None:

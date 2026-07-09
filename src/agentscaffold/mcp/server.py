@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import time
 from pathlib import Path
 from typing import Any
+
+from pydantic import AnyUrl
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +147,15 @@ TOOL_INTENTS: dict[str, list[str]] = {
         "trace the decisions for plan X",
         "trace the rationale chain for plan X",
         "why was this plan decided this way",
+    ],
+    "scaffold_search": [
+        "search the workspace for X",
+        "search across all projects for X",
+        "find code related to X",
+        "find duplicates across projects",
+        "look for duplicate code in the workspace",
+        "search all projects for similar implementations",
+        "look across every project for similar implementations",
     ],
     "scaffold_record_finding": [
         "record finding",
@@ -285,6 +298,7 @@ _TOOL_SIGNAL_TOKENS: dict[str, set[str]] = {
     "scaffold_prior_experiments": {"prior", "experiments", "evidence", "tested"},
     "scaffold_find_adrs": {"adr", "architecture", "decision", "governs"},
     "scaffold_decision_context": {"decision", "history", "chain", "spike", "intent", "adr"},
+    "scaffold_search": {"search", "find", "workspace", "projects", "duplicate", "similar"},
     "scaffold_record_finding": {"record", "log", "finding", "discovered", "issue", "capture"},
     "scaffold_resolve_finding": {"resolve", "resolved", "close", "fixed", "addressed"},
     "scaffold_record_findings_batch": {"batch", "all", "findings", "multiple", "appendix"},
@@ -362,20 +376,20 @@ async def _serve() -> None:
     """Async entry point for the MCP server."""
     server = Server("agentscaffold")
 
-    @server.list_tools()
+    @server.list_tools()  # type: ignore[no-untyped-call,untyped-decorator]
     async def list_tools() -> list[Tool]:
-        return _get_tool_definitions()
+        return _with_working_path_arg(_get_tool_definitions())
 
-    @server.call_tool()
+    @server.call_tool()  # type: ignore[untyped-decorator]
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         result = _dispatch_tool(name, arguments)
         return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
 
-    @server.list_resources()
+    @server.list_resources()  # type: ignore[no-untyped-call,untyped-decorator]
     async def list_resources() -> list[Resource]:
         return _get_resource_definitions()
 
-    @server.read_resource()
+    @server.read_resource()  # type: ignore[no-untyped-call,untyped-decorator]
     async def read_resource(uri: str) -> str:
         return json.dumps(_dispatch_resource(uri), indent=2, default=str)
 
@@ -388,7 +402,36 @@ async def _serve() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _get_tool_definitions() -> list:
+_WORKING_PATH_PROP = {
+    "type": "string",
+    "description": (
+        "Optional. Absolute or workspace-relative path of the file or directory "
+        "you are currently working on. In a multi-project workspace the server "
+        "resolves the owning project from this path and scopes the call to it, so "
+        "reads follow your active project even though the MCP server runs from a "
+        "single fixed directory. Omit to use the server's default project, or pass "
+        "project / all_projects explicitly."
+    ),
+}
+
+
+def _with_working_path_arg(tools: list[Tool]) -> list[Tool]:
+    """Advertise a uniform ``working_path`` arg on every object-schema tool.
+
+    Enables dynamic per-call project scoping (Cursor MCP cannot infer the active
+    project from a fixed server cwd) without each tool schema hand-declaring the
+    field. Mutates the freshly-built inputSchema dicts in place.
+    """
+    for tool in tools:
+        schema = getattr(tool, "inputSchema", None)
+        if isinstance(schema, dict) and schema.get("type") == "object":
+            props = schema.setdefault("properties", {})
+            if isinstance(props, dict):
+                props.setdefault("working_path", dict(_WORKING_PATH_PROP))
+    return tools
+
+
+def _get_tool_definitions() -> list[Tool]:
     """Return MCP tool definitions."""
     if not _MCP_AVAILABLE:
         return []
@@ -452,6 +495,63 @@ def _get_tool_definitions() -> list:
                         "type": "integer",
                         "description": "Number of results (default: 10)",
                         "default": 10,
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": ["code", "governance", "all"],
+                        "description": "Search corpus (default: code)",
+                        "default": "code",
+                    },
+                    "rerank": {
+                        "type": "boolean",
+                        "description": "Rerank final results with the configured cross-encoder",
+                        "default": False,
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": (
+                            "Target a specific project in a multi-project workspace "
+                            "(defaults to the current project)"
+                        ),
+                    },
+                    "all_projects": {
+                        "type": "boolean",
+                        "description": "Search across every project in the workspace",
+                        "default": False,
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="scaffold_recall_governance",
+            description=(
+                "Semantically recall prior governance knowledge (plans, findings, "
+                "learnings, ADRs, studies, spikes, backlog) for a natural-language query."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Natural language recall query"},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["keyword", "semantic", "hybrid"],
+                        "description": "Search mode (default: hybrid)",
+                        "default": "hybrid",
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "description": "Number of results (default: 10)",
+                        "default": 10,
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Target a specific project in a multi-project workspace",
+                    },
+                    "all_projects": {
+                        "type": "boolean",
+                        "description": "Search governance across every project in the workspace",
+                        "default": False,
                     },
                 },
                 "required": ["query"],
@@ -968,20 +1068,20 @@ def _get_tool_definitions() -> list:
 # ---------------------------------------------------------------------------
 
 
-def _get_resource_definitions() -> list:
+def _get_resource_definitions() -> list[Resource]:
     """Return MCP resource definitions."""
     if not _MCP_AVAILABLE:
         return []
 
     return [
         Resource(
-            uri="scaffold://project/context",
+            uri=AnyUrl("scaffold://project/context"),
             name="Project Context",
             description="Project stats, layer map, hot spots, recent plans.",
             mimeType="application/json",
         ),
         Resource(
-            uri="scaffold://project/layers",
+            uri=AnyUrl("scaffold://project/layers"),
             name="Architecture Layers",
             description="Architecture layers with file counts.",
             mimeType="application/json",
@@ -994,22 +1094,150 @@ def _get_resource_definitions() -> list:
 # ---------------------------------------------------------------------------
 
 
+def _route_root_for_working_path(working_path: Any) -> Path | None:
+    """Resolve the project root that owns *working_path* (dynamic per-call scoping).
+
+    The Cursor MCP server runs from a single fixed working directory, so it
+    cannot infer which project the agent is actively editing. When a caller
+    passes ``working_path`` (the file or dir it is working on), resolve the
+    owning project root from it so multi-project reads scope to that project
+    instead of the server's launch directory. Absolute or workspace-relative
+    paths are accepted. Returns None when the path is empty or cannot be
+    resolved, so the caller keeps the default root.
+    """
+    if not working_path:
+        return None
+    try:
+        from agentscaffold.paths import resolve_root, resolve_workspace_root
+
+        candidate = Path(str(working_path)).expanduser()
+        if not candidate.is_absolute():
+            candidate = resolve_workspace_root() / candidate
+        candidate = candidate.resolve()
+        if not candidate.exists():
+            return None
+        return resolve_root(candidate)
+    except Exception:
+        return None
+
+
+def _current_project_or_none() -> str | None:
+    """Resolve the active project for a scoped write/read, or None if unscoped.
+
+    Used by the findings write/read handlers so review findings are stamped with
+    (and filtered by) the project the agent is working in. Relies on the cwd,
+    which ``_dispatch_tool`` has already routed via ``working_path``. Returns
+    None in a single-project workspace or when the project cannot be resolved
+    (federated/ambiguous), preserving the pre-multi-project unscoped behavior.
+    """
+    try:
+        from agentscaffold.graph.scoping import resolve_scope
+
+        return resolve_scope().project
+    except Exception:
+        return None
+
+
+def _effective_mcp_root(start: Path | None = None) -> Path:
+    """Resolve the project root for MCP calls launched from a workspace root.
+
+    Cursor can launch MCP servers from a broad IDE workspace rather than the
+    active AgentScaffold project. When the current directory is an AgentScaffold
+    workspace with exactly one registered project, route no-arg tools to that
+    project root so project-local state resolves correctly.
+    """
+    current = (start or Path.cwd()).resolve()
+    try:
+        from agentscaffold.paths import (
+            load_workspace,
+            resolve_root,
+            resolve_workspace_root,
+        )
+
+        workspace_root = resolve_workspace_root(current)
+
+        # Cursor can launch user-level MCP servers from the broad IDE workspace
+        # (for this devbox, /home/drobb) while the AgentScaffold workspace is a
+        # child folder. If there is exactly one child workspace manifest, use it
+        # as the MCP workspace root so no-arg tools still resolve project state.
+        if workspace_root == current and not (current / "workspace.yaml").is_file():
+            child_workspaces = [
+                p.parent
+                for p in current.glob("*/workspace.yaml")
+                if (p.parent / "workspace.yaml").is_file()
+            ]
+            if len(child_workspaces) == 1:
+                workspace_root = child_workspaces[0].resolve()
+                current = workspace_root
+
+        workspace = load_workspace(current)
+        if current == workspace_root and len(workspace.projects) == 1:
+            entry = workspace.projects[0]
+            project_path = Path(entry.path)
+            if not project_path.is_absolute():
+                project_path = workspace_root / project_path
+            if project_path.is_dir():
+                return project_path.resolve()
+        return resolve_root(current)
+    except Exception:
+        return current
+
+
 def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Dispatch a tool call to the appropriate handler."""
     from agentscaffold.config import load_config
     from agentscaffold.graph import GraphLockError, graph_available, open_graph
 
-    config = load_config()
+    root = _effective_mcp_root()
+    # Dynamic per-call project routing for multi-project workspaces: if the caller
+    # tells us the path it is working on, scope the call to that path's project
+    # instead of the server's fixed launch directory. Every project-scoped read
+    # resolves its scope from the cwd, so chdir is sufficient to retarget them.
+    routed_root = _route_root_for_working_path(arguments.get("working_path"))
+    if routed_root is not None:
+        root = routed_root
+    os.chdir(root)
+    config = load_config(root / "scaffold.yaml")
+    # Pin the embedding weights cache from config BEFORE any retrieval-status
+    # probe (the meta build below runs evaluate_retrieval). Without this, cold
+    # tools like scaffold_stats probe the unpinned default HF cache and report
+    # retrieval as 'degraded' even though semantic search works.
+    try:
+        from agentscaffold.graph.embeddings import configure_embeddings
+
+        configure_embeddings(config.search.embedding_model, config.search.cache_dir)
+    except Exception:  # pragma: no cover - defensive; search config optional
+        pass
+    # Robust default: if the effective root is not a registered project and the
+    # caller did not scope explicitly, federate across all projects rather than
+    # failing closed with a ScopingError.
+    if not arguments.get("project") and not arguments.get("all_projects"):
+        try:
+            from agentscaffold.graph.scoping import current_project_name
+
+            current_project_name(root)
+        except Exception:
+            arguments = {**arguments, "all_projects": True}
     if not graph_available(config):
         return {"error": "No knowledge graph found. Run 'scaffold index' first."}
 
-    try:
-        store = open_graph(config)
-    except GraphLockError as exc:
-        return {"error": str(exc), "graph_locked": True}
-    except Exception as exc:  # pragma: no cover - defensive fallback
-        return {"error": f"Failed to open knowledge graph: {exc}"}
-    root = Path.cwd()
+    store = None
+    for attempt, delay in enumerate((0.0, 0.5, 1.0), start=1):
+        if delay:
+            time.sleep(delay)
+        try:
+            store = open_graph(config)
+            break
+        except GraphLockError as exc:
+            if attempt == 3:
+                return {
+                    "error": str(exc),
+                    "graph_locked": True,
+                    "retry_exhausted": True,
+                    "retry_attempts": attempt,
+                }
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            return {"error": f"Failed to open knowledge graph: {exc}"}
     freshness_meta: dict[str, Any] = {}
     try:
         from agentscaffold.mcp.freshness import (
@@ -1040,6 +1268,7 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         }
 
     meta = _build_meta(store, root, freshness_meta)
+    meta.update(_maybe_schedule_embedding_lane(root, config, meta))
 
     if config.freshness.gate_strict and bool(arguments.get("gate_transition")):
         if freshness_meta.get("freshness_status") in {"stale", "unknown", "refreshing"}:
@@ -1069,7 +1298,18 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             return _tool_impact(store, arguments, meta)
 
         elif name == "scaffold_search":
+            if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
+                from agentscaffold.graph.embeddings import configure_embeddings
+
+                configure_embeddings(config.search.embedding_model, config.search.cache_dir)
             return _tool_search(store, arguments, meta)
+
+        elif name == "scaffold_recall_governance":
+            if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
+                from agentscaffold.graph.embeddings import configure_embeddings
+
+                configure_embeddings(config.search.embedding_model, config.search.cache_dir)
+            return _tool_search(store, {**arguments, "kind": "governance"}, meta)
 
         elif name == "scaffold_validate":
             return _tool_validate(store, arguments, meta)
@@ -1160,7 +1400,40 @@ def _build_meta(
     return meta
 
 
-def _tool_context(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _maybe_schedule_embedding_lane(root: Path, config: Any, meta: dict[str, Any]) -> dict[str, Any]:
+    """Attach async embedding lane state and schedule degraded retrieval repair."""
+    try:
+        from agentscaffold.graph.embedding_scheduler import (
+            embedding_runtime_state,
+            maybe_schedule_async_embeddings,
+        )
+
+        lane_meta = embedding_runtime_state(root, config)
+        degraded = meta.get("retrieval_status") == "degraded"
+        if degraded:
+            schedule = maybe_schedule_async_embeddings(
+                root,
+                config,
+                reason=str(meta.get("retrieval_reason", "retrieval_degraded")),
+            )
+            lane_meta.update(schedule)
+        else:
+            lane_meta.setdefault("embedding_triggered", False)
+            lane_meta.setdefault("embedding_schedule_reason", "retrieval_not_degraded")
+        return lane_meta
+    except Exception as exc:  # pragma: no cover - metadata is best-effort
+        return {
+            "embedding_policy": str(
+                getattr(getattr(config, "graph", None), "async_embeddings", "off")
+            ),
+            "embedding_state": "failed",
+            "embedding_triggered": False,
+            "embedding_schedule_reason": "embedding_scheduler_error",
+            "embedding_last_error": str(exc),
+        }
+
+
+def _tool_context(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
     """Handle scaffold_context tool call."""
     from agentscaffold.graph.query_compat import ql
     from agentscaffold.mcp.coverage import (
@@ -1353,7 +1626,7 @@ def _transitive_importers(store: Any, file_id: str, depth: int) -> list[list[dic
     return levels
 
 
-def _tool_impact(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_impact(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
     """Handle scaffold_impact tool call."""
     from agentscaffold.graph.query_compat import ql
     from agentscaffold.mcp.coverage import (
@@ -1452,9 +1725,11 @@ def _tool_impact(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str,
     }
 
 
-def _tool_search(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_search(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
     """Handle scaffold_search tool call (hybrid search)."""
     from agentscaffold.graph.search import (
+        CODE_TABLES,
+        GOVERNANCE_TABLES,
         evaluate_retrieval,
         format_search_results,
         hybrid_search,
@@ -1463,12 +1738,36 @@ def _tool_search(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str,
     query_text = arguments.get("query", "")
     mode = arguments.get("mode", "hybrid")
     top_k = arguments.get("top_k", 10)
+    kind = arguments.get("kind", "code")
+    rerank = bool(arguments.get("rerank", False))
+    # Scope (Plan 225): defaults to the current project in a multi-project
+    # workspace; clients may pass project / all_projects to retarget or federate.
+    project = arguments.get("project") or None
+    all_projects = bool(arguments.get("all_projects", False))
 
     # Recompute retrieval status for the actually-requested mode so the search
     # response reflects what ran (the meta snapshot used the default mode).
     meta = {**meta, **evaluate_retrieval(store, mode)}
 
-    results = hybrid_search(store, query_text, mode=mode, top_k=top_k)
+    if kind == "code":
+        tables = CODE_TABLES
+    elif kind == "governance":
+        tables = GOVERNANCE_TABLES
+    elif kind == "all":
+        tables = [*CODE_TABLES, *GOVERNANCE_TABLES]
+    else:
+        tables = CODE_TABLES
+
+    results = hybrid_search(
+        store,
+        query_text,
+        mode=mode,
+        top_k=top_k,
+        tables=tables,
+        rerank=rerank,
+        project=project,
+        all_projects=all_projects,
+    )
 
     return {
         "results": [
@@ -1488,14 +1787,14 @@ def _tool_search(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str,
     }
 
 
-def _tool_validate(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_validate(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
     """Handle scaffold_validate tool call."""
     check = arguments.get("check", "")
 
     if check == "staleness":
         from agentscaffold.graph.verify import verify_graph
 
-        report = verify_graph(store, Path.cwd())
+        report = verify_graph(store, _effective_mcp_root())
         return {"report": report, "meta": meta}
 
     if check == "contracts":
@@ -1512,7 +1811,9 @@ def _tool_validate(store: Any, arguments: dict[str, Any], meta: dict) -> dict[st
     return {"error": f"Check '{check}' not yet implemented.", "meta": meta}
 
 
-def _tool_review_context(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_review_context(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
     """Handle scaffold_review_context tool call (Dialectic Engine)."""
     plan_number = arguments.get("plan_number")
     review_type = arguments.get("review_type", "brief")
@@ -1582,7 +1883,7 @@ def _tool_review_context(store: Any, arguments: dict[str, Any], meta: dict) -> d
 _SEVERITY_ORDER: tuple[str, ...] = ("critical", "high", "medium", "low")
 
 
-def _sev_key(row: dict) -> int:
+def _sev_key(row: dict[str, Any]) -> int:
     sev = (row.get("rf.severity") or "medium").lower()
     try:
         return _SEVERITY_ORDER.index(sev)
@@ -1639,7 +1940,7 @@ def _build_reviewer_hints(root: Path, impacted_paths: list[str]) -> list[str]:
 
 
 def _tool_prepare_review(
-    store: Any, arguments: dict[str, Any], meta: dict, root: Path, config: Any
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any], root: Path, config: Any
 ) -> dict[str, Any]:
     """Composite: full review context for a plan."""
     from agentscaffold.graph.findings import get_open_findings  # noqa: PLC0415
@@ -1665,12 +1966,15 @@ def _tool_prepare_review(
     # Collect impacted paths from the brief (avoids a redundant graph query)
     impacted_paths = [fp["path"] for fp in brief.get("file_profiles", []) if fp.get("path")]
 
-    # Open findings: plan-scoped first, then file-scoped (deduplicated)
-    plan_findings = get_open_findings(store, plan_number=pn, limit=20)
+    # Open findings: plan-scoped first, then file-scoped (deduplicated).
+    # Scope to the active project so a sibling project's same-numbered plan does
+    # not leak findings into this review.
+    finding_project = _current_project_or_none()
+    plan_findings = get_open_findings(store, plan_number=pn, limit=20, project=finding_project)
     seen_ids: set[str] = {r.get("rf.id", "") for r in plan_findings}
-    file_findings: list[dict] = []
+    file_findings: list[dict[str, Any]] = []
     for fpath in impacted_paths[:10]:
-        for row in get_open_findings(store, file_path=fpath, limit=5):
+        for row in get_open_findings(store, file_path=fpath, limit=5, project=finding_project):
             fid = row.get("rf.id", "")
             if fid not in seen_ids:
                 seen_ids.add(fid)
@@ -1716,7 +2020,7 @@ def _tool_prepare_review(
 
 
 def _tool_prepare_implementation(
-    store: Any, arguments: dict[str, Any], meta: dict, root: Path
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any], root: Path
 ) -> dict[str, Any]:
     """Composite: implementation preparation for a plan."""
     from agentscaffold.config import load_config as _load_config  # noqa: PLC0415
@@ -1753,7 +2057,7 @@ def _tool_prepare_implementation(
 
     brief = generate_brief(store, pn)
     impacted = get_plan_impacted_files(store, pn)
-    deps = get_plan_dependencies(store, pn)
+    deps = get_plan_dependencies(store, int(pn))
 
     per_file: list[dict[str, Any]] = []
     for f in impacted:
@@ -1782,7 +2086,9 @@ def _tool_prepare_implementation(
     }
 
 
-def _tool_compare_plans(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_compare_plans(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
     """Composite: compare two plans for overlap and conflicts."""
     from agentscaffold.review.queries import get_plan_by_number, get_plan_impacted_files
 
@@ -1817,7 +2123,9 @@ def _tool_compare_plans(store: Any, arguments: dict[str, Any], meta: dict) -> di
     }
 
 
-def _tool_staleness_check(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_staleness_check(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
     """Composite: check if a plan is stale."""
     from agentscaffold.review.queries import (
         get_all_plans,
@@ -1843,7 +2151,9 @@ def _tool_staleness_check(store: Any, arguments: dict[str, Any], meta: dict) -> 
         other_num = p.get("p.number")
         if other_num == pn or p.get("p.status", "").lower() != "complete":
             continue
-        other_files = {f.get("f.path", "") for f in get_plan_impacted_files(store, other_num)}
+        if other_num is None:
+            continue
+        other_files = {f.get("f.path", "") for f in get_plan_impacted_files(store, int(other_num))}
         overlap = plan_files & other_files
         if overlap:
             overlapping_completed.append(
@@ -1882,13 +2192,17 @@ def _tool_staleness_check(store: Any, arguments: dict[str, Any], meta: dict) -> 
     }
 
 
-def _tool_prepare_rewrite(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_prepare_rewrite(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
     """Composite: superset of staleness check plus rewrite context."""
     staleness = _tool_staleness_check(store, arguments, meta)
 
     from agentscaffold.review.queries import get_all_plans, get_plan_dependencies
 
     pn = arguments.get("plan_number")
+    if pn is None:
+        return {"error": "plan_number is required.", "meta": meta}
     deps = get_plan_dependencies(store, pn)
 
     all_plans = get_all_plans(store)
@@ -1903,7 +2217,9 @@ def _tool_prepare_rewrite(store: Any, arguments: dict[str, Any], meta: dict) -> 
     return staleness
 
 
-def _tool_prepare_retro(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_prepare_retro(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
     """Composite: retrospective context for a completed plan."""
     from agentscaffold.review.feedback import format_retro_markdown, generate_retro_enrichment
     from agentscaffold.review.queries import get_plan_by_number, get_studies_for_plan
@@ -1972,7 +2288,7 @@ def _parse_workflow_state(root: Path, config: Any) -> dict[str, Any]:
     return result
 
 
-def _tool_orient(store: Any, meta: dict, root: Path, config: Any) -> dict[str, Any]:
+def _tool_orient(store: Any, meta: dict[str, Any], root: Path, config: Any) -> dict[str, Any]:
     """Composite: session orientation with stats + workflow state."""
     from agentscaffold.mcp.coverage import repo_coverage
     from agentscaffold.review.queries import (
@@ -1996,9 +2312,13 @@ def _tool_orient(store: Any, meta: dict, root: Path, config: Any) -> dict[str, A
     open_backlog = get_open_backlog_items(store, limit=3)
 
     try:
+        _bl_proj = _current_project_or_none()
+        _bl_proj_filter = (
+            f" AND project = '{_bl_proj.replace(chr(39), chr(39) * 2)}'" if _bl_proj else ""
+        )
         count_rows = store.query(
             "SELECT COUNT(*) AS cnt FROM BacklogItem"
-            " WHERE status NOT IN ('archived', 'unblockable')"
+            f" WHERE status NOT IN ('archived', 'unblockable'){_bl_proj_filter}"
         )
         open_backlog_count = count_rows[0]["cnt"] if count_rows else 0
     except Exception:
@@ -2020,7 +2340,9 @@ def _tool_orient(store: Any, meta: dict, root: Path, config: Any) -> dict[str, A
     }
 
 
-def _tool_find_studies(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_find_studies(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
     """Composite: search studies by topic and/or outcome."""
     from agentscaffold.review.queries import get_studies_by_outcome, get_studies_by_tags
 
@@ -2050,7 +2372,9 @@ def _tool_find_studies(store: Any, arguments: dict[str, Any], meta: dict) -> dic
     }
 
 
-def _tool_prior_experiments(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_prior_experiments(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
     """Composite: all experiments related to a plan."""
     from agentscaffold.review.queries import (
         get_plan_impacted_files,
@@ -2084,7 +2408,7 @@ def _tool_prior_experiments(store: Any, arguments: dict[str, Any], meta: dict) -
     }
 
 
-def _tool_find_adrs(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_find_adrs(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
     """Composite: search ADRs by topic keyword and/or status."""
     from agentscaffold.review.queries import get_all_adrs
 
@@ -2111,7 +2435,9 @@ def _tool_find_adrs(store: Any, arguments: dict[str, Any], meta: dict) -> dict[s
     }
 
 
-def _tool_decision_context(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_decision_context(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
     """Composite: full decision chain for a plan (ADRs, spikes, studies, deps)."""
     from agentscaffold.review.queries import (
         get_adrs_for_plan,
@@ -2147,7 +2473,9 @@ def _tool_decision_context(store: Any, arguments: dict[str, Any], meta: dict) ->
     }
 
 
-def _tool_record_finding(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_record_finding(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
     """Record a review finding in the knowledge graph."""
     from agentscaffold.graph.findings import record_finding  # noqa: PLC0415
 
@@ -2156,7 +2484,7 @@ def _tool_record_finding(store: Any, arguments: dict[str, Any], meta: dict) -> d
     category = arguments.get("category", "")
     finding = arguments.get("finding", "")
 
-    if not all([plan_number is not None, review_type, category, finding]):
+    if plan_number is None or not review_type or not category or not finding:
         return {
             "error": "plan_number, review_type, category, and finding are required.",
             "meta": meta,
@@ -2171,12 +2499,15 @@ def _tool_record_finding(store: Any, arguments: dict[str, Any], meta: dict) -> d
         severity=arguments.get("severity", "medium"),
         file_paths=arguments.get("file_paths") or [],
         function_ids=arguments.get("function_ids") or [],
+        project=_current_project_or_none(),
     )
     result["meta"] = meta
     return result
 
 
-def _tool_resolve_finding(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_resolve_finding(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
     """Mark a ReviewFinding as resolved."""
     from agentscaffold.graph.findings import resolve_finding  # noqa: PLC0415
 
@@ -2186,13 +2517,15 @@ def _tool_resolve_finding(store: Any, arguments: dict[str, Any], meta: dict) -> 
     if not finding_id or not resolution:
         return {"error": "finding_id and resolution are required.", "meta": meta}
 
-    result = resolve_finding(store, finding_id, resolution=resolution)
+    result = resolve_finding(
+        store, finding_id, resolution=resolution, project=_current_project_or_none()
+    )
     result["meta"] = meta
     return result
 
 
 def _tool_record_findings_batch(
-    store: Any, arguments: dict[str, Any], meta: dict
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
 ) -> dict[str, Any]:
     """Record multiple ReviewFindings in one transaction."""
     from agentscaffold.graph.findings import record_findings_batch  # noqa: PLC0415
@@ -2212,12 +2545,15 @@ def _tool_record_findings_batch(
         plan_number=int(plan_number),
         review_type=review_type,
         findings=findings,
+        project=_current_project_or_none(),
     )
     result["meta"] = meta
     return result
 
 
-def _tool_record_backlog_item(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_record_backlog_item(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
     """Record one or more BacklogItem nodes (batch or single mode)."""
     from agentscaffold.graph.backlog import (  # noqa: PLC0415
         record_backlog_item,
@@ -2237,6 +2573,7 @@ def _tool_record_backlog_item(store: Any, arguments: dict[str, Any], meta: dict)
             store,
             plan_number=int(plan_number),
             items=items,
+            project=_current_project_or_none(),
         )
         result["meta"] = meta
         return result
@@ -2254,12 +2591,15 @@ def _tool_record_backlog_item(store: Any, arguments: dict[str, Any], meta: dict)
         effort=arguments.get("effort", ""),
         source=arguments.get("source", ""),
         status=arguments.get("status", "open"),
+        project=_current_project_or_none(),
     )
     result["meta"] = meta
     return result
 
 
-def _tool_resolve_backlog_item(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_resolve_backlog_item(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
     """Mark a BacklogItem as archived (completed)."""
     from agentscaffold.graph.backlog import resolve_backlog_item  # noqa: PLC0415
 
@@ -2271,6 +2611,7 @@ def _tool_resolve_backlog_item(store: Any, arguments: dict[str, Any], meta: dict
         store,
         item_id,
         resolution=arguments.get("resolution", ""),
+        project=_current_project_or_none(),
     )
     result["meta"] = meta
     return result
@@ -2324,7 +2665,7 @@ def _finding_file_paths(evidence: Any) -> list[str]:
 
 
 def _tool_begin_plan(
-    store: Any, arguments: dict[str, Any], meta: dict, root: Path, config: Any
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any], root: Path, config: Any
 ) -> dict[str, Any]:
     """Composite: full pre-implementation review chain.
 
@@ -2399,6 +2740,7 @@ def _tool_begin_plan(
             plan_number=pn,
             review_type="pre_review",
             findings=findings_to_write,
+            project=_current_project_or_none(),
         )
 
     # --- Stamp Plan.reviewedAt ---
@@ -2437,7 +2779,9 @@ def _tool_begin_plan(
     }
 
 
-def _tool_complete_plan(store: Any, arguments: dict[str, Any], meta: dict) -> dict[str, Any]:
+def _tool_complete_plan(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
     """Composite: full post-implementation chain.
 
     1. Graph-health pre-check
@@ -2487,6 +2831,7 @@ def _tool_complete_plan(store: Any, arguments: dict[str, Any], meta: dict) -> di
             plan_number=pn,
             review_type="post_retro",
             findings=retro_findings,
+            project=_current_project_or_none(),
         )
 
     # --- Write backlog items if provided ---
@@ -2497,6 +2842,7 @@ def _tool_complete_plan(store: Any, arguments: dict[str, Any], meta: dict) -> di
             store,
             plan_number=pn,
             items=backlog_items_arg,
+            project=_current_project_or_none(),
         )
 
     # --- Build structured_learnings from retro insights ---

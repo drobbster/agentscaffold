@@ -78,6 +78,32 @@ class TestGovernanceFreshnessGate:
         assert any(r["category"] == "RISK" for r in rows)
         store.close()
 
+    def test_backlog_change_refreshes_governance(self, indexed_repo):
+        config, repo, _db_path = indexed_repo
+
+        backlog = repo / "docs" / "ai" / "backlog.md"
+        backlog.parent.mkdir(parents=True, exist_ok=True)
+        backlog.write_text(
+            "# Backlog\n\n| ID | Title | Priority | Effort | Status | Source |\n"
+            "|----|-------|----------|--------|--------|--------|\n"
+            "| B-TEST-1 | Fixture backlog item | P2 | Small | Open | Test |\n"
+        )
+
+        summary = run_pipeline(repo, config, incremental=True)
+
+        assert "governance" in summary, "backlog.md edit must trigger governance refresh"
+
+    def test_governance_artifact_change_refreshes_governance(self, indexed_repo):
+        config, repo, _db_path = indexed_repo
+
+        artifact = repo / "docs" / "ai" / "state" / "governance.json"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text('{"governance_artifact_version": 1, "nodes": {}, "edges": {}}\n')
+
+        summary = run_pipeline(repo, config, incremental=True)
+
+        assert "governance" in summary, "governance.json edit must trigger governance refresh"
+
     def test_code_only_change_skips_governance(self, indexed_repo):
         config, repo, db_path = indexed_repo
 

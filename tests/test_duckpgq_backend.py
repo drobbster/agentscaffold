@@ -414,3 +414,17 @@ def test_graph_lock_error_is_exported() -> None:
     from agentscaffold.graph.duckpgq_backend import GraphLockError
 
     assert ExportedLockError is GraphLockError
+
+
+def test_graph_write_lock_blocks_waiters(tmp_path: Path, monkeypatch) -> None:
+    """The shared filesystem lock is visible to other graph openers."""
+    from agentscaffold.graph.locks import graph_write_lock, wait_for_graph_write_lock_clear
+
+    db_path = tmp_path / "graph.duckdb"
+    sleeps: list[float] = []
+    monkeypatch.setattr("agentscaffold.graph.locks.time.sleep", lambda s: sleeps.append(s))
+
+    with graph_write_lock(db_path, purpose="test", timeout=0.0):
+        assert wait_for_graph_write_lock_clear(db_path, timeout=0.0) is False
+
+    assert wait_for_graph_write_lock_clear(db_path, timeout=0.0) is True

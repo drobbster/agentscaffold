@@ -66,7 +66,7 @@ def test_agents_generate_with_semi_autonomous(tmp_project: Path, cli_runner: Cli
 
 
 def test_cursor_setup(tmp_project: Path, cli_runner: CliRunner) -> None:
-    """Generate .cursor/rules.md and .cursor/rules/agentscaffold.md."""
+    """Generate .cursor/rules.md and .cursor/rules/agentscaffold.mdc."""
     orig_cwd = os.getcwd()
     try:
         os.chdir(tmp_project)
@@ -74,7 +74,7 @@ def test_cursor_setup(tmp_project: Path, cli_runner: CliRunner) -> None:
         rules_md = tmp_project / ".cursor" / "rules.md"
         if rules_md.exists():
             rules_md.unlink()
-        intent_md = tmp_project / ".cursor" / "rules" / "agentscaffold.md"
+        intent_md = tmp_project / ".cursor" / "rules" / "agentscaffold.mdc"
         if intent_md.exists():
             intent_md.unlink()
 
@@ -161,12 +161,12 @@ def test_prompt_export(tmp_project: Path, cli_runner: CliRunner) -> None:
 
 
 def test_generate_all_writes_cursor_routing_doc(tmp_project: Path, cli_runner: CliRunner) -> None:
-    """generate-all must emit .cursor/rules/agentscaffold.md in parity with
+    """generate-all must emit .cursor/rules/agentscaffold.mdc in parity with
     `agents cursor` (the MCP routing + graph trust-discipline policy)."""
     orig_cwd = os.getcwd()
     try:
         os.chdir(tmp_project)
-        intent_md = tmp_project / ".cursor" / "rules" / "agentscaffold.md"
+        intent_md = tmp_project / ".cursor" / "rules" / "agentscaffold.mdc"
         if intent_md.exists():
             intent_md.unlink()
 

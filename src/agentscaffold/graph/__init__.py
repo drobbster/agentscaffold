@@ -34,12 +34,19 @@ def graph_available(config: ScaffoldConfig | None = None) -> bool:
     return db_path.is_file()
 
 
-def open_graph(config: ScaffoldConfig | None = None, *, backend: str | None = None) -> GraphBackend:
+def open_graph(
+    config: ScaffoldConfig | None = None,
+    *,
+    backend: str | None = None,
+    lock_timeout: float = 8.0,
+) -> GraphBackend:
     """Open an existing graph database for querying.
 
     Args:
         config: Optional scaffold config. Used to resolve db_path.
         backend: Reserved for future use. Only "duckpgq" is supported.
+        lock_timeout: Seconds to wait for AgentScaffold's shared graph write
+            lock before attempting to open DuckDB.
 
     Raises:
         ValueError: if an unknown backend name is given.
@@ -48,7 +55,24 @@ def open_graph(config: ScaffoldConfig | None = None, *, backend: str | None = No
     db_path = _resolve_db_path(config)
 
     if backend_name == "duckpgq":
-        return DuckPGQBackend(db_path)
+        from agentscaffold.graph.locks import wait_for_graph_write_lock_clear
+
+        if not wait_for_graph_write_lock_clear(db_path, timeout=lock_timeout):
+            raise GraphLockError(
+                f"Could not open the knowledge graph at {db_path}: another "
+                "AgentScaffold graph write is still running."
+            )
+        store = DuckPGQBackend(db_path)
+        # Enable git-backed governance write-through (Plan 222): runtime
+        # finding/session/backlog mutations re-serialize to the committed
+        # artifact so the graph stays a derived index of git state.
+        from agentscaffold.graph.governance_store import (
+            enable_write_through,
+            resolve_governance_artifact,
+        )
+
+        enable_write_through(store, resolve_governance_artifact(config))
+        return store
 
     raise ValueError(f"Unknown backend '{backend_name}'. Supported: 'duckpgq'.")
 
@@ -79,9 +103,16 @@ def index(
 
 
 def _resolve_db_path(config: ScaffoldConfig | None) -> Path:
-    if config is not None and hasattr(config, "graph"):
-        return Path(config.graph.db_path)
-    return Path(".scaffold/graph.duckdb")
+    """Resolve the graph DB path against the project root (Plan 221).
+
+    Delegates to :func:`agentscaffold.paths.resolve_db_path` so a relative
+    ``db_path`` resolves under the project root (nearest ``scaffold.yaml`` ->
+    nearest ``.git`` -> cwd) instead of the bare working directory. This makes
+    ``open_graph`` agree with ``run_pipeline`` when invoked from a subdirectory.
+    """
+    from agentscaffold.paths import resolve_db_path
+
+    return resolve_db_path(config)
 
 
 def _resolve_backend(config: ScaffoldConfig | None) -> str:

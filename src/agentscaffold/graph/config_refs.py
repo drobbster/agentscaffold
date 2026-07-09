@@ -61,7 +61,11 @@ _REF_LINE_RE = re.compile(
 )
 
 
-def process_config_references(store: GraphBackend, root: Path) -> dict:
+def process_config_references(
+    store: GraphBackend,
+    root: Path,
+    file_paths: set[str] | None = None,
+) -> dict[str, int]:
     """Resolve config references and create CONFIG_REFERENCES edges.
 
     Returns a summary with edge / candidate / config-file counts.
@@ -71,11 +75,14 @@ def process_config_references(store: GraphBackend, root: Path) -> dict:
         sql='SELECT id AS "f.id", path AS "f.path", language AS "f.language" FROM File',
     )
 
+    scope = set(file_paths) if file_paths is not None else None
     path_to_id: dict[str, str] = {}
     config_files: list[tuple[str, str]] = []  # (file_id, path)
     for row in file_rows:
         path_to_id[row["f.path"]] = row["f.id"]
         if row["f.language"] in CONFIG_LANGUAGES:
+            if scope is not None and row["f.path"] not in scope:
+                continue
             config_files.append((row["f.id"], row["f.path"]))
 
     if not config_files:
@@ -129,6 +136,25 @@ def process_config_references(store: GraphBackend, root: Path) -> dict:
         "config_files": len(config_files),
         "resolved": resolved,
     }
+
+
+def config_files_referencing(store: GraphBackend, file_paths: set[str] | list[str]) -> set[str]:
+    """Return config files with CONFIG_REFERENCES edges to *file_paths*."""
+    if not file_paths:
+        return set()
+    paths_lit = ", ".join("'" + path.replace("'", "''") + "'" for path in sorted(file_paths))
+    rows = ql(
+        store,
+        sql=(
+            'SELECT t.cfg_path AS "cfg.path"'
+            " FROM GRAPH_TABLE(agentscaffold_graph"
+            "   MATCH (cfg:File)-[r:CONFIG_REFERENCES]->(target:File)"
+            f"   WHERE target.path IN ({paths_lit})"
+            "   COLUMNS (cfg.path AS cfg_path)"
+            " ) t"
+        ),
+    )
+    return {row["cfg.path"] for row in rows if row.get("cfg.path")}
 
 
 def _clear_config_edges(store: GraphBackend, config_ids: list[str]) -> None:

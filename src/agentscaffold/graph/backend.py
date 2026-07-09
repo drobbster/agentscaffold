@@ -114,6 +114,18 @@ class GraphBackend(Protocol):
         """
         return None
 
+    def store_embedding(
+        self,
+        node_id: str,
+        node_type: str,
+        vector: list[float],
+        *,
+        model: str = "",
+        text_hash: str = "",
+    ) -> None:
+        """Insert or replace a semantic-search embedding for a node."""
+        ...
+
     # ------------------------------------------------------------------
     # Pipeline state management
     # ------------------------------------------------------------------

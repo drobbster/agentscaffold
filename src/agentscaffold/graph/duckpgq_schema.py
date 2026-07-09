@@ -56,13 +56,25 @@ from typing import TYPE_CHECKING, NamedTuple
 if TYPE_CHECKING:
     import duckdb
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 9
 
 # ---------------------------------------------------------------------------
 # Node table DDL (20 tables)
 # ---------------------------------------------------------------------------
 
-NODE_TABLES: list[str] = [
+_AUTHORED_NODE_TABLES: list[str] = [
+    # --- Workspace nodes (Plan 225) ---
+    # The Project node is the namespace itself; it carries no `project` column.
+    # `lastIndexed` is per-project so re-indexing one project does not misreport
+    # another's freshness (GraphMeta stays workspace-global for schema/pipeline state).
+    """
+    CREATE TABLE IF NOT EXISTS Project (
+        id          VARCHAR PRIMARY KEY,
+        name        VARCHAR,
+        rootPath    VARCHAR,
+        lastIndexed VARCHAR
+    )
+    """,
     # --- Code nodes ---
     """
     CREATE TABLE IF NOT EXISTS File (
@@ -300,6 +312,34 @@ def _table_name(create_table_ddl: str) -> str:
     return create_table_ddl.strip().split("(")[0].split()[-1]
 
 
+# Node tables that are NOT project-scoped: GraphMeta is workspace-global
+# (schema version + pipeline state) and Project is the namespace itself.
+_PROJECT_SCOPED_EXCLUDE = {"GraphMeta", "Project"}
+
+
+def _with_project_column(create_table_ddl: str) -> str:
+    """Append a ``project`` column to a node table DDL (Plan 225, single source).
+
+    Multi-project workspaces namespace every code/governance node with its owning
+    project; the column is the authoritative scoping key (ID prefixing is the
+    collision guard, the column drives reads and project-scoped clears). Defined
+    once here so all node tables stay consistent. Single-project repos leave it at
+    the ``''`` default and scope predicates are no-ops, so behavior is unchanged.
+    ``GraphMeta`` and ``Project`` are excluded (see ``_PROJECT_SCOPED_EXCLUDE``).
+    """
+    if _table_name(create_table_ddl) in _PROJECT_SCOPED_EXCLUDE:
+        return create_table_ddl
+    stripped = create_table_ddl.rstrip()
+    if not stripped.endswith(")"):
+        raise ValueError(f"Unexpected node DDL (no trailing ')'): {create_table_ddl!r}")
+    body = stripped[:-1].rstrip()
+    return f"{body},\n        project     VARCHAR DEFAULT ''\n    )\n    "
+
+
+# The authoritative node-table DDL list, with the project column injected.
+NODE_TABLES: list[str] = [_with_project_column(stmt) for stmt in _AUTHORED_NODE_TABLES]
+
+
 NODE_TABLE_NAMES: tuple[str, ...] = tuple(_table_name(stmt) for stmt in NODE_TABLES)
 
 
@@ -438,6 +478,9 @@ AUXILIARY_TABLES: list[str] = [
         node_id   VARCHAR NOT NULL,
         node_type VARCHAR NOT NULL,
         embedding FLOAT[],
+        project   VARCHAR DEFAULT '',
+        model     VARCHAR DEFAULT '',
+        text_hash VARCHAR DEFAULT '',
         PRIMARY KEY (node_id, node_type)
     )
     """,

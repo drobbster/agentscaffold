@@ -59,6 +59,38 @@ def _graph_trust_discipline_lines() -> list[str]:
     ]
 
 
+def _workspace_scope_discipline_lines() -> list[str]:
+    return [
+        "## Multi-Project Workspace Discipline",
+        "",
+        "If the repo is part of a multi-project workspace (a `workspace.yaml` at the",
+        "workspace root lists more than one project), several projects share one",
+        "graph. Otherwise (a lone repo) this section is a no-op -- there is exactly",
+        "one project and nothing is scoped.",
+        "",
+        "- Reads default to the CURRENT project (resolved from the working",
+        "  directory): search and governance queries (plans, findings, learnings,",
+        "  studies, ADRs) return only this project's knowledge. Plan numbers and",
+        "  file paths are NOT unique across projects, so do not assume a result",
+        "  belongs to a sibling.",
+        "- VIA MCP TOOLS the server runs from one fixed directory and cannot infer",
+        "  which project you are editing. On every project-scoped tool call, pass",
+        "  `working_path` = the file or dir you are working on; the server resolves",
+        "  the owning project from it and scopes the read accordingly. Omitting it",
+        "  falls back to the server's default project.",
+        "- To look at another project, pass `project=<name>` (tools) / `--project",
+        "  <name>` (CLI); to search across all of them, pass `all_projects=true` /",
+        "  `--all-projects` (federated results carry a `project` provenance field --",
+        "  always report which project a cross-project hit came from).",
+        "- `scaffold graph duplicates` surfaces cross-project near-duplicate",
+        "  definitions (shared-library reuse candidates); treat hits as advisory.",
+        "- Scoping is a relevance boundary within a single trust domain, not a",
+        "  security isolation boundary. When unsure which project you are in, run",
+        "  `scaffold workspace list`.",
+        "",
+    ]
+
+
 def _governance_guardrails_lines(config: ScaffoldConfig) -> list[str]:
     lines = [
         "## Governance Guardrails (Always Apply)",
@@ -118,6 +150,7 @@ def generate_rule_policy_document(
         lines.append("")
     lines.extend(_tool_selection_policy_lines())
     lines.extend(_graph_trust_discipline_lines())
+    lines.extend(_workspace_scope_discipline_lines())
     lines.extend(_governance_guardrails_lines(config))
     lines.extend(_intent_map_lines(quote_intents=quote_intents))
     return frontmatter + "\n".join(lines).rstrip() + "\n"

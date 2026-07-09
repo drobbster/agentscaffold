@@ -19,6 +19,13 @@ from agentscaffold.graph.query_compat import ql, ql_execute, ql_scalar
 logger = logging.getLogger(__name__)
 
 
+def _sync_governance(store: GraphBackend) -> None:
+    """Re-serialize governance to the git-backed artifact if write-through is on."""
+    from agentscaffold.graph.governance_store import sync_if_enabled  # noqa: PLC0415
+
+    sync_if_enabled(store)
+
+
 def start_session(
     store: GraphBackend,
     *,
@@ -34,17 +41,21 @@ def start_session(
 
     plans_str = json.dumps(plan_numbers or [])
 
-    store.create_node(
-        "Session",
-        {
-            "id": session_id,
-            "date": now,
-            "planNumbers": plans_str,
-            "filesModified": "[]",
-            "summary": summary,
-        },
-    )
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
 
+    with governance_write_lock(store):
+        store.create_node(
+            "Session",
+            {
+                "id": session_id,
+                "date": now,
+                "planNumbers": plans_str,
+                "filesModified": "[]",
+                "summary": summary,
+            },
+        )
+
+        _sync_governance(store)
     logger.info("Started session %s", session_id)
     return session_id
 
@@ -80,27 +91,36 @@ def record_modification(
     if edge_exists and int(edge_exists) > 0:
         return
 
-    store.create_edge("SESSION_MODIFIED", "Session", session_id, "File", file_id)
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
 
-    # Update the filesModified list on the session node
-    rows = ql(
-        store,
-        sql=f"SELECT filesModified AS \"s.filesModified\" FROM Session WHERE id = '{session_id}'",
-    )
-    if rows:
-        try:
-            current = json.loads(rows[0].get("s.filesModified", "[]"))
-        except (json.JSONDecodeError, TypeError):
-            current = []
+    with governance_write_lock(store):
+        store.create_edge("SESSION_MODIFIED", "Session", session_id, "File", file_id)
 
-        if file_path not in current:
-            current.append(file_path)
-            updated = json.dumps(current)
-            escaped = updated.replace("\\", "\\\\").replace("'", "\\'")
-            ql_execute(
-                store,
-                sql=(f"UPDATE Session SET filesModified = '{escaped}' WHERE id = '{session_id}'"),
-            )
+        # Update the filesModified list on the session node
+        rows = ql(
+            store,
+            sql=(
+                f'SELECT filesModified AS "s.filesModified" '
+                f"FROM Session WHERE id = '{session_id}'"
+            ),
+        )
+        if rows:
+            try:
+                current = json.loads(rows[0].get("s.filesModified", "[]"))
+            except (json.JSONDecodeError, TypeError):
+                current = []
+
+            if file_path not in current:
+                current.append(file_path)
+                updated = json.dumps(current)
+                escaped = updated.replace("\\", "\\\\").replace("'", "\\'")
+                ql_execute(
+                    store,
+                    sql=(
+                        f"UPDATE Session SET filesModified = '{escaped}' WHERE id = '{session_id}'"
+                    ),
+                )
+                _sync_governance(store)
 
 
 def end_session(
@@ -115,10 +135,14 @@ def end_session(
     """
     if summary:
         escaped = summary.replace("\\", "\\\\").replace("'", "\\'")
-        ql_execute(
-            store,
-            sql=f"UPDATE Session SET summary = '{escaped}' WHERE id = '{session_id}'",
-        )
+        from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
+
+        with governance_write_lock(store):
+            ql_execute(
+                store,
+                sql=f"UPDATE Session SET summary = '{escaped}' WHERE id = '{session_id}'",
+            )
+            _sync_governance(store)
 
     return get_session(store, session_id)
 

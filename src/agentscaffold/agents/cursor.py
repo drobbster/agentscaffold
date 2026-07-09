@@ -9,7 +9,7 @@ from rich.console import Console
 
 from agentscaffold.agents.rule_policy import generate_rule_policy_document
 from agentscaffold.config import ReviewerConfig, ScaffoldConfig, find_config, load_config
-from agentscaffold.rendering import get_default_context, render_template
+from agentscaffold.rendering import get_default_context, render_template, write_managed_block
 
 console = Console()
 
@@ -50,8 +50,16 @@ def write_cursor_mcp_json(cursor_dir: Path) -> None:
     console.print(f"[green]Wrote[/green] {_display(mcp_path)}")
 
 
-def run_cursor_setup() -> None:
-    """Generate Cursor rule files from scaffold.yaml config."""
+def run_cursor_setup(force: bool = False) -> None:
+    """Generate Cursor rule files from scaffold.yaml config.
+
+    ``.cursor/rules.md`` is a project-owned document: the generated guidance is
+    written into a managed block, so an existing/hand-authored file is never
+    clobbered (created, block-refreshed, or appended). *force* rewrites it whole,
+    keeping a ``.bak`` snapshot. The machine-owned routing/trust policy
+    ``.cursor/rules/agentscaffold.md`` and the per-reviewer rules are always
+    regenerated so policy updates land.
+    """
     config_path = find_config()
     if config_path is None:
         console.print("[red]No scaffold.yaml found. Run 'scaffold init' first.[/red]")
@@ -67,12 +75,28 @@ def run_cursor_setup() -> None:
     cursor_dir.mkdir(parents=True, exist_ok=True)
 
     dest = cursor_dir / "rules.md"
-    dest.write_text(content)
-    console.print(f"[green]Wrote[/green] {dest.relative_to(Path.cwd())}")
+    status = write_managed_block(dest, content, force=force)
+    label = str(dest.relative_to(Path.cwd()))
+    if status == "created":
+        console.print(f"[green]Wrote[/green] {label}")
+    elif status == "block-updated":
+        console.print(f"[green]Updated[/green] AgentScaffold managed section in {label}")
+    elif status == "appended":
+        console.print(
+            f"[green]Appended[/green] AgentScaffold managed section to {label} "
+            "[dim](existing content preserved)[/dim]"
+        )
+    elif status == "overwritten":
+        console.print(f"[yellow]Overwrote[/yellow] {label} [dim](.bak saved)[/dim]")
+    else:
+        console.print(f"[dim]Unchanged[/dim] {label}")
 
     rules_dir = cursor_dir / "rules"
     rules_dir.mkdir(parents=True, exist_ok=True)
-    intent_dest = rules_dir / "agentscaffold.md"
+    # Cursor only loads `.mdc` rules; a plain `.md` here is ignored. Emit `.mdc`
+    # with `alwaysApply: true` and remove any stale `.md` from older runs.
+    intent_dest = rules_dir / "agentscaffold.mdc"
+    legacy_md = rules_dir / "agentscaffold.md"
     intent_dest.write_text(
         generate_rule_policy_document(
             config=config,
@@ -82,8 +106,11 @@ def run_cursor_setup() -> None:
                 "For full process governance, also follow `.cursor/rules.md` and `AGENTS.md`.",
             ],
             quote_intents=True,
+            always_apply=True,
         )
     )
+    if legacy_md.exists():
+        legacy_md.unlink()
     console.print(f"[green]Wrote[/green] {intent_dest.relative_to(Path.cwd())}")
 
     write_cursor_mcp_json(cursor_dir)
@@ -94,14 +121,23 @@ def run_cursor_setup() -> None:
         from agentscaffold.hooks.generators.cursor import (
             resolve_scaffold_bin,
             write_cursor_hooks,
+            write_embedding_commit_hooks,
         )
 
         for path in write_cursor_hooks(
             config.enforcement,
             project_root,
             scaffold_bin=resolve_scaffold_bin(),
+            min_interval_seconds=config.graph.incremental_min_interval_seconds,
         ):
             console.print(f"[green]Wrote[/green] {path.relative_to(project_root)}")
+        if getattr(config.graph, "async_embeddings", "off") == "commit":
+            for path in write_embedding_commit_hooks(
+                project_root,
+                scaffold_bin=resolve_scaffold_bin(),
+                min_interval_seconds=config.graph.embedding_min_interval_seconds,
+            ):
+                console.print(f"[green]Wrote[/green] {path.relative_to(project_root)}")
 
 
 def generate_cursor_reviewer_rule(reviewer: ReviewerConfig, prompt_body: str = "") -> str:
@@ -131,14 +167,20 @@ def write_cursor_reviewer_rules(
     for reviewer in reviewers:
         prompt_body = _load_prompt_body_for_cursor(reviewer, cursor_dir.parent)
         content = generate_cursor_reviewer_rule(reviewer, prompt_body)
-        dest = rules_dir / f"{reviewer.name}.md"
+        # Reviewer rules are agent-requested (`description` frontmatter); Cursor
+        # only honors them with the `.mdc` extension. Emit `.mdc` and clean up a
+        # stale `.md` from older generations.
+        dest = rules_dir / f"{reviewer.name}.mdc"
+        legacy_md = rules_dir / f"{reviewer.name}.md"
         written.append(dest)
         if dry_run:
             console.print(f"[dim]dry-run[/dim] would write {dest}")
         else:
             rules_dir.mkdir(parents=True, exist_ok=True)
             dest.write_text(content)
-            console.print(f"[green]Wrote[/green] .cursor/rules/{reviewer.name}.md")
+            if legacy_md.exists():
+                legacy_md.unlink()
+            console.print(f"[green]Wrote[/green] .cursor/rules/{reviewer.name}.mdc")
 
     return written
 

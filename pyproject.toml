@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentscaffold"
-version = "0.6.0"
+version = "0.9.1"
 description = "Structured AI-assisted development framework with plan lifecycle, review gates, and continuous improvement."
 readme = "README.md"
 license = "MIT"
@@ -67,14 +67,21 @@ search = [
 mcp = [
     "mcp>=1.0.0",
 ]
+benchmark = [
+    "mini-swe-agent>=2.0.0",
+    "litellm>=1.50.0",
+    "datasets>=3.0.0",
+    "python-dotenv>=1.0.0",
+]
 all = [
-    "agentscaffold[graph,graph-duckpgq,graph-all-languages,search,mcp]",
+    "agentscaffold[graph,graph-duckpgq,graph-all-languages,search,mcp,benchmark]",
 ]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "ruff>=0.4.0",
     "mypy>=1.0.0",
+    "types-PyYAML>=6.0.0",
     "agentscaffold[graph,mcp]",
 ]
 

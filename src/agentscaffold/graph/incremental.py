@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 from agentscaffold.graph.query_compat import ql, ql_execute, ql_scalar
 
 logger = logging.getLogger(__name__)
+MTIME_TOLERANCE_SECONDS = 1e-6
 
 
 def _file_hash(path: Path) -> str:
@@ -90,16 +91,25 @@ def compute_changeset(
     if graph_config and graph_config.languages:
         allowed_languages = set(graph_config.languages)
 
-    # Build map of graph files: path -> contentHash
-    graph_files: dict[str, str] = {}
+    # Build map of graph files. Content hash remains the source of truth when
+    # metadata differs or is missing; matching (mtime, size) avoids reading the
+    # file body for the common unchanged case.
+    graph_files: dict[str, dict[str, Any]] = {}
     for row in ql(
         store,
-        sql='SELECT path AS "f.path", contentHash AS "f.contentHash" FROM File',
+        sql=(
+            'SELECT path AS "f.path", contentHash AS "f.contentHash",'
+            ' size AS "f.size", lastModified AS "f.lastModified" FROM File'
+        ),
     ):
-        graph_files[row["f.path"]] = row["f.contentHash"]
+        graph_files[row["f.path"]] = {
+            "contentHash": row["f.contentHash"],
+            "size": row.get("f.size"),
+            "lastModified": row.get("f.lastModified"),
+        }
 
     # Walk disk
-    disk_files: dict[str, str] = {}
+    disk_files: set[str] = set()
     root = root.resolve()
     for item in sorted(root.rglob("*")):
         if not item.is_file():
@@ -115,16 +125,36 @@ def compute_changeset(
         if allowed_languages and language not in allowed_languages:
             continue
 
-        disk_files[rel] = _file_hash(item)
+        disk_files.add(rel)
 
     added: list[str] = []
     modified: list[str] = []
     unchanged = 0
 
-    for path, disk_hash in disk_files.items():
+    for path in sorted(disk_files):
         if path not in graph_files:
             added.append(path)
-        elif graph_files[path] != disk_hash:
+            continue
+
+        full_path = root / path
+        try:
+            stat = full_path.stat()
+        except (OSError, PermissionError):
+            modified.append(path)
+            continue
+
+        graph_meta = graph_files[path]
+        if _metadata_matches(
+            graph_meta.get("size"),
+            graph_meta.get("lastModified"),
+            stat.st_size,
+            stat.st_mtime,
+        ):
+            unchanged += 1
+            continue
+
+        disk_hash = _file_hash(full_path)
+        if graph_meta.get("contentHash") != disk_hash:
             modified.append(path)
         else:
             unchanged += 1
@@ -137,6 +167,42 @@ def compute_changeset(
         "deleted": sorted(deleted),
         "unchanged": unchanged,
     }
+
+
+def _metadata_matches(
+    stored_size: Any,
+    stored_mtime: Any,
+    disk_size: int,
+    disk_mtime: float,
+) -> bool:
+    """Return True when stored File metadata matches the filesystem stat."""
+    if stored_size is None or stored_mtime is None:
+        return False
+    try:
+        size_matches = int(stored_size) == disk_size
+        mtime_matches = abs(float(stored_mtime) - disk_mtime) <= MTIME_TOLERANCE_SECONDS
+    except (TypeError, ValueError):
+        return False
+    return size_matches and mtime_matches
+
+
+def direct_dependents(store: GraphBackend, file_paths: set[str] | list[str]) -> set[str]:
+    """Return files that directly import any path in *file_paths*."""
+    if not file_paths:
+        return set()
+    paths_lit = ", ".join("'" + p.replace("'", "''") + "'" for p in sorted(file_paths))
+    rows = ql(
+        store,
+        sql=(
+            'SELECT t.src_path AS "src.path"'
+            " FROM GRAPH_TABLE(agentscaffold_graph"
+            "   MATCH (src:File)-[r:IMPORTS]->(dst:File)"
+            f"   WHERE dst.path IN ({paths_lit})"
+            "   COLUMNS (src.path AS src_path)"
+            " ) t"
+        ),
+    )
+    return {row["src.path"] for row in rows if row.get("src.path")}
 
 
 def remove_file_nodes(store: GraphBackend, file_paths: list[str]) -> int:

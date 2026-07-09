@@ -179,6 +179,30 @@ class TestIncrementalPipeline:
         assert cs["added"] == []
         assert cs["modified"] == []
 
+    def test_incremental_embeddings_no_changes_reconciles_embeddings(
+        self,
+        graph_with_repo,
+        monkeypatch,
+    ):
+        store, config, repo = graph_with_repo
+        store.close()
+        scopes = []
+
+        def _fake_generate_embeddings(_store, *, root=None, file_paths=None, tables=None):
+            del _store, root, tables
+            scopes.append(file_paths)
+            return {"Function": 1}
+
+        monkeypatch.setattr(
+            "agentscaffold.graph.embeddings.generate_embeddings",
+            _fake_generate_embeddings,
+        )
+
+        summary = run_pipeline(repo, config, incremental=True, embeddings=True)
+
+        assert scopes == [None]
+        assert summary["embeddings"] == {"Function": 1}
+
     def test_incremental_with_new_file(self, graph_with_repo):
         store, config, repo = graph_with_repo
         store.close()

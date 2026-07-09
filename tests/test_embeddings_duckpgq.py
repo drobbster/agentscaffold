@@ -82,6 +82,23 @@ def test_store_embedding_inserts_row(store: Any) -> None:
     assert count == 1
 
 
+def test_store_embedding_records_model_and_text_hash(store: Any) -> None:
+    store.store_embedding(
+        _FUNC_A["id"],
+        "Function",
+        _VEC_A,
+        model="test-model",
+        text_hash="abc123",
+    )
+    rows = store.query("SELECT model, text_hash FROM EmbeddingStore")
+    assert rows == [{"model": "test-model", "text_hash": "abc123"}]
+
+
+def test_store_embedding_defaults_to_current_default_model(store: Any) -> None:
+    store.store_embedding(_FUNC_A["id"], "Function", _VEC_A)
+    assert store.query_scalar("SELECT model FROM EmbeddingStore") == "all-MiniLM-L6-v2"
+
+
 def test_store_embedding_upserts(store: Any) -> None:
     """Calling store_embedding twice with the same node_id replaces the row."""
     store.store_embedding(_FUNC_A["id"], "Function", _VEC_A)
@@ -163,6 +180,13 @@ def test_search_wrong_node_type_returns_empty(store: Any) -> None:
     assert results == []
 
 
+def test_search_similar_vss_filters_by_model(store: Any) -> None:
+    store.store_embedding(_FUNC_A["id"], "Function", _VEC_A, model="model-a")
+    store.store_embedding(_FUNC_B["id"], "Function", _VEC_B, model="model-b")
+    results = store.search_similar_vss("Function", _VEC_A, top_k=5, model="model-a")
+    assert [r["node_id"] for r in results] == [_FUNC_A["id"]]
+
+
 # ---------------------------------------------------------------------------
 # embeddings_available integration with embeddings module
 # ---------------------------------------------------------------------------
@@ -179,6 +203,14 @@ def test_embeddings_available_true_after_store(store: Any) -> None:
 
     store.store_embedding(_FUNC_A["id"], "Function", _VEC_A)
     assert embeddings_available(store) is True
+
+
+def test_embeddings_available_false_for_different_model(store: Any) -> None:
+    from agentscaffold.graph.embeddings import embeddings_available, embeddings_model_mismatch
+
+    store.store_embedding(_FUNC_A["id"], "Function", _VEC_A, model="old-model")
+    assert embeddings_available(store, "new-model") is False
+    assert embeddings_model_mismatch(store, "new-model") is True
 
 
 # ---------------------------------------------------------------------------

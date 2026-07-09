@@ -20,9 +20,29 @@ if TYPE_CHECKING:
 _SEVERITY_ORDER: tuple[str, ...] = ("critical", "high", "medium", "low")
 
 
-def _finding_id(plan_number: int, review_type: str, category: str, finding: str) -> str:
-    """Derive a deterministic ID from the finding content."""
-    key = f"finding::{plan_number}::{review_type}::{category}::{finding[:64]}"
+def _sync_governance(store: GraphBackend) -> None:
+    """Re-serialize governance to the git-backed artifact if write-through is on."""
+    from agentscaffold.graph.governance_store import sync_if_enabled  # noqa: PLC0415
+
+    sync_if_enabled(store)
+
+
+def _finding_id(
+    plan_number: int,
+    review_type: str,
+    category: str,
+    finding: str,
+    project: str | None = None,
+) -> str:
+    """Derive a deterministic, project-scoped ID from the finding content.
+
+    Plan numbers are NOT unique across projects in a multi-project workspace, so
+    the project is folded into the hash key to prevent cross-project finding-ID
+    collisions. A falsy *project* reproduces the original (unscoped) ID for
+    single-project back-compat.
+    """
+    prefix = f"{project}::" if project else ""
+    key = f"{prefix}finding::{plan_number}::{review_type}::{category}::{finding[:64]}"
     return "rf::" + hashlib.sha1(key.encode()).hexdigest()[:12]  # noqa: S324
 
 
@@ -36,6 +56,7 @@ def record_finding(
     severity: str = "medium",
     file_paths: list[str] | None = None,
     function_ids: list[str] | None = None,
+    project: str | None = None,
 ) -> dict[str, Any]:
     """Record a review finding in the knowledge graph.
 
@@ -51,13 +72,17 @@ def record_finding(
         severity: "low", "medium", "high", or "critical".
         file_paths: Paths of files related to this finding.
         function_ids: IDs of functions related to this finding.
+        project: Owning project in a multi-project workspace; stamps the
+            ``project`` column and scopes the deterministic ID and File lookups.
+            None (single-project) keeps the original unscoped behavior.
 
     Returns:
         Dict with ``id``, ``status``, and timing info.
     """
     t0 = time.monotonic()
-    finding_id = _finding_id(plan_number, review_type, category, finding)
+    finding_id = _finding_id(plan_number, review_type, category, finding, project)
     now = datetime.now(timezone.utc).isoformat()
+    proj_filter = f" AND project = '{_esc(project)}'" if project else ""
 
     props: dict[str, Any] = {
         "id": finding_id,
@@ -68,21 +93,30 @@ def record_finding(
         "finding": finding,
         "resolution": "",
         "status": "open",
+        "project": project or "",
     }
 
-    store.create_node("ReviewFinding", props)
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
 
-    # Link to files
-    for fp in file_paths or []:
-        rows = store.query(f"SELECT id FROM File WHERE path = '{_esc(fp)}'")
-        file_id = rows[0]["id"] if rows else None
+    with governance_write_lock(store):
+        store.create_node("ReviewFinding", props)
 
-        if file_id:
-            store.create_edge("FINDING_ABOUT_FILE", "ReviewFinding", finding_id, "File", file_id)
+        # Link to files (scoped to the owning project: file paths are not unique
+        # across projects in a multi-project workspace).
+        for fp in file_paths or []:
+            rows = store.query(f"SELECT id FROM File WHERE path = '{_esc(fp)}'{proj_filter}")
+            file_id = rows[0]["id"] if rows else None
 
-    # Link to functions
-    for fn_id in function_ids or []:
-        store.create_edge("FINDING_ABOUT_FUNC", "ReviewFinding", finding_id, "Function", fn_id)
+            if file_id:
+                store.create_edge(
+                    "FINDING_ABOUT_FILE", "ReviewFinding", finding_id, "File", file_id
+                )
+
+        # Link to functions
+        for fn_id in function_ids or []:
+            store.create_edge("FINDING_ABOUT_FUNC", "ReviewFinding", finding_id, "Function", fn_id)
+
+        _sync_governance(store)
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {
@@ -102,6 +136,7 @@ def resolve_finding(
     finding_id: str,
     *,
     resolution: str,
+    project: str | None = None,
 ) -> dict[str, Any]:
     """Mark a ReviewFinding as resolved.
 
@@ -109,16 +144,24 @@ def resolve_finding(
         store: Open GraphBackend instance.
         finding_id: The ID of the finding to resolve.
         resolution: Human-readable resolution description.
+        project: When set, only resolves the finding if it belongs to this
+            project (defense-in-depth against cross-project resolves).
 
     Returns:
         Dict with ``id``, ``status``, and timing info.
     """
     t0 = time.monotonic()
+    proj_filter = f" AND project = '{_esc(project)}'" if project else ""
 
-    store.execute(
-        f"UPDATE ReviewFinding SET status = 'resolved', resolution = '{_esc(resolution)}'"
-        f" WHERE id = '{_esc(finding_id)}'"
-    )
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
+
+    with governance_write_lock(store):
+        store.execute(
+            f"UPDATE ReviewFinding SET status = 'resolved', resolution = '{_esc(resolution)}'"
+            f" WHERE id = '{_esc(finding_id)}'{proj_filter}"
+        )
+
+        _sync_governance(store)
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {
@@ -135,6 +178,7 @@ def get_open_findings(
     plan_number: int | None = None,
     file_path: str | None = None,
     limit: int = 20,
+    project: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return open ReviewFindings, optionally filtered by plan or file.
 
@@ -143,6 +187,8 @@ def get_open_findings(
         plan_number: Filter by plan number.
         file_path: Filter by related file path.
         limit: Maximum number of findings to return.
+        project: When set, only return findings stamped with this project
+            (multi-project scoping). None returns findings regardless of project.
 
     Returns:
         List of finding dicts, sorted by severity then creation order.
@@ -150,13 +196,14 @@ def get_open_findings(
     from agentscaffold.graph.query_compat import ql  # noqa: PLC0415
 
     if file_path:
+        rf_proj_filter = f" AND rf.project = '{_esc(project)}'" if project else ""
         rows = store.query(
             f'SELECT t.rf_id AS "rf.id", t.rf_reviewType AS "rf.reviewType",'
             f' t.rf_planNumber AS "rf.planNumber", t.rf_severity AS "rf.severity",'
             f' t.rf_category AS "rf.category", t.rf_finding AS "rf.finding"'
             f" FROM GRAPH_TABLE(agentscaffold_graph"
             f"   MATCH (rf:ReviewFinding)-[e:FINDING_ABOUT_FILE]->(f:File)"
-            f"   WHERE rf.status = 'open' AND f.path = '{_esc(file_path)}'"
+            f"   WHERE rf.status = 'open' AND f.path = '{_esc(file_path)}'{rf_proj_filter}"
             f"   COLUMNS (rf.id AS rf_id, rf.reviewType AS rf_reviewType,"
             f"            rf.planNumber AS rf_planNumber, rf.severity AS rf_severity,"
             f"            rf.category AS rf_category, rf.finding AS rf_finding)"
@@ -164,13 +211,14 @@ def get_open_findings(
         )
     else:
         plan_filter = f" AND planNumber = {plan_number}" if plan_number is not None else ""
+        proj_filter = f" AND project = '{_esc(project)}'" if project else ""
         rows = ql(
             store,
             sql=(
                 f'SELECT id AS "rf.id", reviewType AS "rf.reviewType",'
                 f' planNumber AS "rf.planNumber", severity AS "rf.severity",'
                 f' category AS "rf.category", finding AS "rf.finding"'
-                f" FROM ReviewFinding WHERE status = 'open'{plan_filter} LIMIT {limit}"
+                f" FROM ReviewFinding WHERE status = 'open'{plan_filter}{proj_filter} LIMIT {limit}"
             ),
         )
 
@@ -191,6 +239,7 @@ def record_findings_batch(
     plan_number: int,
     review_type: str,
     findings: list[dict[str, Any]],
+    project: str | None = None,
 ) -> dict[str, Any]:
     """Record multiple ReviewFinding nodes in a single transaction.
 
@@ -202,6 +251,8 @@ def record_findings_batch(
         plan_number: The plan this batch of findings relates to.
         review_type: Review type label (e.g. "quant_architect").
         findings: List of finding dicts.
+        project: Owning project in a multi-project workspace; stamps the
+            ``project`` column and scopes the deterministic IDs and File lookups.
 
     Returns:
         Dict with ``ids``, ``count``, and ``elapsed_ms``.
@@ -212,46 +263,55 @@ def record_findings_batch(
 
     ids: list[str] = []
     now = datetime.now(timezone.utc).isoformat()
+    proj_filter = f" AND project = '{_esc(project)}'" if project else ""
 
-    store.execute("BEGIN TRANSACTION")
-    try:
-        for item in findings:
-            category = item.get("category", "general")
-            finding_text = item.get("finding", "")
-            severity = item.get("severity", "medium")
-            finding_id = _finding_id(plan_number, review_type, category, finding_text)
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
 
-            props: dict[str, Any] = {
-                "id": finding_id,
-                "reviewType": review_type,
-                "planNumber": plan_number,
-                "severity": severity,
-                "category": category,
-                "finding": finding_text,
-                "resolution": "",
-                "status": "open",
-            }
-            store.create_node("ReviewFinding", props)
+    with governance_write_lock(store):
+        store.execute("BEGIN TRANSACTION")
+        try:
+            for item in findings:
+                category = item.get("category", "general")
+                finding_text = item.get("finding", "")
+                severity = item.get("severity", "medium")
+                finding_id = _finding_id(plan_number, review_type, category, finding_text, project)
 
-            for fp in item.get("file_paths") or []:
-                rows = store.query(f"SELECT id FROM File WHERE path = '{_esc(fp)}'")
-                file_id = rows[0]["id"] if rows else None
-                if file_id:
+                props: dict[str, Any] = {
+                    "id": finding_id,
+                    "reviewType": review_type,
+                    "planNumber": plan_number,
+                    "severity": severity,
+                    "category": category,
+                    "finding": finding_text,
+                    "resolution": "",
+                    "status": "open",
+                    "project": project or "",
+                }
+                store.create_node("ReviewFinding", props)
+
+                for fp in item.get("file_paths") or []:
+                    rows = store.query(
+                        f"SELECT id FROM File WHERE path = '{_esc(fp)}'{proj_filter}"
+                    )
+                    file_id = rows[0]["id"] if rows else None
+                    if file_id:
+                        store.create_edge(
+                            "FINDING_ABOUT_FILE", "ReviewFinding", finding_id, "File", file_id
+                        )
+
+                for fn_id in item.get("function_ids") or []:
                     store.create_edge(
-                        "FINDING_ABOUT_FILE", "ReviewFinding", finding_id, "File", file_id
+                        "FINDING_ABOUT_FUNC", "ReviewFinding", finding_id, "Function", fn_id
                     )
 
-            for fn_id in item.get("function_ids") or []:
-                store.create_edge(
-                    "FINDING_ABOUT_FUNC", "ReviewFinding", finding_id, "Function", fn_id
-                )
+                ids.append(finding_id)
 
-            ids.append(finding_id)
+            store.execute("COMMIT")
+        except Exception:
+            store.execute("ROLLBACK")
+            raise
 
-        store.execute("COMMIT")
-    except Exception:
-        store.execute("ROLLBACK")
-        raise
+        _sync_governance(store)
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {

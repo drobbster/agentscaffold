@@ -30,7 +30,7 @@ When you run `scaffold init`, AgentScaffold installs the full core planning temp
 | Document | Description |
 |----------|-------------|
 | [Getting Started](getting-started.md) | Installation, init, first plan, knowledge graph, review, execution, NL+MCP switch |
-| [User Guide](user-guide.md) | Full session workflow, NL intent routing reference, greenfield onboarding, MCP tools (all 20), session tracking |
+| [User Guide](user-guide.md) | Full session workflow, NL intent routing reference, greenfield onboarding, MCP tools (all 26), session tracking |
 | [Platform Integration](platform-integration.md) | Cursor, Claude Code, Windsurf, Cline, Continue, aider, Codex, MCP setup, all MCP tools |
 | [Configuration](configuration.md) | Full scaffold.yaml reference, gates, rigor presets |
 | [Domain Packs](domain-packs.md) | Available packs, installation, using multiple packs |
@@ -53,7 +53,7 @@ The most common trigger phrases and what they invoke:
 | "decision history for plan X" / "what ADR governs plan X" | `scaffold_decision_context` |
 | "compare plan X and Y" / "do plans overlap" | `scaffold_compare_plans` |
 
-For the full routing table (all 20 MCP tools + trigger phrases), see the
+For the full routing table (all 26 MCP tools + trigger phrases), see the
 [NL Intent Routing Reference](user-guide.md#nl-intent-routing-reference) section of the User Guide.
 
 ## Internal (dev_docs/, not shipped to PyPI)

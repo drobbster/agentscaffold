@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
 from agentscaffold.config import load_config
+from agentscaffold.paths import ResolvedPaths, resolve_root
 
 console = Console()
 
@@ -53,8 +53,8 @@ def _status_style(status: str) -> str:
 
 def run_metrics() -> None:
     """Run metrics dashboard and display results."""
-    load_config()
-    plans_dir = Path("docs/ai/plans")
+    config = load_config()
+    plans_dir = ResolvedPaths(config, resolve_root()).plans_dir
 
     if not plans_dir.is_dir():
         console.print(f"[yellow]Warning: {plans_dir} does not exist.[/yellow]")

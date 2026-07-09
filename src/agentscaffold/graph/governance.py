@@ -665,7 +665,12 @@ def governance_source_files(root: Path, config: Any | None = None) -> list[Path]
             root / gc.adrs_dir,
             root / gc.spikes_dir,
         ]
-        files = [root / gc.learnings_file]
+        files = [
+            root / gc.learnings_file,
+            root / gc.backlog_file,
+            root / gc.backlog_archive_file,
+            root / gc.governance_artifact,
+        ]
     else:
         dirs = [
             root / "docs" / "ai" / "plans",
@@ -674,7 +679,12 @@ def governance_source_files(root: Path, config: Any | None = None) -> list[Path]
             root / "docs" / "ai" / "adrs",
             root / "docs" / "ai" / "spikes",
         ]
-        files = [root / "docs" / "ai" / "state" / "learnings_tracker.md"]
+        files = [
+            root / "docs" / "ai" / "state" / "learnings_tracker.md",
+            root / "docs" / "ai" / "backlog.md",
+            root / "docs" / "ai" / "backlog_archive.md",
+            root / "docs" / "ai" / "state" / "governance.json",
+        ]
 
     result: list[Path] = []
     for d in dirs:
@@ -714,6 +724,23 @@ def process_governance(
         studies_dir = root / "docs" / "studies"
         adrs_dir = root / "docs" / "ai" / "adrs"
         spikes_dir = root / "docs" / "ai" / "spikes"
+
+    # Restore git-backed governance (Plan 222): findings, sessions, and backlog
+    # items recorded at runtime live in a committed artifact, not in code. On a
+    # fresh build the graph has none of them, so ingest the artifact (idempotent)
+    # before parsing code-derived governance. A missing artifact is a no-op; a
+    # corrupt one is logged and skipped so indexing still completes.
+    governance_restored: dict[str, Any] = {}
+    try:
+        from agentscaffold.graph.governance_store import (
+            ingest_governance,
+            resolve_governance_artifact,
+        )
+
+        artifact_path = resolve_governance_artifact(config, start=root)
+        governance_restored = ingest_governance(store, artifact_path)
+    except Exception as exc:  # noqa: BLE001 - artifact restore must not break indexing
+        logger.warning("Governance artifact restore failed: %s", exc)
 
     plan_count = 0
     contract_count = 0
@@ -1042,4 +1069,9 @@ def process_governance(
         "adrs": adr_count,
         "spikes": spike_count,
         "dependency_edges": dep_edge_count,
+        "governance_restored": (
+            sum(governance_restored.get("imported", {}).values())
+            if governance_restored.get("present")
+            else 0
+        ),
     }

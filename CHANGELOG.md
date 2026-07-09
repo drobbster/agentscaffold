@@ -6,6 +6,367 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to semantic versioning (pre-1.0: minor versions may
 introduce additive features and small behavior changes).
 
+## [Unreleased]
+
+## [0.9.1] - 2026-07-08
+
+### Fixed
+- Added shared graph write coordination across indexing, MCP graph opens, and
+  runtime governance writes. `scaffold_begin_plan`, `scaffold_complete_plan`,
+  and other MCP graph-backed paths now retry transient DuckDB lock contention
+  before returning `graph_locked`, while generated Cursor edit hooks defer their
+  background incremental index when lifecycle/governance writes are active.
+- Governance freshness now watches `docs/ai/backlog.md`,
+  `docs/ai/backlog_archive.md`, and `docs/ai/state/governance.json`, preventing
+  backlog/governance artifact edits from staying invisible to graph-backed
+  orientation and review tools.
+
+## [0.9.0] - 2026-06-23
+
+Multi-project workspace hardening discovered while running AgentScaffold against
+real multi-project workspaces. Five related fixes; all preserve single-project
+behavior (scoping is a no-op there, and `project=None` reproduces prior IDs and
+queries byte-for-byte).
+
+### Added
+- MCP tools accept an optional `working_path` argument (advertised on every
+  object-schema tool). In a multi-project workspace the server resolves the
+  owning project root from that path and scopes the call to it, so reads follow
+  the file the agent is editing even though the editor launches the MCP server
+  from one fixed directory. Empty/unresolvable `working_path` keeps the default
+  root; explicit `project` / `all_projects` still take precedence.
+- `_route_root_for_working_path` resolves a project root from an absolute or
+  workspace-relative path; `_dispatch_tool` chdir's into it per call so all
+  cwd-derived project scoping retargets without per-tool changes.
+
+### Fixed
+- MCP: a federated fail-open default. When the effective root is not a
+  registered project and the caller did not scope explicitly, the call now
+  federates across all projects instead of raising `ScopingError`.
+- MCP: accurate `retrieval_status` for cold tools (e.g. `scaffold_stats`). The
+  embedding weights cache is now pinned from config in `_dispatch_tool` before
+  the retrieval-status probe, so cold tools no longer report `degraded` while
+  semantic search actually works.
+- Findings: review findings are now project-scoped. `_finding_id` folds the
+  owning project into its hash key (plan numbers are not unique across
+  projects), `record_finding` / `record_findings_batch` stamp the `project`
+  column and scope `File` lookups, and `resolve_finding` / `get_open_findings`
+  accept a `project` filter. MCP finding handlers and `scaffold_prepare_review`
+  resolve the active project via `_current_project_or_none()`.
+- Backlog: same class of fix on the backlog path. `_backlog_id` folds the
+  project into its hash key; `record_backlog_item` / `record_backlog_items_batch`
+  stamp the `project` column and scope the `Plan` lookup; `resolve_backlog_item`,
+  `get_open_backlog_items`, and `get_backlog_items_for_plan` (in both
+  `graph/backlog` and the `review/queries` wrappers) accept `project`. The
+  orient open-backlog count is project-scoped to match the list.
+- Agent rule delivery: the generated Cursor routing rule is now written as
+  `.cursor/rules/agentscaffold.mdc` with `alwaysApply: true` (Cursor only loads
+  `.mdc` rules), per-reviewer rules are written as `<reviewer>.mdc`, and stale
+  `.md` files from older generations are removed. The `AGENTS.md` template gains
+  "AgentScaffold MCP Tools" and "Multi-Project Workspace Discipline" sections so
+  the `working_path` discipline reaches every agent platform.
+
+### Migration
+- Code stamps `project` only on new writes. Graphs that already hold findings or
+  backlog items written before this release will have rows with an empty
+  `project` column; backfill them per project (regenerate the project-scoped ID,
+  rewire the `BACKLOG_ITEM_OF` edges, then re-sync governance write-through) or
+  rebuild with `scaffold index`. Existing projects should re-run
+  `scaffold agents` / `scaffold agents cursor` to adopt the `.mdc` rule outputs.
+
+## [0.8.0] - 2026-06-16
+
+### Added (Plan 232 - async embedding lane and resident embedder)
+- Added `graph.async_embeddings` (`off | idle | interval | commit`, default
+  `off`) so projects can opt into background embedding refresh without changing
+  historical behavior. With `off`, AgentScaffold schedules nothing and never
+  loads the embedding model.
+- MCP responses now include async embedding lane state and can schedule a
+  single-flight background embedding refresh when retrieval is degraded (for
+  example, no embeddings are indexed) and the structural index lock is idle.
+- The embedding scheduler reuses the existing process-level model cache, making
+  the resident model lazy and opt-in, and honors
+  `graph.embedding_min_interval_seconds` for debounce.
+- Generated git `post-commit` and `post-merge` hooks can request a non-blocking
+  `scaffold index --incremental --embeddings` reconcile for the `commit` policy.
+- Incremental `--embeddings` can now reconcile missing embeddings even when
+  there are no structural changes, while changed-file runs remain scoped to the
+  affected neighborhood.
+- Tightened the scoped Plan 232 validation target by typing legacy MCP
+  decorator/helper signatures and isolating the governance migration test from
+  the repo-level governance artifact; the package suite is back to all-green.
+- Live benchmark execution now validates the expected mini-swe-agent Docker API
+  before constructing a live environment, so unsupported mini-swe-agent releases
+  fail closed instead of starting a container and then crashing on a missing
+  method.
+
+### Changed (Plan 231 - incremental indexer scoping and hook debounce)
+- `scaffold index --incremental` now keeps per-edit work proportional to the
+  changed-file neighborhood: unchanged files use an `(mtime, size)` metadata
+  prefilter before hashing; empty changesets exit as explicit no-ops; import and
+  call re-resolution are scoped to changed files plus direct importers; config
+  references refresh only for changed configs or configs that referenced refreshed
+  code; and community detection is skipped on content-only edits by default.
+- Incremental `--embeddings` runs now pass the changed-file scope into
+  `generate_embeddings`, preserving the existing content-hash skip while avoiding
+  per-node existence checks across the whole store.
+- Generated edit hooks remain non-blocking and single-flight, and now honor
+  `graph.incremental_min_interval_seconds` as an optional interval guard. Claude
+  Code built-in freshness hooks route through the same wrapper script instead of
+  launching a blocking raw `scaffold index --incremental` command.
+- Generated collaboration protocol docs are richer out of the box: prompting
+  patterns, communication patterns, quality checkpoints, future-regret triage,
+  escalation triggers, anti-patterns, and human-readable review terminology now
+  ship in the package template. Domain review sessions render only when domains
+  are configured.
+
+## [0.7.0] - 2026-06-16
+
+Phase 1 foundation chain (Plans 221-223) plus Phase 2 (Plans 224-229):
+multi-project / durability groundwork, shared-policy inheritance, namespaced
+multi-project workspaces, collaboration ergonomics, semantic search quality,
+eval harness coverage, and the AgentScaffold Benchmark CLI.
+
+### Fixed (trust/safety: never clobber org/user-owned agent or skill files)
+- **Project-owned agent docs are never overwritten -- guidance is appended into a
+  managed block.** `scaffold agents generate-all`, `scaffold agents generate`,
+  `scaffold agents cursor`, and a fresh `scaffold init` previously overwrote
+  `AGENTS.md`, `CLAUDE.md`, `.windsurfrules`, and `.cursor/rules.md`
+  unconditionally, silently destroying hand-authored content (a real footgun for
+  established repos and multi-user/org teams). These project-owned docs are now
+  written via a new `write_managed_block` helper that delimits generated guidance
+  with sentinel markers
+  (`<!-- BEGIN AGENTSCAFFOLD MANAGED SECTION -->` ... `<!-- END ... -->`):
+  - **File absent** -> created with the managed block.
+  - **File has the markers** -> only the region between them is refreshed;
+    everything outside is preserved (idempotent, no duplication on re-runs).
+  - **File exists WITHOUT markers (org/user-owned)** -> a fresh managed block is
+    **appended** to the end; not one existing byte is touched.
+  - `--force` rewrites the whole file, saving a `.bak` snapshot first.
+- **User/org-authored skills are never overwritten.** Generated `SKILL.md` files
+  now carry a `managed_by: agentscaffold` frontmatter marker. `scaffold agents
+  skills` writes a skill only when it is absent or previously generated by
+  AgentScaffold; a same-named file lacking the marker is preserved (a warning is
+  logged). `--force` overwrites it after saving a `.md.bak` snapshot.
+- Machine-owned files (`.cursor/rules/agentscaffold.md` routing/trust policy,
+  per-reviewer rules, enforcement hooks, agent stubs) are still regenerated every
+  run so policy/config updates land; `.cursor/mcp.json` remains skip-if-exists.
+- Added `--force` to `scaffold agents generate`, `agents cursor`,
+  `agents generate-all`, and `agents skills`.
+- These safety guarantees are documented in `docs/platform-integration.md`
+  ("File Safety: What AgentScaffold Will and Will Not Overwrite") and summarized in
+  the README.
+
+### Changed (agent guidance for new capabilities)
+- **Multi-project workspace discipline in generated rules**: the shared rule
+  policy rendered into `.cursor/rules/`, `CLAUDE.md`, and other platform agent
+  files now teaches project scoping -- reads default to the current project,
+  plan numbers and file paths are not unique across projects, `--project` /
+  `--all-projects` widen scope (with provenance on federated hits), and
+  `scaffold graph duplicates` finds cross-project reuse candidates. The section
+  is a no-op for lone single-project repos. Run `scaffold agents generate-all`
+  to refresh existing agent files.
+- **Multi-project docs now show real-time agent scoping.** README and
+  configuration docs include a two-repo example showing that the agent's current
+  working directory determines the default project, while `--project` and
+  `--all-projects` are explicit cross-project scope wideners.
+
+### Added (Plan 227 - semantic search quality, Tiers 2-3)
+- **Embedding model is configurable and its weights cache is workspace-pinned.**
+  New `search:` config block (`search.embedding_model`, default `all-MiniLM-L6-v2`;
+  `search.cache_dir`, default `.scaffold/models`). Indexing and querying now load
+  the model from the same pinned cache so they always agree.
+- **`scaffold graph warm`** provisions (downloads + caches) the embedding model
+  once, deliberately. This fixes a real fragility: installing the `[search]` extra
+  gets the *library* but not the model *weights*, which sentence-transformers
+  otherwise downloads lazily on first index/search -- a runtime failure when
+  offline/air-gapped/CI/sandboxed. `scaffold graph warm` makes that step explicit.
+- **`scaffold graph model-status`** reports readiness: package installed? weights
+  cached (offline-ready)? cache dir? and tells you exactly what to run.
+- **Offline-graceful degrade.** When the package + embeddings are present but the
+  model weights are not cached (and there is no network), semantic/hybrid search
+  now degrades to keyword-only with an actionable message ("run `scaffold graph
+  warm`") instead of failing mid-query. `scaffold graph search`/MCP `scaffold_search`
+  surface this via the existing `retrieval_status`/`retrieval_reason`.
+- **Model provenance and mismatch safety.** `EmbeddingStore` now records the
+  embedding model and input-text hash for each row (schema v9). Search filters to
+  the active configured model and reports a re-index instruction rather than
+  comparing incompatible vectors after a model swap.
+- **Governance recall.** Plans, learnings, review findings, studies, ADRs, spikes,
+  and backlog items now have embedding text builders and can be searched with
+  `scaffold graph search --kind governance` (or `--kind all`). MCP clients get a
+  dedicated `scaffold_recall_governance` tool plus `kind` support on
+  `scaffold_search`.
+- **Incremental embedding skip.** Embedding input text is SHA-256 hashed; rows
+  whose `(node_id, node_type, model, text_hash)` already exists are skipped during
+  embedding generation, avoiding unnecessary re-encoding.
+- **Optional precision/performance paths.** DuckDB `vss`/HNSW index creation is
+  attempted best-effort when the extension is available, with exact cosine as the
+  correctness fallback. CrossEncoder reranking is implemented behind `--rerank`
+  / `search.rerank` and remains off by default.
+- Note: forcing the `[search]`/torch dependency at install time would NOT solve
+  the weight issue (weights are not bundled in the wheel) and would bloat every
+  install; the `[search]` extra stays optional, and provisioning is the explicit,
+  offline-safe fix. Documented in `docs/configuration.md` and
+  `docs/platform-integration.md`.
+
+### Added (Plan 228 - eval harness coverage and rigor cost-benefit)
+- **Multi-project eval scenarios** for scoped/federated search, duplicate
+  detection, and single->multi migration integrity.
+- **Search-quality eval scenarios** for keyword vs hybrid retrieval, embedding
+  normalization, and model-readiness reporting.
+- **Rigor cost-benefit proxy scenarios** comparing minimal/standard/strict
+  governance settings.
+- **Thread-safe governance writes** via a shared DuckDB write lock, fixing a
+  pre-existing concurrent-write crash in the eval harness.
+
+### Added (Plan 229 - AgentScaffold Benchmark foundation)
+- **`scaffold benchmark` preflight and dry-run commands.** The new benchmark CLI
+  group includes `models`, `doctor`, and `run --dry-run` so users can inspect
+  selectable model configs, verify Docker/dependency/API-key/pricing readiness,
+  and preview a two-arm benchmark plan without starting containers or live model
+  calls.
+- **Optional benchmark dependency extra.** Live-run dependencies
+  (`mini-swe-agent`, `litellm`, `datasets`) are behind
+  `agentscaffold[benchmark]`, keeping the base install light while making live
+  benchmark setup explicit.
+- **Cost-source transparency.** Built-in benchmark model metadata records provider,
+  API-key env var, and pricing source (`litellm`). The docs distinguish provider
+  API pricing from Cursor subscription/usage pricing, which requires a separate
+  adapter before any Cursor-specific savings claims.
+- **Benchmark task and report contracts.** Added deterministic task graders for
+  tests-go-green and planted-defect review tasks, a serializable `summary.json`
+  result schema, per-arm metric aggregation, and `scaffold benchmark compare` /
+  `report` commands for saved results. Live execution will write into these
+  contracts in the next Plan 229 slice.
+- **Guarded live-runner adapter boundary.** Added baseline/equipped arm
+  definitions, isolated task workspace setup, container-local `scaffold-*`
+  wrapper scripts, trajectory metric extraction, and a guarded mini-swe-agent
+  adapter that fails closed with actionable dependency/setup messages until the
+  concrete Docker run loop is completed.
+- **Concrete mini-swe-agent Docker adapter.** The guarded adapter now builds the
+  selected model config, starts a mini-swe-agent Docker environment, copies the
+  isolated task workspace into `/testbed`, installs equipped-arm wrappers, runs
+  the agent, executes task validation, extracts trajectory metrics, and writes
+  benchmark summaries. Reports now include seed pass-rate ranges when multiple
+  seeds are present.
+
+### Changed (Plan 227 - semantic search quality, Tier 1)
+- **Richer embedding text**: code embeddings now include each definition's
+  docstring or leading comment (read from its source slice at index time), not
+  just `name + signature + module`, so semantic search matches on intent rather
+  than identifiers alone. Best-effort and additive -- when source is unavailable
+  the text falls back to the previous representation.
+- **Store-time vector normalization**: embeddings are L2-normalized before
+  storage, so cosine similarity equals the dot product and a future L2 ANN index
+  ranks identically. Re-index to regenerate vectors in the new representation.
+- Hybrid retrieval (lexical/symbol + vector via reciprocal-rank fusion) remains
+  the default search mode; `--mode keyword|semantic` are the escape hatches.
+
+### Added (Plan 225 - namespaced multi-project workspace)
+- **Multi-project workspaces**: several projects can share one knowledge-graph
+  cache. A `workspace.yaml` at the workspace root lists member projects; every
+  node is then namespaced by project (`{project}::{raw_id}`) and stamped with a
+  `project` column. A lone repo with no `workspace.yaml` is byte-for-byte
+  unchanged (single synthesized project, no ID prefixing, every scope predicate a
+  no-op).
+- **`scaffold workspace` commands**: `workspace list` shows the workspace mode
+  and member projects; `workspace onboard <dir> [--name]` registers a project
+  (creating the manifest on first use) and reports the single->multi transition.
+- **Project-scoped reads by default**: in a multi-project workspace, search
+  (`scaffold graph search`, MCP `scaffold_search`) and governance reads
+  (plans/studies/ADRs/spikes/findings/learnings, including file-path-keyed
+  lookups) default to the current project so an agent never misreads a sibling
+  project's knowledge. `--project NAME` retargets and `--all-projects` federates
+  (federated hits carry per-row project provenance).
+- **`scaffold graph duplicates`**: surfaces cross-project near-duplicate
+  definitions (federated pairwise cosine over embeddings) to drive shared-library
+  reuse. Single-project repos report nothing.
+- **Atomic single->multi mode flip**: `workspace onboard --migrate-existing NAME`
+  re-keys an existing single-project cache in place (nodes + edges + embeddings
+  in one transaction, idempotent, rollback-safe), and `verify_integrity` asserts
+  every project-stamped row carries its matching id prefix.
+
+### Changed / Breaking (Plan 225)
+- **Schema `SCHEMA_VERSION` 7 -> 8**: additive `Project` node + `project` column
+  on node tables and `EmbeddingStore`. The bump triggers the existing fail-closed
+  export -> rebuild -> import on the next `scaffold index`; governance is
+  preserved. Single-project IDs stay unprefixed.
+- **Shared cache location**: a relative `graph.db_path` now resolves under the
+  workspace root (the nearest `workspace.yaml`), not each project root, so
+  workspace members share one cache. For a lone repo the workspace root is the
+  project root, so the resolved path is unchanged.
+- **Project names** are restricted to `[A-Za-z0-9._-]+` (no whitespace, quotes,
+  or `::`) so they are unambiguous as an ID prefix and safe to inline in scope
+  predicates.
+
+### Added (Plan 226 - collaboration ergonomics)
+- **Opt-in governance-file sharding**: with `collab.sharded: true`, the
+  high-contention `workflow_state.md` / `backlog.md` can be stored as per-entry
+  fragments so concurrent writers touch different files. `scaffold state split`
+  shards an existing file (reversible) and `scaffold state render` reassembles
+  the canonical file deterministically (stable order; rendering twice is
+  byte-identical). Defaults to `false`, so existing repos are unaffected.
+- **Advisory plan claims**: `scaffold plan claim <number> --owner <who>` records
+  git-backed, advisory ownership of an in-flight plan; `scaffold plan release`
+  clears it. `scaffold plan status` shows an Owner column when claims exist.
+  Claims are visibility, not enforced locks (git still resolves concurrent edits).
+
+### Added (Plan 224 - config inheritance)
+- **`extends:` in `scaffold.yaml`**: a project can inherit shared policy (rigor,
+  gates, standards, reviewers, prohibitions, approval rules) from a base config
+  instead of copying it into every repo. The base is a filesystem path
+  (absolute, or relative to the file that declares `extends`; a directory
+  resolves to its `scaffold.yaml`) or the literal `home`.
+- **Org/user home**: `extends: home` resolves to `$AGENTSCAFFOLD_HOME` (else
+  `~/.agentscaffold/scaffold.yaml`). An absent home config is a no-op, so a repo
+  with `extends: home` still works on a machine without shared config.
+- **Deterministic precedence** (low -> high): built-in defaults, then the
+  `extends` base chain (recursively), then the project `scaffold.yaml`, then
+  environment overrides (e.g. `AGENTSCAFFOLD_DB_PATH`). Deep-merge per field;
+  lists are replaced wholesale, not concatenated. Cycles and missing explicit
+  bases raise a clear error; an absent `home` base is silent.
+- **`scaffold config show`**: prints the inheritance chain (base-first) and the
+  effective merged configuration, so precedence is debuggable.
+- Repos without `extends:` are unaffected (resolution is byte-for-byte today's).
+
+### Changed
+- **Path/root unification** (Plan 221): all CLI commands now resolve governance
+  paths through one project-root rule (nearest `scaffold.yaml`, then nearest
+  `.git`, then the working directory) and one `ResolvedPaths` accessor derived
+  from `GraphConfig`. Commands that previously hardcoded `docs/ai/*` literals
+  (`plan create/lint/status`, `spike create`, `study create/list/lint`,
+  `retro check`, `metrics`, `validate`, `domain add`) now honor customized
+  `graph.*` paths. Defaults equal the previous literals, so an uncustomized repo
+  is unaffected.
+- **`db_path` resolves from the project root** (Plan 221): `open_graph` and the
+  index pipeline now resolve a relative `graph.db_path` against the project root
+  instead of the bare working directory, so querying the graph works from any
+  subdirectory and matches where `scaffold index` writes it. Repos that relied on
+  a relative `db_path` resolving against a subdirectory should set an absolute
+  `db_path` or run from the project root. Absolute `db_path` values are unchanged.
+
+### Added
+- New `graph.*` config fields (additive, defaults = previous literals):
+  `backlog_file`, `backlog_archive_file`, `standards_dir`, `prompts_dir`,
+  `templates_dir`, `plan_completion_log_file`, `security_dir`.
+- **Git-backed governance serialization** (Plan 222): review findings, sessions,
+  and backlog items recorded at runtime are now serialized to a versioned,
+  git-committed JSON artifact (`graph.governance_artifact`, default
+  `docs/ai/state/governance.json`). This makes agent-generated knowledge the
+  durable *system of record*; the DuckDB graph becomes a derived index that
+  `scaffold index` rebuilds from the artifact plus code. Commit the artifact to
+  share findings/sessions/backlog with teammates and to survive cache loss.
+  Writes are atomic and emitted in a stable order to minimize git churn.
+- New `graph.governance_artifact` config field.
+- **Durable/ephemeral storage** (Plan 223): `graph.db_path` now supports
+  `${ENV}`/`$VAR` and `~` expansion, and an `AGENTSCAFFOLD_DB_PATH` environment
+  variable overrides it entirely -- so one committed `scaffold.yaml` can point
+  the cache at a mounted volume on a persistent box and a scratch path on an
+  ephemeral devbox. On a fresh/empty cache, `scaffold index` reports when it
+  rebuilds governance from the committed artifact (`restored_from_artifact`),
+  so an ephemeral devbox reconstructs the full graph from git alone.
+
 ## [0.6.0] - 2026-06-14
 
 Trust & Safety Hardening batch (Plans 217-220).

@@ -20,6 +20,38 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# Project scoping (Plan 225)
+#
+# File paths and plan/study identifiers are NOT globally unique across the
+# projects sharing one graph cache, so an unscoped governance read could surface
+# another project's learnings/findings (misorientation). These helpers default
+# to the *current* project in a multi-project workspace and are exact no-ops in
+# a single-project repo, so existing callsites keep their behavior unchanged.
+# Project names are validated to a safe charset, so inlining is injection-safe.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_scope(project: str | None, all_projects: bool) -> Any:
+    from agentscaffold.graph.scoping import resolve_scope
+
+    return resolve_scope(project=project, all_projects=all_projects)
+
+
+def _sql_scope(scope: Any, connector: str, column: str = "project") -> str:
+    """Inline plain-SQL predicate (``WHERE``/``AND`` ``project = '<name>'``) or ''."""
+    if getattr(scope, "is_noop", True):
+        return ""
+    return f" {connector} {column} = '{scope.project}'"
+
+
+def _graph_scope(scope: Any, alias: str) -> str:
+    """Inline ``GRAPH_TABLE`` predicate (`` AND <alias>.project = '<name>'``) or ''."""
+    if getattr(scope, "is_noop", True):
+        return ""
+    return f" AND {alias}.project = '{scope.project}'"
+
+
+# ---------------------------------------------------------------------------
 # Dependency queries
 # ---------------------------------------------------------------------------
 
@@ -138,9 +170,16 @@ def count_callers_for_function(store: GraphBackend, func_id: str) -> int:
 # ---------------------------------------------------------------------------
 
 
-def get_plans_impacting_file(store: GraphBackend, file_path: str) -> list[dict[str, Any]]:
+def get_plans_impacting_file(
+    store: GraphBackend,
+    file_path: str,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return plans that list the given file in their File Impact Map."""
     escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    scope = _graph_scope(_resolve_scope(project, all_projects), "f")
     return store.query(
         'SELECT t.p_number AS "p.number",'
         ' t.p_title AS "p.title",'
@@ -149,7 +188,7 @@ def get_plans_impacting_file(store: GraphBackend, file_path: str) -> list[dict[s
         ' t.r_changeType AS "r.changeType"'
         " FROM GRAPH_TABLE(agentscaffold_graph"
         " MATCH (p:Plan)-[r:PLAN_IMPACTS]->(f:File)"
-        f" WHERE f.path = '{escaped}'"
+        f" WHERE f.path = '{escaped}'{scope}"
         " COLUMNS (p.number AS p_number, p.title AS p_title,"
         " p.status AS p_status, p.createdDate AS p_createdDate,"
         " r.changeType AS r_changeType)) t"
@@ -157,9 +196,16 @@ def get_plans_impacting_file(store: GraphBackend, file_path: str) -> list[dict[s
     )
 
 
-def get_learnings_for_file(store: GraphBackend, file_path: str) -> list[dict[str, Any]]:
+def get_learnings_for_file(
+    store: GraphBackend,
+    file_path: str,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return learnings that reference the given file."""
     escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    scope = _graph_scope(_resolve_scope(project, all_projects), "f")
     return store.query(
         'SELECT t.lr_learningId AS "lr.learningId",'
         ' t.lr_planNumber AS "lr.planNumber",'
@@ -167,7 +213,7 @@ def get_learnings_for_file(store: GraphBackend, file_path: str) -> list[dict[str
         ' t.lr_status AS "lr.status"'
         " FROM GRAPH_TABLE(agentscaffold_graph"
         " MATCH (lr:Learning)-[e:LEARNING_RELATES_TO_FILE]->(f:File)"
-        f" WHERE f.path = '{escaped}'"
+        f" WHERE f.path = '{escaped}'{scope}"
         " COLUMNS (lr.learningId AS lr_learningId,"
         " lr.planNumber AS lr_planNumber,"
         " lr.description AS lr_description,"
@@ -175,10 +221,21 @@ def get_learnings_for_file(store: GraphBackend, file_path: str) -> list[dict[str
     )
 
 
-def get_findings_for_file(store: GraphBackend, file_path: str) -> list[dict[str, Any]]:
-    """Return review findings about the given file."""
-    file_id = f"file::{file_path}"
-    escaped_id = file_id.replace("\\", "\\\\").replace("'", "\\'")
+def get_findings_for_file(
+    store: GraphBackend,
+    file_path: str,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
+    """Return review findings about the given file.
+
+    Matches on ``f.path`` (identical across single/multi-project) rather than the
+    node id, which becomes project-qualified when multiple projects share the
+    cache; the project predicate then disambiguates a path shared by siblings.
+    """
+    escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    scope = _graph_scope(_resolve_scope(project, all_projects), "f")
     return ql(
         store,
         sql=(
@@ -190,7 +247,7 @@ def get_findings_for_file(store: GraphBackend, file_path: str) -> list[dict[str,
             ' t.rf_status AS "rf.status"'
             " FROM GRAPH_TABLE(agentscaffold_graph"
             " MATCH (rf:ReviewFinding)-[e:FINDING_ABOUT_FILE]->(f:File)"
-            f" WHERE f.id = '{escaped_id}'"
+            f" WHERE f.path = '{escaped}'{scope}"
             " COLUMNS (rf.reviewType AS rf_reviewType,"
             " rf.planNumber AS rf_planNumber,"
             " rf.category AS rf_category,"
@@ -232,10 +289,16 @@ def get_contracts_for_file(store: GraphBackend, file_path: str) -> list[dict[str
     return result
 
 
-def get_file_layer(store: GraphBackend, file_path: str) -> dict[str, Any] | None:
+def get_file_layer(
+    store: GraphBackend,
+    file_path: str,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> dict[str, Any] | None:
     """Return the architecture layer for the given file, if assigned."""
-    file_id = f"file::{file_path}"
-    escaped_id = file_id.replace("\\", "\\\\").replace("'", "\\'")
+    escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    scope = _graph_scope(_resolve_scope(project, all_projects), "f")
     rows = ql(
         store,
         sql=(
@@ -244,7 +307,7 @@ def get_file_layer(store: GraphBackend, file_path: str) -> dict[str, Any] | None
             ' t.l_description AS "l.description"'
             " FROM GRAPH_TABLE(agentscaffold_graph"
             " MATCH (f:File)-[e:BELONGS_TO_LAYER]->(l:ArchitectureLayer)"
-            f" WHERE f.id = '{escaped_id}'"
+            f" WHERE f.path = '{escaped}'{scope}"
             " COLUMNS (l.number AS l_number, l.name AS l_name,"
             " l.description AS l_description)) t"
         ),
@@ -257,14 +320,23 @@ def get_file_layer(store: GraphBackend, file_path: str) -> dict[str, Any] | None
 # ---------------------------------------------------------------------------
 
 
-def get_hot_files(store: GraphBackend, limit: int = 10) -> list[dict[str, Any]]:
+def get_hot_files(
+    store: GraphBackend,
+    limit: int = 10,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return files with the most plan impacts (most-modified files)."""
+    scope = _resolve_scope(project, all_projects)
+    where = "" if getattr(scope, "is_noop", True) else f" WHERE f.project = '{scope.project}'"
     return ql(
         store,
         sql=(
             'SELECT t.f_path AS "f.path", COUNT(*) AS plan_count'
             " FROM GRAPH_TABLE(agentscaffold_graph"
             " MATCH (p:Plan)-[e:PLAN_IMPACTS]->(f:File)"
+            f"{where}"
             " COLUMNS (f.path AS f_path)) t"
             " GROUP BY t.f_path"
             " ORDER BY plan_count DESC"
@@ -274,15 +346,23 @@ def get_hot_files(store: GraphBackend, limit: int = 10) -> list[dict[str, Any]]:
 
 
 def get_volatile_modules(
-    store: GraphBackend, window_days: int = 30, min_plans: int = 3
+    store: GraphBackend,
+    window_days: int = 30,
+    min_plans: int = 3,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
 ) -> list[dict[str, Any]]:
     """Return files modified by many plans in a recent window (instability signal)."""
+    scope = _resolve_scope(project, all_projects)
+    where = "" if getattr(scope, "is_noop", True) else f" WHERE f.project = '{scope.project}'"
     return ql(
         store,
         sql=(
             'SELECT t.f_path AS "f.path", COUNT(*) AS plan_count'
             " FROM GRAPH_TABLE(agentscaffold_graph"
             " MATCH (p:Plan)-[e:PLAN_IMPACTS]->(f:File)"
+            f"{where}"
             " COLUMNS (f.path AS f_path)) t"
             " GROUP BY t.f_path"
             " ORDER BY plan_count DESC"
@@ -290,21 +370,34 @@ def get_volatile_modules(
     )
 
 
-def get_all_plans(store: GraphBackend) -> list[dict[str, Any]]:
-    """Return all plans ordered by number."""
+def get_all_plans(
+    store: GraphBackend,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
+    """Return all plans ordered by number (scoped to the current project)."""
+    scope = _sql_scope(_resolve_scope(project, all_projects), "WHERE")
     return ql(
         store,
         sql=(
             'SELECT number AS "p.number", title AS "p.title",'
             ' status AS "p.status", planType AS "p.planType",'
             ' createdDate AS "p.createdDate", lastUpdated AS "p.lastUpdated"'
-            " FROM Plan ORDER BY number DESC"
+            f" FROM Plan{scope} ORDER BY number DESC"
         ),
     )
 
 
-def get_plan_by_number(store: GraphBackend, number: int) -> dict[str, Any] | None:
-    """Return a single plan by its number."""
+def get_plan_by_number(
+    store: GraphBackend,
+    number: int,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> dict[str, Any] | None:
+    """Return a single plan by its number (scoped to the current project)."""
+    scope = _sql_scope(_resolve_scope(project, all_projects), "AND")
     rows = ql(
         store,
         sql=(
@@ -313,14 +406,21 @@ def get_plan_by_number(store: GraphBackend, number: int) -> dict[str, Any] | Non
             ' planType AS "p.planType", filePath AS "p.filePath",'
             ' createdDate AS "p.createdDate",'
             ' lastUpdated AS "p.lastUpdated"'
-            f" FROM Plan WHERE number = {number}"
+            f" FROM Plan WHERE number = {number}{scope}"
         ),
     )
     return rows[0] if rows else None
 
 
-def get_plan_impacted_files(store: GraphBackend, plan_number: int) -> list[dict[str, Any]]:
+def get_plan_impacted_files(
+    store: GraphBackend,
+    plan_number: int,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return files listed in a plan's File Impact Map."""
+    scope = _graph_scope(_resolve_scope(project, all_projects), "p")
     return ql(
         store,
         sql=(
@@ -329,7 +429,7 @@ def get_plan_impacted_files(store: GraphBackend, plan_number: int) -> list[dict[
             ' t.r_changeType AS "r.changeType"'
             " FROM GRAPH_TABLE(agentscaffold_graph"
             " MATCH (p:Plan)-[r:PLAN_IMPACTS]->(f:File)"
-            f" WHERE p.number = {plan_number}"
+            f" WHERE p.number = {plan_number}{scope}"
             " COLUMNS (f.path AS f_path, f.language AS f_language,"
             " r.changeType AS r_changeType)) t"
         ),
@@ -337,17 +437,22 @@ def get_plan_impacted_files(store: GraphBackend, plan_number: int) -> list[dict[
 
 
 def get_recurring_finding_patterns(
-    store: GraphBackend, min_occurrences: int = 2
+    store: GraphBackend,
+    min_occurrences: int = 2,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
 ) -> list[dict[str, Any]]:
     """Return review finding categories that appear repeatedly.
 
     Returns rows with keys ``category`` and ``occurrences``.
     """
+    scope = _sql_scope(_resolve_scope(project, all_projects), "WHERE")
     return ql(
         store,
         sql=(
             "SELECT category, COUNT(*) AS occurrences"
-            " FROM ReviewFinding"
+            f" FROM ReviewFinding{scope}"
             " GROUP BY category"
             f" HAVING COUNT(*) >= {min_occurrences}"
             " ORDER BY occurrences DESC"
@@ -355,8 +460,15 @@ def get_recurring_finding_patterns(
     )
 
 
-def get_plan_dependencies(store: GraphBackend, plan_number: int) -> list[dict[str, Any]]:
+def get_plan_dependencies(
+    store: GraphBackend,
+    plan_number: int,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return plans that the given plan depends on."""
+    scope = _graph_scope(_resolve_scope(project, all_projects), "p")
     return ql(
         store,
         sql=(
@@ -365,7 +477,7 @@ def get_plan_dependencies(store: GraphBackend, plan_number: int) -> list[dict[st
             ' t.dep_status AS "dep.status"'
             " FROM GRAPH_TABLE(agentscaffold_graph"
             " MATCH (p:Plan)-[e:DEPENDS_ON_PLAN]->(dep:Plan)"
-            f" WHERE p.number = {plan_number}"
+            f" WHERE p.number = {plan_number}{scope}"
             " COLUMNS (dep.number AS dep_number,"
             " dep.title AS dep_title,"
             " dep.status AS dep_status)) t"
@@ -378,8 +490,15 @@ def get_plan_dependencies(store: GraphBackend, plan_number: int) -> list[dict[st
 # ---------------------------------------------------------------------------
 
 
-def get_studies_for_plan(store: GraphBackend, plan_number: int) -> list[dict[str, Any]]:
+def get_studies_for_plan(
+    store: GraphBackend,
+    plan_number: int,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return studies that reference the given plan."""
+    scope = _graph_scope(_resolve_scope(project, all_projects), "p")
     return ql(
         store,
         sql=(
@@ -391,7 +510,7 @@ def get_studies_for_plan(store: GraphBackend, plan_number: int) -> list[dict[str
             ' t.s_tags AS "s.tags"'
             " FROM GRAPH_TABLE(agentscaffold_graph"
             " MATCH (s:Study)-[e:STUDY_REFERENCES_PLAN]->(p:Plan)"
-            f" WHERE p.number = {plan_number}"
+            f" WHERE p.number = {plan_number}{scope}"
             " COLUMNS (s.studyId AS s_studyId, s.title AS s_title,"
             " s.status AS s_status, s.outcome AS s_outcome,"
             " s.confidence AS s_confidence, s.tags AS s_tags)) t"
@@ -399,9 +518,16 @@ def get_studies_for_plan(store: GraphBackend, plan_number: int) -> list[dict[str
     )
 
 
-def get_studies_by_tags(store: GraphBackend, tags: list[str]) -> list[dict[str, Any]]:
+def get_studies_by_tags(
+    store: GraphBackend,
+    tags: list[str],
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return studies matching any of the given tags (substring match on tags field)."""
     sql_conditions = " OR ".join(f"CONTAINS(tags, '{t}')" for t in tags)
+    scope = _sql_scope(_resolve_scope(project, all_projects), "AND")
     return ql(
         store,
         sql=(
@@ -411,15 +537,22 @@ def get_studies_by_tags(store: GraphBackend, tags: list[str]) -> list[dict[str, 
             ' outcome AS "s.outcome",'
             ' confidence AS "s.confidence",'
             ' tags AS "s.tags"'
-            f" FROM Study WHERE {sql_conditions}"
+            f" FROM Study WHERE ({sql_conditions}){scope}"
             " ORDER BY started DESC"
         ),
     )
 
 
-def get_studies_by_outcome(store: GraphBackend, outcome: str) -> list[dict[str, Any]]:
+def get_studies_by_outcome(
+    store: GraphBackend,
+    outcome: str,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return studies with a specific outcome."""
     escaped = outcome.replace("'", "\\'")
+    scope = _sql_scope(_resolve_scope(project, all_projects), "AND")
     return ql(
         store,
         sql=(
@@ -429,15 +562,22 @@ def get_studies_by_outcome(store: GraphBackend, outcome: str) -> list[dict[str, 
             ' outcome AS "s.outcome",'
             ' confidence AS "s.confidence",'
             ' tags AS "s.tags"'
-            f" FROM Study WHERE outcome = '{escaped}'"
+            f" FROM Study WHERE outcome = '{escaped}'{scope}"
             " ORDER BY started DESC"
         ),
     )
 
 
-def get_studies_for_file(store: GraphBackend, file_path: str) -> list[dict[str, Any]]:
+def get_studies_for_file(
+    store: GraphBackend,
+    file_path: str,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return studies that reference the given file via artifact paths."""
     escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    scope = _graph_scope(_resolve_scope(project, all_projects), "f")
     return ql(
         store,
         sql=(
@@ -448,7 +588,7 @@ def get_studies_for_file(store: GraphBackend, file_path: str) -> list[dict[str, 
             ' t.s_tags AS "s.tags"'
             " FROM GRAPH_TABLE(agentscaffold_graph"
             " MATCH (s:Study)-[e:STUDY_REFERENCES_FILE]->(f:File)"
-            f" WHERE f.path = '{escaped}'"
+            f" WHERE f.path = '{escaped}'{scope}"
             " COLUMNS (s.studyId AS s_studyId, s.title AS s_title,"
             " s.status AS s_status, s.outcome AS s_outcome,"
             " s.tags AS s_tags)) t"
@@ -456,8 +596,14 @@ def get_studies_for_file(store: GraphBackend, file_path: str) -> list[dict[str, 
     )
 
 
-def get_all_studies(store: GraphBackend) -> list[dict[str, Any]]:
+def get_all_studies(
+    store: GraphBackend,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return all studies ordered by start date descending."""
+    scope = _sql_scope(_resolve_scope(project, all_projects), "WHERE")
     return ql(
         store,
         sql=(
@@ -470,7 +616,7 @@ def get_all_studies(store: GraphBackend) -> list[dict[str, Any]]:
             ' tags AS "s.tags",'
             ' started AS "s.started",'
             ' completed AS "s.completed"'
-            " FROM Study ORDER BY started DESC"
+            f" FROM Study{scope} ORDER BY started DESC"
         ),
     )
 
@@ -480,8 +626,15 @@ def get_all_studies(store: GraphBackend) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def get_adrs_for_plan(store: GraphBackend, plan_number: int) -> list[dict[str, Any]]:
+def get_adrs_for_plan(
+    store: GraphBackend,
+    plan_number: int,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return ADRs that govern the given plan."""
+    scope = _graph_scope(_resolve_scope(project, all_projects), "p")
     return ql(
         store,
         sql=(
@@ -491,15 +644,22 @@ def get_adrs_for_plan(store: GraphBackend, plan_number: int) -> list[dict[str, A
             ' t.a_date AS "a.date"'
             " FROM GRAPH_TABLE(agentscaffold_graph"
             " MATCH (a:ADR)-[e:ADR_GOVERNS]->(p:Plan)"
-            f" WHERE p.number = {plan_number}"
+            f" WHERE p.number = {plan_number}{scope}"
             " COLUMNS (a.number AS a_number, a.title AS a_title,"
             " a.status AS a_status, a.date AS a_date)) t"
         ),
     )
 
 
-def get_adr_by_number(store: GraphBackend, number: int) -> dict[str, Any] | None:
+def get_adr_by_number(
+    store: GraphBackend,
+    number: int,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> dict[str, Any] | None:
     """Return a single ADR by number."""
+    scope = _sql_scope(_resolve_scope(project, all_projects), "AND")
     rows = ql(
         store,
         sql=(
@@ -512,14 +672,20 @@ def get_adr_by_number(store: GraphBackend, number: int) -> dict[str, Any] | None
             ' relatedPlans AS "a.relatedPlans",'
             ' relatedADRs AS "a.relatedADRs",'
             ' supersededBy AS "a.supersededBy"'
-            f" FROM ADR WHERE number = {number}"
+            f" FROM ADR WHERE number = {number}{scope}"
         ),
     )
     return rows[0] if rows else None
 
 
-def get_all_adrs(store: GraphBackend) -> list[dict[str, Any]]:
+def get_all_adrs(
+    store: GraphBackend,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return all ADRs ordered by number."""
+    scope = _sql_scope(_resolve_scope(project, all_projects), "WHERE")
     return ql(
         store,
         sql=(
@@ -528,13 +694,19 @@ def get_all_adrs(store: GraphBackend) -> list[dict[str, Any]]:
             ' status AS "a.status",'
             ' date AS "a.date",'
             ' supersededBy AS "a.supersededBy"'
-            " FROM ADR ORDER BY number"
+            f" FROM ADR{scope} ORDER BY number"
         ),
     )
 
 
-def get_superseded_adrs(store: GraphBackend) -> list[dict[str, Any]]:
+def get_superseded_adrs(
+    store: GraphBackend,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return ADRs that have been superseded."""
+    scope = _sql_scope(_resolve_scope(project, all_projects), "AND")
     return ql(
         store,
         sql=(
@@ -542,14 +714,21 @@ def get_superseded_adrs(store: GraphBackend) -> list[dict[str, Any]]:
             ' title AS "a.title",'
             ' status AS "a.status",'
             ' supersededBy AS "a.supersededBy"'
-            " FROM ADR WHERE CONTAINS(status, 'Superseded')"
+            f" FROM ADR WHERE CONTAINS(status, 'Superseded'){scope}"
         ),
     )
 
 
-def get_adrs_for_file(store: GraphBackend, file_path: str) -> list[dict[str, Any]]:
+def get_adrs_for_file(
+    store: GraphBackend,
+    file_path: str,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return ADRs governing plans that impact this file (2-hop traversal)."""
     escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    scope = _graph_scope(_resolve_scope(project, all_projects), "f")
     return ql(
         store,
         sql=(
@@ -560,7 +739,7 @@ def get_adrs_for_file(store: GraphBackend, file_path: str) -> list[dict[str, Any
             ' t.p_number AS "plan_number"'
             " FROM GRAPH_TABLE(agentscaffold_graph"
             " MATCH (a:ADR)-[e1:ADR_GOVERNS]->(p:Plan)-[e2:PLAN_IMPACTS]->(f:File)"
-            f" WHERE f.path = '{escaped}'"
+            f" WHERE f.path = '{escaped}'{scope}"
             " COLUMNS (a.number AS a_number, a.title AS a_title,"
             " a.status AS a_status, p.number AS p_number)) t"
         ),
@@ -572,8 +751,15 @@ def get_adrs_for_file(store: GraphBackend, file_path: str) -> list[dict[str, Any
 # ---------------------------------------------------------------------------
 
 
-def get_spikes_for_plan(store: GraphBackend, plan_number: int) -> list[dict[str, Any]]:
+def get_spikes_for_plan(
+    store: GraphBackend,
+    plan_number: int,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return spikes that validated the given plan."""
+    scope = _graph_scope(_resolve_scope(project, all_projects), "p")
     return ql(
         store,
         sql=(
@@ -584,7 +770,7 @@ def get_spikes_for_plan(store: GraphBackend, plan_number: int) -> list[dict[str,
             ' t.sp_filePath AS "sp.filePath"'
             " FROM GRAPH_TABLE(agentscaffold_graph"
             " MATCH (sp:Spike)-[e:SPIKE_FOR_PLAN]->(p:Plan)"
-            f" WHERE p.number = {plan_number}"
+            f" WHERE p.number = {plan_number}{scope}"
             " COLUMNS (sp.title AS sp_title, sp.status AS sp_status,"
             " sp.created AS sp_created, sp.timeBox AS sp_timeBox,"
             " sp.filePath AS sp_filePath)) t"
@@ -592,8 +778,14 @@ def get_spikes_for_plan(store: GraphBackend, plan_number: int) -> list[dict[str,
     )
 
 
-def get_all_spikes(store: GraphBackend) -> list[dict[str, Any]]:
+def get_all_spikes(
+    store: GraphBackend,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return all spikes ordered by created date descending."""
+    scope = _sql_scope(_resolve_scope(project, all_projects), "WHERE")
     return ql(
         store,
         sql=(
@@ -602,7 +794,7 @@ def get_all_spikes(store: GraphBackend) -> list[dict[str, Any]]:
             ' status AS "sp.status",'
             ' created AS "sp.created",'
             ' timeBox AS "sp.timeBox"'
-            " FROM Spike ORDER BY created DESC"
+            f" FROM Spike{scope} ORDER BY created DESC"
         ),
     )
 
@@ -617,11 +809,20 @@ def get_open_backlog_items(
     *,
     plan_number: int | None = None,
     limit: int = 20,
+    project: str | None = None,
+    all_projects: bool = False,
 ) -> list[dict[str, Any]]:
-    """Return open BacklogItems, optionally filtered by plan, sorted by priority."""
+    """Return open BacklogItems, optionally filtered by plan, sorted by priority.
+
+    Scoped to the current project by default so a sibling project's backlog does
+    not leak into orientation/recall; ``all_projects`` reads the federation.
+    """
     from agentscaffold.graph.backlog import get_open_backlog_items as _get_open  # noqa: PLC0415
 
-    return _get_open(store, plan_number=plan_number, limit=limit)
+    scope = _resolve_scope(project, all_projects)
+    return _get_open(
+        store, plan_number=plan_number, limit=limit, project=getattr(scope, "project", None)
+    )
 
 
 def get_backlog_items_for_plan(
@@ -629,13 +830,21 @@ def get_backlog_items_for_plan(
     plan_number: int,
     *,
     include_archived: bool = False,
+    project: str | None = None,
+    all_projects: bool = False,
 ) -> list[dict[str, Any]]:
-    """Return all BacklogItems for a specific plan."""
+    """Return all BacklogItems for a specific plan (scoped to the current project)."""
     from agentscaffold.graph.backlog import (  # noqa: PLC0415
         get_backlog_items_for_plan as _get_plan_items,
     )
 
-    return _get_plan_items(store, plan_number, include_archived=include_archived)
+    scope = _resolve_scope(project, all_projects)
+    return _get_plan_items(
+        store,
+        plan_number,
+        include_archived=include_archived,
+        project=getattr(scope, "project", None),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -673,9 +882,16 @@ def get_plan_reviewed_at(store: GraphBackend, plan_number: int) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def get_spike_by_title(store: GraphBackend, title_fragment: str) -> list[dict[str, Any]]:
+def get_spike_by_title(
+    store: GraphBackend,
+    title_fragment: str,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
     """Return spikes matching a title keyword."""
     escaped = title_fragment.replace("'", "\\'")
+    scope = _sql_scope(_resolve_scope(project, all_projects), "AND")
     return ql(
         store,
         sql=(
@@ -684,6 +900,6 @@ def get_spike_by_title(store: GraphBackend, title_fragment: str) -> list[dict[st
             ' status AS "sp.status",'
             ' created AS "sp.created",'
             ' filePath AS "sp.filePath"'
-            f" FROM Spike WHERE CONTAINS(title, '{escaped}')"
+            f" FROM Spike WHERE CONTAINS(title, '{escaped}'){scope}"
         ),
     )
