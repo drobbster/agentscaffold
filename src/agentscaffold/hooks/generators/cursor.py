@@ -80,6 +80,7 @@ fi
 scaffold_bin="__SCAFFOLD_BIN__"
 state_dir=".scaffold"
 lock_dir="$state_dir/index.lock"
+write_lock_dir="$state_dir/graph.write.lock"
 req_stamp="$state_dir/index.request"
 success_stamp="$state_dir/index.last_success"
 log_file="$state_dir/index-hook.log"
@@ -108,11 +109,31 @@ if [ -d "$lock_dir" ]; then
   fi
 fi
 
+if [ -d "$write_lock_dir" ]; then
+  write_lock_mtime=$(stat -f %m "$write_lock_dir" 2>/dev/null \\
+    || stat -c %Y "$write_lock_dir" 2>/dev/null || echo "$now")
+  if [ $((now - write_lock_mtime)) -gt 600 ]; then
+    rm -f "$write_lock_dir/owner.json" 2>/dev/null || true
+    rmdir "$write_lock_dir" 2>/dev/null || true
+  fi
+fi
+
 # Single-flight: acquire the lock or let the running indexer pick up our request.
 if mkdir "$lock_dir" 2>/dev/null; then
   (
     trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
     while :; do
+      while [ -d "$write_lock_dir" ]; do
+        now_wait=$(date +%s)
+        write_lock_mtime=$(stat -f %m "$write_lock_dir" 2>/dev/null \\
+          || stat -c %Y "$write_lock_dir" 2>/dev/null || echo "$now_wait")
+        if [ $((now_wait - write_lock_mtime)) -gt 600 ]; then
+          rm -f "$write_lock_dir/owner.json" 2>/dev/null || true
+          rmdir "$write_lock_dir" 2>/dev/null || true
+          break
+        fi
+        sleep 1
+      done
       start=$(date +%s)
       "$scaffold_bin" index --incremental >> "$log_file" 2>&1 || true
       date +%s > "$success_stamp" 2>/dev/null || true

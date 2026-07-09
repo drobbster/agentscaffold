@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -1220,12 +1221,23 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if not graph_available(config):
         return {"error": "No knowledge graph found. Run 'scaffold index' first."}
 
-    try:
-        store = open_graph(config)
-    except GraphLockError as exc:
-        return {"error": str(exc), "graph_locked": True}
-    except Exception as exc:  # pragma: no cover - defensive fallback
-        return {"error": f"Failed to open knowledge graph: {exc}"}
+    store = None
+    for attempt, delay in enumerate((0.0, 0.5, 1.0), start=1):
+        if delay:
+            time.sleep(delay)
+        try:
+            store = open_graph(config)
+            break
+        except GraphLockError as exc:
+            if attempt == 3:
+                return {
+                    "error": str(exc),
+                    "graph_locked": True,
+                    "retry_exhausted": True,
+                    "retry_attempts": attempt,
+                }
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            return {"error": f"Failed to open knowledge graph: {exc}"}
     freshness_meta: dict[str, Any] = {}
     try:
         from agentscaffold.mcp.freshness import (

@@ -665,7 +665,12 @@ def governance_source_files(root: Path, config: Any | None = None) -> list[Path]
             root / gc.adrs_dir,
             root / gc.spikes_dir,
         ]
-        files = [root / gc.learnings_file]
+        files = [
+            root / gc.learnings_file,
+            root / gc.backlog_file,
+            root / gc.backlog_archive_file,
+            root / gc.governance_artifact,
+        ]
     else:
         dirs = [
             root / "docs" / "ai" / "plans",
@@ -674,7 +679,12 @@ def governance_source_files(root: Path, config: Any | None = None) -> list[Path]
             root / "docs" / "ai" / "adrs",
             root / "docs" / "ai" / "spikes",
         ]
-        files = [root / "docs" / "ai" / "state" / "learnings_tracker.md"]
+        files = [
+            root / "docs" / "ai" / "state" / "learnings_tracker.md",
+            root / "docs" / "ai" / "backlog.md",
+            root / "docs" / "ai" / "backlog_archive.md",
+            root / "docs" / "ai" / "state" / "governance.json",
+        ]
 
     result: list[Path] = []
     for d in dirs:
