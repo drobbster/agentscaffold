@@ -8,6 +8,8 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-07-08
+
 ### Fixed
 - Added shared graph write coordination across indexing, MCP graph opens, and
   runtime governance writes. `scaffold_begin_plan`, `scaffold_complete_plan`,
