@@ -8,6 +8,17 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Fixed
+- Added shared graph write coordination across indexing, MCP graph opens, and
+  runtime governance writes. `scaffold_begin_plan`, `scaffold_complete_plan`,
+  and other MCP graph-backed paths now retry transient DuckDB lock contention
+  before returning `graph_locked`, while generated Cursor edit hooks defer their
+  background incremental index when lifecycle/governance writes are active.
+- Governance freshness now watches `docs/ai/backlog.md`,
+  `docs/ai/backlog_archive.md`, and `docs/ai/state/governance.json`, preventing
+  backlog/governance artifact edits from staying invisible to graph-backed
+  orientation and review tools.
+
 ## [0.9.0] - 2026-06-23
 
 Multi-project workspace hardening discovered while running AgentScaffold against
