@@ -243,6 +243,8 @@ def test_render_index_hook_script_is_single_flight_and_nonblocking() -> None:
     # Single-flight lock + coalesced trailing run + backgrounded so the hook
     # returns immediately and rapid edits never stack.
     assert 'mkdir "$lock_dir"' in script
+    assert 'write_lock_dir="$state_dir/graph.write.lock"' in script
+    assert 'while [ -d "$write_lock_dir" ]' in script
     assert "index.request" in script
     assert "index.last_success" in script
     assert "min_interval_seconds=30" in script

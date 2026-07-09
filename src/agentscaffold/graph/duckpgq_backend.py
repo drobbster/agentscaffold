@@ -1059,7 +1059,16 @@ class DuckPGQBackend:
 
     def close(self) -> None:
         """Close the DuckDB connection."""
-        self._conn.close()
+        try:
+            self._conn.close()
+        finally:
+            lock_cm = getattr(self, "_graph_write_lock_cm", None)
+            if lock_cm is not None:
+                try:
+                    lock_cm.__exit__(None, None, None)
+                finally:
+                    setattr(self, "_graph_write_lock_cm", None)
+                    setattr(self, "_graph_write_lock_active", False)
 
     def __enter__(self) -> DuckPGQBackend:
         return self

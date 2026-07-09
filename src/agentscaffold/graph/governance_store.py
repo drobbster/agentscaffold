@@ -41,6 +41,7 @@ GOVERNANCE_ARTIFACT_VERSION = 1
 # unset, so write-through is inert unless explicitly enabled.
 _ARTIFACT_ATTR = "_governance_artifact"
 _LOCK_ATTR = "_governance_write_lock"
+_FS_LOCK_DEPTH_ATTR = "_governance_fs_lock_depth"
 
 
 class GovernanceArtifactError(Exception):
@@ -163,7 +164,25 @@ def governance_write_lock(store: GraphBackend) -> Iterator[None]:
     protects direct serialization calls.
     """
     with _lock_for(store):
-        yield
+        db_path = getattr(store, "_db_path", None)
+        already_index_locked = bool(getattr(store, "_graph_write_lock_active", False))
+        depth = int(getattr(store, _FS_LOCK_DEPTH_ATTR, 0) or 0)
+        if db_path is None or already_index_locked or depth > 0:
+            setattr(store, _FS_LOCK_DEPTH_ATTR, depth + 1)
+            try:
+                yield
+            finally:
+                setattr(store, _FS_LOCK_DEPTH_ATTR, depth)
+            return
+
+        from agentscaffold.graph.locks import graph_write_lock  # noqa: PLC0415
+
+        with graph_write_lock(db_path, purpose="governance_write", timeout=8.0):
+            setattr(store, _FS_LOCK_DEPTH_ATTR, 1)
+            try:
+                yield
+            finally:
+                setattr(store, _FS_LOCK_DEPTH_ATTR, 0)
 
 
 def sync_if_enabled(store: GraphBackend) -> None:

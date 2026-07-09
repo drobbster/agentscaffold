@@ -34,12 +34,19 @@ def graph_available(config: ScaffoldConfig | None = None) -> bool:
     return db_path.is_file()
 
 
-def open_graph(config: ScaffoldConfig | None = None, *, backend: str | None = None) -> GraphBackend:
+def open_graph(
+    config: ScaffoldConfig | None = None,
+    *,
+    backend: str | None = None,
+    lock_timeout: float = 8.0,
+) -> GraphBackend:
     """Open an existing graph database for querying.
 
     Args:
         config: Optional scaffold config. Used to resolve db_path.
         backend: Reserved for future use. Only "duckpgq" is supported.
+        lock_timeout: Seconds to wait for AgentScaffold's shared graph write
+            lock before attempting to open DuckDB.
 
     Raises:
         ValueError: if an unknown backend name is given.
@@ -48,6 +55,13 @@ def open_graph(config: ScaffoldConfig | None = None, *, backend: str | None = No
     db_path = _resolve_db_path(config)
 
     if backend_name == "duckpgq":
+        from agentscaffold.graph.locks import wait_for_graph_write_lock_clear
+
+        if not wait_for_graph_write_lock_clear(db_path, timeout=lock_timeout):
+            raise GraphLockError(
+                f"Could not open the knowledge graph at {db_path}: another "
+                "AgentScaffold graph write is still running."
+            )
         store = DuckPGQBackend(db_path)
         # Enable git-backed governance write-through (Plan 222): runtime
         # finding/session/backlog mutations re-serialize to the committed

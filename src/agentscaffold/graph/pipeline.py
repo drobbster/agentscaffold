@@ -23,7 +23,18 @@ from agentscaffold.graph.symbol_table import SymbolTable
 
 def _open_store_for_pipeline(db_path: Path, backend_name: str) -> GraphBackend:
     """Instantiate the backend for pipeline writes."""
-    return DuckPGQBackend(db_path)
+    from agentscaffold.graph.locks import graph_write_lock
+
+    lock_cm = graph_write_lock(db_path, purpose="index", timeout=30.0)
+    lock_cm.__enter__()
+    try:
+        store = DuckPGQBackend(db_path)
+    except Exception:
+        lock_cm.__exit__(None, None, None)
+        raise
+    setattr(store, "_graph_write_lock_cm", lock_cm)
+    setattr(store, "_graph_write_lock_active", True)
+    return store
 
 
 def _migrate_on_version_change(

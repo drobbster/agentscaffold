@@ -93,15 +93,18 @@ def record_backlog_item(
         "project": project or "",
     }
 
-    store.create_node("BacklogItem", props)
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
 
-    # Link to plan (scoped to the owning project: plan numbers are not unique
-    # across projects in a multi-project workspace).
-    plan_rows = store.query(f"SELECT id FROM Plan WHERE number = {plan_number}{proj_filter}")
-    if plan_rows:
-        store.create_edge("BACKLOG_ITEM_OF", "BacklogItem", item_id, "Plan", plan_rows[0]["id"])
+    with governance_write_lock(store):
+        store.create_node("BacklogItem", props)
 
-    _sync_governance(store)
+        # Link to plan (scoped to the owning project: plan numbers are not unique
+        # across projects in a multi-project workspace).
+        plan_rows = store.query(f"SELECT id FROM Plan WHERE number = {plan_number}{proj_filter}")
+        if plan_rows:
+            store.create_edge("BACKLOG_ITEM_OF", "BacklogItem", item_id, "Plan", plan_rows[0]["id"])
+
+        _sync_governance(store)
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {
@@ -148,36 +151,39 @@ def record_backlog_items_batch(
     plan_rows = store.query(f"SELECT id FROM Plan WHERE number = {plan_number}{proj_filter}")
     plan_id = plan_rows[0]["id"] if plan_rows else None
 
-    store.execute("BEGIN TRANSACTION")
-    try:
-        for item in items:
-            title = item.get("title", "")
-            if not title:
-                continue
-            item_id = _backlog_id(plan_number, title, project)
-            props: dict[str, Any] = {
-                "id": item_id,
-                "planNumber": plan_number,
-                "title": title,
-                "priority": item.get("priority", "P3"),
-                "effort": item.get("effort", ""),
-                "status": item.get("status", "open"),
-                "source": item.get("source", ""),
-                "createdAt": now,
-                "archivedAt": "",
-                "project": project or "",
-            }
-            store.create_node("BacklogItem", props)
-            if plan_id:
-                store.create_edge("BACKLOG_ITEM_OF", "BacklogItem", item_id, "Plan", plan_id)
-            ids.append(item_id)
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
 
-        store.execute("COMMIT")
-    except Exception:
-        store.execute("ROLLBACK")
-        raise
+    with governance_write_lock(store):
+        store.execute("BEGIN TRANSACTION")
+        try:
+            for item in items:
+                title = item.get("title", "")
+                if not title:
+                    continue
+                item_id = _backlog_id(plan_number, title, project)
+                props: dict[str, Any] = {
+                    "id": item_id,
+                    "planNumber": plan_number,
+                    "title": title,
+                    "priority": item.get("priority", "P3"),
+                    "effort": item.get("effort", ""),
+                    "status": item.get("status", "open"),
+                    "source": item.get("source", ""),
+                    "createdAt": now,
+                    "archivedAt": "",
+                    "project": project or "",
+                }
+                store.create_node("BacklogItem", props)
+                if plan_id:
+                    store.create_edge("BACKLOG_ITEM_OF", "BacklogItem", item_id, "Plan", plan_id)
+                ids.append(item_id)
 
-    _sync_governance(store)
+            store.execute("COMMIT")
+        except Exception:
+            store.execute("ROLLBACK")
+            raise
+
+        _sync_governance(store)
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {
@@ -215,12 +221,15 @@ def resolve_backlog_item(
     now = datetime.now(timezone.utc).isoformat()
     proj_filter = f" AND project = '{_esc(project)}'" if project else ""
 
-    store.execute(
-        f"UPDATE BacklogItem SET status = 'archived', archivedAt = '{now}'"
-        f" WHERE id = '{_esc(item_id)}'{proj_filter}"
-    )
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
 
-    _sync_governance(store)
+    with governance_write_lock(store):
+        store.execute(
+            f"UPDATE BacklogItem SET status = 'archived', archivedAt = '{now}'"
+            f" WHERE id = '{_esc(item_id)}'{proj_filter}"
+        )
+
+        _sync_governance(store)
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {
