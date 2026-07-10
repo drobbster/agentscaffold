@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from agentscaffold.graph.query_compat import ql
+from agentscaffold.review.filters import is_source_code_file
 from agentscaffold.review.queries import (
     get_contracts_for_file,
     get_file_importers,
@@ -57,8 +58,9 @@ def generate_challenges(store: GraphBackend, plan_number: int) -> list[Challenge
         if not fpath:
             continue
 
+        flang = frow.get("f.language", "")
         _check_dependency_blast(store, fpath, challenges)
-        _check_history(store, fpath, plan_number, challenges)
+        _check_history(store, fpath, plan_number, challenges, language=flang)
         _check_learnings(store, fpath, challenges)
         _check_layer(store, fpath, impacted_files, challenges)
         _check_contracts(store, fpath, challenges)
@@ -120,9 +122,23 @@ def _check_dependency_blast(store: GraphBackend, file_path: str, out: list[Chall
 
 
 def _check_history(
-    store: GraphBackend, file_path: str, current_plan: int, out: list[Challenge]
+    store: GraphBackend,
+    file_path: str,
+    current_plan: int,
+    out: list[Challenge],
+    *,
+    language: str = "",
 ) -> None:
-    """Generate HISTORY challenges based on modification frequency."""
+    """Generate HISTORY challenges based on modification frequency.
+
+    Only applies to parsed source files. Append-only governance/docs artifacts
+    (workflow_state.md, contract registries, studies) are modified by nearly
+    every plan by design, so flagging them as "architecturally unstable" is a
+    false positive.
+    """
+    if not is_source_code_file(file_path, language):
+        return
+
     prior_plans = get_plans_impacting_file(store, file_path)
     other_plans = [p for p in prior_plans if p.get("p.number") != current_plan]
 
@@ -147,16 +163,44 @@ def _check_history(
         )
 
 
-def _check_learnings(store: GraphBackend, file_path: str, out: list[Challenge]) -> None:
-    """Generate LEARNING challenges from related learnings."""
-    learnings = get_learnings_for_file(store, file_path)
+def _check_learnings(
+    store: GraphBackend, file_path: str, out: list[Challenge], *, max_per_file: int = 5
+) -> None:
+    """Generate LEARNING challenges from related learnings.
 
-    for lr in learnings:
+    Learnings are linked to files by plan co-occurrence (``LEARNING_RELATES_TO_FILE``),
+    not semantic relevance, so a high-churn file can accumulate many unrelated
+    learnings. Cap and rank them: not-yet-incorporated learnings first (they are
+    the ones an author most needs reminding of), then most-recent plan. This
+    keeps the signal focused until embedding-based relevance is available.
+    """
+    learnings = [lr for lr in get_learnings_for_file(store, file_path) if lr.get("lr.description")]
+
+    def _rank(lr: dict[str, Any]) -> tuple[int, int]:
+        status = str(lr.get("lr.status", "")).strip().lower()
+        # incorporated learnings are lower priority than pending/unmarked ones
+        incorporated = 1 if status.startswith("incorporated") else 0
+        try:
+            plan_rank = -int(lr.get("lr.planNumber") or 0)
+        except (TypeError, ValueError):
+            plan_rank = 0
+        return (incorporated, plan_rank)
+
+    ranked = sorted(learnings, key=_rank)
+    total = len(ranked)
+
+    for idx, lr in enumerate(ranked[:max_per_file]):
         description = lr.get("lr.description", "")
         learning_id = lr.get("lr.learningId", "")
         plan_num = lr.get("lr.planNumber", "?")
 
         if description:
+            suffix = ""
+            if idx == 0 and total > max_per_file:
+                suffix = (
+                    f" (showing top {max_per_file} of {total} learnings linked to this file; "
+                    "linkage is by plan co-occurrence, not semantic relevance)"
+                )
             out.append(
                 Challenge(
                     category="LEARNING",
@@ -165,12 +209,14 @@ def _check_learnings(store: GraphBackend, file_path: str, out: list[Challenge]) 
                         f"{learning_id} (from Plan {plan_num}) states: "
                         f'"{description}" '
                         f"This plan modifies {file_path}. "
-                        "Has this learning been accounted for?"
+                        f"Has this learning been accounted for?{suffix}"
                     ),
                     evidence={
                         "file": file_path,
                         "learning_id": learning_id,
                         "plan_number": plan_num,
+                        "total_linked_learnings": total,
+                        "shown": min(max_per_file, total),
                     },
                 )
             )
@@ -327,19 +373,22 @@ def _check_consumer_coverage(
                 unlisted_consumers.setdefault(imp_path, []).append(fpath)
 
     if unlisted_consumers:
+        total = len(unlisted_consumers)
         sample = list(unlisted_consumers.items())[:5]
         detail = "; ".join(f"{path} (imports {', '.join(targets)})" for path, targets in sample)
+        shown_note = f" (showing {len(sample)} of {total})" if total > len(sample) else ""
         out.append(
             Challenge(
                 category="CONSUMER",
-                severity="high" if len(unlisted_consumers) >= 5 else "medium",
+                severity="high" if total >= 5 else "medium",
                 text=(
-                    f"{len(unlisted_consumers)} files import plan targets but are NOT in "
-                    f"the File Impact Map: {detail}. "
+                    f"{total} files import plan targets but are NOT in "
+                    f"the File Impact Map{shown_note}: {detail}. "
                     "These may need test updates or explicit scoping justification."
                 ),
                 evidence={
-                    "unlisted_count": len(unlisted_consumers),
+                    "unlisted_count": total,
+                    "shown": len(sample),
                     "sample": dict(sample),
                 },
             )

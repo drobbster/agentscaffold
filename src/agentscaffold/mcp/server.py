@@ -2693,10 +2693,17 @@ def _tool_begin_plan(
         )
 
     # --- Compact orient summary ---
+    # Expose enough counts to confirm parsing actually ran. `functions` alone is
+    # misleading (top-level functions only); methods/classes/edges reveal whether
+    # the structural graph is populated.
     orient_summary = {
         "schema_version": stats.get("schema_version"),
         "files": stats.get("files", 0),
         "functions": stats.get("functions", 0),
+        "methods": stats.get("methods", 0),
+        "classes": stats.get("classes", 0),
+        "imports_edges": stats.get("imports_edges", 0),
+        "calls_edges": stats.get("calls_edges", 0),
         "plans": stats.get("plans", 0),
         "pipeline_state": stats.get("pipeline_state", "unknown"),
     }
@@ -2713,9 +2720,13 @@ def _tool_begin_plan(
         }
 
     # --- Map challenges + gaps to findings format and write to graph ---
-    findings_to_write: list[dict[str, Any]] = []
+    # Only high-value findings are PERSISTED (default: high severity), and only
+    # if not already recorded for this plan. The full challenge/gap lists remain
+    # in the returned payload for the reviewing agent. This stops every review
+    # run from injecting ~20 low-precision co-occurrence findings into the graph.
+    candidate_findings: list[dict[str, Any]] = []
     for c in review_result.get("challenges", []):
-        findings_to_write.append(
+        candidate_findings.append(
             {
                 "category": c.get("category", "challenge"),
                 "finding": c.get("text", ""),
@@ -2724,7 +2735,7 @@ def _tool_begin_plan(
             }
         )
     for g in review_result.get("gaps", []):
-        findings_to_write.append(
+        candidate_findings.append(
             {
                 "category": g.get("category", "gap"),
                 "finding": g.get("text", ""),
@@ -2732,6 +2743,10 @@ def _tool_begin_plan(
                 "file_paths": _finding_file_paths(g.get("evidence")),
             }
         )
+
+    findings_to_write = _select_findings_to_persist(
+        candidate_findings, review_result.get("open_findings", [])
+    )
 
     findings_written = {"ids": [], "count": 0}
     if findings_to_write:
@@ -2772,11 +2787,50 @@ def _tool_begin_plan(
         "findings_written": {
             "ids": findings_written.get("ids", []),
             "count": n_findings,
+            "candidates": len(candidate_findings),
+            "persist_policy": "high_severity_only",
         },
         "reviewed_at": reviewed_at,
         "proceed_prompt": proceed_prompt,
         "meta": meta,
     }
+
+
+def _select_findings_to_persist(
+    candidates: list[dict[str, Any]],
+    existing_open: list[dict[str, Any]],
+    *,
+    min_severity: str = "high",
+) -> list[dict[str, Any]]:
+    """Filter review findings down to the set worth persisting to the graph.
+
+    Keeps only findings at or above ``min_severity`` (default ``high``) and drops
+    any that duplicate an already-open finding for the plan (matched on category +
+    normalized finding text). This makes ``scaffold_begin_plan`` idempotent: a
+    re-run does not multiply findings.
+    """
+    order = {"low": 0, "medium": 1, "high": 2}
+    threshold = order.get(min_severity, 2)
+
+    def _norm(text: str) -> str:
+        return " ".join(str(text).split()).strip().lower()
+
+    existing_keys = {
+        (str(r.get("rf.category", "")).lower(), _norm(r.get("rf.finding", "")))
+        for r in existing_open
+    }
+
+    selected: list[dict[str, Any]] = []
+    batch_keys: set[tuple[str, str]] = set()
+    for f in candidates:
+        if order.get(f.get("severity", "medium"), 1) < threshold:
+            continue
+        key = (str(f.get("category", "")).lower(), _norm(f.get("finding", "")))
+        if key in existing_keys or key in batch_keys:
+            continue
+        batch_keys.add(key)
+        selected.append(f)
+    return selected
 
 
 def _tool_complete_plan(
