@@ -410,6 +410,57 @@ def test_agents_md_template_contains_human_readable_review_terminology():
     assert "primary description" in content
 
 
+def test_agents_md_template_contains_two_phase_governed_lifecycle():
+    from agentscaffold.rendering import get_default_context, render_template
+
+    content = render_template("agents/agents_md.md.j2", get_default_context(ScaffoldConfig()))
+
+    assert "### Two-Phase Governed Lifecycle" in content
+    assert "tools own graph state" in content
+    assert "the agent owns file state" in content
+    assert "Strict-mode gate" in content
+    assert "freshness.gate_strict" in content
+
+
+def test_agents_md_template_contains_architecture_changelog_scope():
+    from agentscaffold.rendering import get_default_context, render_template
+
+    content = render_template("agents/agents_md.md.j2", get_default_context(ScaffoldConfig()))
+
+    assert "## Architecture Changelog Scope" in content
+    assert "durable" in content
+    assert "one-off recovery" in content
+
+
+def test_agents_md_template_contains_handoff_and_fix_vs_backlog():
+    from agentscaffold.rendering import get_default_context, render_template
+
+    content = render_template("agents/agents_md.md.j2", get_default_context(ScaffoldConfig()))
+
+    assert "### Session Handoff Hygiene" in content
+    assert "in-flight state" in content
+    assert "Fixing pre-existing defects (immediate vs backlog)" in content
+
+
+def test_agents_md_template_contains_study_artifact_naming():
+    from agentscaffold.rendering import get_default_context, render_template
+
+    content = render_template("agents/agents_md.md.j2", get_default_context(ScaffoldConfig()))
+
+    assert "### Study Artifact Naming" in content
+    assert "nest them under" in content
+
+
+def test_agents_md_template_stays_generic_no_domain_leakage():
+    from agentscaffold.rendering import get_default_context, render_template
+
+    content = render_template("agents/agents_md.md.j2", get_default_context(ScaffoldConfig()))
+
+    # The generic template must not carry consumer/domain-specific vocabulary.
+    for term in ("Prefect", "CUSIP", "CIK", "rebellion", "trading"):
+        assert term not in content
+
+
 def test_collaboration_protocol_template_contains_enriched_sections():
     from agentscaffold.rendering import get_default_context, render_template
 

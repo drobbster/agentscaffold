@@ -8,6 +8,18 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Added
+- Generic governance controls in the generated `AGENTS.md` template (Plan 240).
+  The shipped `agents/agents_md.md.j2` now documents the Two-Phase Governed
+  Lifecycle (begin-plan/complete-plan agent action checklists, the
+  `freshness.gate_strict` strict-mode deferral, and the "tools own graph state;
+  agent owns file state" boundary), an Architecture Changelog Scope section
+  (durable architecture changes only), Session Handoff Hygiene, an
+  immediate-fix-vs-backlog decision rule, and a Study Artifact Naming convention.
+  A parity one-line changelog-scope prohibition is added to the Cursor rules
+  summary. These were previously hand-added by consumers; they now ship for every
+  generated project.
+
 ### Fixed
 - Query escaping, search provenance, and coverage honesty (Plan 239). SQL string
   literals are now escaped consistently and correctly for DuckDB via a single
