@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from agentscaffold.graph.query_compat import ql
+from agentscaffold.graph.query_compat import ql, sql_escape
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
@@ -670,6 +670,7 @@ def governance_source_files(root: Path, config: Any | None = None) -> list[Path]
             root / gc.backlog_file,
             root / gc.backlog_archive_file,
             root / gc.governance_artifact,
+            root / getattr(gc, "architecture_doc", "docs/ai/system_architecture.md"),
         ]
     else:
         dirs = [
@@ -684,6 +685,7 @@ def governance_source_files(root: Path, config: Any | None = None) -> list[Path]
             root / "docs" / "ai" / "backlog.md",
             root / "docs" / "ai" / "backlog_archive.md",
             root / "docs" / "ai" / "state" / "governance.json",
+            root / "docs" / "ai" / "system_architecture.md",
         ]
 
     result: list[Path] = []
@@ -694,6 +696,58 @@ def governance_source_files(root: Path, config: Any | None = None) -> list[Path]
         if f.is_file():
             result.append(f)
     return result
+
+
+def _ingest_architecture_layers(
+    store: GraphBackend,
+    architecture_doc: Path,
+    file_id_map: dict[str, str],
+) -> tuple[int, int]:
+    """Ingest ArchitectureLayer nodes and BELONGS_TO_LAYER edges.
+
+    Returns ``(layer_count, edge_count)``. A missing doc or a doc with only
+    placeholder layers is a no-op that returns ``(0, 0)``.
+    """
+    from agentscaffold.graph.architecture import (
+        match_layer_for_file,
+        parse_architecture_layers,
+    )
+
+    if not architecture_doc.is_file():
+        return (0, 0)
+
+    layers = parse_architecture_layers(architecture_doc.read_text(errors="replace"))
+    if not layers:
+        return (0, 0)
+
+    for layer in layers:
+        store.create_node(
+            "ArchitectureLayer",
+            {
+                "id": f"layer::{layer.number}",
+                "number": layer.number,
+                "name": layer.name,
+                "description": layer.description,
+                "pathPatterns": ",".join(layer.path_patterns),
+            },
+        )
+
+    edge_count = 0
+    # Only layers that actually declare patterns can own files.
+    mappable = [layer for layer in layers if layer.path_patterns]
+    if mappable:
+        for path, file_id in file_id_map.items():
+            layer = match_layer_for_file(path, mappable)
+            if layer is not None:
+                store.create_edge(
+                    "BELONGS_TO_LAYER",
+                    "File",
+                    file_id,
+                    "ArchitectureLayer",
+                    f"layer::{layer.number}",
+                )
+                edge_count += 1
+    return (len(layers), edge_count)
 
 
 def process_governance(
@@ -717,6 +771,7 @@ def process_governance(
         studies_dir = root / gc.studies_dir
         adrs_dir = root / gc.adrs_dir
         spikes_dir = root / gc.spikes_dir
+        architecture_doc = root / getattr(gc, "architecture_doc", "docs/ai/system_architecture.md")
     else:
         plans_dir = root / "docs" / "ai" / "plans"
         contracts_dir = root / "docs" / "ai" / "contracts"
@@ -724,6 +779,7 @@ def process_governance(
         studies_dir = root / "docs" / "studies"
         adrs_dir = root / "docs" / "ai" / "adrs"
         spikes_dir = root / "docs" / "ai" / "spikes"
+        architecture_doc = root / "docs" / "ai" / "system_architecture.md"
 
     # Restore git-backed governance (Plan 222): findings, sessions, and backlog
     # items recorded at runtime live in a committed artifact, not in code. On a
@@ -750,6 +806,8 @@ def process_governance(
     study_count = 0
     adr_count = 0
     spike_count = 0
+    layer_count = 0
+    layer_edge_count = 0
 
     # File ID lookup for linking governance -> code nodes
     file_id_map: dict[str, str] = {}
@@ -758,6 +816,18 @@ def process_governance(
         sql='SELECT id AS "f.id", path AS "f.path" FROM File',
     ):
         file_id_map[row["f.path"]] = row["f.id"]
+
+    # --- Architecture layers (Plan 237) ---
+    # Parse the human-owned architecture baseline into ArchitectureLayer nodes and
+    # link each file to its most-specific layer. A missing/placeholder doc yields
+    # no layers (clean no-op); a parse failure is logged and skipped so indexing
+    # still completes, mirroring the governance-artifact restore contract.
+    try:
+        layer_count, layer_edge_count = _ingest_architecture_layers(
+            store, architecture_doc, file_id_map
+        )
+    except Exception as exc:  # noqa: BLE001 - layer ingestion must not break indexing
+        logger.warning("Architecture layer ingestion failed: %s", exc)
 
     # Track plan number -> plan_id for cross-referencing
     plan_number_to_id: dict[int, str] = {}
@@ -849,11 +919,17 @@ def process_governance(
             )
             contract_count += 1
 
+            # Files that contain a declared symbol -> direct CONTRACT_ABOUT_FILE
+            # edge (Plan 237). This makes contract coverage a first-class,
+            # queryable relationship instead of only an implicit declares-join.
+            contract_files: set[str] = set()
+
             for method_name in data.get("declared_methods", []):
                 fn_rows = ql(
                     store,
                     sql=(
-                        f"SELECT id AS \"fn.id\" FROM Function WHERE name = '{method_name}' LIMIT 1"
+                        'SELECT id AS "fn.id", filePath AS "fn.filePath"'
+                        f" FROM Function WHERE name = '{sql_escape(method_name)}' LIMIT 1"
                     ),
                 )
                 if fn_rows:
@@ -865,11 +941,17 @@ def process_governance(
                         fn_rows[0]["fn.id"],
                     )
                     declares_edge_count += 1
+                    fpath = fn_rows[0].get("fn.filePath")
+                    if fpath:
+                        contract_files.add(fpath)
 
             for class_name in data.get("declared_classes", []):
                 cls_rows = ql(
                     store,
-                    sql=f"SELECT id AS \"c.id\" FROM Class WHERE name = '{class_name}' LIMIT 1",
+                    sql=(
+                        'SELECT id AS "c.id", filePath AS "c.filePath"'
+                        f" FROM Class WHERE name = '{sql_escape(class_name)}' LIMIT 1"
+                    ),
                 )
                 if cls_rows:
                     store.create_edge(
@@ -880,6 +962,20 @@ def process_governance(
                         cls_rows[0]["c.id"],
                     )
                     declares_edge_count += 1
+                    fpath = cls_rows[0].get("c.filePath")
+                    if fpath:
+                        contract_files.add(fpath)
+
+            for fpath in contract_files:
+                file_id = file_id_map.get(fpath)
+                if file_id:
+                    store.create_edge(
+                        "CONTRACT_ABOUT_FILE",
+                        "Contract",
+                        contract_id,
+                        "File",
+                        file_id,
+                    )
 
     # --- Learnings ---
     if learnings_file.is_file():
@@ -1048,15 +1144,17 @@ def process_governance(
 
     logger.info(
         "Governance: %d plans, %d contracts, %d learnings, %d studies, %d ADRs, %d spikes, "
-        "%d impact edges, %d dep edges",
+        "%d layers, %d impact edges, %d dep edges, %d layer edges",
         plan_count,
         contract_count,
         learning_count,
         study_count,
         adr_count,
         spike_count,
+        layer_count,
         impact_edge_count,
         dep_edge_count,
+        layer_edge_count,
     )
 
     return {
@@ -1068,6 +1166,8 @@ def process_governance(
         "studies": study_count,
         "adrs": adr_count,
         "spikes": spike_count,
+        "layers": layer_count,
+        "layer_edges": layer_edge_count,
         "dependency_edges": dep_edge_count,
         "governance_restored": (
             sum(governance_restored.get("imported", {}).values())

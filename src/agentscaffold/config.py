@@ -379,6 +379,9 @@ class GraphConfig(BaseModel):
     # and backlog items are serialized here so the graph can be rebuilt from
     # git. Relative values resolve against the project root.
     governance_artifact: str = "docs/ai/state/governance.json"
+    # Human-owned architecture baseline (Plan 237). Parsed into ArchitectureLayer
+    # nodes + BELONGS_TO_LAYER edges so file->layer analyses activate.
+    architecture_doc: str = "docs/ai/system_architecture.md"
     embeddings: bool = False
     communities: bool = True
     incremental_community_refresh: str = "structure"

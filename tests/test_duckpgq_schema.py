@@ -51,7 +51,7 @@ def test_node_table_count():
 
 
 def test_edge_table_count():
-    assert len(EDGE_TABLES) == 36
+    assert len(EDGE_TABLES) == 37  # +CONTRACT_ABOUT_FILE (Plan 237)
 
 
 def test_all_node_ddl_returns_copy():
@@ -73,7 +73,7 @@ def test_create_property_graph_sql_lists_all_node_tables():
 
 def test_create_property_graph_sql_lists_all_edge_tables():
     """Every edge type must appear in the CREATE PROPERTY GRAPH statement."""
-    assert len(EDGE_TABLE_NAMES) == 36
+    assert len(EDGE_TABLE_NAMES) == 37
     for name in EDGE_TABLE_NAMES:
         assert name in CREATE_PROPERTY_GRAPH_SQL, f"Missing edge: {name}"
 

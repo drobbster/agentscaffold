@@ -8,6 +8,66 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Fixed
+- Query escaping, search provenance, and coverage honesty (Plan 239). SQL string
+  literals are now escaped consistently and correctly for DuckDB via a single
+  `sql_escape` helper (quotes are doubled; backslashes are left literal), fixing a
+  latent bug where identifiers containing an apostrophe (file paths, study
+  outcomes, spike titles, session summaries, contract symbol names) could break a
+  query or slip past the ad-hoc backslash escaping used in most of the review
+  query layer. Federated `scaffold_search` now reports project provenance:
+  `SearchResult` carries a `project` field and `format_search_results` shows a
+  Project column for multi-project results (single-project output is unchanged).
+  The plan/governance read tools are more honest about an empty graph:
+  `scaffold_orient`, `scaffold_compare_plans`, `scaffold_staleness_check`, and
+  `scaffold_decision_context` attach a `graph_warning` when the graph has 0 files
+  and 0 plans so a confident negative (`is_stale: false`,
+  `has_full_decision_chain: false`) is not mistaken for a confirmed absence, and
+  `compare_plans` labels `conflict_risk` with its heuristic basis.
+- Graph-tool rendering and signal hygiene (Plan 238). `scaffold_staleness_check`
+  and the rewrite context no longer miss completed plans whose status carries a
+  trailing date or note (e.g. `COMPLETE (2026-07-09)`); completed detection now
+  uses tolerant status normalization. `scaffold_orient` no longer lists an ADR
+  with a descriptive status like `Superseded by ADR-030` as active. The
+  plan/governance composites (`orient`, `prepare_review`, `decision_context`,
+  `prior_experiments`, `find_studies`, `find_adrs`) now strip internal
+  `alias.field` query-column prefixes from agent-facing output, matching
+  `search`/`context`/`impact`, and tools that echo plan status expose a
+  normalized value alongside the raw string.
+
+### Added
+- Architecture-layer and contract-to-file graph ingestion (Plan 237). The
+  `system_architecture.md` baseline is now parsed into `ArchitectureLayer` nodes
+  and each source file is linked to its most-specific layer via `BELONGS_TO_LAYER`
+  (matching the machine-readable path globs in the doc's Components tables). This
+  activates the previously-inert LAYER challenge, INTEGRATION_POINTS gap, and the
+  brief's `layer_coverage` signal for repos whose graph contains both the
+  architecture doc and the source tree. Contracts additionally gain a direct
+  `CONTRACT_ABOUT_FILE` edge (derived from the files declaring their functions and
+  classes), and `get_contracts_for_file` resolves via that edge with a fallback to
+  the declares-join. Governance freshness now also watches
+  `docs/ai/system_architecture.md`.
+
+### Changed
+- Pre-review signal quality (Plan 236). `scaffold_begin_plan` now persists only
+  high-value findings (high severity, de-duplicated against already-open
+  findings) instead of writing every generated challenge and gap, so repeated
+  reviews no longer flood the finding graph. The full challenge/gap lists remain
+  in the returned payload.
+- Modification-frequency ("architectural instability") challenges and the brief
+  frequency signal, plus missing-test-coverage gaps, now apply only to parsed
+  source files. Append-only governance/docs artifacts (workflow_state, contract
+  registries, studies, runbooks) are no longer flagged as unstable or untested.
+- `LEARNING` challenges are capped and ranked per file (unincorporated first,
+  then most recent) with an explicit disclosure that linkage is by plan
+  co-occurrence, not semantic relevance.
+- The compact orient summary in `scaffold_begin_plan` now reports methods,
+  classes, and import/call edge counts (not just top-level functions), and the
+  brief surfaces `layer_coverage`/`contract_link_count` so absent layer and
+  contract data reads as unconfirmed rather than a clean result.
+- Prior-plan status is normalized to a known vocabulary and a trailing
+  `(YYYY-MM-DD)` date is recovered from status text in review briefs.
+
 ## [0.9.1] - 2026-07-08
 
 ### Fixed

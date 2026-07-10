@@ -14,3 +14,11 @@
 
 - `DataRouter`
 - `DataProvider`
+
+## Reference Declaration
+
+```python
+class DataRouter:
+    def fetch(self, symbol, lookback): ...
+    def fetch_batch(self, symbols): ...
+```

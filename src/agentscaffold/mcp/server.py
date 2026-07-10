@@ -1778,6 +1778,7 @@ def _tool_search(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) ->
                 "type": r.node_type,
                 "score": r.score,
                 "source": r.source,
+                **({"project": r.project} if r.project else {}),
             }
             for r in results
         ],
@@ -1881,6 +1882,63 @@ def _tool_review_context(
 # ---------------------------------------------------------------------------
 
 _SEVERITY_ORDER: tuple[str, ...] = ("critical", "high", "medium", "low")
+
+
+def _clean_out_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Strip ``alias.`` prefixes from agent-facing tool output rows (Plan 238).
+
+    The query layer aliases columns as ``alias.field`` (a deliberate internal
+    contract). That prefix is noise once it reaches the agent, so plan/governance
+    composites clean it at the tool boundary -- matching what ``search``/``context``
+    already do -- without touching the query layer itself.
+    """
+    from agentscaffold.mcp.render import clean_rows  # noqa: PLC0415
+
+    return clean_rows(rows or [])
+
+
+def _with_normalized_status(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Clean rows and attach ``status_normalized`` next to the raw ``status`` (Plan 238)."""
+    from agentscaffold.review.filters import normalize_plan_status  # noqa: PLC0415
+
+    cleaned = _clean_out_rows(rows)
+    for row in cleaned:
+        if "status" in row:
+            row["status_normalized"] = normalize_plan_status(row.get("status"))
+    return cleaned
+
+
+def _is_plan_complete(raw_status: str | None) -> bool:
+    """Return True if a plan status normalizes to Complete (date/note tolerant)."""
+    from agentscaffold.review.filters import normalize_plan_status  # noqa: PLC0415
+
+    return normalize_plan_status(raw_status) == "Complete"
+
+
+def _adr_is_active(raw_status: str | None) -> bool:
+    """Return True unless an ADR status indicates it is superseded/deprecated.
+
+    Uses substring matching so descriptive statuses like ``Superseded by ADR-030``
+    are correctly treated as inactive (exact-token membership missed these).
+    """
+    s = (raw_status or "").lower()
+    return "supersed" not in s and "deprecat" not in s
+
+
+def _empty_graph_warning(stats: dict[str, Any]) -> str | None:
+    """Return a warning string when the graph looks empty, else None (Plan 239).
+
+    Several read tools render confident negatives (``is_stale: false``,
+    ``has_full_decision_chain: false``, empty overlaps) that are indistinguishable
+    from "the graph was never populated". Attaching this signal lets the agent tell
+    a confirmed absence from an unconfirmed one.
+    """
+    if stats.get("files", 0) == 0 and stats.get("plans", 0) == 0:
+        return (
+            "Graph appears empty (0 files, 0 plans). "
+            "Run 'scaffold index' before treating absent results as confirmed."
+        )
+    return None
 
 
 def _sev_key(row: dict[str, Any]) -> int:
@@ -2008,12 +2066,12 @@ def _tool_prepare_review(
             for g in gaps
         ],
         "gaps_markdown": format_gaps_markdown(gaps),
-        "governing_adrs": get_adrs_for_plan(store, pn),
-        "validation_spikes": get_spikes_for_plan(store, pn),
-        "related_studies": get_studies_for_plan(store, pn),
-        "dependencies": get_plan_dependencies(store, pn),
-        "open_findings": all_findings,
-        "open_backlog_items": open_backlog,
+        "governing_adrs": _clean_out_rows(get_adrs_for_plan(store, pn)),
+        "validation_spikes": _clean_out_rows(get_spikes_for_plan(store, pn)),
+        "related_studies": _clean_out_rows(get_studies_for_plan(store, pn)),
+        "dependencies": _clean_out_rows(get_plan_dependencies(store, pn)),
+        "open_findings": _clean_out_rows(all_findings),
+        "open_backlog_items": _clean_out_rows(open_backlog),
         "reviewer_hints": reviewer_hints,
         "meta": meta,
     }
@@ -2090,6 +2148,7 @@ def _tool_compare_plans(
     store: Any, arguments: dict[str, Any], meta: dict[str, Any]
 ) -> dict[str, Any]:
     """Composite: compare two plans for overlap and conflicts."""
+    from agentscaffold.review.filters import normalize_plan_status
     from agentscaffold.review.queries import get_plan_by_number, get_plan_impacted_files
 
     pa = arguments.get("plan_a")
@@ -2112,13 +2171,27 @@ def _tool_compare_plans(
     only_b = files_b - files_a
 
     return {
-        "plan_a": {"number": pa, "title": plan_a.get("p.title"), "status": plan_a.get("p.status")},
-        "plan_b": {"number": pb, "title": plan_b.get("p.title"), "status": plan_b.get("p.status")},
-        "shared_files": sorted(shared),
-        "only_in_a": sorted(only_a),
-        "only_in_b": sorted(only_b),
+        "plan_a": {
+            "number": pa,
+            "title": plan_a.get("p.title"),
+            "status": plan_a.get("p.status"),
+            "status_normalized": normalize_plan_status(plan_a.get("p.status")),
+        },
+        "plan_b": {
+            "number": pb,
+            "title": plan_b.get("p.title"),
+            "status": plan_b.get("p.status"),
+            "status_normalized": normalize_plan_status(plan_b.get("p.status")),
+        },
+        "shared_files": sorted(f for f in shared if f),
+        "only_in_a": sorted(f for f in only_a if f),
+        "only_in_b": sorted(f for f in only_b if f),
         "overlap_count": len(shared),
         "conflict_risk": "high" if len(shared) > 3 else "medium" if shared else "low",
+        # A file-overlap heuristic, not a proven conflict. Label the basis so the
+        # agent does not read "low" as "definitely safe" (Plan 239).
+        "conflict_risk_basis": "shared impacted-file count (>3 high, >=1 medium, 0 low)",
+        "graph_warning": _empty_graph_warning(store.get_stats()),
         "meta": meta,
     }
 
@@ -2127,6 +2200,7 @@ def _tool_staleness_check(
     store: Any, arguments: dict[str, Any], meta: dict[str, Any]
 ) -> dict[str, Any]:
     """Composite: check if a plan is stale."""
+    from agentscaffold.review.filters import normalize_plan_status
     from agentscaffold.review.queries import (
         get_all_plans,
         get_plan_by_number,
@@ -2149,7 +2223,7 @@ def _tool_staleness_check(
     overlapping_completed = []
     for p in all_plans:
         other_num = p.get("p.number")
-        if other_num == pn or p.get("p.status", "").lower() != "complete":
+        if other_num == pn or not _is_plan_complete(p.get("p.status")):
             continue
         if other_num is None:
             continue
@@ -2160,7 +2234,7 @@ def _tool_staleness_check(
                 {
                     "plan": other_num,
                     "title": p.get("p.title"),
-                    "shared_files": sorted(overlap),
+                    "shared_files": sorted(f for f in overlap if f),
                 }
             )
 
@@ -2181,9 +2255,13 @@ def _tool_staleness_check(
         "plan_number": pn,
         "plan_title": plan.get("p.title"),
         "plan_status": plan.get("p.status"),
+        "plan_status_normalized": normalize_plan_status(plan.get("p.status")),
         "last_updated": plan.get("p.lastUpdated"),
         "stale_signals": signals,
         "is_stale": bool(signals),
+        # An empty graph produces no overlap/study signals, which reads as a
+        # confident "not stale". Surface that the absence may be unconfirmed.
+        "graph_warning": _empty_graph_warning(store.get_stats()),
         "overlapping_completed_plans": overlapping_completed,
         "related_studies": [
             {"id": s.get("s.studyId"), "outcome": s.get("s.outcome")} for s in studies
@@ -2209,7 +2287,7 @@ def _tool_prepare_rewrite(
     recent_completed = [
         {"number": p.get("p.number"), "title": p.get("p.title")}
         for p in all_plans
-        if p.get("p.status", "").lower() == "complete"
+        if _is_plan_complete(p.get("p.status"))
     ][:10]
 
     staleness["dependencies"] = deps
@@ -2324,18 +2402,19 @@ def _tool_orient(store: Any, meta: dict[str, Any], root: Path, config: Any) -> d
     except Exception:
         open_backlog_count = 0
 
+    active_adrs = [a for a in adrs if _adr_is_active(a.get("a.status"))]
+
     return {
         "stats": stats,
         "coverage": coverage,
-        "recent_plans": recent_plans,
-        "hot_files": hot_files,
-        "recent_studies": studies[:5],
-        "active_adrs": [
-            a for a in adrs if a.get("a.status", "").lower() not in ("superseded", "deprecated")
-        ],
+        "graph_warning": _empty_graph_warning(stats),
+        "recent_plans": _with_normalized_status(recent_plans),
+        "hot_files": _clean_out_rows(hot_files),
+        "recent_studies": _clean_out_rows(studies[:5]),
+        "active_adrs": _clean_out_rows(active_adrs),
         "workflow_state": workflow,
         "open_backlog_count": open_backlog_count,
-        "open_backlog_top3": open_backlog,
+        "open_backlog_top3": _clean_out_rows(open_backlog),
         "meta": meta,
     }
 
@@ -2366,7 +2445,7 @@ def _tool_find_studies(
     return {
         "topic": topic,
         "outcome_filter": outcome,
-        "studies": results,
+        "studies": _clean_out_rows(results),
         "count": len(results),
         "meta": meta,
     }
@@ -2401,8 +2480,8 @@ def _tool_prior_experiments(
 
     return {
         "plan_number": pn,
-        "directly_referenced": direct,
-        "file_overlap_studies": file_studies,
+        "directly_referenced": _clean_out_rows(direct),
+        "file_overlap_studies": _clean_out_rows(file_studies),
         "total_count": len(direct) + len(file_studies),
         "meta": meta,
     }
@@ -2429,7 +2508,7 @@ def _tool_find_adrs(store: Any, arguments: dict[str, Any], meta: dict[str, Any])
     return {
         "topic": topic,
         "status_filter": status_filter,
-        "adrs": results,
+        "adrs": _clean_out_rows(results),
         "count": len(results),
         "meta": meta,
     }
@@ -2460,15 +2539,21 @@ def _tool_decision_context(
     studies = get_studies_for_plan(store, pn)
     deps = get_plan_dependencies(store, pn)
 
+    from agentscaffold.review.filters import normalize_plan_status
+
     return {
         "plan_number": pn,
         "plan_title": plan.get("p.title"),
         "plan_status": plan.get("p.status"),
-        "governing_adrs": adrs,
-        "validation_spikes": spikes,
-        "supporting_studies": studies,
-        "plan_dependencies": deps,
+        "plan_status_normalized": normalize_plan_status(plan.get("p.status")),
+        "governing_adrs": _clean_out_rows(adrs),
+        "validation_spikes": _clean_out_rows(spikes),
+        "supporting_studies": _clean_out_rows(studies),
+        "plan_dependencies": _clean_out_rows(deps),
         "has_full_decision_chain": bool(adrs or spikes or studies),
+        # If the graph is empty the chain looks absent even when it exists in
+        # docs; flag so a False is not read as a confirmed "no decisions".
+        "graph_warning": _empty_graph_warning(store.get_stats()),
         "meta": meta,
     }
 
@@ -2693,10 +2778,17 @@ def _tool_begin_plan(
         )
 
     # --- Compact orient summary ---
+    # Expose enough counts to confirm parsing actually ran. `functions` alone is
+    # misleading (top-level functions only); methods/classes/edges reveal whether
+    # the structural graph is populated.
     orient_summary = {
         "schema_version": stats.get("schema_version"),
         "files": stats.get("files", 0),
         "functions": stats.get("functions", 0),
+        "methods": stats.get("methods", 0),
+        "classes": stats.get("classes", 0),
+        "imports_edges": stats.get("imports_edges", 0),
+        "calls_edges": stats.get("calls_edges", 0),
         "plans": stats.get("plans", 0),
         "pipeline_state": stats.get("pipeline_state", "unknown"),
     }
@@ -2713,9 +2805,13 @@ def _tool_begin_plan(
         }
 
     # --- Map challenges + gaps to findings format and write to graph ---
-    findings_to_write: list[dict[str, Any]] = []
+    # Only high-value findings are PERSISTED (default: high severity), and only
+    # if not already recorded for this plan. The full challenge/gap lists remain
+    # in the returned payload for the reviewing agent. This stops every review
+    # run from injecting ~20 low-precision co-occurrence findings into the graph.
+    candidate_findings: list[dict[str, Any]] = []
     for c in review_result.get("challenges", []):
-        findings_to_write.append(
+        candidate_findings.append(
             {
                 "category": c.get("category", "challenge"),
                 "finding": c.get("text", ""),
@@ -2724,7 +2820,7 @@ def _tool_begin_plan(
             }
         )
     for g in review_result.get("gaps", []):
-        findings_to_write.append(
+        candidate_findings.append(
             {
                 "category": g.get("category", "gap"),
                 "finding": g.get("text", ""),
@@ -2732,6 +2828,10 @@ def _tool_begin_plan(
                 "file_paths": _finding_file_paths(g.get("evidence")),
             }
         )
+
+    findings_to_write = _select_findings_to_persist(
+        candidate_findings, review_result.get("open_findings", [])
+    )
 
     findings_written = {"ids": [], "count": 0}
     if findings_to_write:
@@ -2772,11 +2872,50 @@ def _tool_begin_plan(
         "findings_written": {
             "ids": findings_written.get("ids", []),
             "count": n_findings,
+            "candidates": len(candidate_findings),
+            "persist_policy": "high_severity_only",
         },
         "reviewed_at": reviewed_at,
         "proceed_prompt": proceed_prompt,
         "meta": meta,
     }
+
+
+def _select_findings_to_persist(
+    candidates: list[dict[str, Any]],
+    existing_open: list[dict[str, Any]],
+    *,
+    min_severity: str = "high",
+) -> list[dict[str, Any]]:
+    """Filter review findings down to the set worth persisting to the graph.
+
+    Keeps only findings at or above ``min_severity`` (default ``high``) and drops
+    any that duplicate an already-open finding for the plan (matched on category +
+    normalized finding text). This makes ``scaffold_begin_plan`` idempotent: a
+    re-run does not multiply findings.
+    """
+    order = {"low": 0, "medium": 1, "high": 2}
+    threshold = order.get(min_severity, 2)
+
+    def _norm(text: str) -> str:
+        return " ".join(str(text).split()).strip().lower()
+
+    existing_keys = {
+        (str(r.get("rf.category", "")).lower(), _norm(r.get("rf.finding", "")))
+        for r in existing_open
+    }
+
+    selected: list[dict[str, Any]] = []
+    batch_keys: set[tuple[str, str]] = set()
+    for f in candidates:
+        if order.get(f.get("severity", "medium"), 1) < threshold:
+            continue
+        key = (str(f.get("category", "")).lower(), _norm(f.get("finding", "")))
+        if key in existing_keys or key in batch_keys:
+            continue
+        batch_keys.add(key)
+        selected.append(f)
+    return selected
 
 
 def _tool_complete_plan(

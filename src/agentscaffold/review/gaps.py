@@ -13,7 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from agentscaffold.graph.query_compat import ql
+from agentscaffold.graph.query_compat import ql, sql_escape
+from agentscaffold.review.filters import is_source_code_file
 from agentscaffold.review.queries import (
     get_file_importers,
     get_file_layer,
@@ -85,17 +86,21 @@ def _consumer_audit(
                 unlisted.setdefault(imp_path, []).append(fpath)
 
     if unlisted:
+        total = len(unlisted)
+        shown = dict(list(unlisted.items())[:10])
         out.append(
             GapFinding(
                 category="CONSUMER_AUDIT",
-                severity="high" if len(unlisted) >= 5 else "medium",
+                severity="high" if total >= 5 else "medium",
                 text=(
-                    f"{len(unlisted)} files import changed modules but are NOT in "
+                    f"{total} files import changed modules but are NOT in "
                     "the File Impact Map. These may need updates or explicit scoping."
+                    + (f" (evidence shows {len(shown)} of {total})" if total > len(shown) else "")
                 ),
                 evidence={
-                    "unlisted_count": len(unlisted),
-                    "files": {k: v for k, v in list(unlisted.items())[:10]},
+                    "unlisted_count": total,
+                    "shown": len(shown),
+                    "files": shown,
                 },
             )
         )
@@ -209,8 +214,13 @@ def _test_coverage_gaps(
         if not fpath or "/test" in fpath or fpath.startswith("tests/"):
             continue
 
+        # Only source code needs test coverage. Docs/markdown/config are not
+        # testable units and would otherwise be false positives.
+        if not is_source_code_file(fpath, frow.get("f.language", "")):
+            continue
+
         # Check if any test file references the source
-        escaped = fpath.replace("\\", "\\\\").replace("'", "\\'")
+        escaped = sql_escape(fpath)
         file_stem = escaped.split("/")[-1].split(".")[0]
         test_refs = ql(
             store,
@@ -256,7 +266,7 @@ def _dependency_completeness(
         if not fpath or "/test" in fpath:
             continue
 
-        escaped = fpath.replace("\\", "\\\\").replace("'", "\\'")
+        escaped = sql_escape(fpath)
         imports = ql(
             store,
             sql=(
@@ -274,17 +284,23 @@ def _dependency_completeness(
                 upstream_deps.setdefault(dep_path, []).append(fpath)
 
     if upstream_deps:
+        total = len(upstream_deps)
+        shown = dict(list(upstream_deps.items())[:10])
         out.append(
             GapFinding(
                 category="DEPENDENCY_COMPLETENESS",
                 severity="medium",
                 text=(
-                    f"{len(upstream_deps)} upstream dependencies imported by plan "
+                    f"{total} upstream dependencies imported by plan "
                     "files are not in the File Impact Map. Verify they do not need "
-                    "modification: " + ", ".join(f"`{p}`" for p in sorted(upstream_deps)[:5])
+                    "modification: "
+                    + ", ".join(f"`{p}`" for p in sorted(upstream_deps)[:5])
+                    + (f" (evidence shows {len(shown)} of {total})" if total > len(shown) else "")
                 ),
                 evidence={
-                    "upstream_deps": {k: v for k, v in list(upstream_deps.items())[:10]},
+                    "upstream_count": total,
+                    "shown": len(shown),
+                    "upstream_deps": shown,
                 },
             )
         )
