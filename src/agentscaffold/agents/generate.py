@@ -11,6 +11,7 @@ from agentscaffold.rendering import (
     get_default_context,
     get_graph_context,
     render_template,
+    write_gitignore_block,
     write_managed_block,
 )
 
@@ -150,7 +151,19 @@ def run_agents_generate_all_platforms(
         "cursor": [],
         "windsurf": [],
         "hooks": [],
+        "project": [],
     }
+
+    # .gitignore (co-owned -- managed block ignoring runtime artifacts; never clobbered)
+    gitignore_path = project_root / ".gitignore"
+    if not dry_run:
+        status = write_gitignore_block(gitignore_path)
+        _report_managed_write(status, ".gitignore")
+    else:
+        console.print(
+            "[dim]dry-run[/dim] would update .gitignore managed block (existing content preserved)"
+        )
+    written["project"].append(gitignore_path)
 
     # AGENTS.md (project-owned -- managed block, never clobbered unless force)
     context = get_default_context(config)

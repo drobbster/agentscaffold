@@ -10,7 +10,12 @@ from rich.panel import Panel
 from rich.table import Table
 
 from agentscaffold.config import CONFIG_FILENAME, load_config
-from agentscaffold.rendering import get_default_context, render_template, write_if_missing
+from agentscaffold.rendering import (
+    get_default_context,
+    render_template,
+    write_gitignore_block,
+    write_if_missing,
+)
 
 console = Console()
 
@@ -243,6 +248,16 @@ def _write_session_dir(directory: Path, semi_autonomous: bool) -> bool:
     return True
 
 
+def _write_gitignore(directory: Path) -> bool:
+    """Ensure the project .gitignore ignores AgentScaffold runtime artifacts.
+
+    Returns True when the managed block was created or refreshed, False when it
+    was already present and unchanged. Never clobbers an existing .gitignore.
+    """
+    status = write_gitignore_block(directory / ".gitignore")
+    return status != "unchanged"
+
+
 def _write_empty_readmes(directory: Path) -> int:
     """Write minimal README.md files in empty scaffold directories."""
     count = 0
@@ -336,6 +351,9 @@ def run_init(directory: Path, non_interactive: bool = False) -> None:
 
     readme_count = _write_empty_readmes(directory)
     written += readme_count
+
+    if _write_gitignore(directory):
+        written += 1
 
     if yaml_written:
         written += 1
