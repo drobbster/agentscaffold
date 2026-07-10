@@ -8,6 +8,18 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Fixed
+- Graph-tool rendering and signal hygiene (Plan 238). `scaffold_staleness_check`
+  and the rewrite context no longer miss completed plans whose status carries a
+  trailing date or note (e.g. `COMPLETE (2026-07-09)`); completed detection now
+  uses tolerant status normalization. `scaffold_orient` no longer lists an ADR
+  with a descriptive status like `Superseded by ADR-030` as active. The
+  plan/governance composites (`orient`, `prepare_review`, `decision_context`,
+  `prior_experiments`, `find_studies`, `find_adrs`) now strip internal
+  `alias.field` query-column prefixes from agent-facing output, matching
+  `search`/`context`/`impact`, and tools that echo plan status expose a
+  normalized value alongside the raw string.
+
 ### Added
 - Architecture-layer and contract-to-file graph ingestion (Plan 237). The
   `system_architecture.md` baseline is now parsed into `ArchitectureLayer` nodes
