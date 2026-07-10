@@ -8,6 +8,8 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-07-10
+
 ### Added
 - Auto `.gitignore` managed block in the install sequence (Plan 241). `scaffold
   init` and `scaffold agents generate-all` now ensure the project `.gitignore`
