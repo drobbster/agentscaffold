@@ -388,6 +388,7 @@ EDGE_DEFS: list[EdgeDef] = [
     EdgeDef("PLAN_INTRODUCES_CLASS", "Plan", "Class"),
     EdgeDef("CONTRACT_DECLARES_FUNC", "Contract", "Function", (("declaredSignature", "VARCHAR"),)),
     EdgeDef("CONTRACT_DECLARES_CLASS", "Contract", "Class", (("declaredSignature", "VARCHAR"),)),
+    EdgeDef("CONTRACT_ABOUT_FILE", "Contract", "File"),
     EdgeDef("LEARNING_RELATES_TO_FILE", "Learning", "File"),
     EdgeDef("LEARNING_RELATES_TO_FUNC", "Learning", "Function"),
     EdgeDef("FINDING_ABOUT_FILE", "ReviewFinding", "File"),

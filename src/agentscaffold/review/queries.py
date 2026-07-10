@@ -259,8 +259,33 @@ def get_findings_for_file(
 
 
 def get_contracts_for_file(store: GraphBackend, file_path: str) -> list[dict[str, Any]]:
-    """Return contracts whose declared functions/classes are in the given file."""
+    """Return contracts covering the given file.
+
+    Prefers the direct ``CONTRACT_ABOUT_FILE`` edge (Plan 237); falls back to the
+    declares-join (contracts whose declared functions/classes live in the file) so
+    graphs indexed before the edge existed still resolve.
+    """
     escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+
+    direct = store.query(
+        'SELECT DISTINCT c.name AS "c.name",'
+        ' c.version AS "c.version",'
+        ' c.filePath AS "c.filePath"'
+        " FROM CONTRACT_ABOUT_FILE caf"
+        " JOIN Contract c ON c.id = caf.src"
+        " JOIN File f ON f.id = caf.dst"
+        f" WHERE f.path = '{escaped}'"
+    )
+    if direct:
+        seen_direct: set[str] = set()
+        result_direct: list[dict[str, Any]] = []
+        for c in direct:
+            key = c.get("c.name", "")
+            if key not in seen_direct:
+                seen_direct.add(key)
+                result_direct.append(c)
+        return result_direct
+
     func_contracts = store.query(
         'SELECT DISTINCT c.name AS "c.name",'
         ' c.version AS "c.version",'

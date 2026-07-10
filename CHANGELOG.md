@@ -8,6 +8,39 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Added
+- Architecture-layer and contract-to-file graph ingestion (Plan 237). The
+  `system_architecture.md` baseline is now parsed into `ArchitectureLayer` nodes
+  and each source file is linked to its most-specific layer via `BELONGS_TO_LAYER`
+  (matching the machine-readable path globs in the doc's Components tables). This
+  activates the previously-inert LAYER challenge, INTEGRATION_POINTS gap, and the
+  brief's `layer_coverage` signal for repos whose graph contains both the
+  architecture doc and the source tree. Contracts additionally gain a direct
+  `CONTRACT_ABOUT_FILE` edge (derived from the files declaring their functions and
+  classes), and `get_contracts_for_file` resolves via that edge with a fallback to
+  the declares-join. Governance freshness now also watches
+  `docs/ai/system_architecture.md`.
+
+### Changed
+- Pre-review signal quality (Plan 236). `scaffold_begin_plan` now persists only
+  high-value findings (high severity, de-duplicated against already-open
+  findings) instead of writing every generated challenge and gap, so repeated
+  reviews no longer flood the finding graph. The full challenge/gap lists remain
+  in the returned payload.
+- Modification-frequency ("architectural instability") challenges and the brief
+  frequency signal, plus missing-test-coverage gaps, now apply only to parsed
+  source files. Append-only governance/docs artifacts (workflow_state, contract
+  registries, studies, runbooks) are no longer flagged as unstable or untested.
+- `LEARNING` challenges are capped and ranked per file (unincorporated first,
+  then most recent) with an explicit disclosure that linkage is by plan
+  co-occurrence, not semantic relevance.
+- The compact orient summary in `scaffold_begin_plan` now reports methods,
+  classes, and import/call edge counts (not just top-level functions), and the
+  brief surfaces `layer_coverage`/`contract_link_count` so absent layer and
+  contract data reads as unconfirmed rather than a clean result.
+- Prior-plan status is normalized to a known vocabulary and a trailing
+  `(YYYY-MM-DD)` date is recovered from status text in review briefs.
+
 ## [0.9.1] - 2026-07-08
 
 ### Fixed
