@@ -102,6 +102,7 @@ my-project/
 
 - **AGENTS.md**: The agent reads this file to learn the plan lifecycle, gates, and collaboration protocol.
 - **Platform rule files** (`CLAUDE.md`, `.windsurfrules`, `.cursor/rules/`, `.claude/agents/`): generated automatically on a fresh init. Regenerate them after editing `scaffold.yaml` with `scaffold agents generate-all`.
+- **.gitignore**: a managed block is added ignoring AgentScaffold runtime artifacts (`.scaffold/` graph DB and model cache, `.venv-scaffold/`, `*.duckdb`) so they never get committed. An existing `.gitignore` is appended to, never overwritten.
 - **scaffold.yaml**: Edit this to change rigor, gates, domains, or semi-autonomous settings.
 - **docs/ai/**: Source of truth for templates, prompts, and state. The agent references these paths.
 - **Plan templates included**: `docs/ai/templates/plan_template.md`,
