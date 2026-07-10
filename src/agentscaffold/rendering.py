@@ -95,6 +95,7 @@ def get_graph_context(config: ScaffoldConfig) -> dict[str, Any]:
         plans = get_all_plans(store)
 
         from agentscaffold.graph.query_compat import ql  # noqa: PLC0415
+        from agentscaffold.review.filters import normalize_plan_status  # noqa: PLC0415
 
         # Architecture layers
         layers = ql(
@@ -127,6 +128,7 @@ def get_graph_context(config: ScaffoldConfig) -> dict[str, Any]:
                     "number": p.get("p.number"),
                     "title": p.get("p.title", ""),
                     "status": p.get("p.status", ""),
+                    "status_normalized": normalize_plan_status(p.get("p.status", "")),
                 }
                 for p in plans[:20]
             ],

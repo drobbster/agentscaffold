@@ -226,3 +226,79 @@ def test_orient_excludes_superseded_adr_and_cleans():
     assert active_titles == ["Active one"]
     assert not _has_dotted_key(result["active_adrs"])
     assert result["recent_plans"][0]["status_normalized"] == "Complete"
+
+
+# ---------------------------------------------------------------------------
+# Plan 239: coverage honesty (empty-graph signal + heuristic basis)
+# ---------------------------------------------------------------------------
+
+
+def test_empty_graph_warning_helper():
+    from agentscaffold.mcp.server import _empty_graph_warning
+
+    assert _empty_graph_warning({"files": 0, "plans": 0}) is not None
+    assert _empty_graph_warning({"files": 5, "plans": 0}) is None
+    assert _empty_graph_warning({"files": 0, "plans": 2}) is None
+    assert _empty_graph_warning({}) is not None
+
+
+def test_compare_plans_has_conflict_basis_and_warning_when_empty():
+    from agentscaffold.mcp.server import _tool_compare_plans
+
+    store = MagicMock()
+    store.get_stats.return_value = {"files": 0, "plans": 0}
+
+    def _by_num(_s, n, **_k):
+        return {"p.title": f"Plan {n}", "p.status": "Draft"}
+
+    with (
+        patch("agentscaffold.review.queries.get_plan_by_number", side_effect=_by_num),
+        patch("agentscaffold.review.queries.get_plan_impacted_files", return_value=[]),
+    ):
+        result = _tool_compare_plans(store, {"plan_a": 1, "plan_b": 2}, {})
+
+    assert result["conflict_risk_basis"]
+    assert result["graph_warning"] is not None
+
+
+def test_staleness_graph_warning_when_empty():
+    from agentscaffold.mcp.server import _tool_staleness_check
+
+    store = MagicMock()
+    store.get_stats.return_value = {"files": 0, "plans": 0}
+
+    with (
+        patch(
+            "agentscaffold.review.queries.get_plan_by_number",
+            return_value={"p.title": "T", "p.status": "Draft", "p.lastUpdated": ""},
+        ),
+        patch("agentscaffold.review.queries.get_plan_impacted_files", return_value=[]),
+        patch("agentscaffold.review.queries.get_all_plans", return_value=[]),
+        patch("agentscaffold.review.queries.get_studies_for_plan", return_value=[]),
+    ):
+        result = _tool_staleness_check(store, {"plan_number": 5}, {})
+
+    assert result["is_stale"] is False
+    assert result["graph_warning"] is not None
+
+
+def test_decision_context_graph_warning_when_empty():
+    from agentscaffold.mcp.server import _tool_decision_context
+
+    store = MagicMock()
+    store.get_stats.return_value = {"files": 0, "plans": 0}
+
+    with (
+        patch(
+            "agentscaffold.review.queries.get_plan_by_number",
+            return_value={"p.title": "T", "p.status": "Draft"},
+        ),
+        patch("agentscaffold.review.queries.get_adrs_for_plan", return_value=[]),
+        patch("agentscaffold.review.queries.get_spikes_for_plan", return_value=[]),
+        patch("agentscaffold.review.queries.get_studies_for_plan", return_value=[]),
+        patch("agentscaffold.review.queries.get_plan_dependencies", return_value=[]),
+    ):
+        result = _tool_decision_context(store, {"plan_number": 5}, {})
+
+    assert result["has_full_decision_chain"] is False
+    assert result["graph_warning"] is not None

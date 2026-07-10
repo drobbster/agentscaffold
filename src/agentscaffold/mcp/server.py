@@ -1778,6 +1778,7 @@ def _tool_search(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) ->
                 "type": r.node_type,
                 "score": r.score,
                 "source": r.source,
+                **({"project": r.project} if r.project else {}),
             }
             for r in results
         ],
@@ -1922,6 +1923,22 @@ def _adr_is_active(raw_status: str | None) -> bool:
     """
     s = (raw_status or "").lower()
     return "supersed" not in s and "deprecat" not in s
+
+
+def _empty_graph_warning(stats: dict[str, Any]) -> str | None:
+    """Return a warning string when the graph looks empty, else None (Plan 239).
+
+    Several read tools render confident negatives (``is_stale: false``,
+    ``has_full_decision_chain: false``, empty overlaps) that are indistinguishable
+    from "the graph was never populated". Attaching this signal lets the agent tell
+    a confirmed absence from an unconfirmed one.
+    """
+    if stats.get("files", 0) == 0 and stats.get("plans", 0) == 0:
+        return (
+            "Graph appears empty (0 files, 0 plans). "
+            "Run 'scaffold index' before treating absent results as confirmed."
+        )
+    return None
 
 
 def _sev_key(row: dict[str, Any]) -> int:
@@ -2171,6 +2188,10 @@ def _tool_compare_plans(
         "only_in_b": sorted(f for f in only_b if f),
         "overlap_count": len(shared),
         "conflict_risk": "high" if len(shared) > 3 else "medium" if shared else "low",
+        # A file-overlap heuristic, not a proven conflict. Label the basis so the
+        # agent does not read "low" as "definitely safe" (Plan 239).
+        "conflict_risk_basis": "shared impacted-file count (>3 high, >=1 medium, 0 low)",
+        "graph_warning": _empty_graph_warning(store.get_stats()),
         "meta": meta,
     }
 
@@ -2238,6 +2259,9 @@ def _tool_staleness_check(
         "last_updated": plan.get("p.lastUpdated"),
         "stale_signals": signals,
         "is_stale": bool(signals),
+        # An empty graph produces no overlap/study signals, which reads as a
+        # confident "not stale". Surface that the absence may be unconfirmed.
+        "graph_warning": _empty_graph_warning(store.get_stats()),
         "overlapping_completed_plans": overlapping_completed,
         "related_studies": [
             {"id": s.get("s.studyId"), "outcome": s.get("s.outcome")} for s in studies
@@ -2383,6 +2407,7 @@ def _tool_orient(store: Any, meta: dict[str, Any], root: Path, config: Any) -> d
     return {
         "stats": stats,
         "coverage": coverage,
+        "graph_warning": _empty_graph_warning(stats),
         "recent_plans": _with_normalized_status(recent_plans),
         "hot_files": _clean_out_rows(hot_files),
         "recent_studies": _clean_out_rows(studies[:5]),
@@ -2526,6 +2551,9 @@ def _tool_decision_context(
         "supporting_studies": _clean_out_rows(studies),
         "plan_dependencies": _clean_out_rows(deps),
         "has_full_decision_chain": bool(adrs or spikes or studies),
+        # If the graph is empty the chain looks absent even when it exists in
+        # docs; flag so a False is not read as a confirmed "no decisions".
+        "graph_warning": _empty_graph_warning(store.get_stats()),
         "meta": meta,
     }
 

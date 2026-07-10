@@ -9,6 +9,21 @@ introduce additive features and small behavior changes).
 ## [Unreleased]
 
 ### Fixed
+- Query escaping, search provenance, and coverage honesty (Plan 239). SQL string
+  literals are now escaped consistently and correctly for DuckDB via a single
+  `sql_escape` helper (quotes are doubled; backslashes are left literal), fixing a
+  latent bug where identifiers containing an apostrophe (file paths, study
+  outcomes, spike titles, session summaries, contract symbol names) could break a
+  query or slip past the ad-hoc backslash escaping used in most of the review
+  query layer. Federated `scaffold_search` now reports project provenance:
+  `SearchResult` carries a `project` field and `format_search_results` shows a
+  Project column for multi-project results (single-project output is unchanged).
+  The plan/governance read tools are more honest about an empty graph:
+  `scaffold_orient`, `scaffold_compare_plans`, `scaffold_staleness_check`, and
+  `scaffold_decision_context` attach a `graph_warning` when the graph has 0 files
+  and 0 plans so a confident negative (`is_stale: false`,
+  `has_full_decision_chain: false`) is not mistaken for a confirmed absence, and
+  `compare_plans` labels `conflict_risk` with its heuristic basis.
 - Graph-tool rendering and signal hygiene (Plan 238). `scaffold_staleness_check`
   and the rewrite context no longer miss completed plans whose status carries a
   trailing date or note (e.g. `COMPLETE (2026-07-09)`); completed detection now

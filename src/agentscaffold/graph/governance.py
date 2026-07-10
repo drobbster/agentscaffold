@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from agentscaffold.graph.query_compat import ql
+from agentscaffold.graph.query_compat import ql, sql_escape
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
@@ -929,7 +929,7 @@ def process_governance(
                     store,
                     sql=(
                         'SELECT id AS "fn.id", filePath AS "fn.filePath"'
-                        f" FROM Function WHERE name = '{method_name}' LIMIT 1"
+                        f" FROM Function WHERE name = '{sql_escape(method_name)}' LIMIT 1"
                     ),
                 )
                 if fn_rows:
@@ -950,7 +950,7 @@ def process_governance(
                     store,
                     sql=(
                         'SELECT id AS "c.id", filePath AS "c.filePath"'
-                        f" FROM Class WHERE name = '{class_name}' LIMIT 1"
+                        f" FROM Class WHERE name = '{sql_escape(class_name)}' LIMIT 1"
                     ),
                 )
                 if cls_rows:

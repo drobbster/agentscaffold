@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from agentscaffold.graph.query_compat import ql
+from agentscaffold.graph.query_compat import ql, sql_escape
 from agentscaffold.review.filters import is_source_code_file
 from agentscaffold.review.queries import (
     get_file_importers,
@@ -220,7 +220,7 @@ def _test_coverage_gaps(
             continue
 
         # Check if any test file references the source
-        escaped = fpath.replace("\\", "\\\\").replace("'", "\\'")
+        escaped = sql_escape(fpath)
         file_stem = escaped.split("/")[-1].split(".")[0]
         test_refs = ql(
             store,
@@ -266,7 +266,7 @@ def _dependency_completeness(
         if not fpath or "/test" in fpath:
             continue
 
-        escaped = fpath.replace("\\", "\\\\").replace("'", "\\'")
+        escaped = sql_escape(fpath)
         imports = ql(
             store,
             sql=(

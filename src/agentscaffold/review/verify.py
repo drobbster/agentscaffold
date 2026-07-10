@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from agentscaffold.graph.query_compat import ql
+from agentscaffold.graph.query_compat import ql, sql_escape
 from agentscaffold.review.queries import (
     get_file_importers,
     get_function_callers,
@@ -80,7 +80,7 @@ def _check_plan_compliance(
         if not fpath:
             continue
         file_id = f"file::{fpath}"
-        escaped = file_id.replace("\\", "\\\\").replace("'", "\\'")
+        escaped = sql_escape(file_id)
         rows = ql(
             store,
             sql=f"SELECT id AS \"f.id\" FROM File WHERE id = '{escaped}'",
@@ -120,7 +120,7 @@ def _check_signatures(
     for fpath in planned_paths:
         if not fpath:
             continue
-        escaped = fpath.replace("\\", "\\\\").replace("'", "\\'")
+        escaped = sql_escape(fpath)
         funcs = ql(
             store,
             sql=(
@@ -194,7 +194,7 @@ def _check_test_delta(
             continue
 
         stem = fpath.split("/")[-1].split(".")[0]
-        escaped = stem.replace("\\", "\\\\").replace("'", "\\'")
+        escaped = sql_escape(stem)
         test_files = ql(
             store,
             sql=(

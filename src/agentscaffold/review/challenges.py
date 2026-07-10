@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from agentscaffold.graph.query_compat import ql
+from agentscaffold.graph.query_compat import ql, sql_escape
 from agentscaffold.review.filters import is_source_code_file
 from agentscaffold.review.queries import (
     get_contracts_for_file,
@@ -317,7 +317,7 @@ def _check_patterns(
             continue
 
         file_id = f"file::{fpath}"
-        escaped = file_id.replace("\\", "\\\\").replace("'", "\\'")
+        escaped = sql_escape(file_id)
         findings = ql(
             store,
             sql=(

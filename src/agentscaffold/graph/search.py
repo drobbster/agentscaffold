@@ -19,6 +19,17 @@ from agentscaffold.graph.query_compat import ql
 
 logger = logging.getLogger(__name__)
 
+
+def _project_of(value: str | None) -> str | None:
+    """Normalize a stored ``project`` column value to ``str | None``.
+
+    Node rows carry a ``project`` column that is populated in multi-project
+    workspaces and empty in single-project repos. Provenance is surfaced only
+    when it is actually present (federated / multi-project results).
+    """
+    return value or None
+
+
 CODE_TABLES = ["Function", "Class", "Method", "File"]
 GOVERNANCE_TABLES = ["Plan", "Learning", "ReviewFinding", "Study", "ADR", "Spike", "BacklogItem"]
 
@@ -33,6 +44,7 @@ class SearchResult:
     node_type: str
     score: float
     source: str  # "keyword", "semantic", or "both"
+    project: str | None = None  # owning project (federated searches only)
     context: dict[str, Any] = field(default_factory=dict)
 
 
@@ -201,7 +213,8 @@ def _keyword_search(
                 store,
                 sql=(
                     f'SELECT id AS "n.id", name AS "n.name", '
-                    f'filePath AS "n.filePath", signature AS "n.signature" '
+                    f'filePath AS "n.filePath", signature AS "n.signature", '
+                    f'project AS "n.project" '
                     f"FROM Function{where} LIMIT {limit * 2}"
                 ),
             )
@@ -221,6 +234,7 @@ def _keyword_search(
                             node_type="Function",
                             score=score,
                             source="keyword",
+                            project=_project_of(row.get("n.project")),
                             context={"signature": row.get("n.signature", "")},
                         )
                     )
@@ -230,7 +244,8 @@ def _keyword_search(
                 store,
                 sql=(
                     f'SELECT id AS "n.id", name AS "n.name", '
-                    f'filePath AS "n.filePath" FROM Class{where} LIMIT {limit * 2}'
+                    f'filePath AS "n.filePath", project AS "n.project" '
+                    f"FROM Class{where} LIMIT {limit * 2}"
                 ),
             )
             for row in rows:
@@ -244,6 +259,7 @@ def _keyword_search(
                             node_type="Class",
                             score=score,
                             source="keyword",
+                            project=_project_of(row.get("n.project")),
                         )
                     )
 
@@ -252,7 +268,8 @@ def _keyword_search(
                 store,
                 sql=(
                     f'SELECT id AS "n.id", name AS "n.name", className AS "n.className",'
-                    f' filePath AS "n.filePath", signature AS "n.signature"'
+                    f' filePath AS "n.filePath", signature AS "n.signature",'
+                    f' project AS "n.project"'
                     f" FROM Method{where} LIMIT {limit * 2}"
                 ),
             )
@@ -273,6 +290,7 @@ def _keyword_search(
                             node_type="Method",
                             score=score,
                             source="keyword",
+                            project=_project_of(row.get("n.project")),
                             context={"signature": row.get("n.signature", "")},
                         )
                     )
@@ -282,7 +300,8 @@ def _keyword_search(
                 store,
                 sql=(
                     f'SELECT id AS "n.id", path AS "n.path", '
-                    f'language AS "n.language" FROM File{where} LIMIT {limit * 2}'
+                    f'language AS "n.language", project AS "n.project" '
+                    f"FROM File{where} LIMIT {limit * 2}"
                 ),
             )
             for row in rows:
@@ -296,11 +315,15 @@ def _keyword_search(
                             node_type="File",
                             score=score,
                             source="keyword",
+                            project=_project_of(row.get("n.project")),
                         )
                     )
 
         elif table in GOVERNANCE_TABLES:
-            sql = f"SELECT {_governance_keyword_cols(table)} FROM {table}{where} LIMIT {limit * 2}"
+            sql = (
+                f'SELECT {_governance_keyword_cols(table)}, project AS "n.project"'
+                f" FROM {table}{where} LIMIT {limit * 2}"
+            )
             rows = ql(
                 store,
                 sql=sql,
@@ -320,10 +343,11 @@ def _keyword_search(
                             node_type=table,
                             score=score,
                             source="keyword",
+                            project=_project_of(row.get("n.project")),
                             context={
                                 k.removeprefix("n."): v
                                 for k, v in row.items()
-                                if k.startswith("n.")
+                                if k.startswith("n.") and k != "n.project"
                             },
                         )
                     )
@@ -379,6 +403,7 @@ def _semantic_search(
                     node_type=table,
                     score=hit.get("similarity", 0.0),
                     source="semantic",
+                    project=_project_of(hit.get("project")),
                     context={k.removeprefix("n."): v for k, v in hit.items() if k.startswith("n.")},
                 )
             )
@@ -520,13 +545,25 @@ def format_search_results(results: list[SearchResult]) -> str:
     if not results:
         return "No results found."
 
-    lines = ["## Search Results", ""]
-    lines.append("| # | Type | Name | Path | Score | Source |")
-    lines.append("|---|------|------|------|-------|--------|")
+    # Show a Project column only for federated results (multi-project hits),
+    # so cross-project provenance is always visible when it matters.
+    show_project = any(r.project for r in results)
 
-    for i, r in enumerate(results, 1):
-        lines.append(
-            f"| {i} | {r.node_type} | `{r.name}` | `{r.path}` | {r.score:.4f} | {r.source} |"
-        )
+    lines = ["## Search Results", ""]
+    if show_project:
+        lines.append("| # | Project | Type | Name | Path | Score | Source |")
+        lines.append("|---|---------|------|------|------|-------|--------|")
+        for i, r in enumerate(results, 1):
+            lines.append(
+                f"| {i} | {r.project or '-'} | {r.node_type} | `{r.name}` | "
+                f"`{r.path}` | {r.score:.4f} | {r.source} |"
+            )
+    else:
+        lines.append("| # | Type | Name | Path | Score | Source |")
+        lines.append("|---|------|------|------|-------|--------|")
+        for i, r in enumerate(results, 1):
+            lines.append(
+                f"| {i} | {r.node_type} | `{r.name}` | `{r.path}` | {r.score:.4f} | {r.source} |"
+            )
 
     return "\n".join(lines)
