@@ -9,6 +9,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from agentscaffold.review.filters import (
+    is_source_code_file,
+    normalize_plan_status,
+    recover_plan_date,
+)
 from agentscaffold.review.queries import (
     get_contracts_for_file,
     get_file_importers,
@@ -43,12 +48,16 @@ def generate_brief(store: GraphBackend, plan_number: int) -> dict[str, Any]:
     total_direct_importers = 0
     total_transitive_consumers = 0
     total_callers = 0
+    total_contract_links = 0
+    code_prior_plan_numbers: set[Any] = set()
 
     for frow in impacted_files:
         fpath = frow.get("f.path", "")
         if not fpath:
             continue
 
+        flang = frow.get("f.language", "")
+        is_code = is_source_code_file(fpath, flang)
         importers = get_file_importers(store, fpath)
         callers = get_function_callers(store, fpath)
         transitive = get_transitive_consumers(store, fpath)
@@ -63,6 +72,7 @@ def generate_brief(store: GraphBackend, plan_number: int) -> dict[str, Any]:
         total_direct_importers += len(importers)
         total_transitive_consumers += len(transitive)
         total_callers += len(callers)
+        total_contract_links += len(contracts)
 
         # Deduplicate learnings and prior plans
         for lr in learnings:
@@ -72,9 +82,13 @@ def generate_brief(store: GraphBackend, plan_number: int) -> dict[str, Any]:
 
         for pp in prior_plans:
             pp_num = pp.get("p.number")
-            if pp_num != plan_number and not any(
-                x.get("p.number") == pp_num for x in all_prior_plans
-            ):
+            if pp_num == plan_number:
+                continue
+            # Only parsed source files contribute to the instability signal;
+            # append-only docs/state artifacts are touched by every plan.
+            if is_code:
+                code_prior_plan_numbers.add(pp_num)
+            if not any(x.get("p.number") == pp_num for x in all_prior_plans):
                 all_prior_plans.append(pp)
 
         file_profiles.append(
@@ -109,19 +123,23 @@ def generate_brief(store: GraphBackend, plan_number: int) -> dict[str, Any]:
             }
         )
 
-    # Frequency analysis for prior plans
+    # Frequency analysis -- only parsed source files count toward the
+    # architectural-instability signal.
     plan_frequency_signal = ""
-    if len(all_prior_plans) >= 3:
+    code_churn = len(code_prior_plan_numbers)
+    if code_churn >= 3:
         plan_frequency_signal = (
-            f"{len(all_prior_plans)} prior plans have modified these files. "
+            f"{code_churn} prior plans have modified the source-code files in this plan. "
             "High modification frequency may indicate architectural instability."
         )
 
+    plan_status_raw = plan.get("p.status", "")
     return {
         "plan": {
             "number": plan.get("p.number"),
             "title": plan.get("p.title", ""),
-            "status": plan.get("p.status", ""),
+            "status": normalize_plan_status(plan_status_raw),
+            "status_raw": plan_status_raw,
             "type": plan.get("p.planType", ""),
         },
         "file_profiles": file_profiles,
@@ -131,8 +149,11 @@ def generate_brief(store: GraphBackend, plan_number: int) -> dict[str, Any]:
             "total_transitive_consumers": total_transitive_consumers,
             "total_external_callers": total_callers,
             "layers_touched": sorted(layers_touched),
+            "layer_coverage": "present" if layers_touched else "absent",
+            "contract_link_count": total_contract_links,
             "related_learnings": len(all_learnings),
             "prior_plans": len(all_prior_plans),
+            "code_prior_plans": code_churn,
             "frequency_signal": plan_frequency_signal,
         },
         "learnings": [
@@ -148,8 +169,9 @@ def generate_brief(store: GraphBackend, plan_number: int) -> dict[str, Any]:
             {
                 "number": pp.get("p.number"),
                 "title": pp.get("p.title", ""),
-                "status": pp.get("p.status", ""),
-                "date": pp.get("p.createdDate", ""),
+                "status": normalize_plan_status(pp.get("p.status", "")),
+                "status_raw": pp.get("p.status", ""),
+                "date": recover_plan_date(pp.get("p.createdDate", ""), pp.get("p.status", "")),
             }
             for pp in all_prior_plans
         ],
@@ -175,7 +197,20 @@ def format_brief_markdown(brief: dict[str, Any]) -> str:
     lines.append(f"- Direct importers across all files: {summary['total_direct_importers']}")
     lines.append(f"- Transitive consumers (2-hop): {summary['total_transitive_consumers']}")
     lines.append(f"- External callers into these files: {summary['total_external_callers']}")
-    lines.append(f"- Layers touched: {', '.join(summary['layers_touched']) or 'none detected'}")
+    if summary.get("layer_coverage") == "absent":
+        lines.append(
+            "- Layers touched: none (layer mapping absent -- unconfirmed, not 'no impact')"
+        )
+    else:
+        lines.append(f"- Layers touched: {', '.join(summary['layers_touched']) or 'none detected'}")
+    lines.append(
+        f"- Contract links on impacted files: {summary.get('contract_link_count', 0)}"
+        + (
+            " (no contract<->file links in graph -- unconfirmed)"
+            if not summary.get("contract_link_count")
+            else ""
+        )
+    )
     lines.append("")
 
     # Per-file profiles

@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from agentscaffold.graph.query_compat import ql
+from agentscaffold.graph.query_compat import ql, sql_escape
 from agentscaffold.review.queries import (
     get_file_importers,
     get_function_callers,
@@ -108,7 +108,7 @@ def _learning_patterns(
         if not fpath:
             continue
         file_id = f"file::{fpath}"
-        escaped = file_id.replace("\\", "\\\\").replace("'", "\\'")
+        escaped = sql_escape(file_id)
         learnings = ql(
             store,
             sql=(

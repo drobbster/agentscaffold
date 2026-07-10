@@ -96,6 +96,28 @@ class TestGovernanceIngestion:
         # so this depends on fixture alignment
         assert gov.get("impact_edges", 0) >= 0
 
+    def test_architecture_layers_ingested(self, indexed_store):
+        store, summary = indexed_store
+        gov = summary.get("governance", {})
+        # Fixture arch doc defines 2 real layers (Layer 3 is a [Name] placeholder).
+        assert gov.get("layers", 0) == 2
+        assert gov.get("layer_edges", 0) >= 1
+
+    def test_get_file_layer_after_ingest(self, indexed_store):
+        from agentscaffold.review.queries import get_file_layer
+
+        store, _summary = indexed_store
+        layer = get_file_layer(store, "libs/data/router.py")
+        assert layer is not None
+        assert layer["l.number"] == 1
+        assert layer["l.name"] == "Data Access"
+
+    def test_contract_about_file_edge_created(self, indexed_store):
+        store, _summary = indexed_store
+        rows = store.query("SELECT COUNT(*) AS n FROM CONTRACT_ABOUT_FILE")
+        # The data_router contract declares symbols that resolve into fixture files.
+        assert rows and rows[0].get("n", 0) >= 1
+
 
 # ---------------------------------------------------------------------------
 # Governance markdown parser unit tests

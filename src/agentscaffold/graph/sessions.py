@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from agentscaffold.graph.backend import GraphBackend
-from agentscaffold.graph.query_compat import ql, ql_execute, ql_scalar
+from agentscaffold.graph.query_compat import ql, ql_execute, ql_scalar, sql_escape
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,7 @@ def record_modification(
             if file_path not in current:
                 current.append(file_path)
                 updated = json.dumps(current)
-                escaped = updated.replace("\\", "\\\\").replace("'", "\\'")
+                escaped = sql_escape(updated)
                 ql_execute(
                     store,
                     sql=(
@@ -134,7 +134,7 @@ def end_session(
     Optionally updates the session summary text.
     """
     if summary:
-        escaped = summary.replace("\\", "\\\\").replace("'", "\\'")
+        escaped = sql_escape(summary)
         from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
 
         with governance_write_lock(store):

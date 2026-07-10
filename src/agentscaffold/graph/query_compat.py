@@ -17,6 +17,20 @@ def is_duckpgq(store: Any) -> bool:
     return True
 
 
+def sql_escape(value: str) -> str:
+    """Escape a string for safe inlining inside a single-quoted DuckDB literal.
+
+    DuckDB (SQL standard) escapes a single quote by *doubling* it; backslash is
+    a literal character in ordinary string literals and must NOT be doubled.
+    Use as ``f"... = '{sql_escape(x)}'"``.
+
+    Note: parameterized queries (``?`` placeholders, supported by the backend)
+    are preferred where practical; this helper keeps the many existing
+    f-string queries correct and consistent in the meantime.
+    """
+    return str(value).replace("'", "''")
+
+
 def ql(
     store: GraphBackend,
     sql: str = "",

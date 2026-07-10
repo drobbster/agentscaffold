@@ -433,6 +433,13 @@ To request approval:
 - Adding features or refactoring beyond the current task
 - **Blindly auto-fixing linter warnings** - see Linter Warning Protocol below
 
+**Fixing pre-existing defects (immediate vs backlog):** when a pre-existing defect
+blocks the current governed plan and the validation context is already loaded, fix it
+in the same session -- UNLESS the fix changes scope, security posture, or architecture,
+in which case pause and escalate. Use a backlog item only for separable work that is
+not blocking the current plan. Do not silently expand scope; note in-session fixes in
+the plan's execution log.
+
 ### After Execution
 
 - Run validation commands
@@ -454,6 +461,14 @@ To request approval:
 {% if config.gates.in_progress_to_complete.retrospective %}- Skipping retrospective to move faster
 {% endif %}- Under-documenting changes (missing docstrings, no runbook update)
 - Leaving technical debt undocumented
+
+### Session Handoff Hygiene
+
+Do not leave uncommitted or in-flight state across a handoff or session boundary.
+Before pausing or handing off work -- especially work that touched deploys, schedules,
+migrations, or other operational mutations -- commit, stash, or explicitly document the
+uncommitted state and what is safe to resume. The next agent or human must be able to
+tell what is done, what is in flight, and what is safe to touch.
 
 ## Linter Warning Protocol (Mandatory)
 
@@ -545,6 +560,19 @@ When running empirical comparisons, ablation studies, or experiments, document f
 
 `STU-YYYY-MM-DD-short-description.md`
 
+### Study Artifact Naming
+
+Do not create output-artifact filenames that look like new study IDs unless they are
+standalone study documents. When artifacts belong to an existing study, nest them under
+the parent study slug and encode the plan number in the directory, not by appending it
+to the study date prefix:
+
+- Good: `outputs/studies/STU-2026-05-21-cost-realism/plan209/financials/summary.json`
+- Bad: `outputs/studies/STU-2026-05-21-financials-plan209-summary.json`
+
+References in plans, studies, workflow state, and summaries must use the canonical
+nested path.
+
 ## Quality Gates
 
 ### Plan Quality Checklist
@@ -589,6 +617,21 @@ Before marking execution complete:
 {% for pattern in config.prohibitions.patterns -%}
 - Prohibited pattern: {{ pattern }}
 {% endfor %}
+## Architecture Changelog Scope
+
+`docs/ai/architectural_design_changelog.md` is for durable, higher-level architecture
+evolution only. Keep the signal high by recording an entry there ONLY when the system
+shape changes in an enduring way:
+
+- Topology, boundaries, or responsibilities between components
+- Orchestration model or long-lived runtime lanes
+- Layer alignment or the layer framework itself
+
+Do NOT log routine implementation detail there: bug fixes, crash-debugging notes,
+performance tweaks (batching, memory trims), queue/cache cleanup, or one-off recovery
+steps. That lower-level history belongs in `docs/ai/state/workflow_state.md`, the
+relevant plan appendix/retrospective, or the runbook.
+
 ## Runbook Rules (Mandatory)
 
 The runbook (docs/runbook/) contains human-readable operational documentation.
@@ -722,6 +765,32 @@ Prompt templates available in docs/ai/prompts/:
 - plan_expansion.md - Gap and edge case analysis
 {% for review_name in domain_reviews %}- {{ review_name | lower | replace(' ', '_') }}.md - {{ review_name }}
 {% endfor %}- retrospective.md - Post-execution learning
+
+### Two-Phase Governed Lifecycle
+
+Governed plans move through a two-phase tool chain. The boundary is simple: the
+tools own graph state and the agent owns file state. Concretely, **the tools write
+ReviewFindings and BacklogItems to the graph and return structured output; the agent
+uses that output to update the markdown files** (plan appendix, `backlog.md`,
+`learnings_tracker.md`, `workflow_state.md`, and the plan's execution checkboxes).
+
+**Phase 1 -- Pre-implementation review** (begin-plan chain: orient -> prepare_review's
+devil's advocate + expansion + gap analysis -> record findings -> stamp the plan as
+reviewed). After it runs, the agent MUST:
+1. Present the review perspectives (brief, challenges, gaps) to the human.
+2. Write the review summary to the plan appendix.
+3. Ask whether to proceed, and wait for explicit confirmation before coding.
+
+**Phase 2 -- Post-implementation review / retrospective** (complete-plan chain:
+prepare_retro -> record retro insights -> optionally record backlog items). After it
+runs, the agent MUST write learnings to `learnings_tracker.md`, add any new backlog
+items, update `workflow_state.md`, check off completed plan steps, and write the retro
+summary to the plan appendix.
+
+**Strict-mode gate.** When `freshness.gate_strict` is enabled in `scaffold.yaml`, a
+gated transition into implementation checks that the pre-implementation review has run
+(the plan has been stamped as reviewed). If it has not, implementation is deferred --
+run Phase 1 first. Do not work around the gate by editing state manually.
 
 ## Review Output Format (Mandatory)
 

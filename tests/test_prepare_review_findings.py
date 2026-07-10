@@ -366,8 +366,9 @@ def test_prepare_review_deduplicates_findings(tmp_path: Path):
     ):
         result = _tool_prepare_review(store, {"plan_number": 10}, {}, tmp_path, None)
 
-    # shared_finding appeared in both plan and file queries → must appear only once
-    ids = [f["rf.id"] for f in result["open_findings"]]
+    # shared_finding appeared in both plan and file queries → must appear only once.
+    # open_findings is cleaned of alias prefixes at the tool boundary (Plan 238).
+    ids = [f["id"] for f in result["open_findings"]]
     assert ids.count("rf::shared") == 1
 
 
@@ -408,7 +409,7 @@ def test_prepare_review_findings_sorted_by_severity(tmp_path: Path):
     ):
         result = _tool_prepare_review(store, {"plan_number": 10}, {}, tmp_path, None)
 
-    severities = [f["rf.severity"] for f in result["open_findings"]]
+    severities = [f["severity"] for f in result["open_findings"]]
     assert severities[0] == "critical"
     assert severities[-1] == "low"
 

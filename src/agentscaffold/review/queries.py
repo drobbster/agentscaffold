@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agentscaffold.graph.query_compat import ql, ql_scalar
+from agentscaffold.graph.query_compat import ql, ql_scalar, sql_escape
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
@@ -58,7 +58,7 @@ def _graph_scope(scope: Any, alias: str) -> str:
 
 def get_file_importers(store: GraphBackend, file_path: str) -> list[dict[str, Any]]:
     """Return files that import the given file."""
-    escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    escaped = sql_escape(file_path)
     return ql(
         store,
         sql=(
@@ -76,7 +76,7 @@ def get_file_importers(store: GraphBackend, file_path: str) -> list[dict[str, An
 
 def get_file_importees(store: GraphBackend, file_path: str) -> list[dict[str, Any]]:
     """Return files that the given file imports."""
-    escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    escaped = sql_escape(file_path)
     return ql(
         store,
         sql=(
@@ -94,7 +94,7 @@ def get_file_importees(store: GraphBackend, file_path: str) -> list[dict[str, An
 
 def get_function_callers(store: GraphBackend, file_path: str) -> list[dict[str, Any]]:
     """Return all functions in other files that call functions in the given file."""
-    escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    escaped = sql_escape(file_path)
     return ql(
         store,
         sql=(
@@ -122,7 +122,7 @@ def get_transitive_consumers(
     Uses SQL joins instead of variable-length GRAPH_TABLE paths to avoid a
     DuckPGQ bug in IterativeLengthFunction with recursive path queries.
     """
-    escaped = file_path.replace("'", "''")
+    escaped = sql_escape(file_path)
     # Direct importers (depth=1)
     sql = (
         'SELECT DISTINCT f.path AS "a.path", f.language AS "a.language"'
@@ -157,7 +157,7 @@ def get_transitive_consumers(
 
 def count_callers_for_function(store: GraphBackend, func_id: str) -> int:
     """Count how many functions call the given function."""
-    escaped = func_id.replace("\\", "\\\\").replace("'", "\\'")
+    escaped = sql_escape(func_id)
     val = ql_scalar(
         store,
         sql=f"SELECT COUNT(DISTINCT src) FROM CALLS WHERE dst = '{escaped}'",
@@ -178,7 +178,7 @@ def get_plans_impacting_file(
     all_projects: bool = False,
 ) -> list[dict[str, Any]]:
     """Return plans that list the given file in their File Impact Map."""
-    escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    escaped = sql_escape(file_path)
     scope = _graph_scope(_resolve_scope(project, all_projects), "f")
     return store.query(
         'SELECT t.p_number AS "p.number",'
@@ -204,7 +204,7 @@ def get_learnings_for_file(
     all_projects: bool = False,
 ) -> list[dict[str, Any]]:
     """Return learnings that reference the given file."""
-    escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    escaped = sql_escape(file_path)
     scope = _graph_scope(_resolve_scope(project, all_projects), "f")
     return store.query(
         'SELECT t.lr_learningId AS "lr.learningId",'
@@ -234,7 +234,7 @@ def get_findings_for_file(
     node id, which becomes project-qualified when multiple projects share the
     cache; the project predicate then disambiguates a path shared by siblings.
     """
-    escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    escaped = sql_escape(file_path)
     scope = _graph_scope(_resolve_scope(project, all_projects), "f")
     return ql(
         store,
@@ -259,8 +259,33 @@ def get_findings_for_file(
 
 
 def get_contracts_for_file(store: GraphBackend, file_path: str) -> list[dict[str, Any]]:
-    """Return contracts whose declared functions/classes are in the given file."""
-    escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    """Return contracts covering the given file.
+
+    Prefers the direct ``CONTRACT_ABOUT_FILE`` edge (Plan 237); falls back to the
+    declares-join (contracts whose declared functions/classes live in the file) so
+    graphs indexed before the edge existed still resolve.
+    """
+    escaped = sql_escape(file_path)
+
+    direct = store.query(
+        'SELECT DISTINCT c.name AS "c.name",'
+        ' c.version AS "c.version",'
+        ' c.filePath AS "c.filePath"'
+        " FROM CONTRACT_ABOUT_FILE caf"
+        " JOIN Contract c ON c.id = caf.src"
+        " JOIN File f ON f.id = caf.dst"
+        f" WHERE f.path = '{escaped}'"
+    )
+    if direct:
+        seen_direct: set[str] = set()
+        result_direct: list[dict[str, Any]] = []
+        for c in direct:
+            key = c.get("c.name", "")
+            if key not in seen_direct:
+                seen_direct.add(key)
+                result_direct.append(c)
+        return result_direct
+
     func_contracts = store.query(
         'SELECT DISTINCT c.name AS "c.name",'
         ' c.version AS "c.version",'
@@ -297,7 +322,7 @@ def get_file_layer(
     all_projects: bool = False,
 ) -> dict[str, Any] | None:
     """Return the architecture layer for the given file, if assigned."""
-    escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    escaped = sql_escape(file_path)
     scope = _graph_scope(_resolve_scope(project, all_projects), "f")
     rows = ql(
         store,
@@ -551,7 +576,7 @@ def get_studies_by_outcome(
     all_projects: bool = False,
 ) -> list[dict[str, Any]]:
     """Return studies with a specific outcome."""
-    escaped = outcome.replace("'", "\\'")
+    escaped = sql_escape(outcome)
     scope = _sql_scope(_resolve_scope(project, all_projects), "AND")
     return ql(
         store,
@@ -576,7 +601,7 @@ def get_studies_for_file(
     all_projects: bool = False,
 ) -> list[dict[str, Any]]:
     """Return studies that reference the given file via artifact paths."""
-    escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    escaped = sql_escape(file_path)
     scope = _graph_scope(_resolve_scope(project, all_projects), "f")
     return ql(
         store,
@@ -727,7 +752,7 @@ def get_adrs_for_file(
     all_projects: bool = False,
 ) -> list[dict[str, Any]]:
     """Return ADRs governing plans that impact this file (2-hop traversal)."""
-    escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
+    escaped = sql_escape(file_path)
     scope = _graph_scope(_resolve_scope(project, all_projects), "f")
     return ql(
         store,
@@ -890,7 +915,7 @@ def get_spike_by_title(
     all_projects: bool = False,
 ) -> list[dict[str, Any]]:
     """Return spikes matching a title keyword."""
-    escaped = title_fragment.replace("'", "\\'")
+    escaped = sql_escape(title_fragment)
     scope = _sql_scope(_resolve_scope(project, all_projects), "AND")
     return ql(
         store,

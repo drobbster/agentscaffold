@@ -63,6 +63,8 @@ Generated files fall into three categories:
 
 **3. Machine-owned policy files (regenerated each run).** `.cursor/rules/agentscaffold.md` (MCP routing/trust policy), per-reviewer rule files, enforcement hooks, and agent stubs are derived entirely from `scaffold.yaml` and are regenerated on every run so policy and config changes always land. Customize these through `scaffold.yaml`, not by hand-editing the generated output. `.cursor/mcp.json` is written once and then left alone (skip-if-exists).
 
+**4. The project `.gitignore` (co-owned, managed-block, never wholesale-rewritten).** `scaffold init` and `scaffold agents generate-all` ensure your `.gitignore` ignores AgentScaffold's runtime artifacts — everything under `.scaffold/` (the `graph.duckdb` DB, the embedding model cache, hook logs, the incremental-index lock/stamp, and schema-migration exports), plus the `.venv-scaffold/` dedicated-venv convention and `*.duckdb`/`*.duckdb.wal` globs. These are written into a managed block delimited by `# BEGIN/END AGENTSCAFFOLD MANAGED SECTION`. A `.gitignore` is inherently multi-purpose, so unlike the project-owned docs above it has **no forced-rewrite path at all**: AgentScaffold only creates the file (if absent), refreshes the region between its own markers, or appends the block to your existing file — every user line is preserved, even under `--force`.
+
 **Forcing a clean rewrite.** When you genuinely want to discard local edits and regenerate from scratch, pass `--force`:
 
 ```bash
@@ -126,7 +128,10 @@ deactivate
 
 ### Keep It Out of Git
 
-Add the venv to your `.gitignore` — it's a local tool install, not project source:
+`scaffold init` (and `scaffold agents generate-all`) already add `.venv-scaffold/` to your
+`.gitignore` managed block, so a dedicated venv is ignored automatically. If you set the venv
+up before ever running those commands, add it by hand — it's a local tool install, not project
+source:
 
 ```
 .venv-scaffold/

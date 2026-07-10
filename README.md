@@ -122,6 +122,7 @@ complete rule set for every supported platform:
 - `CLAUDE.md` and `.claude/agents/` — Claude Code rules and one subagent file per configured reviewer
 - `.windsurfrules` — Windsurf rules
 - Lifecycle hooks for each enabled platform
+- `.gitignore` — a managed block ignoring AgentScaffold runtime artifacts (`.scaffold/`, `.venv-scaffold/`, `*.duckdb`) so the graph DB, model cache, logs, and locks never get committed
 
 Re-running `scaffold init` is idempotent and never overwrites hand-edited rules.
 Run `scaffold agents generate-all` to regenerate the rule set on an existing
@@ -137,7 +138,9 @@ overwritten, and anything outside the block is always preserved. User-authored
 skills (`SKILL.md` without a `managed_by: agentscaffold` marker) are left untouched.
 Only machine-owned policy files (`.cursor/rules/agentscaffold.md`, reviewer rules,
 enforcement hooks) are regenerated each run. Pass `--force` to rewrite a file whole;
-a `.bak` snapshot is always kept. See
+a `.bak` snapshot is always kept. The project `.gitignore` is treated as co-owned:
+AgentScaffold only ever creates it, refreshes its own managed block, or appends the
+block — it never rewrites your `.gitignore` whole, even under `--force`. See
 [File Safety](docs/platform-integration.md#file-safety-what-agentscaffold-will-and-will-not-overwrite).
 
 The `index` command builds the knowledge graph (a DuckDB + DuckPGQ database at `.scaffold/graph.duckdb`), enabling search, reviews, impact analysis, and session memory.
