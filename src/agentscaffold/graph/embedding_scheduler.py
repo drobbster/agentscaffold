@@ -175,7 +175,16 @@ def _embedding_worker(
             # scoped embedding path when structure changed; when nothing changed
             # it performs a content-hash reconcile for missing/stale embeddings.
             _ = file_paths  # reserved for a future direct scoped embed request API
-            index(path=root, config=config, incremental=True, embeddings=True, audit=False)
+            # quiet=True: this runs inside the MCP stdio process; Rich progress
+            # on stdout would break Cursor's JSON-RPC transport (Plan 242).
+            index(
+                path=root,
+                config=config,
+                incremental=True,
+                embeddings=True,
+                audit=False,
+                quiet=True,
+            )
             with state.lock:
                 state.last_result = "idle"
                 state.last_end_monotonic = time.monotonic()
