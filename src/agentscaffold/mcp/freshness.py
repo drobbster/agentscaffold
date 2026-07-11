@@ -255,7 +255,16 @@ def _refresh_worker(root: Path, config: ScaffoldConfig, reason: str) -> None:
 
         try:
             _ = reason  # reserved for future telemetry routing context
-            index(path=root, config=config, incremental=True, embeddings=False, audit=False)
+            # quiet=True: this runs inside the MCP stdio process; Rich progress
+            # on stdout would break Cursor's JSON-RPC transport (Plan 242).
+            index(
+                path=root,
+                config=config,
+                incremental=True,
+                embeddings=False,
+                audit=False,
+                quiet=True,
+            )
             write_watermark(root, config)
             with state.lock:
                 state.last_result = "idle"

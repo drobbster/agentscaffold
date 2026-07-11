@@ -369,6 +369,12 @@ def run_mcp_server() -> None:
 
     import asyncio
 
+    # MCP owns stdout for JSON-RPC. Suppress Rich pipeline progress so
+    # in-process incremental refresh cannot poison the transport (Plan 242).
+    from agentscaffold.graph.pipeline import install_stdio_safe_console
+
+    install_stdio_safe_console()
+
     asyncio.run(_serve())
 
 

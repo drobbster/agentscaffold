@@ -8,6 +8,16 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-07-11
+
+### Fixed
+- MCP stdio transport no longer breaks when async freshness or embedding refresh
+  runs an in-process incremental index (Plan 242). Rich progress / Index Summary
+  output is suppressed via `index(..., quiet=True)` in background workers, and
+  MCP server startup installs a quiet pipeline console so stdout stays JSON-RPC
+  only. Symptom was Cursor logging `Unexpected token 'I', "Incrementa"... is not
+  valid JSON` followed by `Not connected` on tools like `scaffold_orient`.
+
 ## [0.9.2] - 2026-07-10
 
 ### Added
