@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -132,6 +135,39 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 console = Console()
 
+_QUIET_LOCK = threading.Lock()
+_QUIET_DEPTH = 0
+_QUIET_PREVIOUS: Console | None = None
+
+
+def install_stdio_safe_console() -> None:
+    """Replace the pipeline console with a quiet console for MCP stdio hosts.
+
+    MCP JSON-RPC uses stdout. Rich progress must never write there while the
+    MCP server is alive. Call once at MCP process startup.
+    """
+    global console
+    console = Console(quiet=True)
+
+
+@contextmanager
+def quiet_pipeline_output() -> Iterator[None]:
+    """Temporarily suppress Rich pipeline progress (refcount-safe for threads)."""
+    global console, _QUIET_DEPTH, _QUIET_PREVIOUS
+    with _QUIET_LOCK:
+        if _QUIET_DEPTH == 0:
+            _QUIET_PREVIOUS = console
+            console = Console(quiet=True)
+        _QUIET_DEPTH += 1
+    try:
+        yield
+    finally:
+        with _QUIET_LOCK:
+            _QUIET_DEPTH -= 1
+            if _QUIET_DEPTH == 0 and _QUIET_PREVIOUS is not None:
+                console = _QUIET_PREVIOUS
+                _QUIET_PREVIOUS = None
+
 
 def run_pipeline(
     root: Path,
@@ -141,11 +177,28 @@ def run_pipeline(
     embeddings: bool = False,
     audit: bool = False,
     force_rebuild: bool = False,
+    quiet: bool = False,
 ) -> dict[str, Any]:
     """Execute the full indexing pipeline.
 
     Returns a summary dict with quality metrics.
+
+    When ``quiet`` is True, Rich progress/summary output is suppressed. MCP
+    background refresh must use quiet mode so progress text cannot poison the
+    stdio JSON-RPC channel.
     """
+    if quiet:
+        with quiet_pipeline_output():
+            return run_pipeline(
+                root,
+                config,
+                incremental=incremental,
+                embeddings=embeddings,
+                audit=audit,
+                force_rebuild=force_rebuild,
+                quiet=False,
+            )
+
     root = root.resolve()
     graph_config = config.graph if config else None
 

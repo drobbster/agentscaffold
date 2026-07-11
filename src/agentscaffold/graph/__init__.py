@@ -85,10 +85,14 @@ def index(
     embeddings: bool = False,
     audit: bool = False,
     force_rebuild: bool = False,
+    quiet: bool = False,
 ) -> dict:
     """Build or rebuild the knowledge graph.
 
     Returns an index summary dict with quality metrics.
+
+    Pass ``quiet=True`` when indexing inside an MCP stdio process so Rich
+    progress cannot corrupt the JSON-RPC stdout channel.
     """
     from agentscaffold.graph.pipeline import run_pipeline
 
@@ -99,6 +103,7 @@ def index(
         embeddings=embeddings,
         audit=audit,
         force_rebuild=force_rebuild,
+        quiet=quiet,
     )
 
 
