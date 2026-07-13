@@ -522,7 +522,11 @@ This blocks and communicates over stdin/stdout. The client launches this as a su
 | `scaffold_staleness_check` | "is plan X stale" / "is plan X still valid" | Checks overlapping completions, missing files, changed dependencies |
 | `scaffold_prepare_rewrite` | "rewrite plan X" / "refresh plan X" | Staleness check + current dependency landscape + new contracts |
 | `scaffold_prepare_retro` | "retro on plan X" / "post-implementation review" | Retrospective context with verification results and findings |
-| `scaffold_orient` | "where did we leave off" / "what's blocked" | Session orientation: stats, recent plans, hot files, workflow state |
+| `scaffold_orient` | "where did we leave off" / "what's blocked" / "what next" | Session orientation plus `recommended_actions`, `plan_progress`, `next_action_focus` (prefer these over a separate next_action call) |
+| `scaffold_next_action` | "what should I do next" / "next action" | Fallback router when orient lacked recommended_actions |
+| `scaffold_diff_plan_vs_code` | "diff plan X vs code" / "what's left on plan X" | Mid-impl progress: next step, disk/graph presence, symbol spot-checks |
+| `scaffold_grep_graph` | "grep the workspace for X" | Fallback ripgrep when inline `grep_fallback` is absent/insufficient |
+| `scaffold_why_empty` | "why is search empty" / "why no callers" | Fallback explainer when inline `why_empty` is absent |
 | `scaffold_find_studies` | "any studies on X" / "experiments related to X" | Search studies and A/B tests by topic or outcome |
 | `scaffold_prior_experiments` | "prior experiments for plan X" / "has this been tested" | Experiments linked to a plan via reference, tag, or file overlap |
 | `scaffold_find_adrs` | "any ADRs about X" / "what ADR governs X" | Search ADRs by topic keyword or status |
@@ -537,8 +541,8 @@ This blocks and communicates over stdin/stdout. The client launches this as a su
 
 | Tool | NL Trigger | Description |
 |------|-----------|-------------|
-| `scaffold_begin_plan` | "begin plan X" / "kick off plan X" | Phase 1: orient + full pre-review, writes findings, stamps `reviewedAt` |
-| `scaffold_complete_plan` | "wrap up plan X" / "close out plan X" | Phase 2: retro, writes retro findings, optional backlog items |
+| `scaffold_begin_plan` | "begin plan X" / "kick off plan X" | Phase 1: orient + full pre-review, writes findings, stamps `reviewedAt` (`dry_run=true` rehearses without writes) |
+| `scaffold_complete_plan` | "wrap up plan X" / "close out plan X" | Phase 2: retro, writes retro findings, optional backlog items (`dry_run=true` supported) |
 
 ### Testing the Connection
 

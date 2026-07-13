@@ -261,7 +261,7 @@ class TestScaffoldComparePlans:
         with p1, p2, p3:
             data = _dispatch_tool("scaffold_compare_plans", {"plan_a": 42, "plan_b": 55})
 
-        expected_keys = ["shared_files", "conflict_risk"]
+        expected_keys = ["shared_files", "conflict_risk", "lead_shared_files"]
         present = [k for k in expected_keys if k in data]
         missing = [k for k in expected_keys if k not in data]
 
@@ -378,28 +378,35 @@ class TestScaffoldOrient:
         finally:
             stack.__exit__(None, None, None)
 
-        expected_keys = ["stats", "workflow_state", "recent_plans"]
+        expected_keys = ["stats", "workflow_state", "recent_plans", "recommended_actions"]
         present = [k for k in expected_keys if k in data]
         missing = [k for k in expected_keys if k not in data]
 
         ws = data.get("workflow_state", {})
         has_blockers = "blockers" in ws
         has_next = "next_steps" in ws
+        has_actions = isinstance(data.get("recommended_actions"), list)
+        has_progress = "plan_progress" in data
 
         result = EvalResult(
             scenario="mcp_orient",
-            passed=len(missing) == 0 and has_blockers and has_next,
+            passed=len(missing) == 0 and has_blockers and has_next and has_actions,
             score=len(present) / len(expected_keys),
-            expected=f"Keys: {expected_keys}, workflow_state has blockers + next_steps",
+            expected=(
+                f"Keys: {expected_keys}, workflow_state has blockers + next_steps, "
+                "recommended_actions list present (Plan 247 fuse)"
+            ),
             actual=(
                 f"Present: {present}, Missing: {missing}, "
-                f"blockers={has_blockers}, next_steps={has_next}"
+                f"blockers={has_blockers}, next_steps={has_next}, "
+                f"recommended_actions={has_actions}, plan_progress={has_progress}"
             ),
             category="mcp",
         )
         collect_result(result)
         assert len(missing) == 0, f"Missing keys: {missing}"
         assert has_blockers and has_next, "workflow_state missing blockers or next_steps"
+        assert has_actions, "orient missing recommended_actions (Plan 247)"
 
 
 class TestScaffoldFindStudies:
@@ -792,7 +799,11 @@ class TestScaffoldPrepareReviewEnriched:
             stack.__exit__(None, None, None)
 
         open_findings = data.get("open_findings", [])
-        finding_present = any(f.get("rf.id") == fid for f in open_findings)
+
+        def _finding_id(row: dict) -> str | None:
+            return row.get("id") or row.get("rf.id") or row.get("rf_id")
+
+        finding_present = any(_finding_id(f) == fid for f in open_findings)
 
         passed = finding_present
         result = EvalResult(
@@ -806,5 +817,250 @@ class TestScaffoldPrepareReviewEnriched:
         collect_result(result)
         assert finding_present, (
             f"Finding {fid} not in open_findings. "
-            f"open_findings IDs: {[f.get('rf.id') for f in open_findings]}"
+            f"open_findings IDs: {[_finding_id(f) for f in open_findings]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Plan 246/247: agent tool pack + call-compression fused fields
+# ---------------------------------------------------------------------------
+
+
+class TestScaffoldDiffPlanVsCode:
+    """Scenario: scaffold_diff_plan_vs_code returns plan vs disk/graph progress."""
+
+    @timed
+    def test_diff_plan_vs_code(self, indexed_sim):
+        root, store, config = indexed_sim
+        from agentscaffold.mcp.server import _dispatch_tool
+
+        patches = _patch_mcp(config, store, root=root)
+        stack = _enter_patches(patches)
+        try:
+            data = _dispatch_tool("scaffold_diff_plan_vs_code", {"plan_number": 42})
+        finally:
+            stack.__exit__(None, None, None)
+
+        expected_keys = [
+            "plan_number",
+            "planned_files",
+            "existing_on_disk",
+            "missing_on_disk",
+            "unchecked_steps",
+            "checked_steps",
+            "summary",
+        ]
+        present = [k for k in expected_keys if k in data]
+        missing = [k for k in expected_keys if k not in data]
+        has_next = "next_unchecked_step" in data
+        has_spots = "symbol_spot_checks" in data
+
+        passed = len(missing) == 0 and "error" not in data and has_next and has_spots
+        result = EvalResult(
+            scenario="mcp_diff_plan_vs_code",
+            passed=passed,
+            score=len(present) / len(expected_keys),
+            expected=f"Keys: {expected_keys} + next_unchecked_step + symbol_spot_checks",
+            actual=(
+                f"Present: {present}, Missing: {missing}, "
+                f"next_unchecked_step={has_next}, symbol_spot_checks={has_spots}"
+            ),
+            category="mcp",
+        )
+        collect_result(result)
+        assert len(missing) == 0, f"Missing keys: {missing}"
+        assert has_next and has_spots
+
+
+class TestScaffoldGrepGraph:
+    """Scenario: scaffold_grep_graph returns sandboxed text hits."""
+
+    @timed
+    def test_grep_graph(self, indexed_sim):
+        root, store, config = indexed_sim
+        from agentscaffold.mcp.server import _dispatch_tool
+
+        patches = _patch_mcp(config, store, root=root)
+        stack = _enter_patches(patches)
+        try:
+            data = _dispatch_tool(
+                "scaffold_grep_graph",
+                {"pattern": "DataRouter", "max_hits": 10},
+            )
+        finally:
+            stack.__exit__(None, None, None)
+
+        expected_keys = ["hits", "count", "pattern"]
+        present = [k for k in expected_keys if k in data]
+        missing = [k for k in expected_keys if k not in data]
+        passed = len(missing) == 0 and "error" not in data and data.get("count", 0) > 0
+
+        result = EvalResult(
+            scenario="mcp_grep_graph",
+            passed=passed,
+            score=1.0 if passed else 0.0,
+            expected="Greppable DataRouter hits under sim project root",
+            actual=f"Present: {present}, Missing: {missing}, count={data.get('count')}",
+            category="mcp",
+        )
+        collect_result(result)
+        assert passed, f"grep_graph failed: {data}"
+
+
+class TestScaffoldWhyEmpty:
+    """Scenario: scaffold_why_empty returns structured diagnosis."""
+
+    @timed
+    def test_why_empty(self, indexed_sim):
+        root, store, config = indexed_sim
+        from agentscaffold.mcp.server import _dispatch_tool
+
+        patches = _patch_mcp(config, store, root=root)
+        stack = _enter_patches(patches)
+        try:
+            data = _dispatch_tool(
+                "scaffold_why_empty",
+                {
+                    "kind": "search",
+                    "query": "definitely_missing_symbol_zzz",
+                },
+            )
+        finally:
+            stack.__exit__(None, None, None)
+
+        expected_keys = ["reasons", "suggestions"]
+        present = [k for k in expected_keys if k in data]
+        missing = [k for k in expected_keys if k not in data]
+        passed = len(missing) == 0 and "error" not in data
+
+        result = EvalResult(
+            scenario="mcp_why_empty",
+            passed=passed,
+            score=len(present) / len(expected_keys) if expected_keys else 0.0,
+            expected=f"Keys: {expected_keys}",
+            actual=f"Present: {present}, Missing: {missing}, keys={list(data.keys())[:8]}",
+            category="mcp",
+        )
+        collect_result(result)
+        assert passed, f"why_empty failed: {data}"
+
+
+class TestScaffoldNextAction:
+    """Scenario: scaffold_next_action returns bounded recommended moves."""
+
+    @timed
+    def test_next_action(self, indexed_sim):
+        root, store, config = indexed_sim
+        from agentscaffold.mcp.server import _dispatch_tool
+
+        patches = _patch_mcp(config, store, root=root)
+        stack = _enter_patches(patches)
+        try:
+            data = _dispatch_tool("scaffold_next_action", {})
+        finally:
+            stack.__exit__(None, None, None)
+
+        actions = data.get("actions")
+        passed = (
+            "error" not in data
+            and isinstance(actions, list)
+            and 1 <= len(actions) <= 3
+            and all("tool" in a for a in actions)
+        )
+        result = EvalResult(
+            scenario="mcp_next_action",
+            passed=passed,
+            score=1.0 if passed else 0.0,
+            expected="1-3 actions with tool hints",
+            actual=f"action_count={len(actions) if isinstance(actions, list) else None}",
+            category="mcp",
+        )
+        collect_result(result)
+        assert passed, f"next_action failed: {data}"
+
+
+class TestCallCompressionFusedFields:
+    """Scenario: empty search/impact inline why_empty + grep_fallback (Plan 247)."""
+
+    @timed
+    def test_empty_search_includes_fused_fallback(self, indexed_sim):
+        root, store, config = indexed_sim
+        from agentscaffold.mcp.server import _dispatch_tool
+
+        # Ensure a text hit exists so grep_fallback can populate.
+        marker = root / "libs" / "data" / "orphan_marker_247.py"
+        marker.write_text(
+            "def orphan_marker_247_fn():\n    return 247\n",
+            encoding="utf-8",
+        )
+
+        patches = _patch_mcp(config, store, root=root)
+        stack = _enter_patches(patches)
+        try:
+            data = _dispatch_tool(
+                "scaffold_search",
+                {
+                    "query": "orphan_marker_247_fn",
+                    "mode": "keyword",
+                    "top_k": 5,
+                },
+            )
+        finally:
+            stack.__exit__(None, None, None)
+
+        # Symbol is not indexed into the graph (file written post-index), so
+        # search should be empty and fuse diagnosis + text hits.
+        count = data.get("count", -1)
+        has_why = "why_empty" in data
+        has_grep = "grep_fallback" in data
+        grep_count = (data.get("grep_fallback") or {}).get("count", 0)
+        passed = count == 0 and has_why and has_grep and grep_count >= 1
+
+        result = EvalResult(
+            scenario="mcp_empty_search_fused_fallback",
+            passed=passed,
+            score=1.0 if passed else 0.0,
+            expected="Empty search with why_empty + grep_fallback hits",
+            actual=(
+                f"count={count}, why_empty={has_why}, grep_fallback={has_grep}, "
+                f"grep_count={grep_count}"
+            ),
+            category="mcp",
+        )
+        collect_result(result)
+        assert passed, f"fused empty search failed: {data}"
+
+    @timed
+    def test_empty_impact_includes_fused_fallback(self, indexed_sim):
+        root, store, config = indexed_sim
+        from agentscaffold.mcp.server import _dispatch_tool
+
+        patches = _patch_mcp(config, store, root=root)
+        stack = _enter_patches(patches)
+        try:
+            data = _dispatch_tool(
+                "scaffold_impact",
+                {"file_or_symbol": "definitely/not/a/real/path_247.py"},
+            )
+        finally:
+            stack.__exit__(None, None, None)
+
+        empty = data.get("importer_count", -1) == 0 and data.get("caller_count", -1) == 0
+        has_why = "why_empty" in data
+        has_grep = "grep_fallback" in data
+        passed = empty and has_why and has_grep and "error" not in data
+
+        result = EvalResult(
+            scenario="mcp_empty_impact_fused_fallback",
+            passed=passed,
+            score=1.0 if passed else 0.0,
+            expected="Empty impact with why_empty + grep_fallback",
+            actual=(
+                f"importer_count={data.get('importer_count')}, "
+                f"caller_count={data.get('caller_count')}, "
+                f"why_empty={has_why}, grep_fallback={has_grep}"
+            ),
+            category="mcp",
+        )
+        collect_result(result)
+        assert passed, f"fused empty impact failed: {data}"

@@ -133,3 +133,141 @@ def recover_plan_date(date_field: str | None, status: str | None = None) -> str:
         if m:
             return m.group(1)
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Plan file-overlap noise denylist (Plan 245)
+# ---------------------------------------------------------------------------
+
+# Ubiquitous governance docs that nearly every plan touches. Counting them as
+# "shared impacted files" floods staleness / compare / prior-experiment signals.
+DEFAULT_OVERLAP_NOISE_PATHS: frozenset[str] = frozenset(
+    {
+        "docs/ai/contracts/README.md",
+        "docs/ai/state/workflow_state.md",
+        "docs/ai/backlog.md",
+        "docs/ai/architectural_design_changelog.md",
+    }
+)
+
+
+def normalize_plan_file_path(path: str) -> str:
+    """Normalize a plan File Impact path for overlap comparison."""
+    return path.replace("\\", "/").lstrip("./").strip()
+
+
+def resolve_overlap_noise_paths(configured: list[str] | None = None) -> frozenset[str]:
+    """Return the active noise denylist.
+
+    ``None`` (config omitted) uses :data:`DEFAULT_OVERLAP_NOISE_PATHS`. An
+    explicit list (including empty) replaces the defaults so operators can
+    disable or customize filtering via ``graph.overlap_noise_paths``.
+    """
+    if configured is None:
+        return DEFAULT_OVERLAP_NOISE_PATHS
+    return frozenset(normalize_plan_file_path(p) for p in configured if p and str(p).strip())
+
+
+def is_overlap_noise_path(path: str, noise_paths: frozenset[str] | None = None) -> bool:
+    """Return True if ``path`` is a denylisted governance noise path."""
+    if not path:
+        return False
+    noise = noise_paths if noise_paths is not None else DEFAULT_OVERLAP_NOISE_PATHS
+    if not noise:
+        return False
+    normalized = normalize_plan_file_path(path)
+    if normalized in noise:
+        return True
+    for noise_path in noise:
+        if normalized.endswith("/" + noise_path):
+            return True
+    return False
+
+
+def meaningful_plan_file_overlap(
+    files_a: set[str] | frozenset[str] | list[str],
+    files_b: set[str] | frozenset[str] | list[str],
+    *,
+    noise_paths: frozenset[str] | None = None,
+    path_frequency: dict[str, int] | None = None,
+    frequency_demote_threshold: int = 5,
+) -> tuple[list[str], list[str]]:
+    """Split shared plan files into (meaningful, noise) sorted lists.
+
+    Meaningful overlaps drive staleness / conflict_risk. Noise overlaps are
+    returned for audit transparency (``overlap_noise_filtered``).
+
+    When ``path_frequency`` is provided (path -> number of completed plans that
+    touch it), paths at or above ``frequency_demote_threshold`` are treated as
+    noise unless they are the only shared meaningful path (Plan 247).
+    """
+    noise = noise_paths if noise_paths is not None else DEFAULT_OVERLAP_NOISE_PATHS
+    shared = {normalize_plan_file_path(f) for f in files_a if f} & {
+        normalize_plan_file_path(f) for f in files_b if f
+    }
+    shared.discard("")
+    meaningful: list[str] = []
+    noise_shared: list[str] = []
+    for path in sorted(shared):
+        if is_overlap_noise_path(path, noise):
+            noise_shared.append(path)
+        else:
+            meaningful.append(path)
+
+    if path_frequency and meaningful:
+        core: list[str] = []
+        demoted: list[str] = []
+        for path in meaningful:
+            freq = int(path_frequency.get(path, 0))
+            if freq >= frequency_demote_threshold:
+                demoted.append(path)
+            else:
+                core.append(path)
+        # Keep at least one meaningful signal when everything was ubiquitous.
+        if not core and demoted:
+            core = [rank_lead_overlap(demoted, limit=1)[0]]
+            demoted = [p for p in demoted if p not in core]
+        meaningful = core
+        noise_shared.extend(demoted)
+
+    return meaningful, noise_shared
+
+
+# Soft-noise: governance/docs paths that are not on the hard denylist but are
+# usually weak conflict signals compared to code/config (Plan 247).
+_SOFT_NOISE_PREFIXES: tuple[str, ...] = (
+    "docs/ai/templates/",
+    "docs/ai/standards/",
+    "docs/ai/state/",
+    "docs/ai/prompts/",
+    "docs/ai/contracts/",
+)
+_SOFT_NOISE_BASENAMES: frozenset[str] = frozenset(
+    {"AGENTS.md", "CLAUDE.md", "README.md", ".gitignore"}
+)
+
+
+def overlap_signal_weight(path: str) -> int:
+    """Lower weight = stronger lead signal for agents.
+
+    Code/config paths rank ahead of docs/governance soft-noise.
+    """
+    n = normalize_plan_file_path(path)
+    if is_overlap_noise_path(n):
+        return 100
+    if n in _SOFT_NOISE_BASENAMES or any(n.endswith("/" + b) for b in _SOFT_NOISE_BASENAMES):
+        return 60
+    if any(n.startswith(p) or f"/{p}" in f"/{n}" for p in _SOFT_NOISE_PREFIXES):
+        return 50
+    if n.startswith("docs/"):
+        return 40
+    return 0
+
+
+def rank_lead_overlap(paths: list[str], *, limit: int = 5) -> list[str]:
+    """Return the most agent-useful shared paths first (Plan 247 lead signal)."""
+    ranked = sorted(
+        {normalize_plan_file_path(p) for p in paths if p},
+        key=lambda p: (overlap_signal_weight(p), p),
+    )
+    return ranked[: max(0, limit)]

@@ -35,10 +35,10 @@ def test_dispatch_tool_returns_graph_locked_on_lock(monkeypatch) -> None:
 
     result = _dispatch_tool("scaffold_stats", {})
 
-    assert calls["n"] == 3
+    assert calls["n"] == 2
     assert result.get("graph_locked") is True
     assert result.get("retry_exhausted") is True
-    assert result.get("retry_attempts") == 3
+    assert result.get("retry_attempts") == 2
     assert "another process" in result.get("error", "")
 
 

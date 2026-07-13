@@ -1,8 +1,51 @@
-"""Shared rule composition for MCP-first agent routing policies."""
+"""Shared rule composition for MCP-first agent routing policies.
+
+Used by Cursor (``.mdc``), Claude Code (``CLAUDE.md``), Windsurf
+(``.windsurfrules``), and the generic prompt snippet so every install gets the
+same MCP-first + call-compression controls regardless of IDE.
+"""
 
 from __future__ import annotations
 
 from agentscaffold.config import ScaffoldConfig
+
+# Notes appended under specific Intent Map entries (Plan 247 call compression).
+_INTENT_NOTES: dict[str, str] = {
+    "scaffold_orient": (
+        "Primary session router. Prefer its `recommended_actions`, "
+        "`plan_progress`, and `next_action_focus` over a follow-up "
+        "`scaffold_next_action` call."
+    ),
+    "scaffold_diff_plan_vs_code": (
+        "Preferred mid-implementation progress check (next unchecked step, "
+        "disk/graph presence, symbol spot-checks). Prefer over re-reading the "
+        "full plan body for status."
+    ),
+    "scaffold_search": (
+        "On empty results, read inline `why_empty` and `grep_fallback` before "
+        "calling `scaffold_why_empty` or `scaffold_grep_graph`."
+    ),
+    "scaffold_impact": (
+        "On empty importers/callers, read inline `why_empty` and "
+        "`grep_fallback` before extra tool hops."
+    ),
+    "scaffold_context": (
+        "When a symbol is missing, read inline `why_empty` / `grep_fallback` "
+        "on that response before a separate diagnosis call."
+    ),
+    "scaffold_why_empty": (
+        "Fallback only. Prefer inline `why_empty` on empty "
+        "search/impact/context responses when present."
+    ),
+    "scaffold_grep_graph": (
+        "Fallback only. Prefer inline `grep_fallback` on empty search/impact "
+        "when present; otherwise use for low coverage / non-parsed languages."
+    ),
+    "scaffold_next_action": (
+        "Fallback only. Prefer `recommended_actions` from `scaffold_orient` "
+        "when present."
+    ),
+}
 
 
 def _tool_selection_policy_lines() -> list[str]:
@@ -30,8 +73,32 @@ def _tool_selection_policy_lines() -> list[str]:
         "",
         "- Plan review/gap/challenge -> `scaffold_prepare_review` first",
         "- Project status/blockers/next steps -> `scaffold_orient` first",
+        "  (use embedded `recommended_actions` / `plan_progress`; do not also",
+        "  call `scaffold_next_action` unless those fields are absent)",
+        "- Mid-implementation progress / what's left on a plan ->",
+        "  `scaffold_diff_plan_vs_code` first",
         "- Decision lineage (ADR/spike/study) -> `scaffold_decision_context` first",
         "- Symbol context/impact -> `scaffold_context` or `scaffold_impact` first",
+        "- Empty search/impact/context -> consume inline `why_empty` +",
+        "  `grep_fallback` on that same response before extra tool hops",
+        "",
+        "## Call Compression Discipline",
+        "",
+        "Prefer fewer, richer MCP calls. Do not undo fused responses with",
+        "redundant follow-ups:",
+        "",
+        "- After `scaffold_orient`, act on `recommended_actions` /",
+        "  `plan_progress` / `next_action_focus` instead of calling",
+        "  `scaffold_next_action` again.",
+        "- After empty `scaffold_search`, `scaffold_impact`, or missing-symbol",
+        "  `scaffold_context`, use inline `why_empty` and `grep_fallback`",
+        "  instead of immediately calling `scaffold_why_empty` or",
+        "  `scaffold_grep_graph`.",
+        "- Use standalone `scaffold_why_empty`, `scaffold_grep_graph`, and",
+        "  `scaffold_next_action` only when fused fields are missing or",
+        "  insufficient.",
+        "- Prefer `scaffold_diff_plan_vs_code` over dumping or re-reading the",
+        "  full plan file just to check progress.",
         "",
     ]
 
@@ -46,6 +113,9 @@ def _graph_trust_discipline_lines() -> list[str]:
         "- An empty result (`0 callers`, `0 importers`, no impact) means",
         "  `unconfirmed`, NOT `unused`. Do not conclude code is safe to change",
         "  from an empty graph result alone.",
+        "- When search/impact/context returns empty, read `why_empty` and",
+        "  `grep_fallback` on that same response before a follow-up tool or",
+        "  treating the target as unused.",
         "- Call/import edges exist ONLY for parsed languages (python, javascript,",
         "  typescript, go, rust, java, c, cpp). Markdown, YAML, shell, SQL, JSON,",
         "  and config files are invisible to structural queries. Check the",
@@ -53,7 +123,8 @@ def _graph_trust_discipline_lines() -> list[str]:
         "- Static analysis cannot see dynamic dispatch, reflection (`getattr`),",
         "  dependency-injection registries, or config/string-driven wiring.",
         "- Before changing safety-critical, cross-language, or dynamically-wired",
-        "  code, confirm usage with a text search (grep) in addition to the graph.",
+        "  code, confirm usage with a text search (grep) in addition to the graph",
+        "  (inline `grep_fallback` counts when present).",
         "- If `scaffold_orient` reports low parsed coverage, lean more on grep.",
         "",
     ]
@@ -124,6 +195,10 @@ def _intent_map_lines(quote_intents: bool) -> list[str]:
     for tool_name, intents in TOOL_INTENTS.items():
         lines.append(f"### {tool_name}")
         lines.append("")
+        note = _INTENT_NOTES.get(tool_name)
+        if note:
+            lines.append(f"Note: {note}")
+            lines.append("")
         lines.append("Trigger phrases:")
         for intent in intents:
             if quote_intents:
