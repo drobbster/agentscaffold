@@ -39,6 +39,7 @@ def open_graph(
     *,
     backend: str | None = None,
     lock_timeout: float = 8.0,
+    read_only: bool = False,
 ) -> GraphBackend:
     """Open an existing graph database for querying.
 
@@ -46,10 +47,19 @@ def open_graph(
         config: Optional scaffold config. Used to resolve db_path.
         backend: Reserved for future use. Only "duckpgq" is supported.
         lock_timeout: Seconds to wait for AgentScaffold's shared graph write
-            lock before attempting to open DuckDB.
+            lock before attempting to open DuckDB. Ignored when
+            ``read_only=True`` (Plan 244): readers skip the exclusive writer
+            wait so MCP tools stay responsive during in-process refresh.
+        read_only: When True, open without waiting for the AgentScaffold write
+            lock and without enabling governance write-through. Same-process
+            concurrent readers can query while an incremental index holds the
+            lock; cross-process DuckDB file locks still raise GraphLockError
+            quickly for soft ``refresh_in_progress`` handling.
 
     Raises:
         ValueError: if an unknown backend name is given.
+        GraphLockError: if the database cannot be opened (writer wait expired
+            for write opens, or DuckDB file lock for read opens).
     """
     backend_name = backend or _resolve_backend(config)
     db_path = _resolve_db_path(config)
@@ -57,21 +67,23 @@ def open_graph(
     if backend_name == "duckpgq":
         from agentscaffold.graph.locks import wait_for_graph_write_lock_clear
 
-        if not wait_for_graph_write_lock_clear(db_path, timeout=lock_timeout):
-            raise GraphLockError(
-                f"Could not open the knowledge graph at {db_path}: another "
-                "AgentScaffold graph write is still running."
+        if not read_only:
+            if not wait_for_graph_write_lock_clear(db_path, timeout=lock_timeout):
+                raise GraphLockError(
+                    f"Could not open the knowledge graph at {db_path}: another "
+                    "AgentScaffold graph write is still running."
+                )
+        store = DuckPGQBackend(db_path, read_only=read_only)
+        if not read_only:
+            # Enable git-backed governance write-through (Plan 222): runtime
+            # finding/session/backlog mutations re-serialize to the committed
+            # artifact so the graph stays a derived index of git state.
+            from agentscaffold.graph.governance_store import (
+                enable_write_through,
+                resolve_governance_artifact,
             )
-        store = DuckPGQBackend(db_path)
-        # Enable git-backed governance write-through (Plan 222): runtime
-        # finding/session/backlog mutations re-serialize to the committed
-        # artifact so the graph stays a derived index of git state.
-        from agentscaffold.graph.governance_store import (
-            enable_write_through,
-            resolve_governance_artifact,
-        )
 
-        enable_write_through(store, resolve_governance_artifact(config))
+            enable_write_through(store, resolve_governance_artifact(config))
         return store
 
     raise ValueError(f"Unknown backend '{backend_name}'. Supported: 'duckpgq'.")

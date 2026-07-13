@@ -119,30 +119,33 @@ class TestCursorRuleTaxonomy:
         return fresh_sim / ".cursor" / "rules"
 
     def test_agentscaffold_rule_always_apply(self, cursor_rules_dir):
-        """agentscaffold.md governance rule should have alwaysApply: false (routing intent)."""
-        rule_file = cursor_rules_dir / "agentscaffold.md"
-        assert rule_file.exists(), f"agentscaffold.md not found in {cursor_rules_dir}"
+        """agentscaffold.mdc MCP routing rule should alwaysApply (Cursor loads .mdc)."""
+        rule_file = cursor_rules_dir / "agentscaffold.mdc"
+        assert rule_file.exists(), f"agentscaffold.mdc not found in {cursor_rules_dir}"
 
         content = rule_file.read_text()
-        # The agentscaffold routing rule uses alwaysApply: false per the template
-        has_always_apply = "alwaysApply" in content
+        has_always_apply = "alwaysApply: true" in content
+        has_compression = "Call Compression Discipline" in content
 
         collect_result(
             EvalResult(
                 scenario="artifact_governance_rule_always_apply",
-                passed=has_always_apply,
-                score=1.0 if has_always_apply else 0.0,
-                expected="agentscaffold.md contains alwaysApply field",
-                actual=f"has_always_apply={has_always_apply}",
+                passed=has_always_apply and has_compression,
+                score=1.0 if has_always_apply and has_compression else 0.0,
+                expected="agentscaffold.mdc has alwaysApply: true + Call Compression Discipline",
+                actual=(
+                    f"has_always_apply={has_always_apply}, has_compression={has_compression}"
+                ),
                 category="artifact",
             )
         )
-        assert has_always_apply, "agentscaffold.md missing alwaysApply field"
+        assert has_always_apply, "agentscaffold.mdc missing alwaysApply: true"
+        assert has_compression, "agentscaffold.mdc missing Call Compression Discipline"
 
     def test_reviewer_rule_always_apply_false(self, cursor_rules_dir):
         """Per-reviewer rules should have alwaysApply: false."""
-        reviewer_file = cursor_rules_dir / "quant_architect.md"
-        assert reviewer_file.exists(), f"quant_architect.md not in {cursor_rules_dir}"
+        reviewer_file = cursor_rules_dir / "quant_architect.mdc"
+        assert reviewer_file.exists(), f"quant_architect.mdc not in {cursor_rules_dir}"
 
         content = reviewer_file.read_text()
         has_false = "alwaysApply: false" in content
@@ -152,16 +155,16 @@ class TestCursorRuleTaxonomy:
                 scenario="artifact_reviewer_rule_always_apply_false",
                 passed=has_false,
                 score=1.0 if has_false else 0.0,
-                expected="quant_architect.md has alwaysApply: false",
+                expected="quant_architect.mdc has alwaysApply: false",
                 actual=f"has_false={has_false}",
                 category="artifact",
             )
         )
-        assert has_false, f"quant_architect.md missing 'alwaysApply: false': {content[:200]}"
+        assert has_false, f"quant_architect.mdc missing 'alwaysApply: false': {content[:200]}"
 
     def test_domain_reviewer_rule_has_globs(self, cursor_rules_dir):
         """Reviewer with file_patterns should have globs: in frontmatter."""
-        reviewer_file = cursor_rules_dir / "quant_architect.md"
+        reviewer_file = cursor_rules_dir / "quant_architect.mdc"
         assert reviewer_file.exists()
 
         content = reviewer_file.read_text()
@@ -172,17 +175,17 @@ class TestCursorRuleTaxonomy:
                 scenario="artifact_reviewer_rule_has_globs",
                 passed=has_globs,
                 score=1.0 if has_globs else 0.0,
-                expected="quant_architect.md (with file_patterns) has globs: field",
+                expected="quant_architect.mdc (with file_patterns) has globs: field",
                 actual=f"has_globs={has_globs}",
                 category="artifact",
             )
         )
-        assert has_globs, f"quant_architect.md missing globs despite file_patterns: {content[:300]}"
+        assert has_globs, f"quant_architect.mdc missing globs despite file_patterns: {content[:300]}"
 
     def test_no_file_patterns_reviewer_no_globs(self, cursor_rules_dir):
         """Reviewer without file_patterns falls back to alwaysApply: false (no globs)."""
-        reviewer_file = cursor_rules_dir / "devils_advocate.md"
-        assert reviewer_file.exists(), f"devils_advocate.md not in {cursor_rules_dir}"
+        reviewer_file = cursor_rules_dir / "devils_advocate.mdc"
+        assert reviewer_file.exists(), f"devils_advocate.mdc not in {cursor_rules_dir}"
 
         content = reviewer_file.read_text()
         no_globs = "globs:" not in content
@@ -194,12 +197,12 @@ class TestCursorRuleTaxonomy:
                 scenario="artifact_no_patterns_reviewer_no_globs",
                 passed=passed,
                 score=1.0 if passed else 0.0,
-                expected="devils_advocate.md has no globs, has alwaysApply: false",
+                expected="devils_advocate.mdc has no globs, has alwaysApply: false",
                 actual=f"no_globs={no_globs}, has_always_apply_false={has_always_apply_false}",
                 category="artifact",
             )
         )
-        assert passed, f"devils_advocate.md unexpected content: {content[:300]}"
+        assert passed, f"devils_advocate.mdc unexpected content: {content[:300]}"
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +211,7 @@ class TestCursorRuleTaxonomy:
 
 
 class TestCursorPerReviewerRules:
-    """Per-reviewer .cursor/rules/<reviewer>.md files are well-formed."""
+    """Per-reviewer .cursor/rules/<reviewer>.mdc files are well-formed."""
 
     @pytest.fixture()
     def rules_dir(self, fresh_sim):
@@ -232,15 +235,15 @@ class TestCursorPerReviewerRules:
 
     def test_reviewer_files_created_for_each(self, rules_dir):
         """Both configured reviewers have rule files."""
-        quant = rules_dir / "quant_architect.md"
-        devil = rules_dir / "devils_advocate.md"
+        quant = rules_dir / "quant_architect.mdc"
+        devil = rules_dir / "devils_advocate.mdc"
         both_exist = quant.exists() and devil.exists()
         collect_result(
             EvalResult(
                 scenario="artifact_reviewer_files_created",
                 passed=both_exist,
                 score=1.0 if both_exist else (0.5 if quant.exists() or devil.exists() else 0.0),
-                expected="quant_architect.md and devils_advocate.md created",
+                expected="quant_architect.mdc and devils_advocate.mdc created",
                 actual=f"quant={quant.exists()}, devil={devil.exists()}",
                 category="artifact",
             )
@@ -249,14 +252,14 @@ class TestCursorPerReviewerRules:
 
     def test_reviewer_description_present_and_nonempty(self, rules_dir):
         """description: field in frontmatter is non-empty."""
-        content = (rules_dir / "quant_architect.md").read_text()
+        content = (rules_dir / "quant_architect.mdc").read_text()
         fm_result = score_frontmatter_correctness(content, ["description"], name="quant_architect")
         collect_result(fm_result)
-        assert fm_result.passed, f"quant_architect.md missing description: {fm_result.actual}"
+        assert fm_result.passed, f"quant_architect.mdc missing description: {fm_result.actual}"
 
     def test_reviewer_body_contains_mcp_tool_calls(self, rules_dir):
         """Rule body instructs use of scaffold_record_finding."""
-        content = (rules_dir / "quant_architect.md").read_text()
+        content = (rules_dir / "quant_architect.mdc").read_text()
         has_tool = "scaffold_record_finding" in content
 
         collect_result(
@@ -264,18 +267,18 @@ class TestCursorPerReviewerRules:
                 scenario="artifact_reviewer_rule_has_mcp_tool",
                 passed=has_tool,
                 score=1.0 if has_tool else 0.0,
-                expected="scaffold_record_finding mentioned in quant_architect.md",
+                expected="scaffold_record_finding mentioned in quant_architect.mdc",
                 actual=f"has_tool={has_tool}",
                 category="artifact",
             )
         )
-        assert has_tool, "quant_architect.md missing scaffold_record_finding instruction"
+        assert has_tool, "quant_architect.mdc missing scaffold_record_finding instruction"
 
     def test_reviewer_rule_always_apply_is_false(self, rules_dir):
         """alwaysApply: false so the rule loads on-demand."""
         for name in ("quant_architect", "devils_advocate"):
-            content = (rules_dir / f"{name}.md").read_text()
-            assert "alwaysApply: false" in content, f"{name}.md missing 'alwaysApply: false'"
+            content = (rules_dir / f"{name}.mdc").read_text()
+            assert "alwaysApply: false" in content, f"{name}.mdc missing 'alwaysApply: false'"
 
         collect_result(
             EvalResult(
@@ -290,14 +293,14 @@ class TestCursorPerReviewerRules:
 
     def test_reviewer_rule_globs_from_file_patterns(self, rules_dir):
         """quant_architect (has file_patterns) includes globs: in frontmatter."""
-        content = (rules_dir / "quant_architect.md").read_text()
+        content = (rules_dir / "quant_architect.mdc").read_text()
         has_globs = "globs:" in content
         collect_result(
             EvalResult(
                 scenario="artifact_reviewer_rule_globs_from_patterns",
                 passed=has_globs,
                 score=1.0 if has_globs else 0.0,
-                expected="globs: present in quant_architect.md from file_patterns",
+                expected="globs: present in quant_architect.mdc from file_patterns",
                 actual=f"has_globs={has_globs}",
                 category="artifact",
             )

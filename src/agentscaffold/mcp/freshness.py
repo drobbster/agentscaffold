@@ -24,6 +24,9 @@ ELIGIBLE_REFRESH_TOOLS = {
     "scaffold_prepare_rewrite",
     "scaffold_prepare_retro",
     "scaffold_orient",
+    "scaffold_next_action",
+    "scaffold_diff_plan_vs_code",
+    "scaffold_why_empty",
 }
 
 

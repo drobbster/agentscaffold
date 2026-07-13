@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agentscaffold.graph.backend import GraphBackend
-from agentscaffold.graph.query_compat import ql
+from agentscaffold.graph.query_compat import ql, sql_escape
 
 logger = logging.getLogger(__name__)
 
@@ -197,25 +197,38 @@ def _keyword_search(
 ) -> list[SearchResult]:
     """Search using graph structure: name matching, path matching.
 
+    Candidates are filtered in SQL with case-insensitive ``contains`` predicates
+    (Plan 243) so matches are not missed when they fall outside a blind ``LIMIT``
+    window. Surviving rows are still scored in Python via ``_text_match_score``.
+
     When *scope* targets a single project (multi-project workspace), a
-    ``WHERE project = '<name>'`` predicate is appended to each table scan.
-    Project names are validated to a safe charset so inlining is injection-safe.
+    ``project = '<name>'`` predicate is AND-ed. Project names are validated
+    to a safe charset so inlining is injection-safe.
     """
     results: list[SearchResult] = []
-    terms = query.lower().split()
-    where = ""
+    terms = [t for t in query.lower().split() if t]
+    # Cap the candidate pool after predicate filter; large enough to outrun
+    # the old blind top_k*4 window, small enough for interactive MCP latency.
+    candidate_limit = max(limit * 10, 100)
+
+    project_clause = ""
     if scope is not None and not getattr(scope, "is_noop", True):
-        where = f" WHERE project = '{scope.project}'"
+        project_clause = f"project = '{sql_escape(str(scope.project))}'"
 
     for table in tables:
         if table == "Function":
+            where = _keyword_where(
+                terms,
+                ["name", "filePath", "signature"],
+                project_clause=project_clause,
+            )
             rows = ql(
                 store,
                 sql=(
                     f'SELECT id AS "n.id", name AS "n.name", '
                     f'filePath AS "n.filePath", signature AS "n.signature", '
                     f'project AS "n.project" '
-                    f"FROM Function{where} LIMIT {limit * 2}"
+                    f"FROM Function{where} LIMIT {candidate_limit}"
                 ),
             )
             for row in rows:
@@ -240,12 +253,17 @@ def _keyword_search(
                     )
 
         elif table == "Class":
+            where = _keyword_where(
+                terms,
+                ["name", "filePath"],
+                project_clause=project_clause,
+            )
             rows = ql(
                 store,
                 sql=(
                     f'SELECT id AS "n.id", name AS "n.name", '
                     f'filePath AS "n.filePath", project AS "n.project" '
-                    f"FROM Class{where} LIMIT {limit * 2}"
+                    f"FROM Class{where} LIMIT {candidate_limit}"
                 ),
             )
             for row in rows:
@@ -264,13 +282,20 @@ def _keyword_search(
                     )
 
         elif table == "Method":
+            # className || '.' || name covers "Class.method" style queries.
+            where = _keyword_where(
+                terms,
+                ["name", "className", "filePath", "signature"],
+                project_clause=project_clause,
+                extra_exprs=["(COALESCE(className, '') || '.' || COALESCE(name, ''))"],
+            )
             rows = ql(
                 store,
                 sql=(
                     f'SELECT id AS "n.id", name AS "n.name", className AS "n.className",'
                     f' filePath AS "n.filePath", signature AS "n.signature",'
                     f' project AS "n.project"'
-                    f" FROM Method{where} LIMIT {limit * 2}"
+                    f" FROM Method{where} LIMIT {candidate_limit}"
                 ),
             )
             for row in rows:
@@ -296,12 +321,17 @@ def _keyword_search(
                     )
 
         elif table == "File":
+            where = _keyword_where(
+                terms,
+                ["path", "language"],
+                project_clause=project_clause,
+            )
             rows = ql(
                 store,
                 sql=(
                     f'SELECT id AS "n.id", path AS "n.path", '
                     f'language AS "n.language", project AS "n.project" '
-                    f"FROM File{where} LIMIT {limit * 2}"
+                    f"FROM File{where} LIMIT {candidate_limit}"
                 ),
             )
             for row in rows:
@@ -320,9 +350,16 @@ def _keyword_search(
                     )
 
         elif table in GOVERNANCE_TABLES:
+            cols, exprs = _governance_keyword_filter_cols(table)
+            where = _keyword_where(
+                terms,
+                cols,
+                project_clause=project_clause,
+                extra_exprs=exprs,
+            )
             sql = (
                 f'SELECT {_governance_keyword_cols(table)}, project AS "n.project"'
-                f" FROM {table}{where} LIMIT {limit * 2}"
+                f" FROM {table}{where} LIMIT {candidate_limit}"
             )
             rows = ql(
                 store,
@@ -354,6 +391,58 @@ def _keyword_search(
 
     results.sort(key=lambda r: r.score, reverse=True)
     return results[:limit]
+
+
+def _keyword_where(
+    terms: list[str],
+    columns: list[str],
+    *,
+    project_clause: str = "",
+    extra_exprs: list[str] | None = None,
+) -> str:
+    """Build ``WHERE`` for keyword candidate fetch.
+
+    Any term matching any column/expression is enough (OR), matching
+    ``_text_match_score`` which scores when ``matches > 0``.
+
+    Uses DuckDB ``contains(lower(...), ...)`` instead of ``ILIKE`` so ``%`` /
+    ``_`` in identifiers are matched literally (no LIKE metacharacters).
+    """
+    clauses: list[str] = []
+    if project_clause:
+        clauses.append(project_clause)
+
+    if terms:
+        match_parts: list[str] = []
+        exprs = list(columns) + list(extra_exprs or [])
+        for term in terms:
+            lit = sql_escape(term)
+            for expr in exprs:
+                match_parts.append(f"contains(lower(CAST({expr} AS VARCHAR)), '{lit}')")
+        if match_parts:
+            clauses.append("(" + " OR ".join(match_parts) + ")")
+
+    if not clauses:
+        return ""
+    return " WHERE " + " AND ".join(clauses)
+
+
+def _governance_keyword_filter_cols(table: str) -> tuple[list[str], list[str]]:
+    """Return (plain columns, extra SQL exprs) used for governance ILIKE filters."""
+    if table == "Plan":
+        return ["title", "filePath", "status"], ["CAST(number AS VARCHAR)"]
+    if table == "Learning":
+        return ["learningId", "target", "status", "description"], []
+    if table == "ReviewFinding":
+        return ["category", "finding", "status", "severity"], []
+    if table == "Study":
+        return ["title", "filePath", "status", "outcome"], []
+    if table == "ADR":
+        return ["title", "filePath", "status"], ["CAST(number AS VARCHAR)"]
+    if table == "Spike":
+        return ["title", "filePath", "status", "parentPlan"], []
+    # BacklogItem
+    return ["title", "source", "status", "priority"], []
 
 
 def _semantic_search(

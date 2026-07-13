@@ -8,6 +8,49 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-07-12
+
+### Added
+- MCP call-compression hardening (Plan 247): empty ``scaffold_search`` /
+  ``scaffold_impact`` / missing-symbol ``scaffold_context`` responses inline
+  ``why_empty`` + bounded ``grep_fallback``; ``scaffold_orient`` embeds
+  ``recommended_actions``, ``plan_progress``, and ``next_action_focus``;
+  compare/staleness expose ``lead_shared_files`` / ``lead_overlap`` with
+  frequency demotion for ubiquitous paths; ``diff_plan_vs_code`` returns
+  ``next_unchecked_step`` and symbol spot-checks. Checkbox counts are scoped
+  to the Execution Steps section only. Shared agent rule policy (Cursor,
+  Claude, Windsurf, prompt) teaches call-compression: prefer fused fields
+  over redundant ``why_empty`` / ``grep_graph`` / ``next_action`` hops;
+  mid-impl progress routes to ``scaffold_diff_plan_vs_code``. Eval harness
+  covers the new tools, fused empty-result fields, adoption intents, and a
+  call-compression efficiency scenario; README efficiency figures refreshed
+  from ``eval/reports/latest.md`` (120 scenarios).
+- Agent MCP tool pack (Plan 246): ``scaffold_diff_plan_vs_code``,
+  ``scaffold_grep_graph``, ``scaffold_why_empty``, ``scaffold_next_action``;
+  embedded ``plan_card`` (no full plan dump); ``dry_run`` on begin/complete;
+  ``detail=summary|full`` on heavy read composites; fail-loud required-arg
+  validation (e.g. empty ``scaffold_impact`` target).
+
+### Fixed
+- MCP read tools no longer block ~20s+ on the exclusive graph write lock while
+  an in-process incremental refresh runs (Plan 244). ``open_graph(read_only=True)``
+  skips the AgentScaffold writer wait; same-process DuckDB concurrent readers
+  succeed and set ``meta.read_during_refresh`` / ``freshness_status=refreshing``.
+  Cross-process DuckDB file locks still soft-fail quickly with
+  ``refresh_in_progress`` rather than the old multi-retry hard wait. Write tools
+  keep exclusive lock semantics.
+- Staleness / compare / prior-experiment overlap signals ignore ubiquitous
+  governance docs by default (Plan 245): ``docs/ai/contracts/README.md``,
+  ``workflow_state.md``, ``backlog.md``, and ``architectural_design_changelog.md``.
+  Meaningful code/config overlaps still drive ``is_stale`` and ``conflict_risk``;
+  filtered noise is reported via ``overlap_noise_filtered*``. Override with
+  ``graph.overlap_noise_paths`` in ``scaffold.yaml``.
+- Keyword / hybrid code search no longer misses symbols outside a blind
+  ``LIMIT`` window (Plan 243). ``_keyword_search`` filters candidates with
+  SQL ``contains(lower(...), term)`` before capping rows, then keeps Python
+  scoring. Fixes empty ``scaffold_search`` results for names like
+  ``normalize_feeds`` on large graphs when embeddings are absent.
+
 ## [0.9.3] - 2026-07-11
 
 ### Fixed

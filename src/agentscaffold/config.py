@@ -382,6 +382,10 @@ class GraphConfig(BaseModel):
     # Human-owned architecture baseline (Plan 237). Parsed into ArchitectureLayer
     # nodes + BELONGS_TO_LAYER edges so file->layer analyses activate.
     architecture_doc: str = "docs/ai/system_architecture.md"
+    # Optional override for Plan 245 overlap-noise denylist. ``None`` keeps the
+    # built-in defaults (contracts README, workflow_state, backlog, architecture
+    # changelog). An explicit list replaces defaults (empty list disables filtering).
+    overlap_noise_paths: list[str] | None = None
     embeddings: bool = False
     communities: bool = True
     incremental_community_refresh: str = "structure"

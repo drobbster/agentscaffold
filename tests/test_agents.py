@@ -93,6 +93,9 @@ def test_cursor_setup(tmp_project: Path, cli_runner: CliRunner) -> None:
         assert "governance guardrails" in intent_content
         assert "intent map" in intent_content
         assert "scaffold_prepare_review" in intent_content
+        assert "call compression discipline" in intent_content
+        assert "scaffold_diff_plan_vs_code" in intent_content
+        assert "recommended_actions" in intent_content
     finally:
         os.chdir(orig_cwd)
 
@@ -114,6 +117,8 @@ def test_windsurf_setup(tmp_project: Path, cli_runner: CliRunner) -> None:
         assert "fallback is allowed when" in content
         assert "governance guardrails" in content
         assert "intent map" in content
+        assert "call compression discipline" in content
+        assert "scaffold_diff_plan_vs_code" in content
     finally:
         os.chdir(orig_cwd)
 
@@ -135,6 +140,9 @@ def test_claude_setup(tmp_project: Path, cli_runner: CliRunner) -> None:
         assert "required procedure" in content
         assert "governance guardrails" in content
         assert "scaffold_orient" in content
+        assert "call compression discipline" in content
+        assert "scaffold_next_action" in content
+        assert "recommended_actions" in content
     finally:
         os.chdir(orig_cwd)
 
@@ -156,6 +164,7 @@ def test_prompt_export(tmp_project: Path, cli_runner: CliRunner) -> None:
         assert "fallback is allowed when" in content
         assert "intent map" in content
         assert "scaffold_decision_context" in content
+        assert "call compression discipline" in content
     finally:
         os.chdir(orig_cwd)
 
@@ -177,7 +186,18 @@ def test_generate_all_writes_cursor_routing_doc(tmp_project: Path, cli_runner: C
         content = intent_md.read_text().lower()
         assert "tool selection policy" in content
         assert "graph trust discipline" in content
+        assert "call compression discipline" in content
         assert "intent map" in content
+        assert "scaffold_diff_plan_vs_code" in content
+
+        agents_md = (tmp_project / "AGENTS.md").read_text().lower()
+        assert "call-compressed" in agents_md or "call compression" in agents_md
+        assert "recommended_actions" in agents_md
+
+        claude = (tmp_project / "CLAUDE.md").read_text().lower()
+        assert "call compression discipline" in claude
+        windsurf = (tmp_project / ".windsurfrules").read_text().lower()
+        assert "call compression discipline" in windsurf
     finally:
         os.chdir(orig_cwd)
 

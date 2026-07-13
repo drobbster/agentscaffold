@@ -30,6 +30,21 @@ except ImportError:
 
 _MCP_EXTRAS_MSG = "MCP server requires extra dependencies: pip install agentscaffold[mcp]"
 
+# Tools that mutate the graph and must wait for the exclusive write lock.
+# All other tools open read-preferring (Plan 244) so async freshness refresh
+# does not block interactive reads for ~20s+.
+_GRAPH_WRITE_TOOLS: frozenset[str] = frozenset(
+    {
+        "scaffold_record_finding",
+        "scaffold_resolve_finding",
+        "scaffold_record_findings_batch",
+        "scaffold_record_backlog_item",
+        "scaffold_resolve_backlog_item",
+        "scaffold_begin_plan",
+        "scaffold_complete_plan",
+    }
+)
+
 # ---------------------------------------------------------------------------
 # Intent metadata: single source of truth for semantic mapping.
 # Platform rule generators (cursor, windsurf, claude) read from this dict.
@@ -227,6 +242,31 @@ TOOL_INTENTS: dict[str, list[str]] = {
         "run complete plan for plan X",
         "finish plan X",
     ],
+    "scaffold_diff_plan_vs_code": [
+        "diff plan X vs code",
+        "what's left on plan X",
+        "plan vs implementation for plan X",
+        "which planned files are missing",
+        "mid-implementation progress on plan X",
+    ],
+    "scaffold_grep_graph": [
+        "grep the workspace for X",
+        "ripgrep for X in the project",
+        "text search the repo for X",
+        "scaffold grep for X",
+    ],
+    "scaffold_why_empty": [
+        "why is search empty",
+        "why no callers",
+        "why empty impact",
+        "explain empty scaffold result",
+    ],
+    "scaffold_next_action": [
+        "what should I do next",
+        "next action",
+        "what tool should I call next",
+        "route me to the next step",
+    ],
 }
 
 _ROUTING_STOPWORDS = {
@@ -306,6 +346,19 @@ _TOOL_SIGNAL_TOKENS: dict[str, set[str]] = {
     "scaffold_resolve_backlog_item": {"backlog", "done", "complete", "archive", "resolved"},
     "scaffold_begin_plan": {"begin", "kick", "pre", "reviews", "collab", "protocol", "start"},
     "scaffold_complete_plan": {"wrap", "close", "post", "retro", "finish", "complete"},
+    "scaffold_diff_plan_vs_code": {"diff", "missing", "progress", "implementation", "vs"},
+    "scaffold_grep_graph": {"grep", "ripgrep", "text", "workspace", "search"},
+    "scaffold_why_empty": {"why", "empty", "explain", "no", "callers"},
+    "scaffold_next_action": {"next", "action", "route", "should", "tool"},
+}
+
+# Required string args that must be non-empty (Plan 246 fail-loud validation).
+_REQUIRED_STRING_ARGS: dict[str, tuple[str, ...]] = {
+    "scaffold_impact": ("file_or_symbol",),
+    "scaffold_context": ("symbol",),
+    "scaffold_search": ("query",),
+    "scaffold_recall_governance": ("query",),
+    "scaffold_grep_graph": ("pattern",),
 }
 
 
@@ -449,7 +502,8 @@ def _get_tool_definitions() -> list[Tool]:
                 "Get call-graph context for a symbol: its definition, the "
                 "functions and methods that call it (callers), and the functions "
                 "it calls (callees). Returns a 'markdown' summary plus structured "
-                "lists."
+                "lists. When the symbol is missing, includes inline why_empty and "
+                "grep_fallback -- consume those before a separate diagnosis call."
             ),
             inputSchema={
                 "type": "object",
@@ -465,7 +519,9 @@ def _get_tool_definitions() -> list[Tool]:
                 "Analyze the blast radius of changing a file. Walks IMPORTS edges "
                 "up to 'depth' hops to find transitive importing files, and lists "
                 "the functions and methods that call into the file. Returns a "
-                "'markdown' summary plus structured lists."
+                "'markdown' summary plus structured lists. When empty, also "
+                "includes inline why_empty and grep_fallback -- consume those "
+                "before calling scaffold_why_empty or scaffold_grep_graph."
             ),
             inputSchema={
                 "type": "object",
@@ -485,7 +541,9 @@ def _get_tool_definitions() -> list[Tool]:
             description=(
                 "Search across code definitions using hybrid search "
                 "(structural graph + semantic similarity). Supports keyword, "
-                "semantic, or hybrid modes."
+                "semantic, or hybrid modes. When count is 0, the response "
+                "includes inline why_empty and grep_fallback -- use those "
+                "before a separate diagnosis or grep tool call."
             ),
             inputSchema={
                 "type": "object",
@@ -623,6 +681,12 @@ def _get_tool_definitions() -> list[Tool]:
                         "enum": ["brief", "challenges", "gaps", "verify", "retro", "all"],
                         "description": "Type of review context to generate",
                     },
+                    "detail": {
+                        "type": "string",
+                        "enum": ["summary", "full"],
+                        "description": "Token control: summary (default) or full",
+                        "default": "summary",
+                    },
                 },
                 "required": ["plan_number", "review_type"],
             },
@@ -640,6 +704,12 @@ def _get_tool_definitions() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "plan_number": {"type": "integer", "description": "Plan number"},
+                    "detail": {
+                        "type": "string",
+                        "enum": ["summary", "full"],
+                        "description": "Token control: summary (default) or full",
+                        "default": "summary",
+                    },
                 },
                 "required": ["plan_number"],
             },
@@ -662,6 +732,12 @@ def _get_tool_definitions() -> list[Tool]:
                             "If freshness gate is enabled and graph is stale, "
                             "transition is deferred."
                         ),
+                    },
+                    "detail": {
+                        "type": "string",
+                        "enum": ["summary", "full"],
+                        "description": "Token control: summary (default) or full",
+                        "default": "summary",
                     },
                 },
                 "required": ["plan_number"],
@@ -731,13 +807,23 @@ def _get_tool_definitions() -> list[Tool]:
             name="scaffold_orient",
             description=(
                 "Get session orientation: codebase stats, recent plans, hot files, "
-                "recent studies, active ADRs, and live workflow state (blockers, next "
-                "steps, in-progress plans). Use at session start or when the user asks "
-                "where we left off, what's blocked, or what the current state is."
+                "recent studies, active ADRs, live workflow state (blockers, next "
+                "steps, in-progress plans), plus recommended_actions, "
+                "plan_progress, and next_action_focus. Use at session start or "
+                "when the user asks where we left off, what's blocked, or what "
+                "to do next. Prefer embedded recommended_actions over a separate "
+                "scaffold_next_action call."
             ),
             inputSchema={
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "detail": {
+                        "type": "string",
+                        "enum": ["summary", "full"],
+                        "description": "Token control: summary (default) or full",
+                        "default": "summary",
+                    },
+                },
             },
         ),
         Tool(
@@ -1015,15 +1101,15 @@ def _get_tool_definitions() -> list[Tool]:
                 "required": ["item_id"],
             },
         ),
-        # --- Governed lifecycle composite tools ---
+        # --- Agent tool pack (Plan 246) ---
         Tool(
-            name="scaffold_begin_plan",
+            name="scaffold_diff_plan_vs_code",
             description=(
-                "Run the full pre-implementation review chain for a plan: orient, "
-                "prepare_review (all three perspectives), auto-write challenges and gaps "
-                "as ReviewFindings to the graph, stamp Plan.reviewedAt. Returns structured "
-                "output with orient summary, review perspectives, findings written, and a "
-                "proceed_prompt for the agent to present to the user."
+                "Compare a plan's File Impact Map and execution checkboxes against "
+                "filesystem and graph reality. Returns next_unchecked_step, "
+                "disk/graph presence, and symbol spot-checks. Preferred "
+                "mid-implementation progress check; prefer over re-reading the "
+                "full plan body for status."
             ),
             inputSchema={
                 "type": "object",
@@ -1034,17 +1120,116 @@ def _get_tool_definitions() -> list[Tool]:
             },
         ),
         Tool(
-            name="scaffold_complete_plan",
+            name="scaffold_grep_graph",
             description=(
-                "Run the full post-implementation chain for a plan: prepare_retro, "
-                "auto-write retro insights as ReviewFindings, optionally write backlog items. "
-                "Returns structured output with retro results, findings written, structured "
-                "learnings, and a completion checklist for the agent."
+                "Structured ripgrep of the project workspace (path-sandboxed). "
+                "Fallback when graph search is degraded, coverage is low, or "
+                "inline grep_fallback on an empty search/impact response is "
+                "absent or insufficient."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Search pattern"},
+                    "path": {
+                        "type": "string",
+                        "description": "Optional subdirectory or file under project root",
+                    },
+                    "glob": {"type": "string", "description": "Optional ripgrep glob filter"},
+                    "max_hits": {
+                        "type": "integer",
+                        "description": "Maximum hits (default 50)",
+                        "default": 50,
+                    },
+                },
+                "required": ["pattern"],
+            },
+        ),
+        Tool(
+            name="scaffold_why_empty",
+            description=(
+                "Explain why a structural or search result was empty: coverage gaps, "
+                "missing args, degraded retrieval, refresh/lock, or unconfirmed static "
+                "analysis. Fallback only -- prefer inline why_empty on empty "
+                "search/impact/context responses when present."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["structural", "search", "impact", "context", "generic"],
+                        "description": "Empty-result category",
+                        "default": "structural",
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": "File path or symbol that returned empty",
+                    },
+                    "query": {"type": "string", "description": "Search query that returned empty"},
+                },
+            },
+        ),
+        Tool(
+            name="scaffold_next_action",
+            description=(
+                "Return 1-3 concrete next moves with suggested MCP tool calls from "
+                "workflow state, in-progress plans, and optional plan_card. "
+                "Fallback only -- prefer recommended_actions from scaffold_orient "
+                "when present."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "plan_number": {
+                        "type": "integer",
+                        "description": "Optional plan to route around",
+                    },
+                },
+            },
+        ),
+        # --- Governed lifecycle composite tools ---
+        Tool(
+            name="scaffold_begin_plan",
+            description=(
+                "Run the full pre-implementation review chain for a plan: orient, "
+                "prepare_review (all three perspectives), auto-write challenges and gaps "
+                "as ReviewFindings to the graph, stamp Plan.reviewedAt. Returns structured "
+                "output with orient summary, review perspectives, findings written, and a "
+                "proceed_prompt for the agent to present to the user. Pass dry_run=true to "
+                "rehearse without writing findings or stamping reviewedAt."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "plan_number": {"type": "integer", "description": "Plan number"},
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "When true, return review payload without graph writes",
+                        "default": False,
+                    },
+                },
+                "required": ["plan_number"],
+            },
+        ),
+        Tool(
+            name="scaffold_complete_plan",
+            description=(
+                "Run the full post-implementation chain for a plan: prepare_retro, "
+                "auto-write retro insights as ReviewFindings, optionally write backlog items. "
+                "Returns structured output with retro results, findings written, structured "
+                "learnings, and a completion checklist for the agent. Pass dry_run=true to "
+                "rehearse without writing findings or backlog items."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "plan_number": {"type": "integer", "description": "Plan number"},
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "When true, return retro payload without graph writes",
+                        "default": False,
+                    },
                     "backlog_items": {
                         "type": "array",
                         "description": "Optional backlog items to record",
@@ -1194,6 +1379,15 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     from agentscaffold.config import load_config
     from agentscaffold.graph import GraphLockError, graph_available, open_graph
 
+    # Fail loud on missing/empty required string args before opening the graph.
+    for arg_name in _REQUIRED_STRING_ARGS.get(name, ()):
+        value = arguments.get(arg_name)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return {
+                "error": f"Missing required argument '{arg_name}'.",
+                "missing_argument": arg_name,
+            }
+
     root = _effective_mcp_root()
     # Dynamic per-call project routing for multi-project workspaces: if the caller
     # tells us the path it is working on, scope the call to that path's project
@@ -1227,20 +1421,46 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if not graph_available(config):
         return {"error": "No knowledge graph found. Run 'scaffold index' first."}
 
+    read_preferring = name not in _GRAPH_WRITE_TOOLS
     store = None
-    for attempt, delay in enumerate((0.0, 0.5, 1.0), start=1):
+    # Read tools: at most one brief retry (Plan 244). Write tools keep Plan 235
+    # backoff so transient lock contention can clear.
+    open_attempts = (0.0, 0.1) if read_preferring else (0.0, 0.5, 1.0)
+    for attempt, delay in enumerate(open_attempts, start=1):
         if delay:
             time.sleep(delay)
         try:
-            store = open_graph(config)
+            store = open_graph(config, read_only=read_preferring)
             break
         except GraphLockError as exc:
-            if attempt == 3:
+            if attempt >= len(open_attempts):
+                from agentscaffold.graph.locks import graph_write_lock_held
+                from agentscaffold.mcp.freshness import refresh_runtime_state
+                from agentscaffold.paths import resolve_db_path
+
+                db_path = resolve_db_path(config)
+                refresh_meta: dict[str, Any] = {}
+                try:
+                    refresh_meta = refresh_runtime_state(root, config)
+                except Exception:  # noqa: BLE001
+                    refresh_meta = {}
+                writer_active = graph_write_lock_held(db_path) or refresh_meta.get(
+                    "refresh_state"
+                ) in {"running", "scheduled"}
                 return {
                     "error": str(exc),
                     "graph_locked": True,
+                    "refresh_in_progress": bool(writer_active),
                     "retry_exhausted": True,
                     "retry_attempts": attempt,
+                    "meta": {
+                        **refresh_meta,
+                        "read_during_refresh": False,
+                        "freshness_status": ("refreshing" if writer_active else "unknown"),
+                        "freshness_reason": (
+                            "refresh_in_progress" if writer_active else "graph_locked"
+                        ),
+                    },
                 }
         except Exception as exc:  # pragma: no cover - defensive fallback
             return {"error": f"Failed to open knowledge graph: {exc}"}
@@ -1275,6 +1495,20 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
     meta = _build_meta(store, root, freshness_meta)
     meta.update(_maybe_schedule_embedding_lane(root, config, meta))
+    if read_preferring:
+        try:
+            from agentscaffold.graph.locks import graph_write_lock_held
+            from agentscaffold.paths import resolve_db_path
+
+            during_refresh = graph_write_lock_held(resolve_db_path(config)) or meta.get(
+                "refresh_state"
+            ) in {"running", "scheduled"}
+            meta["read_during_refresh"] = bool(during_refresh)
+            if during_refresh:
+                meta["freshness_status"] = "refreshing"
+                meta.setdefault("freshness_reason", "refresh_in_progress")
+        except Exception:  # noqa: BLE001
+            meta.setdefault("read_during_refresh", False)
 
     if config.freshness.gate_strict and bool(arguments.get("gate_transition")):
         if freshness_meta.get("freshness_status") in {"stale", "unknown", "refreshing"}:
@@ -1298,24 +1532,24 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             return {"results": rows, "count": len(rows), "meta": meta}
 
         elif name == "scaffold_context":
-            return _tool_context(store, arguments, meta)
+            return _tool_context(store, arguments, meta, root)
 
         elif name == "scaffold_impact":
-            return _tool_impact(store, arguments, meta)
+            return _tool_impact(store, arguments, meta, root)
 
         elif name == "scaffold_search":
             if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
                 from agentscaffold.graph.embeddings import configure_embeddings
 
                 configure_embeddings(config.search.embedding_model, config.search.cache_dir)
-            return _tool_search(store, arguments, meta)
+            return _tool_search(store, arguments, meta, root)
 
         elif name == "scaffold_recall_governance":
             if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
                 from agentscaffold.graph.embeddings import configure_embeddings
 
                 configure_embeddings(config.search.embedding_model, config.search.cache_dir)
-            return _tool_search(store, {**arguments, "kind": "governance"}, meta)
+            return _tool_search(store, {**arguments, "kind": "governance"}, meta, root)
 
         elif name == "scaffold_validate":
             return _tool_validate(store, arguments, meta)
@@ -1330,25 +1564,37 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             return _tool_prepare_implementation(store, arguments, meta, root)
 
         elif name == "scaffold_compare_plans":
-            return _tool_compare_plans(store, arguments, meta)
+            return _tool_compare_plans(store, arguments, meta, config)
 
         elif name == "scaffold_staleness_check":
-            return _tool_staleness_check(store, arguments, meta)
+            return _tool_staleness_check(store, arguments, meta, config)
 
         elif name == "scaffold_prepare_rewrite":
-            return _tool_prepare_rewrite(store, arguments, meta)
+            return _tool_prepare_rewrite(store, arguments, meta, config)
 
         elif name == "scaffold_prepare_retro":
             return _tool_prepare_retro(store, arguments, meta)
 
         elif name == "scaffold_orient":
-            return _tool_orient(store, meta, root, config)
+            return _tool_orient(store, meta, root, config, arguments)
+
+        elif name == "scaffold_diff_plan_vs_code":
+            return _tool_diff_plan_vs_code(store, arguments, meta, root)
+
+        elif name == "scaffold_grep_graph":
+            return _tool_grep_graph(arguments, meta, root)
+
+        elif name == "scaffold_why_empty":
+            return _tool_why_empty(store, arguments, meta)
+
+        elif name == "scaffold_next_action":
+            return _tool_next_action(store, arguments, meta, root, config)
 
         elif name == "scaffold_find_studies":
             return _tool_find_studies(store, arguments, meta)
 
         elif name == "scaffold_prior_experiments":
-            return _tool_prior_experiments(store, arguments, meta)
+            return _tool_prior_experiments(store, arguments, meta, config)
 
         elif name == "scaffold_find_adrs":
             return _tool_find_adrs(store, arguments, meta)
@@ -1439,7 +1685,12 @@ def _maybe_schedule_embedding_lane(root: Path, config: Any, meta: dict[str, Any]
         }
 
 
-def _tool_context(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
+def _tool_context(
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    root: Path | None = None,
+) -> dict[str, Any]:
     """Handle scaffold_context tool call."""
     from agentscaffold.graph.query_compat import ql
     from agentscaffold.mcp.coverage import (
@@ -1454,6 +1705,13 @@ def _tool_context(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) -
     )
 
     symbol = arguments.get("symbol", "")
+    if not isinstance(symbol, str) or not symbol.strip():
+        return {
+            "error": "Missing required argument 'symbol'.",
+            "missing_argument": "symbol",
+            "meta": meta,
+        }
+    symbol = symbol.strip()
 
     # Search across functions, classes, methods
     results = ql(
@@ -1475,7 +1733,22 @@ def _tool_context(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) -
         )
 
     if not results:
-        return {"error": f"Symbol '{symbol}' not found in graph.", "meta": meta}
+        payload: dict[str, Any] = {
+            "error": f"Symbol '{symbol}' not found in graph.",
+            "meta": meta,
+        }
+        if root is not None:
+            from agentscaffold.mcp.empty_fallback import attach_empty_fallback
+
+            payload = attach_empty_fallback(
+                payload,
+                store=store,
+                root=root,
+                meta=meta,
+                kind="context",
+                target=symbol,
+            )
+        return payload
 
     node = clean_row(results[0])
     node_id = (node.get("id") or "").replace("'", "''")
@@ -1632,7 +1905,12 @@ def _transitive_importers(store: Any, file_id: str, depth: int) -> list[list[dic
     return levels
 
 
-def _tool_impact(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
+def _tool_impact(
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    root: Path | None = None,
+) -> dict[str, Any]:
     """Handle scaffold_impact tool call."""
     from agentscaffold.graph.query_compat import ql
     from agentscaffold.mcp.coverage import (
@@ -1644,6 +1922,13 @@ def _tool_impact(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) ->
     from agentscaffold.mcp.render import clean_rows, format_impact_markdown
 
     target = arguments.get("file_or_symbol", "")
+    if not isinstance(target, str) or not target.strip():
+        return {
+            "error": "Missing required argument 'file_or_symbol'.",
+            "missing_argument": "file_or_symbol",
+            "meta": meta,
+        }
+    target = target.strip()
     try:
         depth = int(arguments.get("depth", 2) or 2)
     except (TypeError, ValueError):
@@ -1702,7 +1987,7 @@ def _tool_impact(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) ->
         relation="importers or callers",
     )
 
-    return {
+    payload: dict[str, Any] = {
         "target": target,
         "depth": depth,
         "direct_importers": importers_by_level[0] if importers_by_level else [],
@@ -1729,9 +2014,26 @@ def _tool_impact(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) ->
         ),
         "meta": meta,
     }
+    if result_count == 0 and root is not None:
+        from agentscaffold.mcp.empty_fallback import attach_empty_fallback
+
+        payload = attach_empty_fallback(
+            payload,
+            store=store,
+            root=root,
+            meta=meta,
+            kind="impact",
+            target=target,
+        )
+    return payload
 
 
-def _tool_search(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
+def _tool_search(
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    root: Path | None = None,
+) -> dict[str, Any]:
     """Handle scaffold_search tool call (hybrid search)."""
     from agentscaffold.graph.search import (
         CODE_TABLES,
@@ -1775,7 +2077,7 @@ def _tool_search(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) ->
         all_projects=all_projects,
     )
 
-    return {
+    payload: dict[str, Any] = {
         "results": [
             {
                 "node_id": r.node_id,
@@ -1792,6 +2094,18 @@ def _tool_search(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) ->
         "markdown": format_search_results(results),
         "meta": meta,
     }
+    if not results and root is not None and str(query_text).strip():
+        from agentscaffold.mcp.empty_fallback import attach_empty_fallback
+
+        payload = attach_empty_fallback(
+            payload,
+            store=store,
+            root=root,
+            meta=meta,
+            kind="search",
+            query=str(query_text).strip(),
+        )
+    return payload
 
 
 def _tool_validate(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
@@ -1880,7 +2194,9 @@ def _tool_review_context(
         result["retro_insights"] = [{"category": i.category, "text": i.text} for i in insights]
         result["retro_markdown"] = format_retro_markdown(insights)
 
-    return result
+    from agentscaffold.mcp.detail import apply_detail
+
+    return apply_detail(result, arguments.get("detail"))
 
 
 # ---------------------------------------------------------------------------
@@ -2048,7 +2364,9 @@ def _tool_prepare_review(
     reviewer_hints = _build_reviewer_hints(root, impacted_paths)
     open_backlog = get_backlog_items_for_plan(store, pn)
 
-    return {
+    from agentscaffold.mcp.detail import apply_detail
+
+    payload = {
         "plan_number": pn,
         "brief": brief,
         "brief_markdown": format_brief_markdown(brief),
@@ -2081,6 +2399,7 @@ def _tool_prepare_review(
         "reviewer_hints": reviewer_hints,
         "meta": meta,
     }
+    return apply_detail(payload, arguments.get("detail"))
 
 
 def _tool_prepare_implementation(
@@ -2138,8 +2457,12 @@ def _tool_prepare_implementation(
             }
         )
 
-    return {
+    from agentscaffold.mcp.detail import apply_detail
+    from agentscaffold.mcp.plan_card import build_plan_card
+
+    payload = {
         "plan_number": pn,
+        "plan_card": build_plan_card(store, int(pn), root=root),
         "brief": brief,
         "impacted_files": per_file,
         "dependencies": deps,
@@ -2148,13 +2471,22 @@ def _tool_prepare_implementation(
         ],
         "meta": meta,
     }
+    return apply_detail(payload, arguments.get("detail"))
 
 
 def _tool_compare_plans(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    config: Any | None = None,
 ) -> dict[str, Any]:
     """Composite: compare two plans for overlap and conflicts."""
-    from agentscaffold.review.filters import normalize_plan_status
+    from agentscaffold.review.filters import (
+        meaningful_plan_file_overlap,
+        normalize_plan_status,
+        rank_lead_overlap,
+        resolve_overlap_noise_paths,
+    )
     from agentscaffold.review.queries import get_plan_by_number, get_plan_impacted_files
 
     pa = arguments.get("plan_a")
@@ -2172,9 +2504,14 @@ def _tool_compare_plans(
     files_a = {f.get("f.path", "") for f in get_plan_impacted_files(store, pa)}
     files_b = {f.get("f.path", "") for f in get_plan_impacted_files(store, pb)}
 
-    shared = files_a & files_b
-    only_a = files_a - files_b
-    only_b = files_b - files_a
+    configured = getattr(getattr(config, "graph", None), "overlap_noise_paths", None)
+    noise_paths = resolve_overlap_noise_paths(configured)
+    meaningful, noise_shared = meaningful_plan_file_overlap(
+        files_a, files_b, noise_paths=noise_paths
+    )
+    lead = rank_lead_overlap(meaningful, limit=5)
+    only_a = sorted(f for f in (files_a - files_b) if f)
+    only_b = sorted(f for f in (files_b - files_a) if f)
 
     return {
         "plan_a": {
@@ -2189,24 +2526,38 @@ def _tool_compare_plans(
             "status": plan_b.get("p.status"),
             "status_normalized": normalize_plan_status(plan_b.get("p.status")),
         },
-        "shared_files": sorted(f for f in shared if f),
-        "only_in_a": sorted(f for f in only_a if f),
-        "only_in_b": sorted(f for f in only_b if f),
-        "overlap_count": len(shared),
-        "conflict_risk": "high" if len(shared) > 3 else "medium" if shared else "low",
-        # A file-overlap heuristic, not a proven conflict. Label the basis so the
-        # agent does not read "low" as "definitely safe" (Plan 239).
-        "conflict_risk_basis": "shared impacted-file count (>3 high, >=1 medium, 0 low)",
+        "shared_files": meaningful,
+        "lead_shared_files": lead,
+        "lead_overlap": lead[0] if lead else None,
+        "only_in_a": only_a,
+        "only_in_b": only_b,
+        "overlap_count": len(meaningful),
+        "overlap_noise_filtered": noise_shared,
+        "overlap_noise_filtered_count": len(noise_shared),
+        "conflict_risk": ("high" if len(meaningful) > 3 else "medium" if meaningful else "low"),
+        "conflict_risk_basis": (
+            "meaningful shared impacted-file count (>3 high, >=1 medium, 0 low); "
+            "ubiquitous governance docs excluded; lead_shared_files ranks code/config first"
+        ),
         "graph_warning": _empty_graph_warning(store.get_stats()),
         "meta": meta,
     }
 
 
 def _tool_staleness_check(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    config: Any | None = None,
 ) -> dict[str, Any]:
     """Composite: check if a plan is stale."""
-    from agentscaffold.review.filters import normalize_plan_status
+    from agentscaffold.review.filters import (
+        meaningful_plan_file_overlap,
+        normalize_plan_file_path,
+        normalize_plan_status,
+        rank_lead_overlap,
+        resolve_overlap_noise_paths,
+    )
     from agentscaffold.review.queries import (
         get_all_plans,
         get_plan_by_number,
@@ -2225,30 +2576,67 @@ def _tool_staleness_check(
     impacted = get_plan_impacted_files(store, pn)
     plan_files = {f.get("f.path", "") for f in impacted}
 
+    configured = getattr(getattr(config, "graph", None), "overlap_noise_paths", None)
+    noise_paths = resolve_overlap_noise_paths(configured)
+
     all_plans = get_all_plans(store)
-    overlapping_completed = []
+    # Frequency map: how many completed plans touch each path (Plan 247 demotion).
+    path_frequency: dict[str, int] = {}
+    completed_file_sets: list[tuple[Any, dict[str, Any], set[str]]] = []
     for p in all_plans:
         other_num = p.get("p.number")
         if other_num == pn or not _is_plan_complete(p.get("p.status")):
             continue
         if other_num is None:
             continue
-        other_files = {f.get("f.path", "") for f in get_plan_impacted_files(store, int(other_num))}
-        overlap = plan_files & other_files
-        if overlap:
+        other_files = {
+            f.get("f.path", "") for f in get_plan_impacted_files(store, int(other_num))
+        }
+        completed_file_sets.append((other_num, p, other_files))
+        for raw in other_files:
+            if not raw:
+                continue
+            key = normalize_plan_file_path(raw)
+            path_frequency[key] = path_frequency.get(key, 0) + 1
+
+    overlapping_completed = []
+    noise_filtered_total = 0
+    all_meaningful: list[str] = []
+    for other_num, p, other_files in completed_file_sets:
+        meaningful, noise_shared = meaningful_plan_file_overlap(
+            plan_files,
+            other_files,
+            noise_paths=noise_paths,
+            path_frequency=path_frequency,
+        )
+        noise_filtered_total += len(noise_shared)
+        if meaningful:
+            all_meaningful.extend(meaningful)
             overlapping_completed.append(
                 {
                     "plan": other_num,
                     "title": p.get("p.title"),
-                    "shared_files": sorted(f for f in overlap if f),
+                    "shared_files": meaningful,
+                    "lead_shared_files": rank_lead_overlap(meaningful, limit=3),
+                    "overlap_noise_filtered": noise_shared,
                 }
             )
 
     studies = get_studies_for_plan(store, pn)
+    lead = rank_lead_overlap(all_meaningful, limit=5)
 
     signals: list[str] = []
     if overlapping_completed:
-        signals.append(f"{len(overlapping_completed)} completed plans overlap with impacted files")
+        if lead:
+            signals.append(
+                f"{len(overlapping_completed)} completed plans overlap; "
+                f"lead shared path: {lead[0]}"
+            )
+        else:
+            signals.append(
+                f"{len(overlapping_completed)} completed plans overlap with meaningful "
+                "impacted files"
+            )
     if studies:
         for s in studies:
             outcome = s.get("s.outcome", "")
@@ -2257,18 +2645,24 @@ def _tool_staleness_check(
                     f"Study {s.get('s.studyId')} outcome '{outcome}' may contradict approach"
                 )
 
+    from agentscaffold.mcp.plan_card import build_plan_card
+
     return {
         "plan_number": pn,
         "plan_title": plan.get("p.title"),
         "plan_status": plan.get("p.status"),
         "plan_status_normalized": normalize_plan_status(plan.get("p.status")),
         "last_updated": plan.get("p.lastUpdated"),
+        "plan_card": build_plan_card(store, int(pn), plan_row=plan),
         "stale_signals": signals,
         "is_stale": bool(signals),
+        "lead_shared_files": lead,
+        "lead_overlap": lead[0] if lead else None,
         # An empty graph produces no overlap/study signals, which reads as a
         # confident "not stale". Surface that the absence may be unconfirmed.
         "graph_warning": _empty_graph_warning(store.get_stats()),
         "overlapping_completed_plans": overlapping_completed,
+        "overlap_noise_filtered_count": noise_filtered_total,
         "related_studies": [
             {"id": s.get("s.studyId"), "outcome": s.get("s.outcome")} for s in studies
         ],
@@ -2277,10 +2671,13 @@ def _tool_staleness_check(
 
 
 def _tool_prepare_rewrite(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    config: Any | None = None,
 ) -> dict[str, Any]:
     """Composite: superset of staleness check plus rewrite context."""
-    staleness = _tool_staleness_check(store, arguments, meta)
+    staleness = _tool_staleness_check(store, arguments, meta, config)
 
     from agentscaffold.review.queries import get_all_plans, get_plan_dependencies
 
@@ -2372,9 +2769,17 @@ def _parse_workflow_state(root: Path, config: Any) -> dict[str, Any]:
     return result
 
 
-def _tool_orient(store: Any, meta: dict[str, Any], root: Path, config: Any) -> dict[str, Any]:
+def _tool_orient(
+    store: Any,
+    meta: dict[str, Any],
+    root: Path,
+    config: Any,
+    arguments: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Composite: session orientation with stats + workflow state."""
     from agentscaffold.mcp.coverage import repo_coverage
+    from agentscaffold.mcp.detail import apply_detail
+    from agentscaffold.mcp.plan_card import build_plan_card
     from agentscaffold.review.queries import (
         get_all_adrs,
         get_all_plans,
@@ -2383,6 +2788,7 @@ def _tool_orient(store: Any, meta: dict[str, Any], root: Path, config: Any) -> d
         get_open_backlog_items,
     )
 
+    arguments = arguments or {}
     stats = store.get_stats()
     coverage = repo_coverage(store)
     plans = get_all_plans(store)
@@ -2392,6 +2798,21 @@ def _tool_orient(store: Any, meta: dict[str, Any], root: Path, config: Any) -> d
     workflow = _parse_workflow_state(root, config)
 
     recent_plans = plans[:10]
+    recent_cards = []
+    for p in recent_plans:
+        cleaned = _with_normalized_status([p])[0]
+        pn = p.get("p.number")
+        if pn is not None:
+            card = build_plan_card(store, int(pn), root=root, plan_row=p)
+            if card:
+                cleaned["plan_card"] = {
+                    "unchecked_steps": card.get("unchecked_steps"),
+                    "checked_steps": card.get("checked_steps"),
+                    "impacted_file_count": card.get("impacted_file_count"),
+                    "open_finding_count": card.get("open_finding_count"),
+                    "last_updated": card.get("last_updated"),
+                }
+        recent_cards.append(cleaned)
 
     open_backlog = get_open_backlog_items(store, limit=3)
 
@@ -2410,19 +2831,51 @@ def _tool_orient(store: Any, meta: dict[str, Any], root: Path, config: Any) -> d
 
     active_adrs = [a for a in adrs if _adr_is_active(a.get("a.status"))]
 
-    return {
+    # Plan 247: fold next_action + compact plan_progress into orient so agents
+    # do not need a second hop after session start.
+    from agentscaffold.mcp.next_action import next_actions
+
+    actions_payload = next_actions(
+        store,
+        root=root,
+        config=config,
+        workflow=workflow,
+        meta=meta,
+        plan_number=arguments.get("plan_number"),
+    )
+    plan_progress: list[dict[str, Any]] = []
+    for card_row in recent_cards:
+        pc = card_row.get("plan_card")
+        if not pc:
+            continue
+        plan_progress.append(
+            {
+                "plan_number": card_row.get("number") or card_row.get("p.number"),
+                "title": card_row.get("title") or card_row.get("p.title"),
+                "status": card_row.get("status") or card_row.get("p.status"),
+                "unchecked_steps": pc.get("unchecked_steps"),
+                "checked_steps": pc.get("checked_steps"),
+                "open_finding_count": pc.get("open_finding_count"),
+            }
+        )
+
+    result = {
         "stats": stats,
         "coverage": coverage,
         "graph_warning": _empty_graph_warning(stats),
-        "recent_plans": _with_normalized_status(recent_plans),
+        "recent_plans": recent_cards,
         "hot_files": _clean_out_rows(hot_files),
         "recent_studies": _clean_out_rows(studies[:5]),
         "active_adrs": _clean_out_rows(active_adrs),
         "workflow_state": workflow,
         "open_backlog_count": open_backlog_count,
         "open_backlog_top3": _clean_out_rows(open_backlog),
+        "recommended_actions": actions_payload.get("actions", []),
+        "plan_progress": plan_progress[:5],
+        "next_action_focus": actions_payload.get("focus_plan"),
         "meta": meta,
     }
+    return apply_detail(result, arguments.get("detail"))
 
 
 def _tool_find_studies(
@@ -2458,9 +2911,16 @@ def _tool_find_studies(
 
 
 def _tool_prior_experiments(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    config: Any | None = None,
 ) -> dict[str, Any]:
     """Composite: all experiments related to a plan."""
+    from agentscaffold.review.filters import (
+        is_overlap_noise_path,
+        resolve_overlap_noise_paths,
+    )
     from agentscaffold.review.queries import (
         get_plan_impacted_files,
         get_studies_for_file,
@@ -2473,11 +2933,18 @@ def _tool_prior_experiments(
 
     direct = get_studies_for_plan(store, pn)
 
+    configured = getattr(getattr(config, "graph", None), "overlap_noise_paths", None)
+    noise_paths = resolve_overlap_noise_paths(configured)
+
     impacted = get_plan_impacted_files(store, pn)
     file_studies: list[dict[str, Any]] = []
     seen_ids: set[str] = {s.get("s.studyId", "") for s in direct}
+    noise_skipped = 0
     for f in impacted:
         fpath = f.get("f.path", "")
+        if is_overlap_noise_path(fpath, noise_paths):
+            noise_skipped += 1
+            continue
         for s in get_studies_for_file(store, fpath):
             sid = s.get("s.studyId", "")
             if sid not in seen_ids:
@@ -2489,6 +2956,7 @@ def _tool_prior_experiments(
         "directly_referenced": _clean_out_rows(direct),
         "file_overlap_studies": _clean_out_rows(file_studies),
         "total_count": len(direct) + len(file_studies),
+        "overlap_noise_filtered_count": noise_skipped,
         "meta": meta,
     }
 
@@ -2709,6 +3177,81 @@ def _tool_resolve_backlog_item(
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Agent tool pack handlers (Plan 246)
+# ---------------------------------------------------------------------------
+
+
+def _tool_diff_plan_vs_code(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any], root: Path
+) -> dict[str, Any]:
+    from agentscaffold.mcp.diff_plan import diff_plan_vs_code
+
+    pn = arguments.get("plan_number")
+    if pn is None:
+        return {"error": "plan_number is required.", "meta": meta}
+    result = diff_plan_vs_code(store, int(pn), root=root)
+    result["meta"] = meta
+    return result
+
+
+def _tool_grep_graph(
+    arguments: dict[str, Any], meta: dict[str, Any], root: Path
+) -> dict[str, Any]:
+    from agentscaffold.mcp.workspace_grep import workspace_grep
+
+    result = workspace_grep(
+        root,
+        str(arguments.get("pattern", "")),
+        path=arguments.get("path"),
+        glob=arguments.get("glob"),
+        max_hits=int(arguments.get("max_hits") or 50),
+    )
+    result["meta"] = meta
+    return result
+
+
+def _tool_why_empty(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
+    from agentscaffold.mcp.why_empty import explain_why_empty
+
+    result = explain_why_empty(
+        store,
+        kind=str(arguments.get("kind") or "structural"),
+        target=str(arguments.get("target") or ""),
+        query=str(arguments.get("query") or ""),
+        meta=meta,
+        arguments_hint=arguments,
+    )
+    result["meta"] = meta
+    return result
+
+
+def _tool_next_action(
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    root: Path,
+    config: Any,
+) -> dict[str, Any]:
+    from agentscaffold.mcp.next_action import next_actions
+
+    workflow = _parse_workflow_state(root, config)
+    pn = arguments.get("plan_number")
+    result = next_actions(
+        store,
+        root=root,
+        config=config,
+        workflow=workflow,
+        meta=meta,
+        plan_number=int(pn) if pn is not None else None,
+    )
+    result["meta"] = meta
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Governed lifecycle composite handlers (Plan 152)
 # ---------------------------------------------------------------------------
 
@@ -2840,7 +3383,8 @@ def _tool_begin_plan(
     )
 
     findings_written = {"ids": [], "count": 0}
-    if findings_to_write:
+    dry_run = bool(arguments.get("dry_run"))
+    if findings_to_write and not dry_run:
         findings_written = record_findings_batch(
             store,
             plan_number=pn,
@@ -2850,18 +3394,29 @@ def _tool_begin_plan(
         )
 
     # --- Stamp Plan.reviewedAt ---
-    reviewed_at = stamp_plan_reviewed(store, pn)
+    reviewed_at = None if dry_run else stamp_plan_reviewed(store, pn)
 
     # --- Build proceed_prompt ---
     n_findings = findings_written["count"]
-    proceed_prompt = (
-        f"Pre-review complete for Plan {pn}. "
-        f"{n_findings} findings recorded to graph. "
-        "Ready to proceed with implementation, or would you like to discuss anything first?"
-    )
+    if dry_run:
+        proceed_prompt = (
+            f"Pre-review dry_run for Plan {pn}. "
+            f"{len(findings_to_write)} findings would be recorded (not written). "
+            "Re-run without dry_run to persist and stamp reviewedAt."
+        )
+    else:
+        proceed_prompt = (
+            f"Pre-review complete for Plan {pn}. "
+            f"{n_findings} findings recorded to graph. "
+            "Ready to proceed with implementation, or would you like to discuss anything first?"
+        )
+
+    from agentscaffold.mcp.plan_card import build_plan_card
 
     return {
         "plan_number": pn,
+        "dry_run": dry_run,
+        "plan_card": build_plan_card(store, int(pn), root=root),
         "orient": orient_summary,
         "graph_warning": graph_warning,
         "pre_review": {
@@ -2879,6 +3434,7 @@ def _tool_begin_plan(
             "ids": findings_written.get("ids", []),
             "count": n_findings,
             "candidates": len(candidate_findings),
+            "would_write_count": len(findings_to_write) if dry_run else n_findings,
             "persist_policy": "high_severity_only",
         },
         "reviewed_at": reviewed_at,
@@ -2970,7 +3526,8 @@ def _tool_complete_plan(
         )
 
     findings_written = {"ids": [], "count": 0}
-    if retro_findings:
+    dry_run = bool(arguments.get("dry_run"))
+    if retro_findings and not dry_run:
         findings_written = record_findings_batch(
             store,
             plan_number=pn,
@@ -2982,7 +3539,7 @@ def _tool_complete_plan(
     # --- Write backlog items if provided ---
     backlog_items_arg = arguments.get("backlog_items")
     backlog_written = {"ids": [], "count": 0}
-    if backlog_items_arg:
+    if backlog_items_arg and not dry_run:
         backlog_written = record_backlog_items_batch(
             store,
             plan_number=pn,
@@ -3014,6 +3571,7 @@ def _tool_complete_plan(
 
     return {
         "plan_number": pn,
+        "dry_run": dry_run,
         "graph_warning": graph_warning,
         "retro": {
             "verification": retro_result.get("verification"),
@@ -3025,6 +3583,7 @@ def _tool_complete_plan(
         "findings_written": {
             "ids": findings_written.get("ids", []),
             "count": findings_written["count"],
+            "would_write_count": len(retro_findings) if dry_run else findings_written["count"],
         },
         "backlog_items_written": {
             "ids": backlog_written.get("ids", []),

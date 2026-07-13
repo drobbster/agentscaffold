@@ -74,31 +74,32 @@ After implementation, a post-implementation review verifies what was built again
 
 These numbers are downstream of governance and memory — not the lead story, but real.
 
-**From the eval harness (108 scenarios):**
+**From the eval harness (120 scenarios, revalidated 2026-07-12):**
 
 | Task | Without AgentScaffold | With AgentScaffold | Savings |
 |------|----------------------|-------------------|---------|
-| Understand a module and its dependents | 12 reads + 2 greps | 1 tool call | ~89% fewer tokens, ~93% fewer calls |
-| Codebase orientation | 38 file reads | 2 tool calls | ~74% fewer tokens, ~95% fewer calls |
-| Impact analysis (blast radius) | 12 file reads | 1 tool call | ~50% fewer tokens, ~92% fewer calls |
-| Find all code matching a concept | 8 file reads | 1 tool call | ~51% fewer tokens, ~88% fewer calls |
+| Understand a module and its dependents | 12 reads + 2 greps | 1 tool call | ~85% fewer tokens, ~93% fewer calls |
+| Codebase orientation | 38 file reads | 2 tool calls | ~65% fewer tokens, ~95% fewer calls |
+| Impact analysis (blast radius) | 12 file reads | 1 tool call | ~45% fewer tokens, ~92% fewer calls |
+| Find all code matching a concept | 8 file reads | 1 tool call | ~32% fewer tokens, ~88% fewer calls |
 | Full plan review with evidence | 10 file reads | 1 tool call | ~90% fewer calls (denser output; see note) |
+| Empty search diagnosis (call compression) | search + why_empty + grep | 1 fused search | ~27% fewer tokens, ~67% fewer calls |
 
-**Capability aggregate (raw): ~87% average call reduction, ~38% average token reduction.**
+**Capability aggregate (raw): ~84% average call reduction, ~46% average token reduction.**
 
-Full plan review is the honest outlier: it replaces ten file reads with one call but returns *more* tokens, not fewer (a token *increase* in our harness), because the single response carries the brief, adversarial challenges, gaps, verification, and retro together — plus any open findings and config consumers. The win there is calls and completeness, not token count; it is gated on call reduction and kept in the average rather than dropped. Note also that token reduction fell as the tool outputs grew richer over recent releases — the trade is denser, more useful single responses for a smaller token margin.
+Full plan review remains the densest composite: one call replaces ten file reads and now lands near token-neutral in the harness (small reduction rather than inflation) because summary trimming prioritizes high-severity signals. The win there is still calls and completeness. Empty-search call compression (Plan 247) collapses the old three-hop diagnosis chain into one response with inline `why_empty` + `grep_fallback`.
 
 We report three views so the headline is not the optimistic one:
 
 | View | Token Reduction | Call Reduction |
 |------|-----------------|----------------|
-| Raw capability (tool routes correctly) | ~38% | ~87% |
-| Behavioral (replay-adjusted) | ~30% | ~70% |
-| Quality-adjusted behavioral | ~27% | ~63% |
+| Raw capability (tool routes correctly) | ~46% | ~84% |
+| Behavioral (replay-adjusted) | ~37% | ~68% |
+| Quality-adjusted behavioral | ~33% | ~61% |
 
-Behavioral and quality-adjusted values come from replay traces (observed tool-call sequences + quality parity checks), not phrase-level intent matching. They are lower because agents do not always route to the tool — the graph does not help if the agent reads files directly instead. Replay-observed tool-first adherence in the latest run was ~80% (20% bypass), and the Cursor/Claude rule taxonomy added in this release is aimed at closing that gap.
+Behavioral and quality-adjusted values come from replay traces (observed tool-call sequences + quality parity checks), not phrase-level intent matching. They are lower because agents do not always route to the tool — the graph does not help if the agent reads files directly instead. Intent-map adoption for exact/paraphrase/negative suites is 100% in the latest harness run; replay-observed tool-first adherence remains the stricter behavioral proxy.
 
-> **Note**: Numbers above are from the most recent evaluation run (`eval/reports/latest.md`). Run `python -m pytest eval/ -q` from the package root to reproduce against the current codebase.
+> **Note**: Numbers above are from the most recent evaluation run (`eval/reports/latest.md`). Run `cd eval && pytest -q` from the package root to reproduce against the current codebase.
 
 ## Quick Start
 

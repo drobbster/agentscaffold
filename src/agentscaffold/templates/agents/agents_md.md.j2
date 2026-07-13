@@ -30,9 +30,16 @@
 
 Prefer AgentScaffold MCP tools first when a request matches a known intent
 (orientation/status, plan review, decision lineage, symbol context/impact,
-recording findings/backlog). If a tool errors, is stale, or lacks the specific
-detail, fall back to direct reads/search and state one short reason. The full
-intent-to-tool map lives in `.cursor/rules/agentscaffold.mdc`.
+mid-implementation progress, recording findings/backlog). If a tool errors, is
+stale, or lacks the specific detail, fall back to direct reads/search and state
+one short reason.
+
+Prefer call-compressed responses: use `recommended_actions` / `plan_progress`
+from `scaffold_orient`, and inline `why_empty` / `grep_fallback` on empty
+search/impact/context, before making redundant follow-up tool calls. The full
+intent-to-tool map and call-compression rules are generated into platform agent
+files (`.cursor/rules/agentscaffold.mdc`, `CLAUDE.md`, `.windsurfrules`, etc.)
+via `scaffold agents generate-all`.
 
 ## Multi-Project Workspace Discipline
 
