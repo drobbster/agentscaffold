@@ -80,18 +80,31 @@ def _is_lock_error(exc: Exception) -> bool:
     return False
 
 
-def _connect(db_str: str, *, retries: int = 4, backoff: float = 0.2):
+def _connect(
+    db_str: str,
+    *,
+    retries: int = 4,
+    backoff: float = 0.2,
+    read_only: bool = False,
+):
     """Open a DuckDB connection, retrying briefly on lock contention.
 
     Non-lock errors propagate immediately. After the bounded retry budget is
     exhausted a :class:`GraphLockError` is raised with actionable guidance.
     In-memory databases never lock, so they are returned on the first try.
+
+    ``read_only=True`` uses DuckDB's READ_ONLY access mode. Prefer the default
+    (writable) configuration for same-process concurrent readers during an
+    in-process index: DuckDB rejects a second connection that differs in
+    access mode from an existing writer (Plan 244 spike).
     """
     if duckdb is None:
         raise ImportError(_EXTRAS_MSG)
     last_exc: Exception | None = None
     for attempt in range(retries):
         try:
+            if read_only:
+                return duckdb.connect(db_str, read_only=True)
             return duckdb.connect(db_str)
         except Exception as exc:
             if not _is_lock_error(exc):
@@ -163,21 +176,40 @@ class DuckPGQBackend:
     to obtain an instance rather than instantiating this class directly.
     """
 
-    def __init__(self, db_path: Path | str) -> None:
+    def __init__(self, db_path: Path | str, *, read_only: bool = False) -> None:
         if duckdb is None:
             raise ImportError(_EXTRAS_MSG)
 
         self._db_path = Path(db_path) if str(db_path) != ":memory:" else Path(":memory:")
-        if str(db_path) != ":memory:":
+        if str(db_path) != ":memory:" and not read_only:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self._conn = _connect(str(db_path))
+        # AgentScaffold read-preferring open (Plan 244). Does not force DuckDB
+        # READ_ONLY mode -- same-process concurrent readers must match the
+        # writer's access mode. Guards mutation helpers instead.
+        self._read_only = read_only
+        # Short retries for read-preferring opens so MCP tools soft-defer quickly
+        # when another *process* holds the DuckDB file lock.
+        retries = 2 if read_only else 4
+        backoff = 0.05 if read_only else 0.2
+        self._conn = _connect(
+            str(db_path),
+            retries=retries,
+            backoff=backoff,
+            read_only=False,
+        )
         # Active write project (Plan 225). None == single-project mode: writes
         # are unprefixed and unstamped, exactly as before. When set (multi-project
         # indexing of one project), create_node/create_edge/store_embedding
         # project-qualify IDs and stamp the project column at this choke point.
         self._write_project: str | None = None
         self._load_extension()
+
+    def _ensure_writable(self) -> None:
+        if self._read_only:
+            raise RuntimeError(
+                "Knowledge graph was opened read-preferring; mutations are not allowed."
+            )
 
     def _load_extension(self) -> None:
         """Install and load the duckpgq community extension."""
@@ -381,6 +413,7 @@ class DuckPGQBackend:
         ID is project-qualified and the ``project`` column is stamped at this
         choke point (with a check-before-insert collision guard).
         """
+        self._ensure_writable()
         if not props:
             return
         wp = self._write_project
@@ -424,6 +457,7 @@ class DuckPGQBackend:
         ``(src, dst)`` is semantically correct; edge properties (confidence,
         importedNames, changeType) are retained from the first insert.
         """
+        self._ensure_writable()
         # Multi-project: qualify both endpoints under the active write project so
         # the edge references the same prefixed node IDs create_node produced.
         # Cross-project edges are a non-goal, so both endpoints share the prefix.
@@ -463,6 +497,7 @@ class DuckPGQBackend:
         edges referencing them) are deleted, leaving sibling projects intact;
         when None, all rows are deleted (single-project behavior).
         """
+        self._ensure_writable()
         node_filter = "" if project is None else " WHERE project = ?"
         node_params: list[Any] = [] if project is None else [project]
         for edge_table in EDGE_TABLE_NAMES:
@@ -479,6 +514,7 @@ class DuckPGQBackend:
 
     def clear_all(self) -> None:
         """Close the database, delete the file, and reinitialize from scratch."""
+        self._ensure_writable()
         self._conn.close()
         db_str = str(self._db_path)
         if db_str != ":memory:":
@@ -509,6 +545,7 @@ class DuckPGQBackend:
         the ``project`` column and edges by their project-prefixed endpoints
         (``{project}::%``). When None, everything is cleared (single-project).
         """
+        self._ensure_writable()
         # Tables that represent knowledge gained through work, not derived from code
         preserve_nodes = {"ReviewFinding", "BacklogItem", "Session", "GraphMeta"}
         preserve_edges = {
@@ -579,6 +616,7 @@ class DuckPGQBackend:
         leaving siblings intact. Uses plain DELETE (DML), so the registered
         property graph is unaffected.
         """
+        self._ensure_writable()
         node_filter = "" if project is None else " WHERE project = ?"
         node_params: list[Any] = [] if project is None else [project]
         like = None if project is None else f"{project}{PROJECT_DELIMITER}%"
@@ -789,6 +827,7 @@ class DuckPGQBackend:
         Returns a summary dict: ``imported`` (per-table counts), ``skipped``
         (per-table reasons), and ``compatible`` (bool).
         """
+        self._ensure_writable()
         imported: dict[str, int] = {}
         skipped: dict[str, str] = {}
         compatible = True
@@ -961,6 +1000,7 @@ class DuckPGQBackend:
         node tables and the ``project`` column is stamped, so embedding search
         can be scoped/federated and scoped-cleared like the rest of the graph.
         """
+        self._ensure_writable()
         model = model or "all-MiniLM-L6-v2"
         if self._write_project is not None:
             self._conn.execute(

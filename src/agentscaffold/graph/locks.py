@@ -59,6 +59,23 @@ def wait_for_graph_write_lock_clear(
         time.sleep(max(0.0, poll))
 
 
+def graph_write_lock_held(
+    db_path: Path | str,
+    *,
+    stale_after: float = DEFAULT_GRAPH_WRITE_LOCK_STALE_SECONDS,
+) -> bool:
+    """Return True if an AgentScaffold graph write lock is currently held.
+
+    Used by read-preferring open paths (Plan 244) to label responses without
+    blocking on the exclusive writer.
+    """
+    lock_path = graph_write_lock_path(db_path)
+    if lock_path is None:
+        return False
+    _reap_stale_lock(lock_path, stale_after=stale_after)
+    return lock_path.exists()
+
+
 @contextmanager
 def graph_write_lock(
     db_path: Path | str,

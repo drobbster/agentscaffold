@@ -78,6 +78,12 @@ class TestIntentAdoption:
             # E.6: new exact cases for finding tools
             ("record finding for plan X", "scaffold_record_finding"),
             ("mark finding F001 as resolved", "scaffold_resolve_finding"),
+            # Plan 246/247 agent tool pack
+            ("diff plan X vs code", "scaffold_diff_plan_vs_code"),
+            ("what's left on plan X", "scaffold_diff_plan_vs_code"),
+            ("grep the workspace for X", "scaffold_grep_graph"),
+            ("why is search empty", "scaffold_why_empty"),
+            ("what should I do next", "scaffold_next_action"),
         ]
         _measure_suite("exact", cases, min_adherence_pct=95.0)
 
@@ -113,6 +119,13 @@ class TestIntentAdoption:
             ("log this architectural finding against the plan", "scaffold_record_finding"),
             ("the issue we found earlier has been fixed", "scaffold_resolve_finding"),
             ("close finding F001, it was addressed in plan 043", "scaffold_resolve_finding"),
+            # Plan 246/247: mid-impl / empty-result / routing paraphrases
+            ("mid-implementation progress on plan X", "scaffold_diff_plan_vs_code"),
+            ("plan vs implementation for plan X", "scaffold_diff_plan_vs_code"),
+            ("ripgrep for X in the project", "scaffold_grep_graph"),
+            ("explain empty scaffold result", "scaffold_why_empty"),
+            ("why empty impact", "scaffold_why_empty"),
+            ("route me to the next step", "scaffold_next_action"),
         ]
         _measure_suite("paraphrase", cases, min_adherence_pct=80.0)
 

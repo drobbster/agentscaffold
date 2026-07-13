@@ -499,3 +499,85 @@ class TestReviewWithFindingHistory:
         collect_result(result)
         assert has_findings, "No prior findings were surfaced by scaffold_prepare_review"
         assert call_reduction, f"Expected call reduction > 0%, got {eff.call_reduction_pct}%"
+
+
+class TestCallCompressionEmptySearch:
+    """Task: diagnose an empty search without follow-up hops (Plan 247).
+
+    Baseline/pre-247 agent: scaffold_search (empty) + scaffold_why_empty +
+    scaffold_grep_graph = 3 calls.
+    Graph (247): 1 empty scaffold_search that inlines why_empty + grep_fallback.
+    """
+
+    def test_empty_search_call_compression(self, indexed_sim):
+        root, store, config = indexed_sim
+        from agentscaffold.mcp.server import _dispatch_tool
+
+        marker = root / "libs" / "data" / "call_compress_marker.py"
+        marker.write_text(
+            "def call_compress_marker_fn():\n    return True\n",
+            encoding="utf-8",
+        )
+
+        # Baseline: three separate tool hops after an empty search.
+        baseline_calls = 3
+        # Approximate tokens: empty search payload + why_empty + grep hits.
+        baseline_tokens = 400 + 300 + _read_file_tokens(root, "libs/data/call_compress_marker.py")
+
+        wrapper = _NoCloseStore(store)
+        with (
+            patch("agentscaffold.config.load_config", return_value=config),
+            patch("agentscaffold.graph.graph_available", return_value=True),
+            patch("agentscaffold.graph.open_graph", return_value=wrapper),
+            patch.object(Path, "cwd", return_value=root),
+        ):
+            graph_response = _dispatch_tool(
+                "scaffold_search",
+                {
+                    "query": "call_compress_marker_fn",
+                    "mode": "keyword",
+                    "top_k": 5,
+                },
+            )
+
+        graph_text = json.dumps(graph_response, default=str)
+        graph_tokens = estimate_tokens(graph_text)
+        graph_calls = 1
+
+        fused = (
+            graph_response.get("count") == 0
+            and "why_empty" in graph_response
+            and (graph_response.get("grep_fallback") or {}).get("count", 0) >= 1
+        )
+
+        eff = EfficiencyResult(
+            task="call_compression_empty_search",
+            description="Empty search diagnosis without why_empty/grep follow-up hops",
+            baseline_tool_calls=baseline_calls,
+            baseline_tokens=baseline_tokens,
+            graph_tool_calls=graph_calls,
+            graph_tokens=graph_tokens,
+            observations=[
+                f"Fused fields present: {fused}",
+                f"why_empty={('why_empty' in graph_response)}",
+                f"grep_fallback_count="
+                f"{(graph_response.get('grep_fallback') or {}).get('count')}",
+            ],
+        )
+        collect_efficiency(eff)
+
+        result = EvalResult(
+            scenario="efficiency_call_compression_empty_search",
+            passed=fused and eff.call_reduction_pct > 0,
+            score=round(_efficiency_score(eff), 2),
+            expected="1 fused search call replaces 3-hop empty diagnosis chain",
+            actual=(
+                f"fused={fused}, call_reduction={eff.call_reduction_pct}%, "
+                f"token_reduction={eff.token_reduction_pct}%, "
+                f"compression={eff.compression_ratio}x"
+            ),
+            category="efficiency",
+        )
+        collect_result(result)
+        assert fused, f"Expected fused empty-search fields, got keys={list(graph_response.keys())}"
+        assert eff.call_reduction_pct > 0

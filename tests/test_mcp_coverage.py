@@ -131,6 +131,31 @@ def test_rule_policy_includes_graph_trust_discipline() -> None:
     assert "Graph Trust Discipline" in doc
     assert "unconfirmed" in doc
     assert "grep" in doc
+    assert "why_empty" in doc
+    assert "grep_fallback" in doc
+
+
+def test_rule_policy_includes_call_compression_discipline() -> None:
+    doc = generate_rule_policy_document(config=ScaffoldConfig(), title="Test Rules")
+    assert "Call Compression Discipline" in doc
+    assert "scaffold_diff_plan_vs_code" in doc
+    assert "recommended_actions" in doc
+    assert "Fallback only" in doc or "fallback only" in doc.lower()
+    # Intent notes present for fused vs standalone tools
+    assert "Prefer inline `why_empty`" in doc or "inline `why_empty`" in doc
+    assert "scaffold_why_empty" in doc
+    assert "scaffold_next_action" in doc
+
+
+def test_rule_policy_identical_across_quote_modes_for_compression() -> None:
+    """Cursor quotes intents; Windsurf/prompt may not -- policy body must match."""
+    cfg = ScaffoldConfig()
+    quoted = generate_rule_policy_document(config=cfg, title="A", quote_intents=True)
+    plain = generate_rule_policy_document(config=cfg, title="A", quote_intents=False)
+    assert "Call Compression Discipline" in quoted
+    assert "Call Compression Discipline" in plain
+    assert "High-Value MCP-First Routes" in quoted
+    assert "High-Value MCP-First Routes" in plain
 
 
 def test_rule_policy_includes_multiproject_scope_discipline() -> None:
