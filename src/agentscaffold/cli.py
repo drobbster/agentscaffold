@@ -1826,10 +1826,35 @@ def session_context() -> None:
 
 
 @app.command(name="mcp")
-def mcp_cmd() -> None:
-    """Start MCP server (stdio mode for Cursor/Claude)."""
-    from agentscaffold.mcp.server import run_mcp_server
+def mcp_cmd(
+    workspace: str = typer.Option(
+        "",
+        "--workspace",
+        help=(
+            "Workspace root to anchor MCP resolution (overrides launch cwd). "
+            "Use when the IDE opens a parent folder instead of the project."
+        ),
+    ),
+    project: str = typer.Option(
+        "",
+        "--project",
+        help=(
+            "Registered project name to resolve within the workspace. "
+            "No-argument tools then read this project's governance."
+        ),
+    ),
+) -> None:
+    """Start MCP server (stdio mode for Cursor/Claude).
 
+    ``--workspace`` / ``--project`` (or the ``AGENTSCAFFOLD_WORKSPACE_ROOT`` /
+    ``AGENTSCAFFOLD_PROJECT`` env vars) pin the resolution anchor so no-argument
+    tools resolve the intended project even when the MCP process cwd is a parent
+    directory (Plan 234).
+    """
+    from agentscaffold.mcp.server import run_mcp_server
+    from agentscaffold.paths import configure_mcp_start
+
+    configure_mcp_start(workspace=workspace or None, project=project or None)
     run_mcp_server()
 
 
@@ -1870,6 +1895,14 @@ def workspace_onboard(
         help=(
             "Re-key the existing shared graph cache in place into the named project "
             "(the single->multi flip). Destructive; prefer re-indexing if unsure."
+        ),
+    ),
+    shared_layout: bool = typer.Option(
+        False,
+        "--shared-layout",
+        help=(
+            "Write asset_layout: shared_workspace into workspace.yaml so reusable "
+            "process assets are shared at the workspace root (Plan 234)."
         ),
     ),
 ) -> None:
@@ -1928,19 +1961,86 @@ def workspace_onboard(
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from exc
 
-    manifest_path.write_text(
-        yaml.safe_dump(
-            {"projects": [{"name": p.name, "path": p.path} for p in workspace.projects]},
-            sort_keys=False,
-        )
-    )
+    manifest_out: dict = {
+        "projects": [{"name": p.name, "path": p.path} for p in workspace.projects]
+    }
+    existing_layout = workspace.asset_layout
+    if shared_layout:
+        from agentscaffold.config import AssetLayoutConfig
+
+        manifest_out["asset_layout"] = AssetLayoutConfig(layout="shared_workspace").model_dump()
+    elif existing_layout is not None:
+        manifest_out["asset_layout"] = existing_layout.model_dump()
+    manifest_path.write_text(yaml.safe_dump(manifest_out, sort_keys=False))
     console.print(f"[green]Registered project {proj_name!r} at {stored_path}.[/green]")
+    if shared_layout:
+        console.print("[cyan]Wrote asset_layout: shared_workspace.[/cyan]")
     console.print(f"Workspace manifest: {manifest_path}")
     if workspace.is_multi_project:
         console.print("[cyan]Workspace is now multi-project.[/cyan]")
 
     if migrate_existing:
         _onboard_migrate(ws_root, migrate_existing)
+
+
+@workspace_app.command("migrate-layout")
+def workspace_migrate_layout(
+    apply: bool = typer.Option(
+        False, "--apply", help="Apply the migration (default is a non-mutating dry-run)."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Explicitly request the dry-run report (the default)."
+    ),
+    prefer_project: str = typer.Option(
+        "", "--prefer-project", help="For diverged files, promote this project's copy."
+    ),
+    keep_diverged: bool = typer.Option(
+        False, "--keep-diverged", help="Leave diverged files as project-local (do not promote)."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Allow --apply on a dirty git worktree."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit the machine-readable report as JSON."
+    ),
+) -> None:
+    """Migrate a multi-project workspace to the shared asset layout (Plan 234).
+
+    Promotes duplicated reusable process assets (prompts, standards, templates,
+    protocol, commands, shared security templates) to the workspace root and
+    writes ``asset_layout: shared_workspace``. Project system-of-record artifacts
+    (plans, ADRs, contracts, state, backlog, architecture) are never moved.
+    Default posture is a non-mutating dry-run; pass ``--apply`` to mutate.
+    """
+    import json as _json
+
+    from agentscaffold.workspace_migrate import run_migrate_layout
+
+    if apply and dry_run:
+        console.print("[red]Pass only one of --apply / --dry-run.[/red]")
+        raise SystemExit(1)
+
+    report = run_migrate_layout(
+        apply=apply,
+        prefer_project=prefer_project or None,
+        keep_diverged=keep_diverged,
+        force=force,
+    )
+
+    if json_output:
+        console.print_json(_json.dumps(report.to_dict()))
+    else:
+        for msg in report.messages:
+            console.print(msg)
+        if report.diverged and not apply:
+            console.print("\n[yellow]Diverged process assets:[/yellow]")
+            for c in report.diverged:
+                console.print(f"  {c.rel_path} (differs across: {', '.join(c.projects)})")
+        if report.promoted:
+            console.print(f"[green]Promoted:[/green] {len(report.promoted)} file(s).")
+
+    if report.exit_code != 0:
+        raise SystemExit(report.exit_code)
 
 
 def _onboard_migrate(ws_root: Path, project: str) -> None:

@@ -297,6 +297,49 @@ If you installed `agentscaffold` in a virtualenv, use the full path:
 
 After adding the config, restart Cursor. The MCP tools (`scaffold_context`, `scaffold_search`, `scaffold_impact`, etc.) appear in the agent's tool palette.
 
+### Multi-project workspaces: pin the MCP anchor
+
+The MCP server resolves the active project from its process working directory.
+When Cursor opens a **parent** folder (a monorepo root or your home directory)
+instead of the AgentScaffold project, no-argument tools such as `scaffold_orient`
+would otherwise read governance from the wrong path. Pin the resolution anchor
+with `--workspace` / `--project`:
+
+```json
+{
+  "mcpServers": {
+    "agentscaffold": {
+      "command": "scaffold",
+      "args": ["mcp", "--workspace", "/abs/path/to/workspace-root", "--project", "api"]
+    }
+  }
+}
+```
+
+For a **user-level** MCP install (where you cannot edit a per-project
+`mcp.json`), use the equivalent environment variables on the MCP process:
+
+```bash
+export AGENTSCAFFOLD_WORKSPACE_ROOT=/abs/path/to/workspace-root
+export AGENTSCAFFOLD_PROJECT=api
+```
+
+Precedence (highest first): an explicit `--project` (resolved within the
+workspace), the `AGENTSCAFFOLD_PROJECT` / `AGENTSCAFFOLD_WORKSPACE_ROOT` env vars,
+then a walk-up from the working directory (the previous behavior; sufficient when
+the IDE is already focused on the project). When `scaffold init` / `scaffold
+agents cursor` runs inside a registered multi-project workspace, the generated
+`.cursor/mcp.json` includes these args automatically; if you have a stale
+hand-written `mcp.json`, the skip-if-exists message prints the suggested args.
+
+### Personal overlays (do not untrack team files)
+
+To keep private agent preferences without breaking multi-user system-of-record,
+use `*.local` overlays -- `AGENTS.local.md` and `.cursor/rules/local.*.mdc` -- which
+the managed `.gitignore` block ignores. Never gitignore the team `AGENTS.md` or
+generated platform routing rules to "personalize"; that loses the shared source
+of record and fails on fresh clones and ephemeral devboxes.
+
 ---
 
 ## Claude Code (Claude CLI)

@@ -1,3 +1,3 @@
 """AgentScaffold -- Structured AI-assisted development framework."""
 
-__version__ = "0.9.4"
+__version__ = "0.9.5"

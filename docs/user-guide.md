@@ -1269,6 +1269,77 @@ Run `scaffold graph verify` periodically or after significant codebase changes. 
 
 ---
 
+## Multi-Project Workspaces and Shared Asset Layout
+
+A `workspace.yaml` at the workspace root lets several projects share one graph
+cache and, optionally, one copy of reusable process assets.
+
+### Shared asset layout
+
+By default each project keeps a full `docs/ai` tree. In a multi-project
+workspace you can opt into `asset_layout.layout: shared_workspace` so reusable
+process assets (prompts, standards, templates, collaboration protocol, commands,
+shared security templates) live once at the workspace root, while each project
+keeps its own plans, ADRs, contracts, backlog, architecture, and vision. See the
+configuration guide for the full schema and the escape hatch for per-project
+customizations.
+
+On a fresh workspace, enable it while registering projects:
+
+```bash
+scaffold workspace onboard services/api --shared-layout
+scaffold workspace onboard apps/web
+```
+
+### Nested IDE focus and MCP anchors
+
+Each registered project root keeps a **stub** `AGENTS.md` (pointers to the shared
+process assets), and the workspace root gets a thin router `AGENTS.md`. When your
+IDE opens a parent folder, pin the MCP resolution anchor with `scaffold mcp
+--workspace <root> --project <name>` or the `AGENTSCAFFOLD_WORKSPACE_ROOT` /
+`AGENTSCAFFOLD_PROJECT` env vars (see the platform-integration guide).
+
+Personalize with `*.local` overlays (`AGENTS.local.md`,
+`.cursor/rules/local.*.mdc`) -- never by gitignoring the team `AGENTS.md`.
+
+### Migrating an existing workspace (brownfield)
+
+An existing multi-project workspace that already duplicated process trees can
+adopt the shared layout without hand-editing paths. Agent-facing checklist:
+
+1. Confirm a `workspace.yaml` with two or more projects exists (else run
+   `scaffold workspace onboard` first). This migrator moves *files*; it is
+   distinct from `workspace onboard --migrate-existing`, which re-keys graph IDs.
+2. Inspect (safe, non-mutating):
+
+   ```bash
+   scaffold workspace migrate-layout --dry-run --json
+   ```
+
+3. Summarize the report: identical count, diverged paths (which projects
+   differ), unique promotions, and confirm project SoR is untouched.
+4. **Stop and ask** the human to approve apply. For each diverged path choose
+   `--prefer-project NAME`, `--keep-diverged`, or merge manually first.
+5. Apply after approval:
+
+   ```bash
+   scaffold workspace migrate-layout --apply --prefer-project api
+   # or keep diverged copies project-local:
+   scaffold workspace migrate-layout --apply --keep-diverged
+   ```
+
+6. Regenerate agents if needed (`scaffold agents generate-all`), run `scaffold
+   index` / orient smoke for one project, and open a PR listing promoted,
+   deleted, and kept-diverged paths.
+
+The migrator refuses to apply on a dirty git worktree (pass `--force` to
+override), never moves project system-of-record files (plans, ADRs, contracts,
+state, backlog, architecture), and is idempotent on re-run. Exit codes: `0`
+success / already migrated; `2` diverged conflicts unresolved without policy; `3`
+dirty worktree without `--force`.
+
+---
+
 ## Anti-Patterns to Avoid
 
 Based on observed sessions, these patterns lead to poor outcomes:
