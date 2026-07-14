@@ -13,7 +13,7 @@ from agentscaffold.rendering import get_default_context, render_template, write_
 
 console = Console()
 
-_MCP_JSON_CONTENT: dict = {
+_MCP_JSON_CONTENT: dict[str, object] = {
     "mcpServers": {
         "agentscaffold": {
             "command": "scaffold",
@@ -23,13 +23,73 @@ _MCP_JSON_CONTENT: dict = {
 }
 
 
-def write_cursor_mcp_json(cursor_dir: Path) -> None:
+def _mcp_json_content(
+    workspace_root: str | None = None,
+    project_name: str | None = None,
+) -> dict[str, object]:
+    """Build the mcp.json body, adding ``--workspace``/``--project`` when known.
+
+    In a multi-project workspace the generated config pins the resolution anchor
+    so no-argument MCP tools resolve the intended project even when the IDE opens
+    a parent folder (Plan 234). A lone repo keeps the bare ``["mcp"]`` args.
+    """
+    args = ["mcp"]
+    if workspace_root:
+        args += ["--workspace", workspace_root]
+    if project_name:
+        args += ["--project", project_name]
+    return {
+        "mcpServers": {
+            "agentscaffold": {
+                "command": "scaffold",
+                "args": args,
+            }
+        }
+    }
+
+
+def _detect_workspace_context(project_root: Path) -> tuple[str | None, str | None]:
+    """Return (workspace_root, project_name) for a registered multi-project repo.
+
+    Returns ``(None, None)`` for a lone/single-project repo so the generated
+    mcp.json stays byte-for-byte the same as before.
+    """
+    try:
+        from agentscaffold.graph.scoping import current_project_name
+        from agentscaffold.paths import load_workspace, resolve_workspace_root
+
+        workspace = load_workspace(project_root)
+        if not workspace.is_multi_project:
+            return None, None
+        workspace_root = resolve_workspace_root(project_root)
+        project_name = current_project_name(project_root)
+        if project_name is None:
+            return str(workspace_root), None
+        return str(workspace_root), project_name
+    except Exception:
+        return None, None
+
+
+def write_cursor_mcp_json(
+    cursor_dir: Path,
+    workspace_root: str | None = None,
+    project_name: str | None = None,
+) -> None:
     """Write ``.cursor/mcp.json`` with the agentscaffold MCP server config.
+
+    When *workspace_root*/*project_name* are not supplied they are auto-detected
+    from ``cursor_dir``'s parent, so a registered project in a multi-project
+    workspace emits ``["mcp", "--workspace", ..., "--project", ...]`` (Plan 234).
 
     If the file already exists, skip writing and emit a diff-suggestion to
     stdout so existing custom configs are not overwritten.
     """
     mcp_path = cursor_dir / "mcp.json"
+
+    if workspace_root is None and project_name is None:
+        workspace_root, project_name = _detect_workspace_context(cursor_dir.parent)
+
+    content = _mcp_json_content(workspace_root, project_name)
 
     def _display(p: Path) -> str:
         try:
@@ -42,11 +102,11 @@ def write_cursor_mcp_json(cursor_dir: Path) -> None:
             f"[yellow]Skipping[/yellow] {_display(mcp_path)} "
             "(already exists — verify it contains the agentscaffold server entry)"
         )
-        console.print("  Suggested content:\n" + json.dumps(_MCP_JSON_CONTENT, indent=2))
+        console.print("  Suggested content:\n" + json.dumps(content, indent=2))
         return
 
     cursor_dir.mkdir(parents=True, exist_ok=True)
-    mcp_path.write_text(json.dumps(_MCP_JSON_CONTENT, indent=2) + "\n")
+    mcp_path.write_text(json.dumps(content, indent=2) + "\n")
     console.print(f"[green]Wrote[/green] {_display(mcp_path)}")
 
 

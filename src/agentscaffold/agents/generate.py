@@ -6,7 +6,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from agentscaffold.config import ScaffoldConfig, find_config, load_config
+from agentscaffold.config import ScaffoldConfig, WorkspaceConfig, find_config, load_config
 from agentscaffold.rendering import (
     get_default_context,
     get_graph_context,
@@ -26,6 +26,69 @@ console = Console()
 # touching existing content. Machine-owned files (.cursor/rules/agentscaffold.md,
 # per-reviewer rules, enforcement hooks, agent stubs) are still regenerated via
 # write_text so policy/config updates always land; mcp.json stays skip-if-exists.
+
+
+def _shared_workspace_context(
+    project_root: Path,
+) -> tuple[bool, WorkspaceConfig | None, Path | None]:
+    """Return (is_shared, workspace, workspace_root) for a project (Plan 234).
+
+    Detects whether the project belongs to a workspace whose ``asset_layout``
+    opts into ``shared_workspace``. Returns ``(False, None, None)`` for a lone or
+    ``project_local`` repo so generation stays byte-for-byte the same.
+    """
+    try:
+        from agentscaffold.paths import load_workspace, resolve_workspace_root
+
+        workspace = load_workspace(project_root)
+        if workspace.is_shared_workspace:
+            return True, workspace, resolve_workspace_root(project_root)
+    except Exception:
+        pass
+    return False, None, None
+
+
+def _render_project_agents_md(config: ScaffoldConfig, project_root: Path, context: dict) -> str:  # type: ignore[type-arg]
+    """Render project AGENTS.md, stub-first under shared_workspace (Plan 234)."""
+    is_shared, workspace, _ = _shared_workspace_context(project_root)
+    if is_shared and workspace is not None:
+        from agentscaffold.config import effective_asset_layout
+
+        layout = effective_asset_layout(workspace)
+        return render_template(
+            "agents/project_agents_stub.md.j2",
+            {
+                "project_name": config.framework.project_name,
+                "shared": layout.shared,
+                "project": layout.project,
+            },
+        )
+    return render_template("agents/agents_md.md.j2", context)
+
+
+def write_workspace_agents_router(
+    workspace_root: Path,
+    workspace: WorkspaceConfig,
+    *,
+    force: bool = False,
+) -> str:
+    """Write the thin workspace-root AGENTS.md router (Plan 234).
+
+    Written into a managed block so a hand-authored workspace AGENTS.md is never
+    clobbered. Returns the write status.
+    """
+    from agentscaffold.config import effective_asset_layout
+
+    layout = effective_asset_layout(workspace)
+    content = render_template(
+        "agents/workspace_agents_md.md.j2",
+        {
+            "shared": layout.shared,
+            "projects": workspace.projects,
+        },
+    )
+    dest = workspace_root / "AGENTS.md"
+    return write_managed_block(dest, content, force=force)
 
 
 def _report_managed_write(status: str, label: str) -> None:
@@ -70,7 +133,7 @@ def run_agents_generate(force: bool = False) -> None:
         context.update(graph_ctx)
         console.print("[dim]Graph context injected into AGENTS.md.[/dim]")
 
-    content = render_template("agents/agents_md.md.j2", context)
+    content = _render_project_agents_md(config, project_root, context)
 
     dest = project_root / "AGENTS.md"
     status = write_managed_block(dest, content, force=force)
@@ -90,7 +153,7 @@ def run_agents_generate_to(
     graph_ctx = get_graph_context(config)
     if graph_ctx:
         context.update(graph_ctx)
-    content = render_template("agents/agents_md.md.j2", context)
+    content = _render_project_agents_md(config, project_root, context)
     dest = project_root / "AGENTS.md"
     write_managed_block(dest, content, force=force)
 
@@ -165,12 +228,18 @@ def run_agents_generate_all_platforms(
         )
     written["project"].append(gitignore_path)
 
-    # AGENTS.md (project-owned -- managed block, never clobbered unless force)
+    # AGENTS.md (project-owned -- managed block, never clobbered unless force).
+    # Under shared_workspace the project AGENTS.md is stub-first (pointers to the
+    # workspace shared process assets), and a thin workspace-root router AGENTS.md
+    # is generated too (Plan 234).
     context = get_default_context(config)
     agents_md_path = project_root / "AGENTS.md"
+    is_shared, ws, ws_root = _shared_workspace_context(project_root)
     if not dry_run:
         status = write_managed_block(
-            agents_md_path, render_template("agents/agents_md.md.j2", context), force=force
+            agents_md_path,
+            _render_project_agents_md(config, project_root, context),
+            force=force,
         )
         _report_managed_write(status, "AGENTS.md")
     else:
@@ -178,6 +247,15 @@ def run_agents_generate_all_platforms(
             "[dim]dry-run[/dim] would update AGENTS.md managed block (existing content preserved)"
         )
     written["claude_code"].append(agents_md_path)
+
+    if is_shared and ws is not None and ws_root is not None and ws_root != project_root:
+        router_path = ws_root / "AGENTS.md"
+        if not dry_run:
+            status = write_workspace_agents_router(ws_root, ws, force=force)
+            _report_managed_write(status, str(router_path))
+        else:
+            console.print("[dim]dry-run[/dim] would update workspace-root AGENTS.md router")
+        written["project"].append(router_path)
 
     # Claude Code: CLAUDE.md (project-owned -- managed block) + subagents
     claude_md = project_root / "CLAUDE.md"

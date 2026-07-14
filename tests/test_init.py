@@ -33,6 +33,34 @@ def test_init_creates_structure(tmp_path: Path, cli_runner: CliRunner) -> None:
         assert (tmp_path / d).is_dir(), f"Missing directory: {d}"
 
 
+def test_init_shared_workspace_splits_assets(tmp_path: Path, cli_runner: CliRunner) -> None:
+    """Init into a shared_workspace writes process assets once at the workspace root."""
+    ws = tmp_path / "ws"
+    project = ws / "alpha"
+    project.mkdir(parents=True)
+    ws_manifest = ws / "workspace.yaml"
+    ws_manifest.write_text(
+        "projects:\n  - name: alpha\n    path: alpha\n  - name: beta\n    path: beta\n"
+        "asset_layout:\n  layout: shared_workspace\n"
+    )
+
+    result = cli_runner.invoke(app, ["init", str(project), "-y"])
+    assert result.exit_code == 0
+
+    # Reusable process assets land at the workspace root (shared once).
+    assert (ws / "docs/ai/standards/errors.md").is_file()
+    assert (ws / "docs/ai/prompts/plan_critique.md").is_file()
+    assert (ws / "docs/ai/collaboration_protocol.md").is_file()
+    assert (ws / "docs/ai/commands.md").is_file()
+    # Project system-of-record artifacts stay under the project root.
+    assert (project / "docs/ai/backlog.md").is_file()
+    assert (project / "docs/ai/product_vision.md").is_file()
+    assert (project / "docs/ai/system_architecture.md").is_file()
+    # And are NOT duplicated at the workspace root.
+    assert not (ws / "docs/ai/backlog.md").exists()
+    assert not (project / "docs/ai/standards/errors.md").exists()
+
+
 def test_init_creates_agents_md(tmp_path: Path, cli_runner: CliRunner) -> None:
     """init creates AGENTS.md with content."""
     cli_runner.invoke(app, ["init", str(tmp_path), "-y"])

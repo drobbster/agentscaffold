@@ -1,0 +1,43 @@
+# Workspace Router (AgentScaffold)
+
+This is the WORKSPACE ROOT agent file. It is a thin router/policy document, NOT a
+project execution file. Do not record project state (plans, backlog, workflow
+state, ADRs) from here -- resolve an active project first.
+
+## Trust Domain
+
+This workspace is a SINGLE trust domain shared by all registered projects.
+Project scoping is a relevance/correctness boundary, not a security isolation
+boundary.
+
+## Shared Process Assets (workspace root)
+
+Reusable process material is committed once at the workspace root and shared by
+every registered project:
+
+- Prompts: {{ shared.prompts_dir }}
+- Standards: {{ shared.standards_dir }}
+- Templates: {{ shared.templates_dir }}
+- Collaboration protocol: {{ shared.collaboration_protocol_file }}
+- Commands: {{ shared.commands_file }}
+- Security templates: {{ shared.security_dir }}
+
+## Registered Projects
+
+{% for p in projects %}- `{{ p.name }}` -> `{{ p.path }}`
+{% endfor %}
+
+## Active Project Resolution (Mandatory)
+
+Resolve the active project from the working directory, an explicit `--project`
+(CLI), or `working_path` (MCP). Do NOT write project artifacts (plans, backlog,
+state, ADRs, contracts) without a selected project. When unsure, run
+`scaffold workspace list`.
+
+## Durability Taxonomy
+
+- Commit: workspace shared process assets + each project's system of record.
+- Gitignore: `.scaffold/` cache and personal overlays (`AGENTS.local.md`,
+  `.cursor/rules/local.*.mdc`).
+- Never untrack team `AGENTS.md` / platform routing rules to personalize --
+  use `*.local` overlays instead.

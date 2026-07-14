@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -246,19 +246,106 @@ class ProjectEntry(BaseModel):
     path: str
 
 
+#: The two supported asset-layout policies (Plan 234). ``project_local`` is the
+#: backward-compatible default: every project keeps a full ``docs/ai`` tree.
+#: ``shared_workspace`` promotes reusable process assets (prompts, standards,
+#: templates, protocol, commands, shared security templates) to the workspace
+#: root while project system-of-record artifacts stay project-local.
+AssetLayoutMode = Literal["project_local", "shared_workspace"]
+
+
+class SharedAssetPaths(BaseModel):
+    """Workspace-root-relative locations of reusable *process* assets (Plan 234).
+
+    In ``shared_workspace`` mode these directories/files resolve against the
+    workspace root, so every registered project reads one committed copy of the
+    reusable process material instead of duplicating it. Defaults equal the
+    per-project ``GraphConfig`` literals, so promotion is byte-for-byte the same
+    relative layout, just anchored at the workspace root.
+    """
+
+    prompts_dir: str = "docs/ai/prompts/"
+    standards_dir: str = "docs/ai/standards/"
+    templates_dir: str = "docs/ai/templates/"
+    security_dir: str = "docs/security/"
+    collaboration_protocol_file: str = "docs/ai/collaboration_protocol.md"
+    commands_file: str = "docs/ai/commands.md"
+
+
+class ProjectAssetPaths(BaseModel):
+    """Project-root-relative locations of system-of-record artifacts (Plan 234).
+
+    These are never promoted to the workspace root: plans, ADRs, contracts,
+    spikes, state, backlog, architecture, vision, and history are per-project
+    identity and are always resolved against the active project root. Defaults
+    equal the ``GraphConfig`` literals so a ``shared_workspace`` project keeps
+    today's project-local paths for its own SoR.
+    """
+
+    plans_dir: str = "docs/ai/plans/"
+    adrs_dir: str = "docs/ai/adrs/"
+    contracts_dir: str = "docs/ai/contracts/"
+    spikes_dir: str = "docs/ai/spikes/"
+    state_dir: str = "docs/ai/state/"
+    studies_dir: str = "docs/studies/"
+    runbook_dir: str = "docs/runbook/"
+    backlog_file: str = "docs/ai/backlog.md"
+    backlog_archive_file: str = "docs/ai/backlog_archive.md"
+    product_vision_file: str = "docs/ai/product_vision.md"
+    strategy_roadmap_file: str = "docs/ai/strategy_roadmap.md"
+    system_architecture_file: str = "docs/ai/system_architecture.md"
+    architectural_design_changelog_file: str = "docs/ai/architectural_design_changelog.md"
+
+
+class AssetLayoutConfig(BaseModel):
+    """Workspace asset-layout policy (Plan 234).
+
+    ``layout`` selects whether reusable process assets are shared at the
+    workspace root (``shared_workspace``) or kept project-local
+    (``project_local``, the backward-compatible default). ``shared`` and
+    ``project`` carry the relative path blocks used to resolve each class of
+    asset; both default to the same literals as ``GraphConfig`` so an
+    uncustomized workspace behaves exactly as before.
+    """
+
+    layout: AssetLayoutMode = "project_local"
+    shared: SharedAssetPaths = Field(default_factory=SharedAssetPaths)
+    project: ProjectAssetPaths = Field(default_factory=ProjectAssetPaths)
+
+    @field_validator("layout", mode="before")
+    @classmethod
+    def _validate_layout(cls, value: Any) -> str:
+        if value is None:
+            return "project_local"
+        policy = str(value)
+        if policy not in ("project_local", "shared_workspace"):
+            raise ValueError(
+                "asset_layout.layout must be one of: project_local, shared_workspace"
+            )
+        return policy
+
+
 class WorkspaceConfig(BaseModel):
     """Outer workspace manifest listing the projects sharing one graph cache.
 
     A single-project tree has no manifest; one is synthesized with exactly one
     project (see :func:`agentscaffold.paths.load_workspace`). ``is_multi_project``
     is the single switch that gates ID-prefixing and read scoping everywhere.
+    ``asset_layout`` is optional (Plan 234): ``None`` behaves as
+    ``project_local`` for full backward compatibility.
     """
 
     projects: list[ProjectEntry] = Field(default_factory=list)
+    asset_layout: AssetLayoutConfig | None = None
 
     @property
     def is_multi_project(self) -> bool:
         return len(self.projects) > 1
+
+    @property
+    def is_shared_workspace(self) -> bool:
+        """True when this workspace opts into the shared asset layout."""
+        return self.asset_layout is not None and self.asset_layout.layout == "shared_workspace"
 
     def project_names(self) -> list[str]:
         return [p.name for p in self.projects]
@@ -340,6 +427,18 @@ def load_workspace_manifest(path: Path) -> WorkspaceConfig:
     raw = _read_raw(path)
     workspace = WorkspaceConfig.model_validate(raw or {})
     return validate_workspace(workspace)
+
+
+def effective_asset_layout(workspace: WorkspaceConfig) -> AssetLayoutConfig:
+    """Return the workspace's asset-layout policy, defaulting to project_local.
+
+    A workspace with no ``asset_layout`` block (the common, backward-compatible
+    case) resolves to ``project_local`` defaults, so every caller can read a
+    concrete :class:`AssetLayoutConfig` without a None check.
+    """
+    if workspace.asset_layout is not None:
+        return workspace.asset_layout
+    return AssetLayoutConfig()
 
 
 # ---------------------------------------------------------------------------

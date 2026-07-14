@@ -642,3 +642,69 @@ def test_generate_all_writes_docs_when_absent(tmp_path: Path):
     assert "# CLAUDE.md (generated)" in claude
     assert "BEGIN AGENTSCAFFOLD MANAGED SECTION" in claude
     assert (tmp_path / ".windsurfrules").exists()
+
+
+# ---------------------------------------------------------------------------
+# Shared-workspace stub-first project AGENTS + workspace router (Plan 234)
+# ---------------------------------------------------------------------------
+
+
+def _make_shared_ws(tmp_path: Path) -> Path:
+    ws = tmp_path / "ws"
+    for name in ("alpha", "beta"):
+        (ws / name).mkdir(parents=True)
+        (ws / name / "scaffold.yaml").write_text(f"framework:\n  project_name: {name}\n")
+    (ws / "workspace.yaml").write_text(
+        "projects:\n  - name: alpha\n    path: alpha\n  - name: beta\n    path: beta\n"
+        "asset_layout:\n  layout: shared_workspace\n"
+    )
+    return ws
+
+
+def test_project_agents_is_stub_first_under_shared_workspace(tmp_path: Path):
+    from agentscaffold.agents.generate import _render_project_agents_md
+    from agentscaffold.config import ScaffoldConfig
+    from agentscaffold.rendering import get_default_context
+
+    ws = _make_shared_ws(tmp_path)
+    config = ScaffoldConfig()
+    content = _render_project_agents_md(config, ws / "alpha", get_default_context(config))
+
+    # Stub references shared assets and stays small (no duplicated process bodies).
+    assert "stub-first" in content
+    assert "Shared Workspace Process" in content
+    # Full-template-only sections must NOT be duplicated into the stub.
+    assert "## Plan Lifecycle" not in content
+    assert "## Linter Warning Protocol" not in content
+    assert len(content) < 4000
+
+
+def test_full_project_agents_when_project_local(tmp_path: Path):
+    from agentscaffold.agents.generate import _render_project_agents_md
+    from agentscaffold.config import ScaffoldConfig
+    from agentscaffold.rendering import get_default_context
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "scaffold.yaml").write_text("framework:\n  project_name: solo\n")
+    config = ScaffoldConfig()
+    content = _render_project_agents_md(config, proj, get_default_context(config))
+
+    # No shared workspace -> full template with lifecycle body.
+    assert "## Plan Lifecycle" in content
+
+
+def test_workspace_router_generated(tmp_path: Path):
+    from agentscaffold.agents.generate import write_workspace_agents_router
+    from agentscaffold.paths import load_workspace
+
+    ws = _make_shared_ws(tmp_path)
+    workspace = load_workspace(ws / "alpha")
+    status = write_workspace_agents_router(ws, workspace)
+
+    assert status in ("created", "block-updated")
+    router = (ws / "AGENTS.md").read_text()
+    assert "Workspace Router" in router
+    assert "alpha" in router and "beta" in router
+    # The router must not claim project execution state.
+    assert "## Plan Lifecycle" not in router

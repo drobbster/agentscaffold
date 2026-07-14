@@ -1,0 +1,52 @@
+# Agent Operating Rules ({{ project_name }})
+
+This project uses the AgentScaffold **shared workspace** asset layout. Reusable
+process assets live once at the workspace root; this file is a stub-first pointer,
+NOT a copy of the standards, prompts, or collaboration protocol bodies.
+
+## Shared Workspace Process (resolve at the workspace root)
+
+- Prompts: {{ shared.prompts_dir }}
+- Standards: {{ shared.standards_dir }}
+- Templates: {{ shared.templates_dir }}
+- Collaboration protocol: {{ shared.collaboration_protocol_file }}
+- Commands: {{ shared.commands_file }}
+- Security templates: {{ shared.security_dir }}
+
+## Project System of Record (this project root)
+
+- Plans: {{ project.plans_dir }}
+- ADRs: {{ project.adrs_dir }}
+- Contracts: {{ project.contracts_dir }}
+- Spikes: {{ project.spikes_dir }}
+- State: {{ project.state_dir }}
+- Studies: {{ project.studies_dir }}
+- Runbook: {{ project.runbook_dir }}
+- Backlog: {{ project.backlog_file }} / {{ project.backlog_archive_file }}
+- System architecture: {{ project.system_architecture_file }} (READ-ONLY for agents)
+- Architecture changelog: {{ project.architectural_design_changelog_file }} (append-only)
+- Product vision: {{ project.product_vision_file }}
+- Strategy roadmap: {{ project.strategy_roadmap_file }}
+
+## Personal Overlays (gitignored)
+
+`AGENTS.local.md` and `.cursor/rules/local.*.mdc` are personal, not team system
+of record. Do NOT gitignore team `AGENTS.md` / platform rules to personalize --
+use overlays instead.
+
+## Core Rules
+
+- Any architectural or refactor work MUST begin with a plan file (see the shared
+  plan template under {{ shared.templates_dir }}).
+- Every feature or bug fix MUST include corresponding tests.
+- Follow the shared standards and collaboration protocol referenced above.
+- Do NOT modify `{{ project.system_architecture_file }}` without explicit human
+  approval and a changelog entry.
+- Emojis are forbidden in repository content.
+
+## AgentScaffold MCP Tools
+
+Prefer AgentScaffold MCP tools first when a request matches a known intent. In a
+multi-project workspace, pass `working_path` (MCP) or `--project` (CLI) so reads
+scope to this project. The full intent-to-tool map is generated into the
+platform routing rules (`.cursor/rules/agentscaffold.mdc`, etc.).

@@ -8,6 +8,35 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-07-14
+
+### Added
+- Workspace shared asset layout (Plan 234): a first-class ``asset_layout`` policy
+  in ``workspace.yaml``. ``layout: shared_workspace`` promotes reusable *process*
+  assets (prompts, standards, templates, collaboration protocol, commands, shared
+  security templates) to a single committed copy at the workspace root while each
+  registered project keeps its own system of record (plans, ADRs, contracts,
+  spikes, state, backlog, architecture, vision). The default remains
+  ``project_local`` (fully backward compatible; a workspace with no
+  ``asset_layout`` block is unchanged).
+- MCP resolution anchor (Plan 234): ``scaffold mcp --workspace <root> --project
+  <name>`` and the ``AGENTSCAFFOLD_WORKSPACE_ROOT`` / ``AGENTSCAFFOLD_PROJECT``
+  environment variables pin the project resolution anchor so no-argument tools
+  (``scaffold_orient``, staleness validate) resolve the intended project even when
+  the IDE opens a parent folder. Generated ``.cursor/mcp.json`` emits the
+  ``--workspace`` / ``--project`` args in a multi-project workspace.
+- Stub-first agent files (Plan 234): under ``shared_workspace`` the project
+  ``AGENTS.md`` is a thin pointer to shared process assets, and a thin
+  workspace-root router ``AGENTS.md`` is generated. Managed ``.gitignore`` block
+  now also ignores personal overlays (``AGENTS.local.md``,
+  ``.cursor/rules/local.*.mdc``) without untracking team files.
+- ``scaffold workspace migrate-layout`` (Plan 234): brownfield migrator with
+  ``--dry-run`` (default) / ``--apply`` / ``--prefer-project`` / ``--keep-diverged``
+  / ``--force`` / ``--json``. Promotes identical/unique process assets, requires an
+  explicit policy for diverged copies, never moves project system-of-record files,
+  refuses a dirty worktree without ``--force``, and is idempotent. ``scaffold
+  workspace onboard --shared-layout`` writes the ``asset_layout`` block directly.
+
 ## [0.9.4] - 2026-07-12
 
 ### Added

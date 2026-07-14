@@ -21,10 +21,13 @@ from functools import cached_property
 from pathlib import Path
 
 from agentscaffold.config import (
+    AssetLayoutConfig,
+    GraphConfig,
     ProjectEntry,
     ScaffoldConfig,
     WorkspaceConfig,
     derive_project_name,
+    effective_asset_layout,
     find_config,
     find_workspace_config,
     load_config,
@@ -39,6 +42,89 @@ _UNRESOLVED_ENV_RE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")
 #: Lets the same committed ``scaffold.yaml`` point the cache at a durable mounted
 #: volume on a persistent box and a scratch path on an ephemeral devbox.
 DB_PATH_ENV_VAR = "AGENTSCAFFOLD_DB_PATH"
+
+#: Environment variables that configure the MCP resolution anchor (Plan 234) when
+#: the IDE launches the MCP server from a directory that is not the active
+#: project (e.g. Cursor opening a parent monorepo folder). They mirror the
+#: ``scaffold mcp --workspace`` / ``--project`` flags for user-level MCP installs.
+WORKSPACE_ROOT_ENV_VAR = "AGENTSCAFFOLD_WORKSPACE_ROOT"
+PROJECT_ENV_VAR = "AGENTSCAFFOLD_PROJECT"
+
+#: Module-level MCP anchor override set by ``scaffold mcp`` before the server
+#: starts (see :func:`configure_mcp_start`). Takes precedence over the
+#: environment variables so an explicit flag always wins.
+_MCP_WORKSPACE_OVERRIDE: str | None = None
+_MCP_PROJECT_OVERRIDE: str | None = None
+
+
+def configure_mcp_start(*, workspace: str | None = None, project: str | None = None) -> None:
+    """Set the process-wide MCP resolution anchor from CLI flags (Plan 234).
+
+    ``scaffold mcp --workspace <root> --project <name>`` calls this once before
+    :func:`agentscaffold.mcp.server.run_mcp_server` so every no-argument tool
+    resolves the configured project instead of the launch cwd. Passing ``None``
+    for either value clears that field (falling back to env vars / cwd walk-up).
+    """
+    global _MCP_WORKSPACE_OVERRIDE, _MCP_PROJECT_OVERRIDE
+    _MCP_WORKSPACE_OVERRIDE = workspace
+    _MCP_PROJECT_OVERRIDE = project
+
+
+def _resolve_project_in_workspace(workspace_root: Path, project: str) -> Path | None:
+    """Resolve a registered project's root dir within *workspace_root*, or None."""
+    try:
+        ws_path = find_workspace_config(workspace_root)
+        if ws_path is not None:
+            workspace = load_workspace_manifest(ws_path)
+        else:
+            workspace = load_workspace(workspace_root)
+        entry = workspace.find_by_name(project)
+        if entry is None:
+            return None
+        project_path = Path(entry.path)
+        if not project_path.is_absolute():
+            project_path = workspace_root / project_path
+        return project_path.resolve() if project_path.is_dir() else None
+    except Exception:
+        return None
+
+
+def resolve_mcp_start(start: Path | None = None) -> Path:
+    """Resolve the effective start anchor for MCP tool resolution (Plan 234).
+
+    Precedence:
+    1. An explicit *start* passed by a caller that already resolved flags.
+    2. The module-level override set by ``scaffold mcp`` (:func:`configure_mcp_start`).
+    3. The ``AGENTSCAFFOLD_PROJECT`` env var (resolved against the workspace root,
+       which may come from ``AGENTSCAFFOLD_WORKSPACE_ROOT`` or a cwd walk-up).
+    4. The ``AGENTSCAFFOLD_WORKSPACE_ROOT`` env var alone (workspace root; the
+       active project is inferred later from cwd/single-project heuristics).
+    5. Otherwise the current working directory (existing walk-up behavior).
+
+    This is the single place where flags/env are allowed to beat ``Path.cwd()``;
+    downstream heuristics (single-child workspace, single project) still apply in
+    :func:`agentscaffold.mcp.server._effective_mcp_root`.
+    """
+    if start is not None:
+        return start.resolve()
+
+    workspace = _MCP_WORKSPACE_OVERRIDE or os.environ.get(WORKSPACE_ROOT_ENV_VAR) or None
+    project = _MCP_PROJECT_OVERRIDE or os.environ.get(PROJECT_ENV_VAR) or None
+
+    workspace_root: Path | None = None
+    if workspace:
+        workspace_root = Path(os.path.expanduser(workspace)).resolve()
+
+    if project:
+        base = workspace_root if workspace_root is not None else resolve_workspace_root()
+        project_root = _resolve_project_in_workspace(base, project)
+        if project_root is not None:
+            return project_root
+
+    if workspace_root is not None:
+        return workspace_root
+
+    return Path.cwd().resolve()
 
 
 def _git_root(start: Path | None = None) -> Path | None:
@@ -156,10 +242,27 @@ class ResolvedPaths:
     are honored as-is (``Path`` join semantics).
     """
 
-    def __init__(self, config: ScaffoldConfig, root: Path) -> None:
+    def __init__(
+        self,
+        config: ScaffoldConfig,
+        root: Path,
+        workspace: WorkspaceConfig | None = None,
+        workspace_root: Path | None = None,
+    ) -> None:
         self._config = config
         self._graph = config.graph
         self.root = root.resolve()
+        self._workspace = workspace
+        self._workspace_root = workspace_root.resolve() if workspace_root is not None else None
+        self._layout: AssetLayoutConfig = (
+            effective_asset_layout(workspace) if workspace is not None else AssetLayoutConfig()
+        )
+        # Shared assets only relocate to the workspace root when the policy opts
+        # in AND the workspace root is a real, distinct anchor. For a lone repo
+        # the workspace root collapses to the project root, so nothing moves.
+        self._shared_active = (
+            self._layout.layout == "shared_workspace" and self._workspace_root is not None
+        )
 
     @classmethod
     def discover(cls, start: Path | None = None) -> ResolvedPaths:
@@ -167,10 +270,27 @@ class ResolvedPaths:
         root = resolve_root(start)
         config_path = find_config(start)
         config = load_config(config_path)
-        return cls(config, root)
+        workspace = load_workspace(start)
+        workspace_root = resolve_workspace_root(start)
+        return cls(config, root, workspace=workspace, workspace_root=workspace_root)
 
     def _join(self, value: str) -> Path:
         return self.root / value
+
+    def _shared_asset(self, graph_field: str, shared_value: str) -> Path:
+        """Resolve a reusable process asset, honoring the shared/project split.
+
+        In ``shared_workspace`` mode a reusable process asset resolves at the
+        workspace root -- UNLESS the project has customized the corresponding
+        ``graph.*`` field away from its default, which remains an explicit
+        project-local escape hatch. Otherwise (``project_local`` or a lone repo)
+        it resolves under the project root exactly as before.
+        """
+        graph_value: str = getattr(self._graph, graph_field)
+        default = GraphConfig.model_fields[graph_field].default
+        if self._shared_active and self._workspace_root is not None and graph_value == default:
+            return self._workspace_root / shared_value
+        return self.root / graph_value
 
     # -- Directories --------------------------------------------------------
     @cached_property
@@ -195,19 +315,32 @@ class ResolvedPaths:
 
     @cached_property
     def standards_dir(self) -> Path:
-        return self._join(self._graph.standards_dir)
+        return self._shared_asset("standards_dir", self._layout.shared.standards_dir)
 
     @cached_property
     def prompts_dir(self) -> Path:
-        return self._join(self._graph.prompts_dir)
+        return self._shared_asset("prompts_dir", self._layout.shared.prompts_dir)
 
     @cached_property
     def templates_dir(self) -> Path:
-        return self._join(self._graph.templates_dir)
+        return self._shared_asset("templates_dir", self._layout.shared.templates_dir)
 
     @cached_property
     def security_dir(self) -> Path:
-        return self._join(self._graph.security_dir)
+        return self._shared_asset("security_dir", self._layout.shared.security_dir)
+
+    # -- Shared process files (Plan 234) ------------------------------------
+    @cached_property
+    def collaboration_protocol_file(self) -> Path:
+        if self._shared_active and self._workspace_root is not None:
+            return self._workspace_root / self._layout.shared.collaboration_protocol_file
+        return self.root / "docs/ai/collaboration_protocol.md"
+
+    @cached_property
+    def commands_file(self) -> Path:
+        if self._shared_active and self._workspace_root is not None:
+            return self._workspace_root / self._layout.shared.commands_file
+        return self.root / "docs/ai/commands.md"
 
     # -- Files --------------------------------------------------------------
     @cached_property

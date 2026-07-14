@@ -459,6 +459,62 @@ The workspace is a single trust domain: project scoping is a relevance and
 correctness boundary (no cross-project misorientation), not a security isolation
 boundary.
 
+### Workspace asset layout (`asset_layout`)
+
+By default every project keeps a full `docs/ai` tree (`layout: project_local`).
+In a multi-project workspace you can opt into a **shared** layout so reusable
+*process* assets live once at the workspace root while each project keeps its own
+system of record:
+
+```yaml
+projects:
+  - name: api
+    path: services/api
+  - name: web
+    path: apps/web
+
+asset_layout:
+  layout: shared_workspace       # or project_local (default)
+  shared:                        # resolved at the workspace root
+    prompts_dir: docs/ai/prompts
+    standards_dir: docs/ai/standards
+    templates_dir: docs/ai/templates
+    security_dir: docs/security
+    collaboration_protocol_file: docs/ai/collaboration_protocol.md
+    commands_file: docs/ai/commands.md
+  project:                       # resolved at each project root
+    plans_dir: docs/ai/plans
+    adrs_dir: docs/ai/adrs
+    contracts_dir: docs/ai/contracts
+    spikes_dir: docs/ai/spikes
+    state_dir: docs/ai/state
+    backlog_file: docs/ai/backlog.md
+```
+
+Three-layer durability taxonomy:
+
+- **Workspace shared process (committed once):** prompts, standards, templates,
+  collaboration protocol, commands, shared security templates, thin workspace
+  router `AGENTS.md`.
+- **Project system of record (committed per project):** plans, ADRs, contracts,
+  spikes, state, backlog, architecture, vision, roadmap, and a **stub-first**
+  project `AGENTS.md` (pointers, not copied process bodies).
+- **Personal overlay (gitignored):** `AGENTS.local.md`, `.cursor/rules/local.*.mdc`.
+  Never gitignore team `AGENTS.md` / platform rules to personalize -- use overlays.
+
+Rules:
+
+- Omitting `asset_layout` (or `layout: project_local`) is fully backward
+  compatible: every asset resolves under the project root as before.
+- Under `shared_workspace`, a project that has customized the corresponding
+  `graph.*` path (e.g. `graph.standards_dir`) away from its default keeps that
+  asset **project-local** -- an explicit per-project escape hatch.
+- Only reusable *process* assets are shared. Project SoR (plans, ADRs, contracts,
+  backlog, architecture, vision) is always project-local and is never promoted.
+- Enable it on a fresh workspace with `scaffold workspace onboard <dir>
+  --shared-layout`, or migrate a brownfield workspace with `scaffold workspace
+  migrate-layout` (see the user guide).
+
 ### Durable vs ephemeral cache location
 
 `db_path` is resolved for both persistent and ephemeral environments:

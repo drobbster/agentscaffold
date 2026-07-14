@@ -8,6 +8,29 @@ import pytest
 pytest.importorskip("duckdb", reason="duckdb not installed")
 
 
+def test_effective_mcp_root_honors_configured_project(tmp_path, monkeypatch) -> None:
+    """A configured --workspace/--project anchor beats the launch cwd (Plan 234)."""
+    from agentscaffold.mcp.server import _effective_mcp_root
+    from agentscaffold.paths import configure_mcp_start
+
+    ws = tmp_path / "ws"
+    for name in ("alpha", "beta"):
+        (ws / name).mkdir(parents=True)
+        (ws / name / "scaffold.yaml").write_text("framework:\n  project_name: X\n")
+    (ws / "workspace.yaml").write_text(
+        "projects:\n  - name: alpha\n    path: alpha\n  - name: beta\n    path: beta\n"
+    )
+    outside = tmp_path / "cursor-root"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+
+    configure_mcp_start(workspace=str(ws), project="beta")
+    try:
+        assert _effective_mcp_root() == (ws / "beta").resolve()
+    finally:
+        configure_mcp_start(workspace=None, project=None)
+
+
 def test_dispatch_tool_returns_graph_locked_on_lock(monkeypatch) -> None:
     """Persistent GraphLockError yields a clean error dict after retries."""
     from pathlib import Path
