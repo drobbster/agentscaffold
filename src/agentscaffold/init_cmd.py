@@ -84,6 +84,41 @@ _EMPTY_DIRS: list[str] = [
     "docs/studies",
 ]
 
+# Output prefixes that are reusable *process* assets. Under a shared_workspace
+# layout (Plan 234) these are written once at the workspace root instead of being
+# duplicated into every project.
+_SHARED_OUTPUT_PREFIXES: tuple[str, ...] = (
+    "docs/ai/prompts/",
+    "docs/ai/standards/",
+    "docs/ai/templates/",
+    "docs/security/",
+)
+_SHARED_OUTPUT_FILES: tuple[str, ...] = (
+    "docs/ai/collaboration_protocol.md",
+    "docs/ai/commands.md",
+)
+
+
+def _is_shared_output(out_rel: str) -> bool:
+    """True when *out_rel* is a reusable process asset (shared_workspace layout)."""
+    return out_rel in _SHARED_OUTPUT_FILES or out_rel.startswith(_SHARED_OUTPUT_PREFIXES)
+
+
+def _detect_shared_workspace(directory: Path) -> Path | None:
+    """Return the workspace root when *directory* sits in a shared_workspace, else None."""
+    from agentscaffold.config import find_workspace_config, load_workspace_manifest
+
+    ws_path = find_workspace_config(directory)
+    if ws_path is None:
+        return None
+    try:
+        workspace = load_workspace_manifest(ws_path)
+    except Exception:
+        return None
+    if workspace.is_shared_workspace:
+        return ws_path.parent.resolve()
+    return None
+
 
 def _prompt_project_name(directory: Path) -> str:
     default = directory.resolve().name
@@ -192,12 +227,19 @@ def _write_scaffold_yaml(directory: Path, options: dict[str, object]) -> bool:
     return True
 
 
-def _write_templated_files(directory: Path, context: dict) -> tuple[int, int]:  # type: ignore[type-arg]
-    """Render all templates and write them. Returns (written, skipped) counts."""
+def _write_templated_files(directory: Path, context: dict, shared_root: Path | None = None) -> tuple[int, int]:  # type: ignore[type-arg]  # noqa: E501
+    """Render all templates and write them. Returns (written, skipped) counts.
+
+    When *shared_root* is provided (shared_workspace layout, Plan 234), reusable
+    process assets are written once at the workspace root instead of the project.
+    """
     written = 0
     skipped = 0
     for tpl_path, out_rel in _TEMPLATE_MAP.items():
-        dest = directory / out_rel
+        if shared_root is not None and _is_shared_output(out_rel):
+            dest = shared_root / out_rel
+        else:
+            dest = directory / out_rel
         try:
             content = render_template(tpl_path, context)
         except Exception as exc:
@@ -332,7 +374,13 @@ def run_init(directory: Path, non_interactive: bool = False) -> None:
         }
     )
 
-    written, skipped = _write_templated_files(directory, context)
+    shared_root = _detect_shared_workspace(directory)
+    if shared_root is not None and shared_root != directory:
+        console.print(
+            f"[cyan]Shared workspace layout detected[/cyan]: writing reusable process "
+            f"assets once at {shared_root}"
+        )
+    written, skipped = _write_templated_files(directory, context, shared_root=shared_root)
     dirs_created = _create_empty_dirs(directory)
 
     if _write_agents_md(directory, context):

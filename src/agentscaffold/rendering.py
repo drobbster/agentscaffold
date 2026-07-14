@@ -379,6 +379,12 @@ GITIGNORE_MANAGED_PATTERNS: tuple[str, ...] = (
     ".venv-scaffold/",
     "*.duckdb",
     "*.duckdb.wal",
+    # Personal overlays (Plan 234): user-only agent prefs that must never become
+    # team system-of-record. Ignore the *.local overlays, NOT the team AGENTS.md
+    # / platform routing rules -- personalize via overlays, do not untrack shared
+    # process files.
+    "AGENTS.local.md",
+    ".cursor/rules/local.*.mdc",
 )
 
 

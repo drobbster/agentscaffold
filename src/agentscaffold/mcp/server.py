@@ -1337,14 +1337,20 @@ def _effective_mcp_root(start: Path | None = None) -> Path:
     workspace with exactly one registered project, route no-arg tools to that
     project root so project-local state resolves correctly.
     """
-    current = (start or Path.cwd()).resolve()
     try:
         from agentscaffold.paths import (
             load_workspace,
+            resolve_mcp_start,
             resolve_root,
             resolve_workspace_root,
         )
 
+        # Plan 234: honor an explicit MCP anchor (scaffold mcp --workspace/--project
+        # or AGENTSCAFFOLD_* env vars) before falling back to the launch cwd, so
+        # no-argument tools resolve the configured project even when Cursor opens a
+        # parent folder. The single-child / single-project heuristics below still
+        # apply on top of the resolved start.
+        current = resolve_mcp_start(start)
         workspace_root = resolve_workspace_root(current)
 
         # Cursor can launch user-level MCP servers from the broad IDE workspace
@@ -1371,7 +1377,7 @@ def _effective_mcp_root(start: Path | None = None) -> Path:
                 return project_path.resolve()
         return resolve_root(current)
     except Exception:
-        return current
+        return (start or Path.cwd()).resolve()
 
 
 def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
