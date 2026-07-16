@@ -8,6 +8,16 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Fixed
+- MCP ``detail=summary`` trim (Plan 248): ``apply_detail`` no longer raises
+  ``AttributeError: 'int' object has no attribute 'endswith'`` when a review payload
+  contains an evidence dict keyed by non-string values (e.g. the ``similar_plans``
+  gap evidence keyed by plan number). This crashed ``scaffold_begin_plan`` for any
+  plan whose review produced a ``SIMILAR_PATTERN`` gap, since begin-plan always runs
+  ``prepare_review`` through the default summary trim. Non-string keys are now
+  preserved and recursed into; string-key markdown-stripping and list caps are
+  unchanged, and ``detail=full`` was never affected.
+
 ## [0.9.5] - 2026-07-14
 
 ### Added
