@@ -8,6 +8,8 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-07-15
+
 ### Fixed
 - MCP ``detail=summary`` trim (Plan 248): ``apply_detail`` no longer raises
   ``AttributeError: 'int' object has no attribute 'endswith'`` when a review payload
