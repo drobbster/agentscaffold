@@ -48,6 +48,13 @@ def _trim(obj: Any) -> Any:
     if isinstance(obj, dict):
         out: dict[str, Any] = {}
         for k, v in obj.items():
+            # Only string keys carry the markdown/cap conventions. Evidence dicts
+            # can legitimately be keyed by ints (e.g. gaps.py similar_plans:
+            # plan number -> shared-file count), so guard before string ops to
+            # avoid ``'int' object has no attribute 'endswith'`` (Plan 248).
+            if not isinstance(k, str):
+                out[k] = _trim(v)
+                continue
             if k.endswith("_markdown") or k == "markdown":
                 continue
             if k in _SUMMARY_LIST_CAPS and isinstance(v, list):
