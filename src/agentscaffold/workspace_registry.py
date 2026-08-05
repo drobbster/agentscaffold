@@ -107,12 +107,23 @@ class Registry(BaseModel):
 
 @dataclass(frozen=True)
 class ResolvedProject:
-    """The single project a call resolved to."""
+    """The single project a call resolved to.
+
+    ``workspace_id`` is None for a lone repository resolved directly from the
+    startup anchor without ever being registered. That path has to keep working
+    untouched for existing single-project users, so callers that key on the
+    workspace (the graph handle pool, for one) fall back to ``project_root``.
+    """
 
     name: str
-    workspace_id: str
+    workspace_id: str | None
     workspace_root: Path
     project_root: Path
+
+    @property
+    def pool_key(self) -> str:
+        """Stable per-workspace key, defined even for unregistered lone repos."""
+        return self.workspace_id or f"path:{self.project_root}"
 
 
 def registry_path() -> Path:

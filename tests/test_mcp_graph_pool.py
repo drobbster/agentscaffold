@@ -181,6 +181,10 @@ def test_same_process_threads_queue_instead_of_timing_out(
     Without the in-process mutex this is the spike's TimeoutError: the Plan 235
     mkdir lock is not thread-aware, so the second thread fails outright instead
     of waiting its turn.
+
+    ``lock_timeout=0`` is what gives this test teeth. It leaves the filesystem
+    lock no room to paper over the problem by retrying, so the test can only
+    pass if the mutex serialised the two threads before either reached it.
     """
     db_path = tmp_path / "graph.duckdb"
     order: list[str] = []
@@ -188,7 +192,7 @@ def test_same_process_threads_queue_instead_of_timing_out(
 
     def worker(tag: str) -> None:
         try:
-            with pool.write_lock("ws-a", db_path, timeout=5.0):
+            with pool.write_lock("ws-a", db_path, timeout=5.0, lock_timeout=0.0):
                 order.append(f"{tag}-enter")
                 time.sleep(0.05)
                 order.append(f"{tag}-exit")
