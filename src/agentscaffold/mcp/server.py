@@ -475,6 +475,28 @@ _WORKING_PATH_PROP = {
 }
 
 
+# Cross-project reads stay opt-in per call (Plan 249): the default scope is the
+# one project the call resolved to, and federation is something the agent asks
+# for, never something the server does silently on its behalf.
+_SCOPE_PROPS = {
+    "project": {
+        "type": "string",
+        "description": (
+            "Target a specific project in a multi-project workspace "
+            "(defaults to the project this call resolves to)"
+        ),
+    },
+    "all_projects": {
+        "type": "boolean",
+        "description": (
+            "Read across every project in the workspace. Each result carries a "
+            "'project' field naming its origin."
+        ),
+        "default": False,
+    },
+}
+
+
 def _with_working_path_arg(tools: list[Tool]) -> list[Tool]:
     """Advertise a uniform ``working_path`` arg on every object-schema tool.
 
@@ -841,6 +863,7 @@ def _get_tool_definitions() -> list[Tool]:
                         "type": "string",
                         "description": "Filter by outcome (e.g. baseline_preferred)",
                     },
+                    **_SCOPE_PROPS,
                 },
                 "required": ["topic"],
             },
@@ -874,6 +897,7 @@ def _get_tool_definitions() -> list[Tool]:
                         "type": "string",
                         "description": "Filter by ADR status (e.g. Accepted)",
                     },
+                    **_SCOPE_PROPS,
                 },
                 "required": ["topic"],
             },
@@ -890,9 +914,20 @@ def _get_tool_definitions() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "plan_number": {"type": "integer", "description": "Plan number"},
+                    **_SCOPE_PROPS,
                 },
                 "required": ["plan_number"],
             },
+        ),
+        Tool(
+            name="scaffold_projects",
+            description=(
+                "List the projects this server can answer for and report which project "
+                "the current call resolves to (and why). Use when a call was refused as "
+                "ambiguous, when you need a valid 'project' name, or to confirm which "
+                "project you are in before a scoped read."
+            ),
+            inputSchema={"type": "object", "properties": {}},
         ),
         Tool(
             name="scaffold_record_finding",
@@ -1434,7 +1469,22 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             restrict_to=_RESTRICT_TO or None,
         )
     except McpToolError as exc:
+        # scaffold_projects is the documented recovery from an unresolvable
+        # call, so it must answer when resolution fails -- refusing it with the
+        # very error it exists to explain would leave the agent with no way out.
+        if name == "scaffold_projects":
+            from agentscaffold.mcp.projects import build_projects_payload
+
+            return {
+                **build_projects_payload(None, restrict_to=_RESTRICT_TO or None),
+                "unresolved": to_error_response(exc),
+            }
         return to_error_response(exc)
+
+    if name == "scaffold_projects":
+        from agentscaffold.mcp.projects import build_projects_payload
+
+        return build_projects_payload(resolution, restrict_to=_RESTRICT_TO or None)
 
     root = resolution.root
     # Project-scoped reads resolve their scope from the cwd, so chdir is how the
@@ -2245,6 +2295,23 @@ def _tool_review_context(
 _SEVERITY_ORDER: tuple[str, ...] = ("critical", "high", "medium", "low")
 
 
+def _scope_args(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Read the per-call read scope (Plan 249): default is the resolved project."""
+    return {
+        "project": arguments.get("project") or None,
+        "all_projects": bool(arguments.get("all_projects", False)),
+    }
+
+
+def _scope_echo(scope: dict[str, Any]) -> dict[str, Any]:
+    """Echo a non-default scope so a federated result is never read as local."""
+    if scope["all_projects"]:
+        return {"scope": "all_projects"}
+    if scope["project"]:
+        return {"scope": "project", "project": scope["project"]}
+    return {}
+
+
 def _clean_out_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """Strip ``alias.`` prefixes from agent-facing tool output rows (Plan 238).
 
@@ -2923,13 +2990,14 @@ def _tool_find_studies(
 
     topic = arguments.get("topic", "")
     outcome = arguments.get("outcome")
+    scope = _scope_args(arguments)
 
     results: list[dict[str, Any]] = []
     if topic:
-        results = get_studies_by_tags(store, [topic])
+        results = get_studies_by_tags(store, [topic], **scope)
 
     if outcome:
-        outcome_results = get_studies_by_outcome(store, outcome)
+        outcome_results = get_studies_by_outcome(store, outcome, **scope)
         if results:
             existing_ids = {r.get("s.studyId") for r in results}
             for o in outcome_results:
@@ -2943,6 +3011,7 @@ def _tool_find_studies(
         "outcome_filter": outcome,
         "studies": _clean_out_rows(results),
         "count": len(results),
+        **_scope_echo(scope),
         "meta": meta,
     }
 
@@ -3004,8 +3073,9 @@ def _tool_find_adrs(store: Any, arguments: dict[str, Any], meta: dict[str, Any])
 
     topic = arguments.get("topic", "")
     status_filter = arguments.get("status")
+    scope = _scope_args(arguments)
 
-    all_adrs = get_all_adrs(store)
+    all_adrs = get_all_adrs(store, **scope)
     results = all_adrs
 
     if topic:
@@ -3021,6 +3091,7 @@ def _tool_find_adrs(store: Any, arguments: dict[str, Any], meta: dict[str, Any])
         "status_filter": status_filter,
         "adrs": _clean_out_rows(results),
         "count": len(results),
+        **_scope_echo(scope),
         "meta": meta,
     }
 
@@ -3033,6 +3104,7 @@ def _tool_decision_context(
         get_adrs_for_plan,
         get_plan_by_number,
         get_plan_dependencies,
+        get_plan_projects,
         get_spikes_for_plan,
         get_studies_for_plan,
     )
@@ -3041,14 +3113,37 @@ def _tool_decision_context(
     if pn is None:
         return {"error": "plan_number is required.", "meta": meta}
 
-    plan = get_plan_by_number(store, pn)
+    scope = _scope_args(arguments)
+    # A decision chain is a single plan's history, so federating it cannot mean
+    # "merge every project's plan 249" -- that would splice unrelated ADRs and
+    # spikes into one narrative. It means "find which project owns this number".
+    # If more than one does, the number alone is not an answer, so refuse and
+    # name the candidates rather than silently returning whichever came first.
+    if scope["all_projects"]:
+        from agentscaffold.mcp.errors import AmbiguousProjectError, to_error_response
+
+        owners = get_plan_projects(store, pn)
+        if len(owners) > 1:
+            return {
+                **to_error_response(
+                    AmbiguousProjectError(
+                        f"Plan {pn} exists in {len(owners)} projects; "
+                        "name one with the 'project' argument.",
+                        candidates=owners,
+                    )
+                ),
+                "meta": meta,
+            }
+        scope = {"project": owners[0] if owners else None, "all_projects": False}
+
+    plan = get_plan_by_number(store, pn, **scope)
     if not plan:
         return {"error": f"Plan {pn} not found.", "meta": meta}
 
-    adrs = get_adrs_for_plan(store, pn)
-    spikes = get_spikes_for_plan(store, pn)
-    studies = get_studies_for_plan(store, pn)
-    deps = get_plan_dependencies(store, pn)
+    adrs = get_adrs_for_plan(store, pn, **scope)
+    spikes = get_spikes_for_plan(store, pn, **scope)
+    studies = get_studies_for_plan(store, pn, **scope)
+    deps = get_plan_dependencies(store, pn, **scope)
 
     from agentscaffold.review.filters import normalize_plan_status
 
@@ -3062,6 +3157,7 @@ def _tool_decision_context(
         "supporting_studies": _clean_out_rows(studies),
         "plan_dependencies": _clean_out_rows(deps),
         "has_full_decision_chain": bool(adrs or spikes or studies),
+        **({"project": scope["project"]} if scope["project"] else {}),
         # If the graph is empty the chain looks absent even when it exists in
         # docs; flag so a False is not read as a confirmed "no decisions".
         "graph_warning": _empty_graph_warning(store.get_stats()),
