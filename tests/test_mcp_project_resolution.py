@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from agentscaffold.mcp.errors import AmbiguousProjectError, UnknownProjectError
-from agentscaffold.mcp.projects import ResolutionSource, resolve_project
+from agentscaffold.mcp.project_resolution import ResolutionSource, resolve_project
 from agentscaffold.workspace_registry import Registry, load_registry, register_workspace
 
 

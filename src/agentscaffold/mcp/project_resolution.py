@@ -1,5 +1,9 @@
 """Call-time project resolution for the single MCP server (Plan 249, Step A6).
 
+Named ``project_resolution`` rather than ``projects`` because Plan 249 reserves
+``mcp/projects.py`` for the ``scaffold_projects`` tool at Step A7.
+
+
 One server process serves every registered workspace, so each tool call has to
 decide for itself which project it is about. The precedence is defined in
 ``docs/ai/contracts/workspace_registry_interface.md``:
