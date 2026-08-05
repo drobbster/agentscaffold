@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -1285,6 +1286,29 @@ def _get_resource_definitions() -> list[Resource]:
 # ---------------------------------------------------------------------------
 
 
+_RESTRICT_TO: set[str] = set()
+
+
+def configure_restrict_to(names: Iterable[str] | None) -> None:
+    """Set the ``--restrict-to`` allowlist for this server process.
+
+    Plan 249 Section 11 counts this among the mitigations for the fact that one
+    process can now read every registered project: a user who wants a narrower
+    blast radius can start the server bound to an explicit set. Passing None or
+    an empty iterable clears the restriction rather than denying everything,
+    since an unset allowlist must not fail closed.
+
+    Comma-separated values are split here rather than at the call site, because
+    users reach for both ``--restrict-to a --restrict-to b`` and
+    ``--restrict-to a,b``, and an allowlist entry that is silently parsed into
+    one nonexistent project name would deny access without explaining why.
+    """
+    global _RESTRICT_TO
+    _RESTRICT_TO = {
+        part.strip() for name in (names or ()) for part in str(name).split(",") if part.strip()
+    }
+
+
 def _route_root_for_working_path(working_path: Any) -> Path | None:
     """Resolve the project root that owns *working_path* (dynamic per-call scoping).
 
@@ -1394,14 +1418,28 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
                 "missing_argument": arg_name,
             }
 
-    root = _effective_mcp_root()
-    # Dynamic per-call project routing for multi-project workspaces: if the caller
-    # tells us the path it is working on, scope the call to that path's project
-    # instead of the server's fixed launch directory. Every project-scoped read
-    # resolves its scope from the cwd, so chdir is sufficient to retarget them.
-    routed_root = _route_root_for_working_path(arguments.get("working_path"))
-    if routed_root is not None:
-        root = routed_root
+    # Resolve which project this call is about before touching the graph, so an
+    # unscopeable call costs nothing and cannot read a database it had no
+    # business opening. Replaces the previous behaviour, which swallowed every
+    # resolution failure and federated across all projects -- answering a
+    # question about one project with another's data, silently.
+    from agentscaffold.mcp.errors import McpToolError, to_error_response
+    from agentscaffold.mcp.project_resolution import resolve_project
+
+    try:
+        resolution = resolve_project(
+            project=arguments.get("project"),
+            working_path=arguments.get("working_path"),
+            anchor=_effective_mcp_root(),
+            restrict_to=_RESTRICT_TO or None,
+        )
+    except McpToolError as exc:
+        return to_error_response(exc)
+
+    root = resolution.root
+    # Project-scoped reads resolve their scope from the cwd, so chdir is how the
+    # resolved project reaches them. This is process-global and therefore only
+    # safe while dispatch is serialised; see finding rf::65b49d5c2a95.
     os.chdir(root)
     config = load_config(root / "scaffold.yaml")
     # Pin the embedding weights cache from config BEFORE any retrieval-status
@@ -1414,16 +1452,11 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         configure_embeddings(config.search.embedding_model, config.search.cache_dir)
     except Exception:  # pragma: no cover - defensive; search config optional
         pass
-    # Robust default: if the effective root is not a registered project and the
-    # caller did not scope explicitly, federate across all projects rather than
-    # failing closed with a ScopingError.
-    if not arguments.get("project") and not arguments.get("all_projects"):
-        try:
-            from agentscaffold.graph.scoping import current_project_name
-
-            current_project_name(root)
-        except Exception:
-            arguments = {**arguments, "all_projects": True}
+    # The silent federation fallback that stood here is gone (Plan 249 Step A6b).
+    # It existed because resolution could land on a root that was not a project;
+    # resolve_project now either returns a real project root or refuses, so the
+    # condition it guarded against cannot arise, and quietly widening a call's
+    # scope is the failure this plan exists to remove.
     if not graph_available(config):
         return {"error": "No knowledge graph found. Run 'scaffold index' first."}
 
@@ -2595,9 +2628,7 @@ def _tool_staleness_check(
             continue
         if other_num is None:
             continue
-        other_files = {
-            f.get("f.path", "") for f in get_plan_impacted_files(store, int(other_num))
-        }
+        other_files = {f.get("f.path", "") for f in get_plan_impacted_files(store, int(other_num))}
         completed_file_sets.append((other_num, p, other_files))
         for raw in other_files:
             if not raw:
@@ -3201,9 +3232,7 @@ def _tool_diff_plan_vs_code(
     return result
 
 
-def _tool_grep_graph(
-    arguments: dict[str, Any], meta: dict[str, Any], root: Path
-) -> dict[str, Any]:
+def _tool_grep_graph(arguments: dict[str, Any], meta: dict[str, Any], root: Path) -> dict[str, Any]:
     from agentscaffold.mcp.workspace_grep import workspace_grep
 
     result = workspace_grep(
@@ -3217,9 +3246,7 @@ def _tool_grep_graph(
     return result
 
 
-def _tool_why_empty(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
-) -> dict[str, Any]:
+def _tool_why_empty(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
     from agentscaffold.mcp.why_empty import explain_why_empty
 
     result = explain_why_empty(

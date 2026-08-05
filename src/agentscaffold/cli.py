@@ -1843,6 +1843,14 @@ def mcp_cmd(
             "No-argument tools then read this project's governance."
         ),
     ),
+    restrict_to: list[str] = typer.Option(
+        [],
+        "--restrict-to",
+        help=(
+            "Limit this server to the named projects. Repeat or comma-separate. "
+            "Calls resolving elsewhere are refused with 'restricted_project'."
+        ),
+    ),
 ) -> None:
     """Start MCP server (stdio mode for Cursor/Claude).
 
@@ -1850,11 +1858,16 @@ def mcp_cmd(
     ``AGENTSCAFFOLD_PROJECT`` env vars) pin the resolution anchor so no-argument
     tools resolve the intended project even when the MCP process cwd is a parent
     directory (Plan 234).
+
+    ``--restrict-to`` narrows the blast radius. One server process can read every
+    registered project, so a user who wants a tighter boundary can bind it to an
+    explicit allowlist; anything resolving outside is refused rather than served.
     """
-    from agentscaffold.mcp.server import run_mcp_server
+    from agentscaffold.mcp.server import configure_restrict_to, run_mcp_server
     from agentscaffold.paths import configure_mcp_start
 
     configure_mcp_start(workspace=workspace or None, project=project or None)
+    configure_restrict_to(restrict_to)
     run_mcp_server()
 
 
@@ -1997,9 +2010,7 @@ def workspace_migrate_layout(
     keep_diverged: bool = typer.Option(
         False, "--keep-diverged", help="Leave diverged files as project-local (do not promote)."
     ),
-    force: bool = typer.Option(
-        False, "--force", help="Allow --apply on a dirty git worktree."
-    ),
+    force: bool = typer.Option(False, "--force", help="Allow --apply on a dirty git worktree."),
     json_output: bool = typer.Option(
         False, "--json", help="Emit the machine-readable report as JSON."
     ),

@@ -20,6 +20,7 @@ class ErrorCode:
 
     AMBIGUOUS_PROJECT = "ambiguous_project"
     UNKNOWN_PROJECT = "unknown_project"
+    RESTRICTED_PROJECT = "restricted_project"
     REGISTRY_ERROR = "registry_error"
     GRAPH_LOCKED = "graph_locked"
     GRAPH_MISSING = "graph_missing"
@@ -84,6 +85,20 @@ class UnknownProjectError(McpToolError):
 
     error_code = ErrorCode.UNKNOWN_PROJECT
     default_remediation = "Run 'scaffold workspace list' to see registered projects."
+
+
+class RestrictedProjectError(McpToolError):
+    """The resolved project is outside the ``--restrict-to`` allowlist.
+
+    Distinct from ``unknown_project``: the project exists and resolved fine, it
+    is simply not one this server was started to serve.
+    """
+
+    error_code = ErrorCode.RESTRICTED_PROJECT
+    default_remediation = (
+        "This server was started with --restrict-to. "
+        "Restart without it, or add the project to the allowlist."
+    )
 
 
 class RegistryUnavailableError(McpToolError):

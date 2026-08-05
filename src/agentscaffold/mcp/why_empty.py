@@ -41,9 +41,7 @@ def explain_why_empty(
     args = arguments_hint or {}
     has_target = bool(target or args.get("file_or_symbol") or args.get("symbol"))
     if kind in {"structural", "impact", "context"} and not has_target:
-        reasons.append(
-            "Required target argument is missing or empty (file_or_symbol / symbol)."
-        )
+        reasons.append("Required target argument is missing or empty (file_or_symbol / symbol).")
         suggestions.append(
             "Re-call with file_or_symbol set to a repo-relative path or symbol name."
         )
@@ -82,9 +80,7 @@ def explain_why_empty(
                 "Search is degraded/keyword-only"
                 f" ({meta.get('retrieval_reason') or 'no embeddings'})."
             )
-            suggestions.append(
-                "Run `scaffold index --embeddings` or use scaffold_grep_graph."
-            )
+            suggestions.append("Run `scaffold index --embeddings` or use scaffold_grep_graph.")
         if query:
             suggestions.append(
                 f"Confirm the symbol exists via scaffold_grep_graph with pattern={query!r}."

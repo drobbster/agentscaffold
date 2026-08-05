@@ -26,7 +26,11 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from agentscaffold.mcp.errors import AmbiguousProjectError, UnknownProjectError
+from agentscaffold.mcp.errors import (
+    AmbiguousProjectError,
+    RestrictedProjectError,
+    UnknownProjectError,
+)
 from agentscaffold.workspace_registry import (
     RegisteredProject,
     RegisteredWorkspace,
@@ -64,6 +68,7 @@ def resolve_project(
     working_path: str | Path | None = None,
     anchor: Path | None = None,
     registry: Registry | None = None,
+    restrict_to: set[str] | None = None,
 ) -> ProjectResolution:
     """Resolve the project a tool call is about.
 
@@ -73,24 +78,49 @@ def resolve_project(
         anchor: The startup anchor (Plan 234). Callers in the server pass
             ``resolve_mcp_start()``; tests inject a path directly.
         registry: Registry to resolve against. Loaded from disk when omitted.
+        restrict_to: Optional ``--restrict-to`` allowlist of project names.
+            Applied after resolution so no tier can bypass it.
 
     Raises:
         UnknownProjectError: *project* was given but matches nothing.
+        RestrictedProjectError: resolved outside *restrict_to*.
         AmbiguousProjectError: no tier resolved.
     """
     reg = registry if registry is not None else load_registry()
+    resolution = _resolve(project=project, working_path=working_path, anchor=anchor, registry=reg)
 
+    if restrict_to and resolution.project.name not in restrict_to:
+        raise RestrictedProjectError(
+            f"Project '{resolution.project.name}' is outside this server's allowlist.",
+            candidates=sorted(restrict_to),
+        )
+    return resolution
+
+
+def _resolve(
+    *,
+    project: str | None,
+    working_path: str | Path | None,
+    anchor: Path | None,
+    registry: Registry,
+) -> ProjectResolution:
+    """Run the precedence chain. See :func:`resolve_project` for the contract."""
     if project:
-        resolved = _by_name(reg, project)
+        resolved = _by_name(registry, project)
         if resolved is None:
             raise UnknownProjectError(
                 f"Unknown project '{project}'.",
-                candidates=_candidates(reg),
+                candidates=_candidates(registry),
             )
         return ProjectResolution(resolved, ResolutionSource.EXPLICIT)
 
     if working_path:
-        resolved = _by_path(reg, working_path)
+        # Registry first, then the on-disk walk-up. Plan 234 shipped
+        # multi-project routing via workspace.yaml with no registry involved, so
+        # a registry-only tier 2 would break every workspace already relying on
+        # it. The registry is a cross-workspace index layered over on-disk
+        # resolution, not a replacement for it.
+        resolved = _by_path(registry, working_path) or _on_disk_root(working_path)
         if resolved is not None:
             return ProjectResolution(resolved, ResolutionSource.WORKING_PATH)
         # Deliberately falls through. The contract says the first tier that
@@ -98,19 +128,50 @@ def resolve_project(
         # the way an explicit name is -- the anchor may still resolve the call.
 
     if anchor is not None:
-        resolved = _by_path(reg, anchor) or _unregistered_root(anchor)
+        # With an empty registry there is nothing the call could mean *other*
+        # than the anchor, so accept it whatever it looks like. Demanding a
+        # project marker there would turn "no graph found here" -- a clear,
+        # actionable error -- into "ambiguous project", which is neither true
+        # nor useful. Once projects are registered the anchor has competition,
+        # so it must look like a real root to win.
+        resolved = _by_path(registry, anchor) or _unregistered_root(
+            anchor, require_marker=bool(registry.workspaces)
+        )
         if resolved is not None:
             return ProjectResolution(resolved, ResolutionSource.STARTUP_ANCHOR)
 
-    sole = _sole_project(reg)
+    sole = _sole_project(registry)
     if sole is not None:
         return ProjectResolution(sole, ResolutionSource.SOLE_PROJECT)
 
     raise AmbiguousProjectError(
         "Cannot resolve which project this call is about. "
         "Pass project=<name> or working_path=<file or dir>.",
-        candidates=_candidates(reg),
+        candidates=_candidates(registry),
     )
+
+
+def _on_disk_root(working_path: str | Path) -> ResolvedProject | None:
+    """Resolve a path to its owning project root using the on-disk layout.
+
+    Mirrors the pre-registry behaviour: walk up to the nearest ``scaffold.yaml``
+    (then ``.git``), which is how ``workspace.yaml`` projects have always been
+    routed.
+    """
+    from agentscaffold.paths import resolve_root
+
+    try:
+        candidate = Path(working_path).expanduser()
+        if not candidate.is_absolute():
+            from agentscaffold.paths import resolve_workspace_root
+
+            candidate = resolve_workspace_root() / candidate
+        candidate = candidate.resolve()
+        if not candidate.exists():
+            return None
+        return _unregistered_root(resolve_root(candidate))
+    except Exception:  # noqa: BLE001 - resolution is best-effort by design
+        return None
 
 
 def _candidates(registry: Registry) -> list[str]:
@@ -147,19 +208,29 @@ def _by_path(registry: Registry, path: str | Path) -> ResolvedProject | None:
     return resolve_project_for_path(candidate, registry=registry)
 
 
-def _unregistered_root(anchor: Path) -> ResolvedProject | None:
-    """Treat a real but unregistered project root as resolvable.
+def _unregistered_root(anchor: Path, *, require_marker: bool = True) -> ResolvedProject | None:
+    """Treat an unregistered directory as a project root.
 
     Keeps the lone-repo case working exactly as before. A single-project user
     with no ``workspace.yaml`` and no registry should never have to register
-    anything to use the server, so an anchor that is a genuine project root
-    resolves directly, with its directory name standing in for a registry name.
+    anything to use the server, so the anchor resolves directly with its
+    directory name standing in for a registry name.
+
+    When *require_marker* is set, the directory must hold a ``scaffold.yaml`` or
+    a ``.git`` to qualify. That mirrors :func:`agentscaffold.paths.resolve_root`,
+    and checking for ``.git`` too matters: requiring ``scaffold.yaml`` alone
+    would reject any graph-bearing repo that never created one -- the
+    AgentScaffold package repo among them.
+
+    The caller clears *require_marker* when the registry is empty, because then
+    no other project could possibly be meant and refusing would only convert a
+    precise "no graph found here" into a misleading ambiguity error.
     """
     try:
         root = anchor.expanduser().resolve()
     except (OSError, RuntimeError):
         return None
-    if not (root / "scaffold.yaml").is_file():
+    if require_marker and not ((root / "scaffold.yaml").is_file() or (root / ".git").exists()):
         return None
     return ResolvedProject(
         name=root.name,

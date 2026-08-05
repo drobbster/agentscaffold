@@ -22,7 +22,11 @@ from pathlib import Path
 
 import pytest
 
-from agentscaffold.mcp.errors import AmbiguousProjectError, UnknownProjectError
+from agentscaffold.mcp.errors import (
+    AmbiguousProjectError,
+    RestrictedProjectError,
+    UnknownProjectError,
+)
 from agentscaffold.mcp.project_resolution import ResolutionSource, resolve_project
 from agentscaffold.workspace_registry import Registry, load_registry, register_workspace
 
@@ -154,6 +158,38 @@ def test_unmatched_working_path_falls_through_to_the_next_tier(home: Path, tmp_p
     assert resolved.source is ResolutionSource.STARTUP_ANCHOR
 
 
+def test_working_path_falls_back_to_on_disk_resolution(home: Path, tmp_path: Path) -> None:
+    """An unregistered but real project root still resolves from working_path.
+
+    Plan 234 shipped multi-project routing via ``workspace.yaml`` walk-up, with no
+    registry involved. Making tier 2 registry-only would break every workspace
+    already relying on that, so the registry is a cross-workspace index layered
+    over on-disk resolution rather than a replacement for it.
+    """
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "workspace.yaml").write_text(
+        "projects:\n  - name: alpha\n    path: alpha\n  - name: beta\n    path: beta\n"
+    )
+    beta = _project(workspace / "beta", "beta")
+    (beta / "src").mkdir()
+
+    resolved = resolve_project(working_path=beta / "src", registry=Registry())
+
+    assert resolved.project.project_root == beta.resolve()
+    assert resolved.source is ResolutionSource.WORKING_PATH
+
+
+def test_registry_takes_precedence_over_on_disk_within_tier_2(home: Path, tmp_path: Path) -> None:
+    """A registered name wins over the directory name for the same root."""
+    a = _project(tmp_path / "alpha", "alpha")
+    register_workspace(a, name="registered-alpha")
+
+    resolved = resolve_project(working_path=a, registry=load_registry())
+
+    assert resolved.project.name == "registered-alpha"
+
+
 # --------------------------------------------------------------------------
 # Tier 3 -- startup anchor
 # --------------------------------------------------------------------------
@@ -170,6 +206,53 @@ def test_startup_anchor_used_when_nothing_more_specific(home: Path, tmp_path: Pa
 
     assert resolved.project.name == "beta"
     assert resolved.source is ResolutionSource.STARTUP_ANCHOR
+
+
+def test_bare_anchor_resolves_when_nothing_is_registered(home: Path, tmp_path: Path) -> None:
+    """An empty registry makes the anchor the only possible answer.
+
+    A directory with a graph but no scaffold.yaml, no .git, and nothing
+    registered is not ambiguous -- there is exactly one candidate. Refusing here
+    would convert a precise "no graph found" into a misleading ambiguity error,
+    and would break users whose repo carries no project marker.
+    """
+    bare = tmp_path / "just-a-dir"
+    bare.mkdir()
+
+    resolved = resolve_project(anchor=bare, registry=Registry())
+
+    assert resolved.project.project_root == bare.resolve()
+    assert resolved.source is ResolutionSource.STARTUP_ANCHOR
+
+
+def test_bare_anchor_is_rejected_once_projects_are_registered(home: Path, tmp_path: Path) -> None:
+    """With registered projects competing, the anchor must look like a root.
+
+    This is where the leniency above has to stop: an unmarked directory is no
+    longer the only candidate, so accepting it would be a guess.
+    """
+    register_workspace(_project(tmp_path / "alpha", "alpha"), name="alpha")
+    register_workspace(_project(tmp_path / "beta", "beta"), name="beta")
+    bare = tmp_path / "just-a-dir"
+    bare.mkdir()
+
+    with pytest.raises(AmbiguousProjectError):
+        resolve_project(anchor=bare, registry=load_registry())
+
+
+def test_anchor_with_only_a_git_dir_resolves(home: Path, tmp_path: Path) -> None:
+    """.git counts as a project marker, matching resolve_root.
+
+    Requiring scaffold.yaml alone would reject any graph-bearing repo that never
+    created one, including the AgentScaffold package repo itself.
+    """
+    register_workspace(_project(tmp_path / "alpha", "alpha"), name="alpha")
+    repo = tmp_path / "plain-repo"
+    (repo / ".git").mkdir(parents=True)
+
+    resolved = resolve_project(anchor=repo, registry=load_registry())
+
+    assert resolved.project.project_root == repo.resolve()
 
 
 def test_unregistered_anchor_still_resolves_for_a_lone_repo(home: Path, tmp_path: Path) -> None:
@@ -256,6 +339,66 @@ def test_resolution_never_falls_back_to_a_default_project(home: Path, tmp_path: 
             working_path=tmp_path / "elsewhere" / "x.py",
             registry=load_registry(),
         )
+
+
+# --------------------------------------------------------------------------
+# --restrict-to allowlist
+# --------------------------------------------------------------------------
+
+
+def test_restrict_to_permits_a_listed_project(home: Path, tmp_path: Path) -> None:
+    """An allowlisted project resolves normally."""
+    a = _project(tmp_path / "alpha", "alpha")
+    register_workspace(a, name="alpha")
+
+    resolved = resolve_project(project="alpha", registry=load_registry(), restrict_to={"alpha"})
+
+    assert resolved.project.name == "alpha"
+
+
+def test_restrict_to_blocks_an_unlisted_project(home: Path, tmp_path: Path) -> None:
+    """The allowlist is the point: an unlisted project is refused.
+
+    Section 11 of Plan 249 counts this as one of the mitigations for the fact
+    that one server process can now read every registered project, so it has to
+    actually deny rather than warn.
+    """
+    register_workspace(_project(tmp_path / "alpha", "alpha"), name="alpha")
+    register_workspace(_project(tmp_path / "secret", "secret"), name="secret")
+
+    with pytest.raises(RestrictedProjectError) as excinfo:
+        resolve_project(project="secret", registry=load_registry(), restrict_to={"alpha"})
+
+    payload = excinfo.value.to_response()
+    assert payload["error_code"] == "restricted_project"
+    assert payload["candidates"] == ["alpha"]
+
+
+def test_restrict_to_blocks_inference_tiers_too(home: Path, tmp_path: Path) -> None:
+    """Restriction applies after resolution, so no tier can bypass it.
+
+    Enforcing only on the explicit argument would leave working_path as an open
+    door, which is the opposite of what an allowlist is for.
+    """
+    register_workspace(_project(tmp_path / "alpha", "alpha"), name="alpha")
+    secret = _project(tmp_path / "secret", "secret")
+    register_workspace(secret, name="secret")
+
+    with pytest.raises(RestrictedProjectError):
+        resolve_project(
+            working_path=secret / "x.py",
+            registry=load_registry(),
+            restrict_to={"alpha"},
+        )
+
+
+def test_no_restriction_when_allowlist_is_empty(home: Path, tmp_path: Path) -> None:
+    """An unset allowlist must not accidentally deny everything."""
+    a = _project(tmp_path / "alpha", "alpha")
+    register_workspace(a, name="alpha")
+
+    assert resolve_project(registry=load_registry(), restrict_to=None).project.name == "alpha"
+    assert resolve_project(registry=load_registry(), restrict_to=set()).project.name == "alpha"
 
 
 def test_error_payload_is_json_serialisable(home: Path, tmp_path: Path) -> None:
