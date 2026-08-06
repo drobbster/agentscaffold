@@ -44,6 +44,11 @@ _UNRESOLVED_ENV_RE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")
 #: volume on a persistent box and a scratch path on an ephemeral devbox.
 DB_PATH_ENV_VAR = "AGENTSCAFFOLD_DB_PATH"
 
+#: Environment variable that overrides the embedding weights cache entirely
+#: (Plan 249, Step A7c). Mirrors ``DB_PATH_ENV_VAR``: one machine-level escape
+#: hatch for images and air-gapped builds that provision weights elsewhere.
+MODEL_CACHE_ENV_VAR = "AGENTSCAFFOLD_MODEL_CACHE"
+
 #: Environment variables that configure the MCP resolution anchor (Plan 234) when
 #: the IDE launches the MCP server from a directory that is not the active
 #: project (e.g. Cursor opening a parent monorepo folder). They mirror the
@@ -179,6 +184,98 @@ def resolve_db_path(config: ScaffoldConfig | None, start: Path | None = None) ->
     # for a lone repo the workspace root collapses to the project root, so this
     # is byte-for-byte the previous single-project behavior.
     return resolve_workspace_root(start) / p
+
+
+def resolve_user_cache_dir() -> Path:
+    """Return the user-level cache root for AgentScaffold (Plan 249, Step A7c).
+
+    ``$XDG_CACHE_HOME/agentscaffold`` when set, else ``~/.cache/agentscaffold``.
+    Native Windows has no XDG convention; ``%LOCALAPPDATA%`` is the equivalent.
+
+    Note for Step B4, which adds the *state* default: state and cache are
+    deliberately different XDG roots. Graph state is per-workspace and worth
+    keeping, so it belongs under ``XDG_STATE_HOME`` keyed by workspace id. Model
+    weights are byte-identical everywhere and re-downloadable, so they belong
+    under ``XDG_CACHE_HOME`` and are explicitly *not* keyed by workspace -- that
+    key is what caused the duplication this function exists to remove. B4 should
+    reuse this platform branch rather than write a second one.
+    """
+    override = os.environ.get("XDG_CACHE_HOME")
+    if override:
+        return Path(os.path.expanduser(override)).resolve() / "agentscaffold"
+    if os.name == "nt":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data).resolve() / "agentscaffold" / "Cache"
+    return (Path.home() / ".cache" / "agentscaffold").resolve()
+
+
+def _has_cached_weights(path: Path) -> bool:
+    """True when *path* looks like a populated Hugging Face cache.
+
+    Existence alone is not enough: a failed warm leaves an empty directory
+    behind, and treating that as warm would pin the project to a cache that has
+    nothing in it. Hugging Face names each entry ``models--<org>--<name>``.
+    """
+    try:
+        return any(child.name.startswith("models--") for child in path.iterdir())
+    except OSError:
+        return False
+
+
+def resolve_model_cache_dir(
+    config: ScaffoldConfig | None, start: Path | None = None
+) -> Path | None:
+    """Resolve where embedding model weights are cached (Plan 249, Step A7c).
+
+    Returns ``None`` to mean "use the default Hugging Face cache", preserving the
+    existing meaning of an empty ``search.cache_dir``.
+
+    Resolution order:
+
+    1. ``AGENTSCAFFOLD_MODEL_CACHE``, if set, overrides everything.
+    2. An empty ``search.cache_dir`` yields ``None`` (Hugging Face default).
+    3. An absolute ``search.cache_dir`` is honored unchanged.
+    4. A relative ``search.cache_dir`` the user actually wrote resolves against
+       the project root -- pinning weights inside a repo is legitimate for an
+       air-gapped build, so a deliberate choice is never redirected.
+    5. The shipped default resolves to the shared user-level cache.
+
+    Case 5 is the change. The default was project-relative, so N projects held N
+    copies of byte-identical weights (four were measured at 87 MB each). Note
+    that it is the *default* that redirects, not relative paths in general: the
+    distinction is between a value nobody chose and one somebody wrote.
+
+    One exception keeps upgrades cheap. If the shared cache is cold but this
+    project already has a warmed local one, the local one is used, so upgrading
+    never forces an 87 MB re-download. That is a migration aid, not a
+    preference -- once the shared cache is warm it wins, and ``scaffold gc``
+    reclaims the leftovers.
+    """
+    override = os.environ.get(MODEL_CACHE_ENV_VAR)
+    if override:
+        return Path(os.path.expanduser(os.path.expandvars(override))).resolve()
+
+    raw = config.search.cache_dir if config is not None and hasattr(config, "search") else None
+    if not raw:
+        return None
+
+    path = Path(os.path.expandvars(os.path.expanduser(raw)))
+    if path.is_absolute():
+        return path
+
+    from agentscaffold.config import SearchConfig
+
+    if raw != SearchConfig.model_fields["cache_dir"].default:
+        return resolve_root(start) / path
+
+    shared = resolve_user_cache_dir() / "models"
+    if _has_cached_weights(shared):
+        return shared
+    project_local = resolve_root(start) / path
+    if _has_cached_weights(project_local):
+        return project_local
+    return shared
 
 
 def resolve_root(start: Path | None = None) -> Path:
