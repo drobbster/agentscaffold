@@ -18,7 +18,7 @@ from typing import Any
 from pydantic import AnyUrl
 
 from agentscaffold.active_root import active_root
-from agentscaffold.mcp.registry import tool_specs
+from agentscaffold.mcp.registry import WRITE_TOOLS, tool_specs
 from agentscaffold.mcp.resources import (
     GUIDANCE_ROUTING_URI,
     guidance_resource_definition,
@@ -41,17 +41,10 @@ _MCP_EXTRAS_MSG = "MCP server requires extra dependencies: pip install agentscaf
 # Tools that mutate the graph and must wait for the exclusive write lock.
 # All other tools open read-preferring (Plan 244) so async freshness refresh
 # does not block interactive reads for ~20s+.
-_GRAPH_WRITE_TOOLS: frozenset[str] = frozenset(
-    {
-        "scaffold_record_finding",
-        "scaffold_resolve_finding",
-        "scaffold_record_findings_batch",
-        "scaffold_record_backlog_item",
-        "scaffold_resolve_backlog_item",
-        "scaffold_begin_plan",
-        "scaffold_complete_plan",
-    }
-)
+#
+# Imported rather than restated: `doctor --tools` needs the same distinction to
+# decide what it may safely run, and a second copy would drift.
+_GRAPH_WRITE_TOOLS: frozenset[str] = WRITE_TOOLS
 
 # ---------------------------------------------------------------------------
 # Intent metadata: single source of truth for semantic mapping.

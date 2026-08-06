@@ -2020,7 +2020,39 @@ _STATUS_STYLE = {
     "warn": ("[yellow]warn[/yellow]", "yellow"),
     "fail": ("[red]FAIL[/red]", "red"),
     "skip": ("[dim]skip[/dim]", "dim"),
+    # Distinct from both ok and fail on purpose: another process holding the
+    # graph is transient, and telling someone their tools are broken when an
+    # index is running in the next terminal is how a diagnostic loses trust.
+    "busy": ("[yellow]busy[/yellow]", "yellow"),
 }
+
+
+def _print_tool_probes(context: Any, include_writes: bool) -> bool:
+    """Print the per-tool table. Returns True if any tool actually failed."""
+    from agentscaffold.doctor_tools import probe_tools, summarize
+
+    probes = probe_tools(context, include_writes=include_writes)
+    console.print("\n[bold]MCP tools[/bold]")
+    for probe in probes:
+        label, _style = _STATUS_STYLE[probe.status]
+        line = f"{label} {probe.name}"
+        if probe.status != "skip" and probe.elapsed_ms:
+            line += f" [dim]({probe.elapsed_ms:.0f} ms)[/dim]"
+        console.print(line)
+        if probe.detail and probe.status in {"fail", "busy"}:
+            console.print(f"      [dim]{probe.detail}[/dim]", soft_wrap=True)
+
+    counts = summarize(probes)
+    console.print(
+        "  ".join(f"{status}: {count}" for status, count in sorted(counts.items())),
+        style="dim",
+    )
+    if not include_writes and counts.get("skip"):
+        console.print(
+            "[dim]Write tools were not exercised. "
+            "Add --include-writes to probe them against a scratch project.[/dim]"
+        )
+    return bool(counts.get("fail"))
 
 
 @app.command("doctor")
@@ -2033,6 +2065,14 @@ def doctor(
     ),
     strict: bool = typer.Option(
         False, "--strict", help="Exit non-zero if any check is not clean (for CI)."
+    ),
+    tools: bool = typer.Option(
+        False, "--tools", help="Also call every MCP tool and report how each behaved."
+    ),
+    include_writes: bool = typer.Option(
+        False,
+        "--include-writes",
+        help="With --tools, also exercise write tools against a scratch project.",
     ),
 ) -> None:
     """Diagnose an AgentScaffold installation. Reads only; changes nothing.
@@ -2063,7 +2103,11 @@ def doctor(
         if result.remediation and result.status in {"warn", "fail"}:
             console.print(f"      [cyan]{result.remediation}[/cyan]")
 
+    tools_failed = _print_tool_probes(context, include_writes) if tools else False
+
     worst = worst_status(results)
+    if tools_failed and strict:
+        raise SystemExit(1)
     if worst in {"warn", "fail"}:
         console.print(
             "\nRun [cyan]scaffold doctor --strict[/cyan] in CI to make these block a build."

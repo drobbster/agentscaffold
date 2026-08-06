@@ -26,6 +26,15 @@ the unit suite alone.
   actually resolves. It only reads — it never repairs — so it is safe to run on a setup
   you already believe is broken. The default exits 0 whatever it finds, so it is safe in
   a shell profile or a hook; ``--strict`` exits non-zero and is the CI gate.
+- **``scaffold doctor --tools``** calls every MCP tool once and reports how each behaved,
+  answering the question the configuration checks cannot: whether the tools work in your
+  installation right now. A graph held by another process reports as ``busy`` rather than
+  as a failure, because an index running in the next terminal is routine and a diagnostic
+  that cries wolf during it stops being read. Write tools are skipped by default;
+  ``--include-writes`` exercises them against a temporary throwaway project with its own
+  database, so the command cannot leave findings or backlog items in your governance
+  record either way. A database predating the current schema reports once as "graph schema
+  is out of date" rather than as a dozen broken tools.
 - **The version-skew check** compares what each MCP entry actually launches against the
   running CLI. An entry naming an absolute interpreter keeps launching whatever is left
   at that path after a virtualenv rebuild; the server still starts, just with an old

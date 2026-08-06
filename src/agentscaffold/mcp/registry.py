@@ -70,6 +70,32 @@ _SCOPE_PROPS = {
 }
 
 
+#: Tools that mutate the graph.
+#:
+#: Declared here rather than in ``server.py`` because two other callers need the
+#: distinction without wanting the MCP SDK: the server takes the exclusive write
+#: lock for these and opens read-preferring for the rest, and ``doctor --tools``
+#: must not run them unless explicitly asked. A second hand-maintained copy of
+#: this list is how a new write tool ends up being probed against real
+#: governance data -- the same failure shape as L249-13.
+WRITE_TOOLS: frozenset[str] = frozenset(
+    {
+        "scaffold_record_finding",
+        "scaffold_resolve_finding",
+        "scaffold_record_findings_batch",
+        "scaffold_record_backlog_item",
+        "scaffold_resolve_backlog_item",
+        "scaffold_begin_plan",
+        "scaffold_complete_plan",
+    }
+)
+
+
+def is_write_tool(name: str) -> bool:
+    """True if *name* mutates the graph and needs the exclusive write lock."""
+    return name in WRITE_TOOLS
+
+
 def tool_specs() -> list[ToolSpec]:
     """Every tool the server advertises, with ``working_path`` already applied.
 

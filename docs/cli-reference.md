@@ -176,6 +176,8 @@ this moves and why.
 ```bash
 scaffold doctor                       # report; always exits 0
 scaffold doctor --strict              # exit non-zero if anything is not clean
+scaffold doctor --tools               # also call every MCP tool and report each
+scaffold doctor --tools --include-writes
 scaffold doctor --project-root /path/to/repo
 scaffold doctor --mcp-config /path/to/mcp.json
 ```
@@ -187,6 +189,32 @@ graph resolves.
 It never repairs anything, so it is safe to run on a setup you already believe
 is broken. The default exit code is 0 whatever it finds, which makes it safe in
 a shell profile or a git hook; `--strict` is the gate to put in CI.
+
+#### `--tools`
+
+Calls every MCP tool once and reports how each behaved. This answers the
+question the configuration checks cannot: whether the tools actually work in
+your installation, right now.
+
+Four outcomes:
+
+| Status | Meaning |
+|--------|---------|
+| `ok` | The tool ran and answered |
+| `busy` | Another process holds the graph; retry shortly |
+| `skip` | Not exercised (a write tool, or no usable graph) |
+| `FAIL` | The tool errored |
+
+`busy` is deliberately distinct from `FAIL`. An indexing run in another terminal
+holds the graph briefly, and that is normal rather than broken.
+
+Write tools are skipped by default, so the command cannot leave findings or
+backlog items in your governance record. `--include-writes` exercises them
+against a temporary throwaway project with its own database, which is discarded
+afterwards; it never writes to your project even with the flag set.
+
+If the table shows every tool skipped with "graph schema is out of date", run
+`scaffold index` — the database predates the current schema.
 
 ### `scaffold gc`
 
