@@ -79,7 +79,7 @@ app.add_typer(config_app, name="config")
 state_app = typer.Typer(help="Sharded governance-state operations.")
 app.add_typer(state_app, name="state")
 
-workspace_app = typer.Typer(help="Multi-project workspace management (Plan 225).")
+workspace_app = typer.Typer(help="Multi-project workspace management.")
 app.add_typer(workspace_app, name="workspace")
 
 project_app = typer.Typer(help="User-level project registration.")
