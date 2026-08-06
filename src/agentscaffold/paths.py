@@ -15,6 +15,7 @@ intended change is that customized ``graph.*`` paths finally take effect.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -351,6 +352,62 @@ def ensure_workspace_state_dir(workspace_id: str) -> Path:
     return _ensure_private_dir(resolve_user_state_dir() / workspace_id)
 
 
+#: Written inside each workspace state directory to record which root it serves.
+STATE_PROVENANCE_FILENAME = "workspace.json"
+
+
+def write_state_provenance(state_dir: Path, workspace_id: str, root: Path) -> None:
+    """Record which workspace root *state_dir* was created for.
+
+    Without this, ``scaffold gc`` has only a directory name to reason from, and
+    a directory name cannot distinguish a workspace that was deleted from one
+    that was simply never registered -- the manifest is the source of truth, so
+    an unregistered workspace's state is live and must not be reclaimed. The
+    marker turns that guess into a decidable question.
+
+    Best-effort by design: failing to write a hint must never fail a graph open.
+    """
+    try:
+        (state_dir / STATE_PROVENANCE_FILENAME).write_text(
+            json.dumps({"id": workspace_id, "root": str(root)}, indent=2) + "\n"
+        )
+    except OSError:  # pragma: no cover - unwritable state dir surfaces elsewhere
+        logger.debug("Could not record state provenance in %s", state_dir, exc_info=True)
+
+
+def read_state_provenance(state_dir: Path) -> dict[str, str] | None:
+    """Return the provenance record for *state_dir*, or None if it has none."""
+    marker = state_dir / STATE_PROVENANCE_FILENAME
+    if not marker.is_file():
+        return None
+    try:
+        loaded = json.loads(marker.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def _record_provenance_if_certain(parent: Path, state_root: Path) -> None:
+    """Record provenance for *parent* only when it is unambiguously this root's.
+
+    ``ensure_parent_dir`` is called from the graph-open path, which knows the
+    directory but not the workspace behind it. Rather than assume the ambient
+    workspace is the one being opened -- it need not be, since the MCP server
+    serves several -- the ambient id is resolved and the record is written only
+    if it matches the directory being created. A missed record is handled
+    conservatively by gc; a wrong one would not be.
+    """
+    if parent.parent != state_root:
+        return
+    try:
+        workspace_id = resolve_workspace_state_id()
+        if workspace_id != parent.name:
+            return
+        write_state_provenance(parent, workspace_id, resolve_workspace_root())
+    except Exception:  # pragma: no cover - provenance is never load-bearing
+        logger.debug("Could not determine provenance for %s", parent, exc_info=True)
+
+
 def ensure_parent_dir(path: Path) -> Path:
     """Create the parent directory of *path*, user-only when it is state we own.
 
@@ -380,6 +437,7 @@ def ensure_parent_dir(path: Path) -> Path:
     for part in relative.parts:
         current = current / part
         _ensure_private_dir(current)
+    _record_provenance_if_certain(parent, state_root)
     return parent
 
 

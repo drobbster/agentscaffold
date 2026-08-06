@@ -133,9 +133,7 @@ class TestCursorRuleTaxonomy:
                 passed=has_always_apply and has_compression,
                 score=1.0 if has_always_apply and has_compression else 0.0,
                 expected="agentscaffold.mdc has alwaysApply: true + Call Compression Discipline",
-                actual=(
-                    f"has_always_apply={has_always_apply}, has_compression={has_compression}"
-                ),
+                actual=(f"has_always_apply={has_always_apply}, has_compression={has_compression}"),
                 category="artifact",
             )
         )
@@ -180,7 +178,9 @@ class TestCursorRuleTaxonomy:
                 category="artifact",
             )
         )
-        assert has_globs, f"quant_architect.mdc missing globs despite file_patterns: {content[:300]}"
+        assert has_globs, (
+            f"quant_architect.mdc missing globs despite file_patterns: {content[:300]}"
+        )
 
     def test_no_file_patterns_reviewer_no_globs(self, cursor_rules_dir):
         """Reviewer without file_patterns falls back to alwaysApply: false (no globs)."""

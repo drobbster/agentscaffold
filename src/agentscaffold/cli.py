@@ -20,6 +20,26 @@ app = typer.Typer(
 )
 console = Console()
 
+
+def _version_callback(value: bool) -> None:
+    if value:
+        console.print(f"agentscaffold {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the installed agentscaffold version and exit.",
+    ),
+) -> None:
+    """AgentScaffold -- structured AI-assisted development framework."""
+
+
 # ---------------------------------------------------------------------------
 # Sub-command groups
 # ---------------------------------------------------------------------------
@@ -1988,6 +2008,119 @@ def mcp_install(
     if plan.removed:
         console.print(f"[green]Removed legacy entries:[/green] {', '.join(plan.removed)}")
     console.print("Restart your MCP client to pick up the change.")
+
+
+# ---------------------------------------------------------------------------
+# Health checks and reclamation (Plan 249, Step B8)
+# ---------------------------------------------------------------------------
+
+
+_STATUS_STYLE = {
+    "ok": ("[green]ok[/green]", "green"),
+    "warn": ("[yellow]warn[/yellow]", "yellow"),
+    "fail": ("[red]FAIL[/red]", "red"),
+    "skip": ("[dim]skip[/dim]", "dim"),
+}
+
+
+@app.command("doctor")
+def doctor(
+    project_root: str = typer.Option(
+        "", "--project-root", help="Project to diagnose (default: current directory)."
+    ),
+    mcp_config: str = typer.Option(
+        "", "--mcp-config", help="Client MCP config to inspect (default: ~/.cursor/mcp.json)."
+    ),
+    strict: bool = typer.Option(
+        False, "--strict", help="Exit non-zero if any check is not clean (for CI)."
+    ),
+) -> None:
+    """Diagnose an AgentScaffold installation. Reads only; changes nothing.
+
+    The default exit code is always 0, so this is safe in a shell profile or a
+    git hook. ``--strict`` is the CI gate.
+    """
+    from agentscaffold.doctor import (
+        DoctorContext,
+        default_mcp_config_path,
+        run_checks,
+        worst_status,
+    )
+
+    context = DoctorContext(
+        project_root=Path(project_root).expanduser() if project_root else Path.cwd(),
+        mcp_config_path=Path(mcp_config).expanduser() if mcp_config else default_mcp_config_path(),
+    )
+
+    results = run_checks(context)
+    for check, result in results:
+        label, _style = _STATUS_STYLE[result.status]
+        console.print(f"{label} [bold]{check.title}[/bold] — {result.summary}")
+        for detail in result.details:
+            # Details carry paths and ids. Wrapping one mid-token makes it
+            # unusable for the copy-paste it exists to enable.
+            console.print(f"      [dim]{detail}[/dim]", soft_wrap=True)
+        if result.remediation and result.status in {"warn", "fail"}:
+            console.print(f"      [cyan]{result.remediation}[/cyan]")
+
+    worst = worst_status(results)
+    if worst in {"warn", "fail"}:
+        console.print(
+            "\nRun [cyan]scaffold doctor --strict[/cyan] in CI to make these block a build."
+            if not strict
+            else ""
+        )
+        if strict:
+            raise SystemExit(1)
+    else:
+        console.print("\n[green]Everything checks out.[/green]")
+
+
+@app.command("gc")
+def gc(
+    apply: bool = typer.Option(
+        False, "--apply", help="Actually delete. Without this, gc only reports."
+    ),
+) -> None:
+    """Reclaim state left behind by workspaces that no longer exist.
+
+    Removes only what it can prove is orphaned: a state directory whose recorded
+    workspace root is gone or now resolves to a different id, and registry
+    entries pointing at roots that no longer exist. A state directory with no
+    record of where it came from is reported and kept -- an unnecessary
+    directory costs disk space, a wrongly deleted one costs a full re-index.
+    """
+    from agentscaffold.gc import apply_gc, plan_gc
+
+    plan = plan_gc()
+
+    for directory, reason in plan.orphaned_state:
+        console.print(f"[yellow]orphaned state[/yellow] {directory.name} — {reason}")
+        console.print(f"      [dim]{directory}[/dim]", soft_wrap=True)
+    for workspace_id, root in plan.stale_registry:
+        console.print(
+            f"[yellow]stale registry entry[/yellow] {workspace_id} — {root} is gone",
+            soft_wrap=True,
+        )
+    for directory in plan.unverifiable_state:
+        console.print(
+            f"[dim]kept[/dim] {directory.name} — no record of its workspace, so it is not "
+            "provably orphaned"
+        )
+
+    if not plan.has_work:
+        console.print("[green]Nothing to reclaim.[/green]")
+        return
+
+    if not apply:
+        console.print("\nNothing was deleted. Re-run with [cyan]--apply[/cyan] to reclaim these.")
+        return
+
+    apply_gc(plan)
+    console.print(
+        f"\n[green]Reclaimed[/green] {len(plan.orphaned_state)} state directory(ies) "
+        f"and {len(plan.stale_registry)} registry entry(ies)."
+    )
 
 
 # ---------------------------------------------------------------------------
