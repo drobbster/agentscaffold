@@ -26,9 +26,14 @@ See ``docs/ai/contracts/workspace_registry_interface.md`` v1.0 and
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import tempfile
+import threading
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -54,6 +59,20 @@ REGISTRY_VERSION = 1
 _REGISTRY_FILE_MODE = 0o600
 _REGISTRY_DIR_MODE = 0o700
 
+#: Lock directory guarding the registry read-modify-write cycle, alongside the
+#: registry file itself.
+REGISTRY_LOCK_NAME = ".registry.lock"
+
+#: Registry updates are small and quick; a wait this long means a real holder or
+#: a crashed one, and either way the user deserves to be told rather than hung.
+DEFAULT_REGISTRY_LOCK_TIMEOUT_SECONDS = 10.0
+DEFAULT_REGISTRY_LOCK_POLL_SECONDS = 0.05
+
+#: A lock older than this is presumed abandoned by a killed process. Age is the
+#: only portable signal: a recorded pid is meaningless across containers and
+#: outright wrong after pid reuse.
+DEFAULT_REGISTRY_LOCK_STALE_SECONDS = 300.0
+
 
 class RegistryError(ConfigError):
     """Raised when the registry cannot be read, written, or updated coherently.
@@ -62,6 +81,14 @@ class RegistryError(ConfigError):
     configuration; callers already catching ``ConfigError`` keep working. There
     is no common exception base in this package, so composing over the existing
     hierarchy is the available option rather than inventing a parallel one.
+    """
+
+
+class RegistryLockError(RegistryError):
+    """Raised when the registry lock cannot be acquired within the timeout.
+
+    Distinct from a malformed or unreadable registry because the remedy is
+    different: wait, or clear a lock left by a process that died.
     """
 
 
@@ -129,6 +156,123 @@ class ResolvedProject:
 def registry_path() -> Path:
     """Return the path of the user-level registry file."""
     return resolve_home_dir() / REGISTRY_FILENAME
+
+
+def registry_lock_path(path: Path | None = None) -> Path:
+    """Return the lock directory guarding the registry at *path*."""
+    target = path or registry_path()
+    return target.parent / REGISTRY_LOCK_NAME
+
+
+#: Depth of lock ownership per (thread, lock path), so nesting is reentrant.
+#: Thread-local rather than global because the lock is genuinely held per thread:
+#: a second thread must block, not inherit the first thread's ownership.
+_lock_state = threading.local()
+
+
+def _lock_depths() -> dict[str, int]:
+    depths: dict[str, int] | None = getattr(_lock_state, "depths", None)
+    if depths is None:
+        depths = {}
+        _lock_state.depths = depths
+    return depths
+
+
+@contextmanager
+def registry_lock(
+    *,
+    purpose: str,
+    path: Path | None = None,
+    timeout: float = DEFAULT_REGISTRY_LOCK_TIMEOUT_SECONDS,
+    poll: float = DEFAULT_REGISTRY_LOCK_POLL_SECONDS,
+    stale_after: float = DEFAULT_REGISTRY_LOCK_STALE_SECONDS,
+) -> Iterator[Path]:
+    """Hold an exclusive lock across a registry read-modify-write cycle.
+
+    Step A4 made registry writes atomic, which rules out a reader seeing a
+    half-written file. It does not rule out a lost update: registering reads the
+    document, appends to it, and writes it back, and two of those cycles can
+    interleave so that the second write discards the first's workspace. The file
+    is well-formed throughout -- a workspace has simply disappeared. Atomicity is
+    a property of one write; this is a property of the cycle, so the lock has to
+    span the cycle (review finding ``rf::7918540f8b4b``).
+
+    The lock is a directory because ``mkdir`` is atomic across processes on
+    common local filesystems, and processes are the real case: two ``scaffold``
+    invocations, not two threads. An in-process mutex would look correct in a
+    threaded test and protect nothing in practice.
+
+    Reentrant within a thread, so composing operations cannot self-deadlock.
+    """
+    lock = registry_lock_path(path)
+    key = str(lock)
+    depths = _lock_depths()
+
+    if depths.get(key, 0) > 0:
+        depths[key] += 1
+        try:
+            yield lock
+        finally:
+            depths[key] -= 1
+        return
+
+    lock.parent.mkdir(parents=True, exist_ok=True, mode=_REGISTRY_DIR_MODE)
+
+    deadline = time.monotonic() + timeout
+    while True:
+        _reap_stale_lock(lock, stale_after=stale_after)
+        try:
+            lock.mkdir()
+            break
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise RegistryLockError(
+                    f"Timed out after {timeout:g}s waiting for the registry lock at {lock}. "
+                    "Another scaffold process is probably updating the registry; if none is "
+                    f"running, remove {lock} and retry."
+                ) from None
+            time.sleep(poll)
+
+    _write_lock_owner(lock, purpose)
+    depths[key] = 1
+    try:
+        yield lock
+    finally:
+        depths[key] -= 1
+        _release_lock(lock)
+
+
+def _write_lock_owner(lock: Path, purpose: str) -> None:
+    """Record best-effort diagnostics. Ownership is the directory, not this file."""
+    payload = {"pid": os.getpid(), "purpose": purpose, "created_at": time.time()}
+    try:
+        (lock / "owner.json").write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _release_lock(lock: Path) -> None:
+    try:
+        owner = lock / "owner.json"
+        if owner.exists():
+            owner.unlink()
+        lock.rmdir()
+    except OSError:
+        logger.warning("Could not release registry lock at %s", lock, exc_info=True)
+
+
+def _reap_stale_lock(lock: Path, *, stale_after: float) -> None:
+    """Remove a lock left behind by a killed process, judged by age alone."""
+    if not lock.exists():
+        return
+    try:
+        age = time.time() - lock.stat().st_mtime
+    except OSError:
+        return
+    if age <= stale_after:
+        return
+    logger.warning("Reaping stale registry lock at %s (age %.0fs)", lock, age)
+    _release_lock(lock)
 
 
 def load_registry(path: Path | None = None) -> Registry:
@@ -209,28 +353,34 @@ def register_workspace(
 
     Registration is only ever explicit. Nothing in the indexing or MCP paths may
     call this as a side effect (threat model, Vector 1).
+
+    The whole read-modify-write cycle runs under the registry lock, so two
+    concurrent registrations serialise instead of one silently discarding the
+    other. Taking the lock here rather than asking callers to is deliberate: a
+    lock you have to remember to take is a convention, not a guarantee.
     """
     resolved_root = Path(root).resolve()
     project_name = derive_project_name(resolved_root, name)
 
-    registry = load_registry(path)
-    existing = registry.find_workspace_by_root(resolved_root)
+    with registry_lock(purpose=f"register:{project_name}", path=path):
+        registry = load_registry(path)
+        existing = registry.find_workspace_by_root(resolved_root)
 
-    _reject_name_collision(registry, project_name, resolved_root)
+        _reject_name_collision(registry, project_name, resolved_root)
 
-    if existing is not None:
-        existing.projects = [RegisteredProject(name=project_name, path=".")]
-        entry = existing
-    else:
-        entry = RegisteredWorkspace(
-            id=generate_workspace_id(),
-            root=str(resolved_root),
-            projects=[RegisteredProject(name=project_name, path=".")],
-        )
-        registry.workspaces.append(entry)
+        if existing is not None:
+            existing.projects = [RegisteredProject(name=project_name, path=".")]
+            entry = existing
+        else:
+            entry = RegisteredWorkspace(
+                id=generate_workspace_id(),
+                root=str(resolved_root),
+                projects=[RegisteredProject(name=project_name, path=".")],
+            )
+            registry.workspaces.append(entry)
 
-    save_registry(registry, path)
-    return entry
+        save_registry(registry, path)
+        return entry
 
 
 def unregister_project(name: str, path: Path | None = None) -> bool:
@@ -238,25 +388,30 @@ def unregister_project(name: str, path: Path | None = None) -> bool:
 
     Removing something absent is a no-op rather than an error, so cleanup and
     teardown scripts stay simple. A workspace left with no projects is dropped.
+
+    Locked for the same reason as registration: removal is also a read, a
+    modify, and a write, and interleaving one with a concurrent registration
+    would resurrect the removed project or drop the new one.
     """
-    registry = load_registry(path)
-    remaining: list[RegisteredWorkspace] = []
-    removed = False
+    with registry_lock(purpose=f"unregister:{name}", path=path):
+        registry = load_registry(path)
+        remaining: list[RegisteredWorkspace] = []
+        removed = False
 
-    for workspace in registry.workspaces:
-        kept = [p for p in workspace.projects if p.name != name]
-        if len(kept) != len(workspace.projects):
-            removed = True
-        if kept:
-            workspace.projects = kept
-            remaining.append(workspace)
+        for workspace in registry.workspaces:
+            kept = [p for p in workspace.projects if p.name != name]
+            if len(kept) != len(workspace.projects):
+                removed = True
+            if kept:
+                workspace.projects = kept
+                remaining.append(workspace)
 
-    if not removed:
-        return False
+        if not removed:
+            return False
 
-    registry.workspaces = remaining
-    save_registry(registry, path)
-    return True
+        registry.workspaces = remaining
+        save_registry(registry, path)
+        return True
 
 
 def resolve_project_for_path(

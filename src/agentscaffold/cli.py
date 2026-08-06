@@ -62,6 +62,9 @@ app.add_typer(state_app, name="state")
 workspace_app = typer.Typer(help="Multi-project workspace management (Plan 225).")
 app.add_typer(workspace_app, name="workspace")
 
+project_app = typer.Typer(help="User-level project registration (Plan 249).")
+app.add_typer(project_app, name="project")
+
 app.add_typer(benchmark_app, name="benchmark")
 
 
@@ -1869,6 +1872,102 @@ def mcp_cmd(
     configure_mcp_start(workspace=workspace or None, project=project or None)
     configure_restrict_to(restrict_to)
     run_mcp_server()
+
+
+# ---------------------------------------------------------------------------
+# Project registration commands (Plan 249)
+# ---------------------------------------------------------------------------
+
+
+@project_app.command("register")
+def project_register(
+    root: str = typer.Argument(..., help="Project or workspace root directory to register."),
+    name: str = typer.Option(
+        "", "--name", help="Project name (defaults to the directory basename)."
+    ),
+) -> None:
+    """Record a root in the user-level registry so one MCP server can resolve it.
+
+    This writes the registry and nothing else. In particular it does not touch
+    any client's ``mcp.json``: installing the server entry is a separate command
+    so that widening what a server can read is never a side effect of onboarding
+    a project (threat model, Vector 1).
+    """
+    from agentscaffold.workspace_registry import RegistryError, register_workspace
+
+    target = Path(root).expanduser()
+    if not target.is_dir():
+        console.print(f"[red]Not a directory: {target}[/red]")
+        raise SystemExit(1)
+
+    try:
+        entry = register_workspace(target, name=name or None)
+    except RegistryError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+
+    registered = ", ".join(p.name for p in entry.projects)
+    console.print(f"[green]Registered {registered!r} at {entry.root}.[/green]")
+    console.print("Run [cyan]scaffold mcp install[/cyan] if the MCP server is not yet installed.")
+
+
+@project_app.command("unregister")
+def project_unregister(
+    name: str = typer.Argument(..., help="Registered project name to forget."),
+) -> None:
+    """Forget a registered project.
+
+    Only the registry entry is removed -- never the project directory. Removing
+    something absent reports the fact but succeeds, so teardown scripts can run
+    this blind without special-casing.
+    """
+    from agentscaffold.workspace_registry import RegistryError, unregister_project
+
+    try:
+        removed = unregister_project(name)
+    except RegistryError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+
+    if removed:
+        console.print(f"[green]Unregistered {name!r}.[/green]")
+    else:
+        console.print(f"[yellow]No registered project named {name!r}; nothing to do.[/yellow]")
+
+
+@project_app.command("list")
+def project_list() -> None:
+    """List every registered project and the root it resolves to.
+
+    This is the server's entire read surface, so it is worth being able to see
+    at a glance (threat model, Vector 1).
+    """
+    from rich.table import Table
+
+    from agentscaffold.workspace_registry import RegistryError, load_registry, registry_path
+
+    try:
+        registry = load_registry()
+    except RegistryError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+
+    if not registry.workspaces:
+        console.print("[yellow]No projects registered.[/yellow]")
+        console.print(
+            "Register one with [cyan]scaffold project register <path>[/cyan]. "
+            "A lone repo does not need to be registered."
+        )
+        return
+
+    tbl = Table(title=f"Registered projects ({registry_path()})", show_header=True)
+    tbl.add_column("Project", style="green")
+    tbl.add_column("Root")
+    tbl.add_column("Workspace ID", style="dim")
+    for workspace in registry.workspaces:
+        for entry in workspace.projects:
+            tbl.add_row(entry.name, str(workspace.project_root(entry)), workspace.id)
+    console.print(tbl)
 
 
 # ---------------------------------------------------------------------------
