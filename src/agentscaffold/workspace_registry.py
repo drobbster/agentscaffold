@@ -35,7 +35,7 @@ import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 import yaml
@@ -43,6 +43,13 @@ from pydantic import BaseModel, Field, ValidationError
 
 from agentscaffold.config import ConfigError, derive_project_name, validate_project_name
 from agentscaffold.config_home import resolve_home_dir
+from agentscaffold.path_flavour import (
+    match_depth,
+    normalise_for_match,
+    parse_recorded_path,
+    path_contains,
+    paths_equal,
+)
 from agentscaffold.workspace_ids import generate_workspace_id
 
 logger = logging.getLogger(__name__)
@@ -114,6 +121,19 @@ class RegisteredWorkspace(BaseModel):
         """Return the absolute root of *project* within this workspace."""
         return (Path(self.root) / project.path).resolve()
 
+    def project_match_root(self, project: RegisteredProject) -> PurePath:
+        """Return *project*'s root in the flavour it was recorded in.
+
+        Distinct from :meth:`project_root`, which returns a host ``Path`` for
+        callers that will open files. This one is for comparison only and never
+        touches the filesystem, so a root recorded on another operating system
+        stays intact instead of being mangled into the host's flavour.
+        """
+        root = parse_recorded_path(self.root)
+        if project.path in ("", "."):
+            return normalise_for_match(root)
+        return normalise_for_match(root / project.path)
+
 
 class Registry(BaseModel):
     """The full registry document."""
@@ -125,9 +145,15 @@ class Registry(BaseModel):
         return [p.name for w in self.workspaces for p in w.projects]
 
     def find_workspace_by_root(self, root: Path) -> RegisteredWorkspace | None:
-        target = str(Path(root).resolve())
+        """Find a registered workspace by root, comparing paths not strings.
+
+        String equality is wrong on Windows, where ``C:\\Repo`` and ``c:\\repo``
+        are one directory: comparing the recorded text would let the same
+        workspace be registered twice, and every later read of it would then be
+        ambiguous.
+        """
         for workspace in self.workspaces:
-            if workspace.root == target:
+            if paths_equal(workspace.root, root):
                 return workspace
         return None
 
@@ -443,37 +469,27 @@ def resolve_project_for_path(
     Returning None is a real answer, not a failure to try: the caller raises
     ``ambiguous_project`` rather than falling back to a default project.
     """
-    target = Path(working_path).resolve()
+    target = normalise_for_match(working_path)
 
     best: ResolvedProject | None = None
     best_depth = -1
 
     for workspace in registry.workspaces:
-        workspace_root = Path(workspace.root)
         for project in workspace.projects:
-            project_root = workspace.project_root(project)
-            if not _contains(project_root, target):
+            match_root = workspace.project_match_root(project)
+            if not path_contains(match_root, target):
                 continue
-            depth = len(project_root.parts)
+            depth = match_depth(match_root)
             if depth > best_depth:
                 best_depth = depth
                 best = ResolvedProject(
                     name=project.name,
                     workspace_id=workspace.id,
-                    workspace_root=workspace_root,
-                    project_root=project_root,
+                    workspace_root=Path(workspace.root),
+                    project_root=Path(str(match_root)),
                 )
 
     return best
-
-
-def _contains(root: Path, target: Path) -> bool:
-    """Return True when *target* is *root* or lies beneath it.
-
-    ``is_relative_to`` compares path components, which is the whole point:
-    ``startswith`` would report ``/repo-two`` as living under ``/repo``.
-    """
-    return target == root or target.is_relative_to(root)
 
 
 def _reject_name_collision(registry: Registry, name: str, root: Path) -> None:
@@ -483,9 +499,11 @@ def _reject_name_collision(registry: Registry, name: str, root: Path) -> None:
     it makes reads unresolvable.
     """
     validate_project_name(name)
-    target = str(root)
     for workspace in registry.workspaces:
-        if workspace.root == target:
+        # Same-directory registrations are an update, not a collision. Compared
+        # as paths so a Windows re-registration under different casing is
+        # recognised as the same workspace rather than rejected as a clash.
+        if paths_equal(workspace.root, root):
             continue
         for project in workspace.projects:
             if project.name == name:
