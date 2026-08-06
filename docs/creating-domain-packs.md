@@ -97,7 +97,7 @@ field — the reviewer is triggered by explicit invocation only.
 After editing `expert_reviewers` in `scaffold.yaml`, regenerate all platform files:
 
 ```bash
-scaffold agents generate --all-platforms
+scaffold agents generate-all
 ```
 
 This updates `.cursor/rules/`, `.claude/agents/`, and windsurf stub files in one pass.

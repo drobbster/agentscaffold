@@ -76,13 +76,13 @@ app.add_typer(session_app, name="session")
 config_app = typer.Typer(help="Configuration inspection.")
 app.add_typer(config_app, name="config")
 
-state_app = typer.Typer(help="Sharded governance-state operations (Plan 226).")
+state_app = typer.Typer(help="Sharded governance-state operations.")
 app.add_typer(state_app, name="state")
 
 workspace_app = typer.Typer(help="Multi-project workspace management (Plan 225).")
 app.add_typer(workspace_app, name="workspace")
 
-project_app = typer.Typer(help="User-level project registration (Plan 249).")
+project_app = typer.Typer(help="User-level project registration.")
 app.add_typer(project_app, name="project")
 
 app.add_typer(benchmark_app, name="benchmark")
@@ -282,7 +282,7 @@ def plan_claim(
     number: str = typer.Argument(..., help="Plan number to claim (e.g. 225)."),
     owner: str = typer.Option(..., "--owner", "-o", help="Who is claiming the plan."),
 ) -> None:
-    """Record advisory, git-backed ownership of an in-flight plan (Plan 226)."""
+    """Record advisory, git-backed ownership of an in-flight plan."""
     from agentscaffold import collab
     from agentscaffold.config import load_config
     from agentscaffold.paths import ResolvedPaths, resolve_root
@@ -304,7 +304,7 @@ def plan_claim(
 def plan_release(
     number: str = typer.Argument(..., help="Plan number to release."),
 ) -> None:
-    """Clear an advisory plan claim (Plan 226)."""
+    """Clear an advisory plan claim."""
     from agentscaffold import collab
     from agentscaffold.config import load_config
     from agentscaffold.paths import ResolvedPaths, resolve_root
@@ -1893,7 +1893,7 @@ def mcp_cmd(
     ``--workspace`` / ``--project`` (or the ``AGENTSCAFFOLD_WORKSPACE_ROOT`` /
     ``AGENTSCAFFOLD_PROJECT`` env vars) pin the resolution anchor so no-argument
     tools resolve the intended project even when the MCP process cwd is a parent
-    directory (Plan 234).
+    directory.
 
     ``--restrict-to`` narrows the blast radius. One server process can read every
     registered project, so a user who wants a tighter boundary can bind it to an
@@ -2263,7 +2263,7 @@ def workspace_onboard(
         "--shared-layout",
         help=(
             "Write asset_layout: shared_workspace into workspace.yaml so reusable "
-            "process assets are shared at the workspace root (Plan 234)."
+            "process assets are shared at the workspace root."
         ),
     ),
 ) -> None:
@@ -2391,7 +2391,7 @@ def workspace_migrate_state_cmd(
         False, "--restore", help="Move state back into the tree (the rollback path)."
     ),
 ) -> None:
-    """Move this workspace's graph state out of the source tree (Plan 249).
+    """Move this workspace's graph state out of the source tree.
 
     Relocates the graph database and the files beside it to the platform state
     directory, keyed by workspace id, by copying, verifying, and only then
@@ -2440,7 +2440,7 @@ def workspace_migrate_layout(
         False, "--json", help="Emit the machine-readable report as JSON."
     ),
 ) -> None:
-    """Migrate a multi-project workspace to the shared asset layout (Plan 234).
+    """Migrate a multi-project workspace to the shared asset layout.
 
     Promotes duplicated reusable process assets (prompts, standards, templates,
     protocol, commands, shared security templates) to the workspace root and
