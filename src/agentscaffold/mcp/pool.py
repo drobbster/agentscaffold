@@ -104,6 +104,17 @@ class GraphHandlePool:
             entry = self._handles.get(key)
             return entry.refs if entry else 0
 
+    def holds(self, key: str) -> bool:
+        """Whether a handle for *key* is open, leased or not.
+
+        Distinct from ``refcount(key) > 0``, and the distinction matters to
+        anything asking "can this database be moved?". A returned lease drops the
+        refcount to zero but leaves the handle open -- that is what makes this a
+        pool -- so the database stays held. See ``graph/liveness.py``.
+        """
+        with self._lock:
+            return key in self._handles
+
     @property
     def size(self) -> int:
         """Number of open handles, leased or idle."""

@@ -430,6 +430,12 @@ def run_mcp_server() -> None:
 
     install_stdio_safe_console()
 
+    # Legacy per-project entries keep working; the user is told once, at startup,
+    # how to collapse them. Advisory only -- never a reason to fail to start.
+    from agentscaffold.mcp.install import warn_once_about_legacy_entries
+
+    warn_once_about_legacy_entries()
+
     asyncio.run(_serve())
 
 

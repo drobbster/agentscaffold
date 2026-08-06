@@ -32,11 +32,15 @@ setup; ``--migrate`` is the explicit, backed-up opt-in.
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from agentscaffold.config import ConfigError
+
+logger = logging.getLogger(__name__)
 
 #: The one entry this installs. Registering more projects adds none.
 CANONICAL_ENTRY_NAME = "agentscaffold"
@@ -77,6 +81,169 @@ def is_agentscaffold_entry(name: str) -> bool:
         or name.startswith(f"{CANONICAL_ENTRY_NAME}-")
         or name.startswith(f"{CANONICAL_ENTRY_NAME}_")
     )
+
+
+def find_legacy_entries(document: dict[str, Any]) -> list[str]:
+    """Return AgentScaffold entries other than the canonical one, sorted.
+
+    These are the per-project, ``cd``-bound entries the single-entry install
+    replaces. They keep working through a deprecation window, so finding them is
+    grounds for a notice, not a failure.
+    """
+    servers = document.get(SERVERS_KEY) or {}
+    return sorted(
+        name for name in servers if is_agentscaffold_entry(name) and name != CANONICAL_ENTRY_NAME
+    )
+
+
+#: Relative location of a project-scoped client config.
+PROJECT_CONFIG_RELPATH = Path(".cursor") / "mcp.json"
+
+
+def find_legacy_project_configs(roots: Iterable[Path]) -> list[Path]:
+    """Return project-scoped configs that register an AgentScaffold server.
+
+    The second shape of legacy registration, and the one actually found in the
+    field. A per-repo ``.cursor/mcp.json`` holding an ``agentscaffold`` entry is
+    a per-project server by construction: it is scoped to that checkout and runs
+    only when that folder is open. Note that the entry is typically named plainly
+    ``agentscaffold``, identical to the canonical name -- so unlike
+    :func:`find_legacy_entries`, what makes it legacy is *where it lives*, not
+    what it is called. Matching on the name alone would miss every one of them.
+    """
+    found: list[Path] = []
+    for root in roots:
+        path = Path(root) / PROJECT_CONFIG_RELPATH
+        try:
+            document = load_config(path)
+        except (McpConfigError, OSError):
+            continue
+        servers = document.get(SERVERS_KEY) or {}
+        if any(is_agentscaffold_entry(name) for name in servers):
+            found.append(path)
+    return found
+
+
+def _scan_roots() -> list[Path]:
+    """Project roots worth scanning for a legacy per-project config.
+
+    Includes the working directory, not just registered projects, and that is the
+    important half. A user who has not run `scaffold project register` yet is
+    precisely the user who still has per-project entries -- scanning only the
+    registry would stay silent until after they had partly migrated, which is the
+    wrong way round for a notice whose job is to prompt the migration. A legacy
+    server is launched with its cwd inside the repo that registered it, so this is
+    how it recognises its own registration.
+    """
+    roots: list[Path] = []
+    try:
+        roots.append(Path.cwd())
+    except OSError:  # cwd can be deleted out from under a long-lived process
+        pass
+    roots.extend(_registered_project_roots())
+
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for root in roots:
+        try:
+            resolved = root.resolve()
+        except OSError:
+            continue
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(resolved)
+    return unique
+
+
+def _registered_project_roots() -> list[Path]:
+    """Best-effort list of registered project roots. Never raises."""
+    try:
+        from agentscaffold.workspace_registry import load_registry
+
+        registry = load_registry()
+    except Exception:  # noqa: BLE001 - a notice must not depend on a readable registry
+        logger.debug("Could not load registry for deprecation scan", exc_info=True)
+        return []
+
+    roots: list[Path] = []
+    for workspace in registry.workspaces:
+        for project in workspace.projects:
+            try:
+                roots.append(Path(workspace.root) / project.path)
+            except Exception:  # noqa: BLE001 - skip a malformed entry, keep scanning
+                continue
+    return roots
+
+
+#: Emitted at most once per process. A server that repeated this on every call
+#: would train the user to filter it out, which is the opposite of the intent.
+_deprecation_warned = False
+
+
+def warn_once_about_legacy_entries(
+    config_path: Path | None = None,
+    *,
+    project_roots: Iterable[Path] | None = None,
+) -> str | None:
+    """Log a one-time deprecation notice if legacy registrations are configured.
+
+    Checks both shapes: non-canonical ``agentscaffold-*`` entries in the shared
+    user config, and per-repo ``.cursor/mcp.json`` files. Returns the message
+    emitted, or None if there was nothing to say.
+
+    Purely advisory. Every read failure is swallowed, because a server must never
+    fail to start over a notice about configuration it merely observed.
+    """
+    global _deprecation_warned
+    if _deprecation_warned:
+        return None
+
+    path = config_path or default_config_path()
+    try:
+        document = load_config(path)
+    except (McpConfigError, OSError):
+        # An unreadable or hand-edited config is not our business here, and
+        # `scaffold mcp install` already refuses to touch it.
+        document = {}
+
+    legacy_entries = find_legacy_entries(document)
+    roots = _scan_roots() if project_roots is None else list(project_roots)
+    legacy_configs = find_legacy_project_configs(roots)
+
+    if not legacy_entries and not legacy_configs:
+        return None
+
+    _deprecation_warned = True
+
+    parts = ["Deprecated per-project AgentScaffold MCP registrations found."]
+    if legacy_entries:
+        parts.append(f"In {path}: {', '.join(legacy_entries)}.")
+    if legacy_configs:
+        parts.append("Project-scoped configs: " + ", ".join(str(p) for p in legacy_configs) + ".")
+    parts.append(
+        "One AgentScaffold server now serves every registered project. These still work, "
+        "but will stop being supported."
+    )
+    if legacy_entries:
+        parts.append("Collapse the shared-config entries with: scaffold mcp install --migrate")
+    if legacy_configs:
+        # Deliberately not offered as an automatic removal. These files are
+        # per-repo and often committed, so deleting an entry on the user's behalf
+        # could land in someone else's checkout via version control.
+        parts.append(
+            "Remove the project-scoped entries by hand once "
+            "`scaffold mcp install` has run for your user."
+        )
+
+    message = " ".join(parts)
+    logger.warning(message)
+    return message
+
+
+def reset_deprecation_warning() -> None:
+    """Clear the once-per-process latch. For tests."""
+    global _deprecation_warned
+    _deprecation_warned = False
 
 
 @dataclass
