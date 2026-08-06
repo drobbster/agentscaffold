@@ -24,12 +24,16 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from agentscaffold.paths import GRAPH_SIDECAR_FILENAMES
+
 logger = logging.getLogger(__name__)
 
-#: Files that live beside the database and must travel with it. The freshness
-#: watermark is the one that matters: left behind, a perfectly good migrated
-#: graph looks stale and triggers a full re-index on first use.
-_SIDECAR_NAMES = ("freshness.json", "graph_meta.json")
+#: Files that live beside the database and must travel with it, imported rather
+#: than restated -- see :data:`agentscaffold.paths.GRAPH_SIDECAR_FILENAMES` for
+#: why this is not a local list. The freshness watermark is the one that matters:
+#: left behind, a perfectly good migrated graph looks stale and triggers a full
+#: re-index on first use.
+_SIDECAR_NAMES = GRAPH_SIDECAR_FILENAMES
 
 _HASH_CHUNK = 1024 * 1024
 

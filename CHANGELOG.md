@@ -8,13 +8,49 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
-Phase A of Plan 249 is complete but is **deliberately not released on its own**. It
-contains a breaking change to MCP registration and a state migration, and the tool that
-tells you whether the migration worked (``scaffold doctor``) ships in Phase B. Releasing
-the migration a version ahead of its diagnostic would create exactly the kind of
-invisible failure this work exists to remove. Phases A and B land together as 0.10.0.
+Phases A and B of Plan 249 are complete and release together as 0.10.0. Phase A alone
+would have shipped a breaking change to MCP registration plus a state migration with no
+tool to tell you whether the migration worked; that tool is ``scaffold doctor`` and it
+lands in Phase B. Releasing the migration a version ahead of its diagnostic would create
+exactly the kind of invisible failure this work exists to remove.
+
+**Not yet cut.** Phase A changed how every MCP tool resolves the project it answers from,
+so the release is gated on Phase F verifying each tool against that change rather than on
+the unit suite alone.
 
 ### Added
+- **``scaffold doctor``** (Plan 249 Phase B) diagnoses an installation: registered roots
+  that no longer exist, a workspace recorded under two different ids, generated rule
+  files that have drifted from their canonical source, legacy or interpreter-pinned MCP
+  entries, version skew between the MCP server and your CLI, and where the graph
+  actually resolves. It only reads — it never repairs — so it is safe to run on a setup
+  you already believe is broken. The default exits 0 whatever it finds, so it is safe in
+  a shell profile or a hook; ``--strict`` exits non-zero and is the CI gate.
+- **The version-skew check** compares what each MCP entry actually launches against the
+  running CLI. An entry naming an absolute interpreter keeps launching whatever is left
+  at that path after a virtualenv rebuild; the server still starts, just with an old
+  AgentScaffold, and nothing says so. It reads the console script's shebang and asks that
+  interpreter directly, so it works against installs too old to answer ``--version``.
+- **``scaffold gc``** reclaims state directories for workspaces that are gone and
+  registry entries pointing at missing roots. It reports only; ``--apply`` is required to
+  delete. It removes only what it can *prove* is orphaned, from a record each state
+  directory keeps of the root it was created for — a workspace absent from the registry
+  is **not** treated as an orphan, because the manifest is the source of truth and its
+  graph is live. Directories predating that record are reported and kept.
+- **``scaffold --version``**.
+- **``scaffold workspace migrate-state``** moves an existing graph out of the working
+  tree, with copy-verify-remove semantics and ``--restore`` to go back. Dry run is the
+  default. It refuses while any process holds the database, so a live MCP server cannot
+  have a file moved out from under it.
+- **``scaffold init --dry-run``** reports what init would write without writing it.
+- **Canonical routing guidance.** A workspace using the shared asset layout gets one
+  committed source of routing policy at its root, and each project's generated rule files
+  carry a copy stamped with its content hash. The policy stays inline rather than being
+  replaced by a pointer — an agent has to act on the rules without a tool call to fetch
+  them — and the stamp is what makes the duplication safe, since a copy that has fallen
+  behind becomes detectable rather than merely different. Also served as the
+  ``agentscaffold://guidance/routing`` MCP resource. Single-project repositories are
+  unaffected and emit byte-identical output to 0.9.x.
 - **One project-aware MCP server** (Plan 249 Phase A). A single MCP entry now serves
   every registered project, replacing one server per repository. New user-level registry
   at ``~/.agentscaffold/registry.yaml`` (or ``$AGENTSCAFFOLD_HOME``), maintained with
@@ -33,6 +69,22 @@ invisible failure this work exists to remove. Phases A and B land together as 0.
 - ``--restrict-to`` limits a server instance to an explicit allowlist of projects.
 
 ### Changed
+- **The graph now lives outside your working tree — for registered projects only.**
+  A registered workspace resolves to
+  ``~/.local/state/agentscaffold/<workspace-id>/graph.duckdb`` (honouring
+  ``$XDG_STATE_HOME``; ``%LOCALAPPDATA%\agentscaffold\State`` on native Windows),
+  created readable and writable by you alone. An unregistered repository is unchanged
+  and keeps ``<repo>/.scaffold/graph.duckdb``. ``AGENTSCAFFOLD_DB_PATH`` and an explicit
+  ``graph.db_path`` still take precedence, in that order.
+- **Upgrading does not move your graph.** An existing in-tree database keeps winning over
+  an empty state directory, because flipping a default is not a migration: doing so
+  would point resolution at nothing, silently re-index from scratch, and leave your
+  populated database orphaned in the tree. Move it deliberately with
+  ``scaffold workspace migrate-state --apply``.
+- ``scaffold init`` inside a workspace now joins it — registering the project in both the
+  manifest and the registry under one shared id — instead of cloning the workspace's
+  shared assets into the project. Re-running it reports "no changes" and writes zero
+  bytes.
 - **Breaking: an unscopeable tool call is now refused, not federated.** A call that
   cannot be narrowed to exactly one project returns a structured ``ambiguous_project``
   error naming the candidates and the remediation, instead of quietly searching
@@ -58,6 +110,22 @@ invisible failure this work exists to remove. Phases A and B land together as 0.
   checkout.
 
 ### Fixed
+- A workspace could end up recorded under two different ids: ``scaffold workspace
+  onboard`` generated one into ``workspace.yaml`` while registration independently minted
+  another for the registry. Resolution prefers the manifest, so the graph kept working
+  while the registry reported an id that keyed nothing — and removing the manifest would
+  have re-keyed state and orphaned a populated graph. An id that already exists in either
+  place is now adopted rather than regenerated.
+- ``scaffold workspace migrate-state`` left the freshness watermark and governance
+  fingerprint behind, so a freshly migrated graph looked stale and re-indexed on first
+  use — the exact failure the sidecar handling existed to prevent. It carried a list of
+  two filenames (``freshness.json``, ``graph_meta.json``) that nothing in the codebase
+  has ever written, and the test seeded those same invented names, so both agreed with
+  each other and neither matched the disk. The filenames now come from one shared
+  constant that the writers and the migration both import.
+- ``mcp/freshness.py`` resolved the database path itself instead of going through the
+  shared resolver, so freshness could be tracked against a different file than the graph
+  was read from.
 - Registry writes are serialised by a lock spanning the whole read-modify-write cycle.
   Atomic writes (added earlier in this phase) ruled out torn reads but not lost updates:
   registering is read-modify-write, and two interleaved cycles could discard one

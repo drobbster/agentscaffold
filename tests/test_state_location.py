@@ -648,22 +648,66 @@ def test_migration_plan_names_both_ends(state_home: Path, tmp_path: Path):
 
 
 def test_sidecar_files_migrate_with_the_database(state_home: Path, tmp_path: Path):
-    """The watermark and lock live beside the database and must travel with it.
+    """Everything the graph writes beside its database travels with it.
 
     Leaving the freshness watermark behind would make a migrated graph look
     stale and trigger a full re-index on first use.
+
+    The names come from the shared constant rather than being spelled out here.
+    An earlier version of this test wrote ``freshness.json`` and asserted it
+    arrived -- which it did, because the migration was carrying a list of two
+    filenames nothing in the codebase has ever written. The test and the code
+    agreed with each other and both were wrong about the disk.
     """
+    from agentscaffold.paths import GRAPH_SIDECAR_FILENAMES
     from agentscaffold.workspace_migrate_state import migrate_state
 
     root = tmp_path / "repo"
     _write_scaffold(root)
     _register(root)
     _seed_in_tree_db(root, "payload")
-    (root / ".scaffold" / "freshness.json").write_text('{"commit": "abc"}')
+    for name in GRAPH_SIDECAR_FILENAMES:
+        (root / ".scaffold" / name).write_text(f"contents of {name}")
 
     result = migrate_state(root, apply=True)
 
-    assert (result.destination.parent / "freshness.json").read_text() == '{"commit": "abc"}'
+    for name in GRAPH_SIDECAR_FILENAMES:
+        assert (result.destination.parent / name).read_text() == f"contents of {name}"
+        assert not (root / ".scaffold" / name).exists()
+
+
+def test_the_sidecar_list_names_files_something_actually_writes(
+    state_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The migration's list and the writers' paths must be the same strings.
+
+    This is the assertion whose absence let two fictional filenames sit in the
+    migration for two steps. It passes trivially now *because* both sides import
+    one constant -- which is the point: the guarantee is structural, and this
+    test fails the moment someone reintroduces a local copy that drifts.
+    """
+    from agentscaffold.graph.pipeline import _governance_fp_path
+    from agentscaffold.mcp.freshness import _watermark_path
+    from agentscaffold.paths import GRAPH_SIDECAR_FILENAMES
+    from agentscaffold.workspace_migrate_state import _SIDECAR_NAMES
+
+    root = tmp_path / "repo"
+    _write_scaffold(root)
+    config = load_config(root / "scaffold.yaml")
+
+    class _FakeStore:
+        _db_path = str(root / ".scaffold" / "graph.duckdb")
+
+    written = {
+        _watermark_path(root, config).name,
+        _governance_fp_path(_FakeStore()).name,
+    }
+
+    assert written <= set(_SIDECAR_NAMES), (
+        f"the graph writes {written - set(_SIDECAR_NAMES)} beside the database, "
+        "and the migration would leave them behind"
+    )
+    assert set(GRAPH_SIDECAR_FILENAMES) == written
 
 
 def test_config_default_no_longer_pins_the_in_tree_path():

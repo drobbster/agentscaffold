@@ -11,9 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from agentscaffold.config import ScaffoldConfig
+from agentscaffold.paths import FRESHNESS_WATERMARK_FILE
 
 _GIT_TIMEOUT_S = 2.0
-_WATERMARK_FILE = "freshness_watermark.json"
+_WATERMARK_FILE = FRESHNESS_WATERMARK_FILE
 
 # Tools that can trigger background refresh scheduling.
 ELIGIBLE_REFRESH_TOOLS = {

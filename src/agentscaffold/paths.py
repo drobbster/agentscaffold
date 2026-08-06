@@ -152,6 +152,23 @@ _DEFAULT_DB_PATH = ".scaffold/graph.duckdb"
 #: workspace id already keys the directory, so the file itself needs no suffix.
 _STATE_DB_FILENAME = "graph.duckdb"
 
+#: Persisted freshness watermark, written beside the database.
+FRESHNESS_WATERMARK_FILE = "freshness_watermark.json"
+
+#: Fingerprint of the governance sources last ingested, written beside the database.
+GOVERNANCE_FINGERPRINT_FILE = "governance.fingerprint"
+
+#: Every durable file the graph writes beside its database, and therefore
+#: everything a state migration has to carry with it.
+#:
+#: Defined here, next to the database filename, rather than in the migration --
+#: which is where it was, as a hand-maintained list that named two files nothing
+#: writes (``freshness.json``, ``graph_meta.json``) and missed both of these.
+#: The test could not catch it, because it seeded the same invented names. A
+#: list one module keeps in its head about another module's files is a
+#: convention; a constant both import is a guarantee.
+GRAPH_SIDECAR_FILENAMES = (FRESHNESS_WATERMARK_FILE, GOVERNANCE_FINGERPRINT_FILE)
+
 
 def resolve_workspace_state_id(start: Path | None = None) -> str | None:
     """Return the stable id keying this workspace's state, if it has one.
