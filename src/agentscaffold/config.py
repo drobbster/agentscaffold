@@ -272,6 +272,7 @@ class SharedAssetPaths(BaseModel):
     security_dir: str = "docs/security/"
     collaboration_protocol_file: str = "docs/ai/collaboration_protocol.md"
     commands_file: str = "docs/ai/commands.md"
+    routing_guidance_file: str = "docs/ai/agent_routing.md"
 
 
 class ProjectAssetPaths(BaseModel):

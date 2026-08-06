@@ -209,6 +209,24 @@ def _intent_map_lines(quote_intents: bool) -> list[str]:
     return lines
 
 
+def generate_canonical_guidance_body(config: ScaffoldConfig) -> str:
+    """Build the platform-invariant routing guidance (Plan 249 Step B2).
+
+    This is the canonical source every per-project rule file is generated from,
+    and the content served as the ``agentscaffold://guidance/routing`` resource.
+    It deliberately carries no platform framing -- no frontmatter, no
+    platform-specific title or intro -- because each platform wraps it in its
+    own.
+    """
+    lines: list[str] = ["# AgentScaffold Routing Guidance", ""]
+    lines.extend(_tool_selection_policy_lines())
+    lines.extend(_graph_trust_discipline_lines())
+    lines.extend(_workspace_scope_discipline_lines())
+    lines.extend(_governance_guardrails_lines(config))
+    lines.extend(_intent_map_lines(quote_intents=True))
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def generate_rule_policy_document(
     *,
     config: ScaffoldConfig,

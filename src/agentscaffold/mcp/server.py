@@ -18,6 +18,11 @@ from typing import Any
 from pydantic import AnyUrl
 
 from agentscaffold.active_root import active_root
+from agentscaffold.mcp.resources import (
+    GUIDANCE_ROUTING_URI,
+    guidance_resource_definition,
+    read_guidance_routing,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1320,6 +1325,7 @@ def _get_resource_definitions() -> list[Resource]:
             description="Architecture layers with file counts.",
             mimeType="application/json",
         ),
+        guidance_resource_definition(),
     ]
 
 
@@ -3748,6 +3754,11 @@ def _dispatch_resource(uri: str) -> dict[str, Any]:
     """Dispatch a resource read to the appropriate handler."""
     from agentscaffold.config import load_config
     from agentscaffold.graph import graph_available, open_graph
+
+    # Routing guidance is static text and is served before the graph check: a
+    # fresh clone with no graph is exactly when an agent needs the policy most.
+    if uri == GUIDANCE_ROUTING_URI:
+        return {"content": read_guidance_routing()}
 
     config = load_config()
     if not graph_available(config):
