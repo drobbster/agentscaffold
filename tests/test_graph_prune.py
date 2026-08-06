@@ -153,6 +153,29 @@ def test_malformed_findings_are_not_selected_unless_asked(store):
     assert select_prunable(store, sessions_before="1d")["malformed_findings"] == []
 
 
+def test_apply_writes_through_to_the_governance_artifact(store, tmp_path):
+    """A prune that only touches the derived store is undone by the next index.
+
+    ``governance.json`` is the git-backed system of record and ``index`` restores
+    the graph from it. Every other governance mutation syncs; the delete helpers
+    did not, so pruning was silently non-durable for every category (Plan 250).
+    """
+    import json
+
+    from agentscaffold.graph.governance_store import enable_write_through
+
+    artifact = tmp_path / "governance.json"
+    _appendix_finding(store, "rf::bad", "` detector and reviewer memory become non-empty.")
+    _appendix_finding(store, "rf::good", "Upstream contract is unversioned.")
+    enable_write_through(store, artifact)
+
+    apply_prune(store, select_prunable(store, malformed_findings=True))
+
+    assert artifact.is_file(), "prune must re-serialize the artifact"
+    rows = json.loads(artifact.read_text())["nodes"]["ReviewFinding"]["rows"]
+    assert {r["id"] for r in rows} == {"rf::good"}
+
+
 def test_apply_deletes_malformed_findings(store):
     _appendix_finding(store, "rf::bad", "` detector and reviewer memory become non-empty.")
     _appendix_finding(store, "rf::good", "Upstream contract is unversioned.")

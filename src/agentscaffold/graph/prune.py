@@ -132,9 +132,16 @@ def apply_prune(store: GraphBackend, selection: dict[str, list[dict[str, Any]]])
     """Delete the selected rows and their edges. Mutating.
 
     Returns per-category deletion counts.
+
+    Deletions are written through to the git-backed governance artifact, which is
+    the system of record: ``index`` restores the graph from it, so a prune that
+    only touched the derived store would be undone by the next index. Every other
+    governance mutation already syncs; the delete helpers did not, which made
+    pruning silently non-durable for all categories (Plan 250).
     """
     from agentscaffold.graph.backlog import delete_backlog_item
     from agentscaffold.graph.findings import delete_finding
+    from agentscaffold.graph.governance_store import sync_if_enabled
     from agentscaffold.graph.sessions import delete_session
 
     counts = {
@@ -156,5 +163,8 @@ def apply_prune(store: GraphBackend, selection: dict[str, list[dict[str, Any]]])
     for row in selection.get("archived_backlog", []):
         delete_backlog_item(store, row["id"])
         counts["archived_backlog"] += 1
+
+    if any(counts.values()):
+        sync_if_enabled(store)
 
     return counts

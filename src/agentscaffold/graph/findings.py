@@ -62,16 +62,21 @@ def is_malformed_finding(finding: str) -> bool:
 
     A leading backtick needs care rather than a flat reject: findings that open
     with an inline code span (```` `_FINDING_RE` is unanchored ````) are ordinary
-    and legitimate. What distinguishes the fragment is that its backtick is
-    *unbalanced* -- the opening half was left behind on the line the capture
-    started in the middle of.
+    and legitimate. What gives the fragment away is the *whitespace* after that
+    backtick -- an opening code span is followed by the code, never by a space,
+    so a leading backtick-then-space is the closing half of a span whose opening
+    half was left behind on the line the capture started in the middle of.
+
+    Counting backticks for balance instead looks appealing and is wrong: a
+    fragment that happens to carry another backtick pair (a trailing fence, say)
+    balances out and slips through. Observed on ``rf::8ecd53cc08b9``.
     """
     body = finding.strip()
     if not body:
         return True
     if body[0] in ")]},.;:!?":
         return True
-    if body[0] == "`" and body.count("`") % 2 == 1:
+    if body[0] == "`" and (len(body) == 1 or body[1].isspace()):
         return True
     return body.startswith("and ") or body.startswith("or ") or body.startswith("but ")
 

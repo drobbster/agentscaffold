@@ -265,6 +265,17 @@ class TestFindingExtractionAnchoring:
         assert is_malformed_finding("and the export gets rewritten.")
         assert is_malformed_finding("   ")
 
+    def test_write_guard_is_not_fooled_by_a_balanced_fragment(self):
+        """Observed as rf::8ecd53cc08b9 in the live store.
+
+        A backtick-balance check passes this, because the trailing fence supplies
+        the matching ticks. The whitespace after the leading backtick is what
+        actually marks it as the closing half of an orphaned code span.
+        """
+        from agentscaffold.graph.findings import is_malformed_finding
+
+        assert is_malformed_finding("` detector and reviewer memory become non-empty.\n```")
+
     def test_write_guard_accepts_real_findings(self):
         """A false reject silently loses a finding, so the guard stays narrow."""
         from agentscaffold.graph.findings import is_malformed_finding
