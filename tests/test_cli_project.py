@@ -215,3 +215,56 @@ def test_registry_is_written_user_private(tmp_path, home, cli_runner):
 
     parsed = yaml.safe_load(registry_file.read_text())
     assert parsed["version"] == 1
+
+
+# --------------------------------------------------------------------------
+# workspace onboard mirrors into the registry (Plan 249, Step A8)
+# --------------------------------------------------------------------------
+
+
+def test_workspace_onboard_registers_the_workspace(tmp_path, home, cli_runner, monkeypatch):
+    """Onboarding is an explicit user action, so it may register (Vector 1).
+
+    One workspace entry covers every project in the manifest rather than one
+    entry per project, because pooled graph state is keyed per workspace.
+    """
+    ws = tmp_path / "ws"
+    _repo(ws)
+    (ws / "alpha").mkdir()
+    (ws / "beta").mkdir()
+    monkeypatch.chdir(ws)
+
+    assert cli_runner.invoke(app, ["workspace", "onboard", "alpha"]).exit_code == 0
+    assert cli_runner.invoke(app, ["workspace", "onboard", "beta"]).exit_code == 0
+
+    registry = load_registry()
+    assert len(registry.workspaces) == 1, "expected one workspace entry, not one per project"
+    assert sorted(registry.project_names()) == ["alpha", "beta"]
+    assert registry.workspaces[0].root == str(ws.resolve())
+
+
+def test_onboard_still_writes_the_manifest_if_the_registry_fails(
+    tmp_path, home, cli_runner, monkeypatch
+):
+    """A registry problem must not cost the user the manifest.
+
+    The manifest is the durable artifact and is already written by this point;
+    registration is a convenience on top, so it degrades to a warning.
+    """
+    ws = tmp_path / "ws"
+    _repo(ws)
+    (ws / "alpha").mkdir()
+    monkeypatch.chdir(ws)
+
+    import agentscaffold.workspace_registry as wr
+
+    def boom(*args, **kwargs):
+        raise OSError("registry unavailable")
+
+    monkeypatch.setattr(wr, "register_workspace", boom)
+
+    result = cli_runner.invoke(app, ["workspace", "onboard", "alpha"])
+
+    assert result.exit_code == 0, result.output
+    assert (ws / "workspace.yaml").exists()
+    assert "registry update failed" in result.output.lower()

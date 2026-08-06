@@ -1828,8 +1828,16 @@ def session_context() -> None:
 # ---------------------------------------------------------------------------
 
 
-@app.command(name="mcp")
+mcp_app = typer.Typer(
+    help="MCP server: run it (bare `scaffold mcp`) or install its client entry.",
+    invoke_without_command=True,
+)
+app.add_typer(mcp_app, name="mcp")
+
+
+@mcp_app.callback(invoke_without_command=True)
 def mcp_cmd(
+    ctx: typer.Context,
     workspace: str = typer.Option(
         "",
         "--workspace",
@@ -1865,13 +1873,116 @@ def mcp_cmd(
     ``--restrict-to`` narrows the blast radius. One server process can read every
     registered project, so a user who wants a tighter boundary can bind it to an
     explicit allowlist; anything resolving outside is refused rather than served.
+
+    This is a group callback so that ``scaffold mcp install`` can exist alongside
+    it, but bare ``scaffold mcp`` still starts the server -- which is what every
+    already-installed ``mcp.json`` entry invokes.
     """
+    if ctx.invoked_subcommand is not None:
+        return
+
     from agentscaffold.mcp.server import configure_restrict_to, run_mcp_server
     from agentscaffold.paths import configure_mcp_start
 
     configure_mcp_start(workspace=workspace or None, project=project or None)
     configure_restrict_to(restrict_to)
     run_mcp_server()
+
+
+@mcp_app.command("install")
+def mcp_install(
+    config: str = typer.Option(
+        "",
+        "--config",
+        help="Client MCP config to write (default: ~/.cursor/mcp.json).",
+    ),
+    migrate: bool = typer.Option(
+        False,
+        "--migrate",
+        help="Also remove legacy per-project agentscaffold entries (backs up first).",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would change and write nothing."
+    ),
+) -> None:
+    """Install the single AgentScaffold MCP server entry.
+
+    One entry serves every registered project, so registering more projects adds
+    no further entries. Existing per-project entries keep working and are only
+    removed by an explicit ``--migrate``, which backs the file up first.
+
+    ``mcp.json`` is shared with the user and with other tools, so an unrelated
+    server entry is never modified: the resulting document is verified against
+    the original before anything is written, and a config that cannot be parsed
+    is refused outright rather than guessed at.
+    """
+    from agentscaffold.mcp.install import (
+        CANONICAL_ENTRY_NAME,
+        McpConfigError,
+        backup_path,
+        canonical_entry,
+        default_config_path,
+        load_config,
+        plan_changes,
+        render,
+        verify_unrelated_preserved,
+    )
+
+    target = Path(config).expanduser() if config else default_config_path()
+
+    try:
+        original = load_config(target)
+    except McpConfigError as exc:
+        console.print(f"[red]{exc}[/red]")
+        import json as _json
+
+        console.print("\nAdd this entry by hand:")
+        console.print(
+            _json.dumps({"mcpServers": {CANONICAL_ENTRY_NAME: canonical_entry()}}, indent=2)
+        )
+        raise SystemExit(1) from exc
+
+    plan = plan_changes(original, migrate=migrate)
+
+    try:
+        verify_unrelated_preserved(original, plan.document)
+    except McpConfigError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+
+    if plan.legacy and not migrate:
+        console.print(
+            f"[yellow]Legacy per-project entries still present: {', '.join(plan.legacy)}.[/yellow]"
+        )
+        console.print(
+            "They keep working for now. Collapse them with "
+            "[cyan]scaffold mcp install --migrate[/cyan]."
+        )
+
+    if not plan.changed:
+        console.print(f"[green]No changes needed[/green] — {target} is already correct.")
+        return
+
+    if dry_run:
+        console.print(f"[cyan]Dry run[/cyan] — would write {target}:")
+        console.print(render(plan.document))
+        if plan.removed:
+            console.print(f"[yellow]Would remove: {', '.join(plan.removed)}[/yellow]")
+        console.print("Nothing was written. Re-run without --dry-run to apply.")
+        return
+
+    if target.exists():
+        backup = backup_path(target)
+        backup.write_bytes(target.read_bytes())
+        console.print(f"[dim]Backed up prior config to {backup}[/dim]")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(render(plan.document))
+
+    console.print(f"[green]Installed the {CANONICAL_ENTRY_NAME!r} entry[/green] in {target}.")
+    if plan.removed:
+        console.print(f"[green]Removed legacy entries:[/green] {', '.join(plan.removed)}")
+    console.print("Restart your MCP client to pick up the change.")
 
 
 # ---------------------------------------------------------------------------
@@ -2084,6 +2195,23 @@ def workspace_onboard(
     elif existing_layout is not None:
         manifest_out["asset_layout"] = existing_layout.model_dump()
     manifest_path.write_text(yaml.safe_dump(manifest_out, sort_keys=False))
+
+    # Mirror the manifest into the user-level registry so the single project-aware
+    # MCP server can resolve these projects (Plan 249). Onboarding is an explicit
+    # user action, which is the only context in which registration may happen
+    # (threat model, Vector 1). A registry failure must not lose the manifest that
+    # was just written, so it degrades to a warning.
+    try:
+        from agentscaffold.workspace_registry import register_workspace
+
+        register_workspace(
+            ws_root,
+            projects=[(p.name, p.path) for p in workspace.projects],
+        )
+    except Exception as exc:  # noqa: BLE001 - manifest is written; this is advisory
+        console.print(f"[yellow]Manifest written, but registry update failed: {exc}[/yellow]")
+        console.print("Run [cyan]scaffold project register[/cyan] to retry.")
+
     console.print(f"[green]Registered project {proj_name!r} at {stored_path}.[/green]")
     if shared_layout:
         console.print("[cyan]Wrote asset_layout: shared_workspace.[/cyan]")

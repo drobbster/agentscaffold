@@ -16,6 +16,28 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 SAMPLE_REPO = FIXTURES_DIR / "sample_repo"
 
 
+@pytest.fixture(autouse=True)
+def isolate_agentscaffold_home(tmp_path_factory, monkeypatch) -> Path:
+    """Point ``AGENTSCAFFOLD_HOME`` at a temp dir for every test.
+
+    Autouse and unconditional, because the failure it prevents is not local. The
+    user-level registry is real shared state: once ``scaffold workspace onboard``
+    began mirroring into it (Plan 249, Step A8), the pre-existing onboard tests
+    silently wrote ``alpha`` and ``beta`` into the developer's own
+    ``~/.agentscaffold/registry.yaml``, pointing at temp directories that no
+    longer existed.
+
+    The damage then surfaced two files away, as ``test_graph_read_during_refresh``
+    failing with ``ambiguous_project`` -- because dispatch could now see two
+    registered projects and correctly refused to guess between them. A test that
+    corrupts developer state and breaks an unrelated suite is worth preventing
+    structurally rather than by asking each new test to remember.
+    """
+    home = tmp_path_factory.mktemp("agentscaffold-home")
+    monkeypatch.setenv("AGENTSCAFFOLD_HOME", str(home))
+    return home
+
+
 @pytest.fixture()
 def cli_runner() -> CliRunner:
     """Return a typer CliRunner for invoking CLI commands."""

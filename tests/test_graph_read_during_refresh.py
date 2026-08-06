@@ -123,6 +123,14 @@ def test_dispatch_stats_during_write_lock(tmp_path: Path, monkeypatch: pytest.Mo
             done.wait(timeout=10)
             w.close()
 
+    # Warm the dispatch path before timing anything. The first call in a process
+    # pays a one-off lazy-import cost -- measured at ~4.2s cold against ~0.05s
+    # once warm -- which swamps the thing this test is actually about. Timing it
+    # cold meant the assertion below passed or failed on whether some earlier
+    # test in the session happened to have warmed the imports, which is why it
+    # was intermittent in isolation and stable in a full run.
+    server_mod._dispatch_tool("scaffold_stats", {})
+
     t = threading.Thread(target=writer)
     t.start()
     assert ready.wait(5)

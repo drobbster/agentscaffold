@@ -32,7 +32,7 @@ import os
 import tempfile
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -344,8 +344,15 @@ def register_workspace(
     root: Path,
     name: str | None = None,
     path: Path | None = None,
+    projects: Sequence[tuple[str, str]] | None = None,
 ) -> RegisteredWorkspace:
-    """Register *root* as a workspace containing a single project.
+    """Register *root* as a workspace and record the projects it contains.
+
+    With *projects* omitted the root is registered as a single project at ``.``,
+    which is the lone-repo case and what ``scaffold project register`` does. A
+    multi-project workspace passes ``(name, relative_path)`` pairs so one
+    workspace entry covers all of them -- the grouping matters because pooled
+    graph state is keyed per workspace, not per project.
 
     Re-registering the same root updates it in place and keeps its id, so the
     command is safe to re-run and a workspace never loses the state keyed to its
@@ -360,22 +367,30 @@ def register_workspace(
     lock you have to remember to take is a convention, not a guarantee.
     """
     resolved_root = Path(root).resolve()
-    project_name = derive_project_name(resolved_root, name)
 
-    with registry_lock(purpose=f"register:{project_name}", path=path):
+    if projects is None:
+        entries = [RegisteredProject(name=derive_project_name(resolved_root, name), path=".")]
+    else:
+        entries = [RegisteredProject(name=n, path=p) for n, p in projects]
+        if not entries:
+            raise RegistryError(f"Refusing to register {resolved_root} with no projects.")
+
+    purpose = ",".join(p.name for p in entries)
+    with registry_lock(purpose=f"register:{purpose}", path=path):
         registry = load_registry(path)
         existing = registry.find_workspace_by_root(resolved_root)
 
-        _reject_name_collision(registry, project_name, resolved_root)
+        for entry_project in entries:
+            _reject_name_collision(registry, entry_project.name, resolved_root)
 
         if existing is not None:
-            existing.projects = [RegisteredProject(name=project_name, path=".")]
+            existing.projects = entries
             entry = existing
         else:
             entry = RegisteredWorkspace(
                 id=generate_workspace_id(),
                 root=str(resolved_root),
-                projects=[RegisteredProject(name=project_name, path=".")],
+                projects=entries,
             )
             registry.workspaces.append(entry)
 
