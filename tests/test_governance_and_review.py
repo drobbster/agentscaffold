@@ -177,6 +177,103 @@ class TestGovernanceParsing:
         assert "L085-1" in ids
 
 
+class TestFindingExtractionAnchoring:
+    """Plan 250: a bracketed category name in prose is not a finding.
+
+    ``_FINDING_RE`` was written for formatter output, which emits one finding per
+    line as ``[CATEGORY]!! text``. Applied unanchored to hand-written plan prose it
+    fires on any sentence that merely names a category, capturing the rest of the
+    sentence as the finding body. Over the 44-plan governance corpus that produced
+    a 100 per cent false-positive rate.
+    """
+
+    def test_prose_mention_inside_a_code_span_is_not_a_finding(self):
+        """The verbatim sentence from plan 214 that produced rf::6ec460b41622."""
+        from agentscaffold.graph.governance import _parse_review_findings
+
+        text = "reviews/retros so the `[PATTERN]` detector and reviewer memory become non-empty."
+
+        assert _parse_review_findings(text, 214, "plan_appendix") == []
+
+    def test_mid_sentence_marker_is_not_a_finding(self):
+        from agentscaffold.graph.governance import _parse_review_findings
+
+        text = "The rollback restores the [DEPENDENCY] marker handling Plan 212 added."
+
+        assert _parse_review_findings(text, 250, "plan_appendix") == []
+
+    def test_formatter_output_still_parses_with_severity_stripped(self):
+        """The format the extractor was actually written for must keep working."""
+        from agentscaffold.graph.governance import _parse_review_findings
+
+        text = "[DEPENDENCY]!! Upstream contract is unversioned."
+
+        findings = _parse_review_findings(text, 250, "pre_review")
+
+        assert len(findings) == 1
+        assert findings[0]["category"] == "DEPENDENCY"
+        assert findings[0]["severity"] == "high"
+        assert findings[0]["finding"] == "Upstream contract is unversioned."
+
+    def test_list_prefixed_markers_still_parse(self):
+        """Normal appendix formatting puts findings under bullets or numbers."""
+        from agentscaffold.graph.governance import _parse_review_findings
+
+        text = "- [RISK] Bullet form.\n1. [GAP]! Numbered form.\n  * [LAYER] Indented form."
+
+        findings = _parse_review_findings(text, 250, "pre_review")
+
+        assert [f["category"] for f in findings] == ["RISK", "GAP", "LAYER"]
+        assert findings[1]["severity"] == "medium"
+
+    def test_multi_line_continuation_still_attaches(self):
+        from agentscaffold.graph.governance import _parse_review_findings
+
+        text = "[GAP] First line of the finding\n  wrapped onto a second line."
+
+        findings = _parse_review_findings(text, 250, "pre_review")
+
+        assert len(findings) == 1
+        assert "wrapped onto a second line." in findings[0]["finding"]
+
+    def test_ids_are_stable_across_reparsing(self):
+        """Re-indexing must not mint new ids, or a resolved status is lost.
+
+        Ids are derived from the parsed content, so anchoring the pattern must not
+        perturb the captured text of a finding that legitimately matches.
+        """
+        from agentscaffold.graph.findings import _finding_id
+        from agentscaffold.graph.governance import _parse_review_findings
+
+        text = "[RISK]! Something worth tracking."
+
+        def ids():
+            return [
+                _finding_id(f["plan_number"], f["review_type"], f["category"], f["finding"])
+                for f in _parse_review_findings(text, 250, "pre_review")
+            ]
+
+        assert ids() == ids()
+        assert ids() == ["rf::45fdec62ddfd"]
+
+    def test_write_guard_rejects_fragment_bodies(self):
+        """Defence in depth: the store outlives any one parser version."""
+        from agentscaffold.graph.findings import is_malformed_finding
+
+        assert is_malformed_finding("` detector and reviewer memory become non-empty.")
+        assert is_malformed_finding(") so the count stays at 1.")
+        assert is_malformed_finding("and the export gets rewritten.")
+        assert is_malformed_finding("   ")
+
+    def test_write_guard_accepts_real_findings(self):
+        """A false reject silently loses a finding, so the guard stays narrow."""
+        from agentscaffold.graph.findings import is_malformed_finding
+
+        assert not is_malformed_finding("Upstream contract is unversioned.")
+        assert not is_malformed_finding("`_FINDING_RE` is unanchored.")
+        assert not is_malformed_finding("orphaned edges remain after a purge")
+
+
 # ---------------------------------------------------------------------------
 # 2B: Dialectic Engine tests
 # ---------------------------------------------------------------------------

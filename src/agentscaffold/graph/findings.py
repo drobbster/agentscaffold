@@ -46,6 +46,36 @@ def _finding_id(
     return "rf::" + hashlib.sha1(key.encode()).hexdigest()[:12]  # noqa: S324
 
 
+def is_malformed_finding(finding: str) -> bool:
+    """True when a finding body is a mid-sentence fragment rather than an assertion.
+
+    Defence in depth behind the Plan 250 anchoring fix. Anchoring stops the known
+    producer of fragments, but the store outlives any one parser version and a
+    consuming repo can call this path directly, so the write side checks the shape
+    of what it is asked to persist.
+
+    The signature of the defect is a body that starts mid-sentence: a closing
+    bracket or punctuation left behind when the capture began mid-line, or a
+    dangling conjunction. Deliberately narrow -- it rejects shapes no human would
+    write, not merely unusual ones, because a false reject silently loses a real
+    finding.
+
+    A leading backtick needs care rather than a flat reject: findings that open
+    with an inline code span (```` `_FINDING_RE` is unanchored ````) are ordinary
+    and legitimate. What distinguishes the fragment is that its backtick is
+    *unbalanced* -- the opening half was left behind on the line the capture
+    started in the middle of.
+    """
+    body = finding.strip()
+    if not body:
+        return True
+    if body[0] in ")]},.;:!?":
+        return True
+    if body[0] == "`" and body.count("`") % 2 == 1:
+        return True
+    return body.startswith("and ") or body.startswith("or ") or body.startswith("but ")
+
+
 def record_finding(
     store: GraphBackend,
     *,

@@ -113,6 +113,58 @@ def test_select_only_requested_categories(store):
     assert {r["id"] for r in selection["sessions"]} == {"s::old"}
 
 
+def _appendix_finding(store, fid, finding, review_type="plan_appendix"):
+    store.create_node(
+        "ReviewFinding",
+        {
+            "id": fid,
+            "reviewType": review_type,
+            "planNumber": 214,
+            "severity": "medium",
+            "category": "PATTERN",
+            "finding": finding,
+            "resolution": "",
+            "status": "open",
+        },
+    )
+
+
+def test_malformed_finding_selection_targets_fragments_only(store):
+    """Plan 250: the store-level remedy for rows the old extractor manufactured.
+
+    Anchoring the parser stops new ones, but nothing removes what is stored --
+    create_node is ON CONFLICT DO NOTHING so re-indexing never deletes, and
+    purging the serialized export is overwritten from the store on the next index.
+    """
+    _appendix_finding(store, "rf::bad", "` detector and reviewer memory become non-empty.")
+    _appendix_finding(store, "rf::bad2", ") so the count stays at 1.")
+    _appendix_finding(store, "rf::good", "Upstream contract is unversioned.")
+    _appendix_finding(store, "rf::codespan", "`_FINDING_RE` is unanchored.")
+    _appendix_finding(store, "rf::runtime", "` looks odd but came from review", "pre_review")
+
+    selection = select_prunable(store, malformed_findings=True)
+
+    assert {r["id"] for r in selection["malformed_findings"]} == {"rf::bad", "rf::bad2"}
+
+
+def test_malformed_findings_are_not_selected_unless_asked(store):
+    _appendix_finding(store, "rf::bad", "` detector and reviewer memory become non-empty.")
+
+    assert select_prunable(store, sessions_before="1d")["malformed_findings"] == []
+
+
+def test_apply_deletes_malformed_findings(store):
+    _appendix_finding(store, "rf::bad", "` detector and reviewer memory become non-empty.")
+    _appendix_finding(store, "rf::good", "Upstream contract is unversioned.")
+
+    selection = select_prunable(store, malformed_findings=True)
+    counts = apply_prune(store, selection)
+
+    assert counts["malformed_findings"] == 1
+    remaining = {r["id"] for r in store.query("SELECT id FROM ReviewFinding")}
+    assert remaining == {"rf::good"}
+
+
 def test_dry_run_then_apply_deletes(store):
     _finding(store, "rf::open", "open")
     _finding(store, "rf::resolved", "resolved")
