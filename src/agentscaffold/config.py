@@ -322,9 +322,7 @@ class AssetLayoutConfig(BaseModel):
             return "project_local"
         policy = str(value)
         if policy not in ("project_local", "shared_workspace"):
-            raise ValueError(
-                "asset_layout.layout must be one of: project_local, shared_workspace"
-            )
+            raise ValueError("asset_layout.layout must be one of: project_local, shared_workspace")
         return policy
 
 

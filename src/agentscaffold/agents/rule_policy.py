@@ -42,8 +42,7 @@ _INTENT_NOTES: dict[str, str] = {
         "when present; otherwise use for low coverage / non-parsed languages."
     ),
     "scaffold_next_action": (
-        "Fallback only. Prefer `recommended_actions` from `scaffold_orient` "
-        "when present."
+        "Fallback only. Prefer `recommended_actions` from `scaffold_orient` when present."
     ),
 }
 

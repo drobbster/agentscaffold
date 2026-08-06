@@ -106,8 +106,7 @@ class RegistryUnavailableError(McpToolError):
 
     error_code = ErrorCode.REGISTRY_ERROR
     default_remediation = (
-        "Check ~/.agentscaffold/registry.yaml, "
-        "or re-register with 'scaffold workspace register'."
+        "Check ~/.agentscaffold/registry.yaml, or re-register with 'scaffold workspace register'."
     )
 
 

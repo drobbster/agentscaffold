@@ -85,6 +85,7 @@ class InitWriter:
     def register(self, name: str) -> None:
         self.registered.append(name)
 
+
 AVAILABLE_DOMAINS = [
     "trading",
     "webapp",
@@ -382,7 +383,9 @@ def _write_scaffold_yaml(directory: Path, options: dict[str, object], writer: In
     return writer.write_if_missing(directory / CONFIG_FILENAME, content)
 
 
-def _write_templated_files(directory: Path, context: dict, writer: InitWriter, shared_root: Path | None = None) -> tuple[int, int]:  # type: ignore[type-arg]  # noqa: E501
+def _write_templated_files(
+    directory: Path, context: dict, writer: InitWriter, shared_root: Path | None = None
+) -> tuple[int, int]:  # type: ignore[type-arg]  # noqa: E501
     """Render all templates and write them. Returns (written, skipped) counts.
 
     When *shared_root* is provided (shared_workspace layout, Plan 234), reusable
@@ -531,9 +534,7 @@ def run_init(directory: Path, non_interactive: bool = False, dry_run: bool = Fal
             f"[cyan]Shared workspace layout detected[/cyan]: writing reusable process "
             f"assets once at {shared_root}"
         )
-    written, skipped = _write_templated_files(
-        directory, context, writer, shared_root=shared_root
-    )
+    written, skipped = _write_templated_files(directory, context, writer, shared_root=shared_root)
     dirs_created = _create_empty_dirs(directory, writer)
 
     if _write_agents_md(directory, context, writer):

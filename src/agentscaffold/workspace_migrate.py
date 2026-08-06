@@ -159,9 +159,7 @@ def _eligible_rel_paths(project_root: Path) -> list[str]:
     return rels
 
 
-def classify_assets(
-    workspace_root: Path, workspace: WorkspaceConfig
-) -> list[AssetCandidate]:
+def classify_assets(workspace_root: Path, workspace: WorkspaceConfig) -> list[AssetCandidate]:
     """Classify every eligible process asset across all registered projects."""
     roots = _project_roots(workspace_root, workspace)
     # rel_path -> {project_name: hash}
@@ -274,8 +272,7 @@ def run_migrate_layout(
     unresolved = [
         c
         for c in report.diverged
-        if not keep_diverged
-        and (prefer_project is None or prefer_project not in c.projects)
+        if not keep_diverged and (prefer_project is None or prefer_project not in c.projects)
     ]
 
     if not apply:
@@ -294,8 +291,7 @@ def run_migrate_layout(
     if _git_dirty(workspace_root) and not force:
         report.exit_code = 3
         report.messages.append(
-            "Refusing to apply on a dirty git worktree. Commit/stash first or "
-            "pass --force."
+            "Refusing to apply on a dirty git worktree. Commit/stash first or pass --force."
         )
         return report
 
