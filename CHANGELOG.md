@@ -8,6 +8,63 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+Phase A of Plan 249 is complete but is **deliberately not released on its own**. It
+contains a breaking change to MCP registration and a state migration, and the tool that
+tells you whether the migration worked (``scaffold doctor``) ships in Phase B. Releasing
+the migration a version ahead of its diagnostic would create exactly the kind of
+invisible failure this work exists to remove. Phases A and B land together as 0.10.0.
+
+### Added
+- **One project-aware MCP server** (Plan 249 Phase A). A single MCP entry now serves
+  every registered project, replacing one server per repository. New user-level registry
+  at ``~/.agentscaffold/registry.yaml`` (or ``$AGENTSCAFFOLD_HOME``), maintained with
+  ``scaffold project register/unregister/list``.
+- ``scaffold mcp install [--migrate] [--dry-run] [--config <path>]`` writes exactly one
+  entry: ``{"command": "scaffold", "args": ["mcp"]}``. No ``cd`` binding, no launcher
+  hook, no hardcoded interpreter path, so it survives a virtualenv rebuild and resolves
+  ``scaffold.exe`` through ``PATH`` on Windows. Unrelated entries in a shared
+  ``mcp.json`` are verified unchanged before anything is written, and an unparseable
+  config is refused rather than guessed at.
+- ``scaffold_projects`` MCP tool enumerates registered projects and reports which one a
+  call resolved to and why. It is the recovery path from an ``ambiguous_project``
+  refusal.
+- Opt-in federated discovery: ``all_projects=true`` extends from ``scaffold_search`` to
+  the governance discovery tools, with ``project`` provenance on every hit.
+- ``--restrict-to`` limits a server instance to an explicit allowlist of projects.
+
+### Changed
+- **Breaking: an unscopeable tool call is now refused, not federated.** A call that
+  cannot be narrowed to exactly one project returns a structured ``ambiguous_project``
+  error naming the candidates and the remediation, instead of quietly searching
+  everything. Silently answering from the wrong project is worse than an actionable
+  error.
+- Tool calls scope per call through a context variable rather than by ``os.chdir``, so
+  two projects can be active at once and the graph handle pool is actually reachable.
+- Embedding weights resolve to one user-level cache (``~/.cache/agentscaffold/models``,
+  honouring ``XDG_CACHE_HOME``) instead of one copy per repository. Measured at 87 MB
+  per project across four projects on one machine. Repositories with an already-warm
+  local cache keep using it, so existing installs do not re-download.
+- Registry roots are compared as paths rather than strings, and matching is
+  path-flavour correct: case-insensitive for Windows and UNC roots, case-sensitive for
+  POSIX and WSL ``/mnt/<drive>`` roots. Windows and WSL roots do not cross-match, since
+  the two have separate registries and ``/mnt`` mappings cannot be known from here.
+
+### Deprecated
+- **Per-project MCP entries.** They keep working. The server names them once at startup
+  along with the command that collapses them. Entries in your shared ``mcp.json`` are
+  removed by ``scaffold mcp install --migrate``, which backs the file up first;
+  per-repository ``.cursor/mcp.json`` files are reported but never edited
+  automatically, because they are often committed and a deletion could reach another
+  checkout.
+
+### Fixed
+- Registry writes are serialised by a lock spanning the whole read-modify-write cycle.
+  Atomic writes (added earlier in this phase) ruled out torn reads but not lost updates:
+  registering is read-modify-write, and two interleaved cycles could discard one
+  workspace while leaving a well-formed file.
+- ``scaffold workspace onboard`` now mirrors its manifest into the user-level registry,
+  so the existing onboarding path does not need a second registration step.
+
 ## [0.9.6] - 2026-07-15
 
 ### Fixed
