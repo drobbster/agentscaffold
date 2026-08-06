@@ -85,11 +85,16 @@ def init(
         "-y",
         help="Accept all defaults without prompting.",
     ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Report what init would write without writing anything.",
+    ),
 ) -> None:
     """Scaffold a new project with the AgentScaffold framework."""
     from agentscaffold.init_cmd import run_init
 
-    run_init(directory=directory, non_interactive=non_interactive)
+    run_init(directory=directory, non_interactive=non_interactive, dry_run=dry_run)
 
 
 @app.command()
@@ -2187,10 +2192,22 @@ def workspace_onboard(
     # Generate the workspace id on first write and never regenerate it: it keys
     # this workspace's state directory, so a new id would orphan the graph
     # (ADR-025, which is also why it is opaque rather than derived from the path).
+    # An already-registered root adopts the id the registry gave it, because that
+    # is the id its existing state is keyed to -- minting a fresh one here is the
+    # dangerous direction, and the reason the id is adopted rather than assigned.
     if not workspace.id:
         from agentscaffold.workspace_ids import generate_workspace_id
 
-        workspace.id = generate_workspace_id()
+        registered_id = None
+        try:
+            from agentscaffold.workspace_registry import load_registry
+
+            existing_entry = load_registry().find_workspace_by_root(ws_root)
+            registered_id = existing_entry.id if existing_entry is not None else None
+        except Exception:
+            registered_id = None
+
+        workspace.id = registered_id or generate_workspace_id()
 
     manifest_out: dict = {
         "id": workspace.id,

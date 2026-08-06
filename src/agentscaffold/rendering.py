@@ -329,18 +329,46 @@ def _upsert_block(
     marker-specific behavior. Returns one of ``"created"``, ``"appended"``,
     ``"block-updated"``, ``"unchanged"``, ``"overwritten"``.
     """
+    status, updated = _plan_block(path, block, begin_marker, end_marker, force=force)
+
+    if status == "unchanged" or updated is None:
+        return status
+
+    if status == "overwritten" and backup:
+        existing = path.read_text()
+        if existing.strip():
+            path.with_suffix(path.suffix + ".bak").write_text(existing)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(updated)
+    return status
+
+
+def _plan_block(
+    path: Path,
+    block: str,
+    begin_marker: str,
+    end_marker: str,
+    *,
+    force: bool = False,
+) -> tuple[str, str | None]:
+    """Decide what :func:`_upsert_block` would do, without doing it.
+
+    Split out so a dry run can predict the outcome from the same code that
+    performs it. A predictor that reimplements the decision is a second source of
+    truth, and the whole value of a dry run is that it cannot disagree with the
+    real thing.
+
+    Returns the status and the text that would be written (``None`` when nothing
+    would be).
+    """
     if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(block + "\n")
-        return "created"
+        return "created", block + "\n"
 
     existing = path.read_text()
 
     if force:
-        if backup and existing.strip():
-            path.with_suffix(path.suffix + ".bak").write_text(existing)
-        path.write_text(block + "\n")
-        return "overwritten"
+        return "overwritten", block + "\n"
 
     begin = existing.find(begin_marker)
     end = existing.find(end_marker)
@@ -348,14 +376,12 @@ def _upsert_block(
         end_full = end + len(end_marker)
         updated = existing[:begin] + block + existing[end_full:]
         if updated == existing:
-            return "unchanged"
-        path.write_text(updated)
-        return "block-updated"
+            return "unchanged", None
+        return "block-updated", updated
 
     # No valid markers: this file is owned by the user/org. Append, never clobber.
     prefix = existing if existing.endswith("\n") else existing + "\n"
-    path.write_text(prefix + "\n" + block + "\n")
-    return "appended"
+    return "appended", prefix + "\n" + block + "\n"
 
 
 # Managed .gitignore block. Uses ``#``-comment markers (a ``.gitignore`` treats
@@ -412,6 +438,18 @@ def write_gitignore_block(path: Path) -> str:
         GITIGNORE_BLOCK_END,
         force=False,
     )
+
+
+def gitignore_block_status(path: Path) -> str:
+    """What :func:`write_gitignore_block` would return, without writing."""
+    status, _ = _plan_block(
+        path,
+        render_gitignore_block(),
+        GITIGNORE_BLOCK_BEGIN,
+        GITIGNORE_BLOCK_END,
+        force=False,
+    )
+    return status
 
 
 # ---------------------------------------------------------------------------

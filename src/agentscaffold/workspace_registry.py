@@ -409,12 +409,20 @@ def register_workspace(
         for entry_project in entries:
             _reject_name_collision(registry, entry_project.name, resolved_root)
 
+        manifest_id = _manifest_workspace_id(resolved_root)
+
         if existing is not None:
             existing.projects = entries
+            # A manifest id outranks the registry's own: it is committed, shared
+            # by everyone working in the tree, and it is what keys the state
+            # directory. Leaving the registry on a different id makes
+            # `scaffold project list` report an id that keys nothing.
+            if manifest_id and existing.id != manifest_id:
+                existing.id = manifest_id
             entry = existing
         else:
             entry = RegisteredWorkspace(
-                id=generate_workspace_id(),
+                id=manifest_id or generate_workspace_id(),
                 root=str(resolved_root),
                 projects=entries,
             )
@@ -422,6 +430,34 @@ def register_workspace(
 
         save_registry(registry, path)
         return entry
+
+
+def _manifest_workspace_id(root: Path) -> str | None:
+    """Return the ``id:`` committed in *root*'s ``workspace.yaml``, if any.
+
+    Read here rather than passed in by callers, for the same reason the registry
+    lock is taken here: a rule every caller has to remember is a convention, not
+    a guarantee, and the cost of forgetting this one is a workspace carrying two
+    ids with the graph keyed to whichever source a given reader consults.
+    """
+    from agentscaffold.config import WORKSPACE_FILENAME
+    from agentscaffold.workspace_ids import is_valid_workspace_id
+
+    manifest = root / WORKSPACE_FILENAME
+    if not manifest.is_file():
+        return None
+    try:
+        import yaml
+
+        data = yaml.safe_load(manifest.read_text()) or {}
+    except Exception:
+        logger.debug("Could not read workspace id from %s", manifest, exc_info=True)
+        return None
+
+    candidate = data.get("id")
+    if isinstance(candidate, str) and is_valid_workspace_id(candidate):
+        return candidate
+    return None
 
 
 def unregister_project(name: str, path: Path | None = None) -> bool:
