@@ -20,6 +20,7 @@ import re
 from functools import cached_property
 from pathlib import Path
 
+from agentscaffold.active_root import default_start
 from agentscaffold.config import (
     AssetLayoutConfig,
     GraphConfig,
@@ -129,7 +130,7 @@ def resolve_mcp_start(start: Path | None = None) -> Path:
 
 def _git_root(start: Path | None = None) -> Path | None:
     """Return the nearest ancestor containing a ``.git`` entry, or None."""
-    current = (start or Path.cwd()).resolve()
+    current = (start or default_start()).resolve()
     for parent in [current, *current.parents]:
         if (parent / ".git").exists():
             return parent
@@ -198,7 +199,7 @@ def resolve_root(start: Path | None = None) -> Path:
     git_root = _git_root(start)
     if git_root is not None:
         return git_root
-    return (start or Path.cwd()).resolve()
+    return (start or default_start()).resolve()
 
 
 def resolve_workspace_root(start: Path | None = None) -> Path:

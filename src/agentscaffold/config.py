@@ -10,6 +10,8 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
+from agentscaffold.active_root import default_start
+
 # ---------------------------------------------------------------------------
 # Gate configuration
 # ---------------------------------------------------------------------------
@@ -414,7 +416,7 @@ def derive_project_name(root: Path, explicit: str | None = None) -> str:
 
 def find_workspace_config(start: Path | None = None) -> Path | None:
     """Walk up from *start* looking for workspace.yaml. Return path or None."""
-    current = (start or Path.cwd()).resolve()
+    current = (start or default_start()).resolve()
     for parent in [current, *current.parents]:
         candidate = parent / WORKSPACE_FILENAME
         if candidate.is_file():
@@ -683,7 +685,7 @@ class ConfigError(Exception):
 
 def find_config(start: Path | None = None) -> Path | None:
     """Walk up from *start* looking for scaffold.yaml. Return path or None."""
-    current = (start or Path.cwd()).resolve()
+    current = (start or default_start()).resolve()
     for parent in [current, *current.parents]:
         candidate = parent / CONFIG_FILENAME
         if candidate.is_file():

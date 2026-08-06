@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import time
 from collections.abc import Iterable
@@ -17,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import AnyUrl
+
+from agentscaffold.active_root import active_root
 
 logger = logging.getLogger(__name__)
 
@@ -1440,10 +1441,7 @@ def _effective_mcp_root(start: Path | None = None) -> Path:
 
 
 def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Dispatch a tool call to the appropriate handler."""
-    from agentscaffold.config import load_config
-    from agentscaffold.graph import GraphLockError, graph_available, open_graph
-
+    """Resolve which project a tool call is about, then run it scoped to that project."""
     # Fail loud on missing/empty required string args before opening the graph.
     for arg_name in _REQUIRED_STRING_ARGS.get(name, ()):
         value = arguments.get(arg_name)
@@ -1486,11 +1484,22 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
         return build_projects_payload(resolution, restrict_to=_RESTRICT_TO or None)
 
+    # Project-scoped reads resolve their scope from "where we are", and this is
+    # where the resolved project reaches them. It used to be os.chdir, which is
+    # process-global and therefore only safe while dispatch is serialised (see
+    # finding rf::65b49d5c2a95); an active-root context is per-call, so two
+    # dispatches for different projects can now be in flight at once -- which is
+    # what makes the Step A6 handle pool reachable.
+    with active_root(resolution.root):
+        return _dispatch_resolved(name, arguments, resolution)
+
+
+def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) -> dict[str, Any]:
+    """Run a tool call whose project is already resolved and scoped."""
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import GraphLockError, graph_available, open_graph
+
     root = resolution.root
-    # Project-scoped reads resolve their scope from the cwd, so chdir is how the
-    # resolved project reaches them. This is process-global and therefore only
-    # safe while dispatch is serialised; see finding rf::65b49d5c2a95.
-    os.chdir(root)
     config = load_config(root / "scaffold.yaml")
     # Pin the embedding weights cache from config BEFORE any retrieval-status
     # probe (the meta build below runs evaluate_retrieval). Without this, cold

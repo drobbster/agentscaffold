@@ -11,12 +11,16 @@ from pathlib import Path
 
 import yaml
 
+from agentscaffold.active_root import default_start
 from agentscaffold.config import ScaffoldConfig
 
 
 def check_governance_formats(config: ScaffoldConfig | None = None) -> list[str]:
     """Validate governance doc formats. Returns list of issue strings."""
-    root = Path.cwd()
+    # Was Path.cwd(); under MCP dispatch the cwd used to be chdir'd to the
+    # resolved project, so this now reads that project from the call context
+    # instead. Outside a scoped call it is still exactly Path.cwd().
+    root = default_start()
     issues: list[str] = []
 
     gc = config.graph if config else None

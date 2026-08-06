@@ -17,28 +17,11 @@ Several tests assert that ordering by failing if ``open_graph`` is reached.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
 
 pytest.importorskip("duckdb", reason="duckdb not installed")
-
-
-@pytest.fixture(autouse=True)
-def restore_cwd():
-    """Put the working directory back after every test in this module.
-
-    ``_dispatch_tool`` chdirs into the resolved project, and these tests point it
-    at ``tmp_path`` directories that pytest later deletes. Without this the
-    process is left sitting in a removed directory and unrelated suites that
-    resolve anything from the cwd fail in confusing ways.
-    """
-    original = os.getcwd()
-    try:
-        yield
-    finally:
-        os.chdir(original)
 
 
 @pytest.fixture()
@@ -52,19 +35,24 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture()
 def stub_graph(monkeypatch: pytest.MonkeyPatch) -> dict:
-    """Stub the graph layer and record the cwd each open happens under."""
+    """Stub the graph layer and record the scope each open happens under."""
     import agentscaffold.config as config_mod
     import agentscaffold.graph as graph_mod
     from agentscaffold.config import ScaffoldConfig
+    from agentscaffold.paths import resolve_root
 
-    calls: dict = {"opens": [], "cwd": []}
+    calls: dict = {"opens": [], "scope": []}
 
     def _open(*args, **kwargs):
         # Records where resolution landed, then bails. Dispatch turns the failure
         # into an error dict, which is fine: these tests are about routing, and
         # reaching this point at all already proves the call was not refused.
+        #
+        # This records resolve_root() rather than the cwd: since Step A7b the
+        # resolved project reaches scoped reads through the active-root context,
+        # not by chdir, so the cwd is no longer where a read would look.
         calls["opens"].append(kwargs)
-        calls["cwd"].append(os.getcwd())
+        calls["scope"].append(resolve_root())
         raise RuntimeError("stub: graph open not supported in this test")
 
     monkeypatch.setattr(config_mod, "load_config", lambda *a, **k: ScaffoldConfig())
@@ -133,7 +121,7 @@ def test_working_path_routes_dispatch_to_the_owning_project(
 
     _dispatch_tool("scaffold_orient", {"working_path": str(ws / "beta" / "src")})
 
-    assert Path(stub_graph["cwd"][0]).resolve() == (ws / "beta").resolve()
+    assert stub_graph["scope"][0] == (ws / "beta").resolve()
 
 
 def test_anchor_is_used_when_no_working_path_is_given(
@@ -148,7 +136,7 @@ def test_anchor_is_used_when_no_working_path_is_given(
 
     _dispatch_tool("scaffold_orient", {})
 
-    assert Path(stub_graph["cwd"][0]).resolve() == (ws / "alpha").resolve()
+    assert stub_graph["scope"][0] == (ws / "alpha").resolve()
 
 
 def test_lone_repo_dispatch_is_unaffected(
@@ -163,7 +151,7 @@ def test_lone_repo_dispatch_is_unaffected(
 
     _dispatch_tool("scaffold_orient", {})
 
-    assert Path(stub_graph["cwd"][0]).resolve() == solo.resolve()
+    assert stub_graph["scope"][0] == solo.resolve()
 
 
 def test_restrict_to_denies_a_call_outside_the_allowlist(
@@ -205,7 +193,7 @@ def test_restrict_to_permits_a_call_inside_the_allowlist(
     finally:
         configure_restrict_to(None)
 
-    assert Path(stub_graph["cwd"][0]).resolve() == (ws / "alpha").resolve()
+    assert stub_graph["scope"][0] == (ws / "alpha").resolve()
 
 
 def test_missing_required_argument_still_short_circuits_resolution(
