@@ -338,6 +338,10 @@ class WorkspaceConfig(BaseModel):
     ``project_local`` for full backward compatibility.
     """
 
+    #: Stable opaque workspace id (Plan 249). Written on first manifest write and
+    #: never derived from the path, so moving or renaming a workspace root does
+    #: not orphan the state keyed by it. None for a manifest predating Plan 249.
+    id: str | None = None
     projects: list[ProjectEntry] = Field(default_factory=list)
     asset_layout: AssetLayoutConfig | None = None
 
@@ -455,7 +459,16 @@ class LayerMapping(BaseModel):
 
 
 class GraphConfig(BaseModel):
-    db_path: str = ".scaffold/graph.duckdb"
+    # None means "use the platform default" (Plan 249 Step B4): the state
+    # directory for a registered workspace, or the historical in-tree path when
+    # there is no workspace id to key state by. A string here means the user
+    # chose a location and it is honored unchanged.
+    #
+    # The meaning lives in the value rather than in Pydantic's
+    # ``model_fields_set`` because ``apply_rigor_preset`` round-trips the config
+    # through ``model_dump`` and re-validation, which marks every field as
+    # explicitly set under the ``minimal`` and ``strict`` presets.
+    db_path: str | None = None
     backend: str = "duckpgq"
     languages: list[str] | None = None
     ignore: list[str] = Field(default_factory=list)

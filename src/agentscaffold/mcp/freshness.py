@@ -61,10 +61,17 @@ def _coordinator_state(root: Path) -> _CoordinatorState:
 
 
 def _db_path(root: Path, config: ScaffoldConfig) -> Path:
-    p = Path(config.graph.db_path)
-    if not p.is_absolute():
-        p = root / p
-    return p
+    """Resolve the graph database the same way every other reader does.
+
+    This used to join ``config.graph.db_path`` to *root* itself. That agreed
+    with the rest of the system only while the default was in-tree; once Step B4
+    moved the default under the platform state directory, an independent
+    resolver here would have indexed freshness against one file while the graph
+    was read from another.
+    """
+    from agentscaffold.paths import resolve_db_path  # noqa: PLC0415
+
+    return resolve_db_path(config, root)
 
 
 def _watermark_path(root: Path, config: ScaffoldConfig) -> Path:
@@ -134,8 +141,10 @@ def write_watermark(root: Path, config: ScaffoldConfig) -> None:
         "dirty_index": signals.get("dirty_index"),
         "updated_at": time.time(),
     }
+    from agentscaffold.paths import ensure_parent_dir  # noqa: PLC0415
+
     p = _watermark_path(root, config)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    ensure_parent_dir(p)
     p.write_text(json.dumps(payload, indent=2))
 
 

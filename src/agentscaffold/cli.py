@@ -2184,8 +2184,17 @@ def workspace_onboard(
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from exc
 
+    # Generate the workspace id on first write and never regenerate it: it keys
+    # this workspace's state directory, so a new id would orphan the graph
+    # (ADR-025, which is also why it is opaque rather than derived from the path).
+    if not workspace.id:
+        from agentscaffold.workspace_ids import generate_workspace_id
+
+        workspace.id = generate_workspace_id()
+
     manifest_out: dict = {
-        "projects": [{"name": p.name, "path": p.path} for p in workspace.projects]
+        "id": workspace.id,
+        "projects": [{"name": p.name, "path": p.path} for p in workspace.projects],
     }
     existing_layout = workspace.asset_layout
     if shared_layout:
@@ -2221,6 +2230,45 @@ def workspace_onboard(
 
     if migrate_existing:
         _onboard_migrate(ws_root, migrate_existing)
+
+
+@workspace_app.command("migrate-state")
+def workspace_migrate_state_cmd(
+    apply: bool = typer.Option(
+        False, "--apply", help="Apply the migration (default is a non-mutating dry-run)."
+    ),
+    restore: bool = typer.Option(
+        False, "--restore", help="Move state back into the tree (the rollback path)."
+    ),
+) -> None:
+    """Move this workspace's graph state out of the source tree (Plan 249).
+
+    Relocates the graph database and the files beside it to the platform state
+    directory, keyed by workspace id, by copying, verifying, and only then
+    removing the original. Refuses to start while another process holds the
+    database. Default posture is a non-mutating dry-run; pass ``--apply``.
+    """
+    from agentscaffold.workspace_migrate_state import StateMigrationError, migrate_state
+
+    try:
+        result = migrate_state(apply=apply, restore=restore)
+    except StateMigrationError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+
+    if not result.needed:
+        console.print(f"[dim]{result.reason}[/dim]")
+        return
+
+    if result.applied:
+        console.print(
+            f"[green]Moved[/green] {result.source}\n     [green]to[/green] {result.destination}"
+        )
+        for path in result.copied[1:]:
+            console.print(f"[dim]  also moved {path.name}[/dim]")
+    else:
+        console.print(f"[yellow]dry-run[/yellow] {result.reason}")
+        console.print("[dim]Re-run with --apply to perform the move.[/dim]")
 
 
 @workspace_app.command("migrate-layout")

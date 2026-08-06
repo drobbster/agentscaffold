@@ -182,7 +182,9 @@ class DuckPGQBackend:
 
         self._db_path = Path(db_path) if str(db_path) != ":memory:" else Path(":memory:")
         if str(db_path) != ":memory:" and not read_only:
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            from agentscaffold.paths import ensure_parent_dir
+
+            ensure_parent_dir(self._db_path)
 
         # AgentScaffold read-preferring open (Plan 244). Does not force DuckDB
         # READ_ONLY mode -- same-process concurrent readers must match the
@@ -525,7 +527,9 @@ class DuckPGQBackend:
             wal = self._db_path.with_suffix(self._db_path.suffix + ".wal")
             if wal.exists():
                 wal.unlink()
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            from agentscaffold.paths import ensure_parent_dir
+
+            ensure_parent_dir(self._db_path)
         self._conn = _connect(db_str)
         self._load_extension()
         _duckpgq_init_schema(self._conn, force_recreate_graph=True)

@@ -15,6 +15,7 @@ intended change is that customized ``graph.*`` paths finally take effect.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from functools import cached_property
@@ -34,6 +35,8 @@ from agentscaffold.config import (
     load_config,
     load_workspace_manifest,
 )
+
+logger = logging.getLogger(__name__)
 
 #: Matches an unexpanded ``${VAR}`` placeholder left behind by expandvars when
 #: the referenced environment variable is not set.
@@ -144,16 +147,85 @@ def _git_root(start: Path | None = None) -> Path | None:
 
 _DEFAULT_DB_PATH = ".scaffold/graph.duckdb"
 
+#: Filename of the graph database once it lives under the state directory. The
+#: workspace id already keys the directory, so the file itself needs no suffix.
+_STATE_DB_FILENAME = "graph.duckdb"
+
+
+def resolve_workspace_state_id(start: Path | None = None) -> str | None:
+    """Return the stable id keying this workspace's state, if it has one.
+
+    Prefers the committed ``id:`` in ``workspace.yaml`` over the user-level
+    registry so a workspace cannot key its state two ways depending on which
+    source resolution happened to consult first.
+
+    None means there is no stable id -- an unregistered lone repo -- and per the
+    approved Step B4 scope such a repo keeps the in-tree default rather than
+    having its state keyed by a path (rejected in ADR-025, since moving the root
+    would orphan it).
+    """
+    try:
+        workspace = load_workspace(start)
+    except Exception:
+        workspace = None
+
+    if workspace is not None and workspace.id:
+        from agentscaffold.workspace_ids import is_valid_workspace_id  # noqa: PLC0415
+
+        if is_valid_workspace_id(workspace.id):
+            return workspace.id
+        logger.warning(
+            "Ignoring malformed workspace id %r in workspace.yaml; falling back to the registry.",
+            workspace.id,
+        )
+
+    try:
+        from agentscaffold.workspace_registry import load_registry  # noqa: PLC0415
+
+        entry = load_registry().find_workspace_by_root(resolve_workspace_root(start))
+    except Exception:
+        logger.debug("Registry unavailable while resolving workspace state id", exc_info=True)
+        return None
+    return entry.id if entry is not None else None
+
+
+def _platform_db_path(start: Path | None = None) -> Path:
+    """The default graph location when the user has not chosen one.
+
+    Registered workspaces resolve under the platform state directory keyed by
+    workspace id; everything else keeps the historical in-tree path.
+
+    **An existing in-tree database always wins over an empty state directory.**
+    Flipping a default is not a migration: without this, upgrading would point
+    resolution at nothing, silently re-index from scratch, and leave the
+    populated database orphaned in the tree -- the two-divergent-databases
+    outcome Section 3 forbids, reached without any migration having run. The
+    user moves it deliberately with ``scaffold workspace migrate-state``. This
+    mirrors the warm-local fallback Step A7c established for model weights.
+    """
+    in_tree = resolve_workspace_root(start) / _DEFAULT_DB_PATH
+
+    workspace_id = resolve_workspace_state_id(start)
+    if workspace_id is None:
+        return in_tree
+
+    relocated = resolve_user_state_dir() / workspace_id / _STATE_DB_FILENAME
+    if not relocated.exists() and in_tree.exists():
+        return in_tree
+    return relocated
+
 
 def resolve_db_path(config: ScaffoldConfig | None, start: Path | None = None) -> Path:
     """Resolve the graph database path for durable/ephemeral environments.
 
-    Resolution order (Plan 221 + 223):
+    Resolution order (Plan 221 + 223, extended by Plan 249 Step B4):
     1. The ``AGENTSCAFFOLD_DB_PATH`` environment variable, if set, overrides
        everything (durable-volume vs scratch-path selection per machine).
-    2. Otherwise ``config.graph.db_path`` (or the default).
+    2. Otherwise an explicit ``config.graph.db_path``, so a config pinning
+       ``.scaffold/graph.duckdb`` keeps its database exactly where it is.
+    3. Otherwise the platform default -- see :func:`_platform_db_path`.
 
-    The chosen value then has ``${VAR}``/``$VAR`` environment placeholders and a
+    A chosen value then has ``${VAR}``/``$VAR`` environment placeholders and a
     leading ``~`` expanded, so one committed ``scaffold.yaml`` works across
     machines. A relative result resolves under :func:`resolve_workspace_root`
     (the project root for a lone repo, or the shared workspace root when a
@@ -165,9 +237,12 @@ def resolve_db_path(config: ScaffoldConfig | None, start: Path | None = None) ->
     if override:
         raw = override
     else:
-        raw = _DEFAULT_DB_PATH
-        if config is not None and hasattr(config, "graph"):
-            raw = config.graph.db_path or _DEFAULT_DB_PATH
+        configured = (
+            config.graph.db_path if config is not None and hasattr(config, "graph") else None
+        )
+        if not configured:
+            return _platform_db_path(start)
+        raw = configured
 
     raw = os.path.expandvars(os.path.expanduser(raw))
     unresolved = _UNRESOLVED_ENV_RE.search(raw)
@@ -203,11 +278,109 @@ def resolve_user_cache_dir() -> Path:
     override = os.environ.get("XDG_CACHE_HOME")
     if override:
         return Path(os.path.expanduser(override)).resolve() / "agentscaffold"
-    if os.name == "nt":
+    if _running_on_windows():
         local_app_data = os.environ.get("LOCALAPPDATA")
         if local_app_data:
-            return Path(local_app_data).resolve() / "agentscaffold" / "Cache"
+            return Path(local_app_data) / "agentscaffold" / "Cache"
     return (Path.home() / ".cache" / "agentscaffold").resolve()
+
+
+def _running_on_windows() -> bool:
+    """Whether this is a native Windows host.
+
+    A named indirection rather than an inline ``os.name`` check so the Windows
+    branch can be exercised from a POSIX host. Patching ``os.name`` itself is not
+    an option: it changes which concrete class ``Path`` instantiates process-wide,
+    and a Windows-flavoured Path cannot operate on this host's paths.
+    """
+    return os.name == "nt"
+
+
+def resolve_user_state_dir() -> Path:
+    """Return the user-level *state* root for AgentScaffold (Plan 249, Step B4).
+
+    ``$XDG_STATE_HOME/agentscaffold`` when set, else ``~/.local/state/agentscaffold``.
+    Native Windows has no XDG convention; ``%LOCALAPPDATA%`` is the equivalent,
+    and the platform branch deliberately mirrors :func:`resolve_user_cache_dir`
+    rather than reimplementing it differently.
+
+    State and cache are separate roots on purpose. Graph state is per-workspace,
+    expensive to rebuild, and worth keeping. Model weights are byte-identical
+    everywhere and re-downloadable, so they are a cache and are explicitly not
+    keyed by workspace.
+    """
+    override = os.environ.get("XDG_STATE_HOME")
+    if override:
+        return Path(os.path.expanduser(override)).resolve() / "agentscaffold"
+    if _running_on_windows():
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            # Deliberately not resolved: %LOCALAPPDATA% is already absolute, so
+            # resolving buys nothing and would call realpath on a path this host
+            # may not own.
+            return Path(local_app_data) / "agentscaffold" / "State"
+    return (Path.home() / ".local" / "state" / "agentscaffold").resolve()
+
+
+def _ensure_private_dir(path: Path) -> Path:
+    """Create *path* readable and writable only by its owner.
+
+    Threat model Vector 4: the state directory aggregates indexed content from
+    every registered workspace into one place, which is a concentration the
+    per-repo layout never had. It is created 0o700 rather than inheriting
+    whatever the ambient umask happens to allow, and an existing directory is
+    tightened rather than trusted, since it may predate this rule.
+    """
+    path.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        try:
+            path.chmod(0o700)
+        except OSError:  # pragma: no cover - unusual filesystems
+            logger.warning("Could not restrict permissions on %s", path)
+    return path
+
+
+def ensure_user_state_dir() -> Path:
+    """Return the user-level state root, creating it user-only if absent."""
+    return _ensure_private_dir(resolve_user_state_dir())
+
+
+def ensure_workspace_state_dir(workspace_id: str) -> Path:
+    """Return this workspace's state directory, creating it user-only if absent."""
+    ensure_user_state_dir()
+    return _ensure_private_dir(resolve_user_state_dir() / workspace_id)
+
+
+def ensure_parent_dir(path: Path) -> Path:
+    """Create the parent directory of *path*, user-only when it is state we own.
+
+    Every site that creates a graph database or its sidecars routes through this
+    rather than calling ``mkdir`` itself. Directly calling ``mkdir`` is how the
+    0o700 requirement gets satisfied in a helper and quietly missed on the path
+    that actually runs: the permission is a property of the directory, so it has
+    to be applied where the directory is made.
+
+    Outside the state root the ambient umask still applies, because those
+    directories live in the user's own tree and are not ours to tighten.
+    """
+    parent = path.parent
+    state_root = resolve_user_state_dir()
+    try:
+        inside_state = parent == state_root or state_root in parent.parents
+    except (OSError, ValueError):  # pragma: no cover - unresolvable path flavour
+        inside_state = False
+
+    if not inside_state:
+        parent.mkdir(parents=True, exist_ok=True)
+        return parent
+
+    _ensure_private_dir(state_root)
+    relative = parent.relative_to(state_root)
+    current = state_root
+    for part in relative.parts:
+        current = current / part
+        _ensure_private_dir(current)
+    return parent
 
 
 def _has_cached_weights(path: Path) -> bool:
@@ -463,8 +636,14 @@ class ResolvedPaths:
 
     @cached_property
     def db_path(self) -> Path:
-        """Resolved graph database path (relative values join to the root)."""
-        return self._join(self._graph.db_path)
+        """The *configured* graph database path, joined to this root.
+
+        A view of the config value, not the live location: since Step B4 the
+        authoritative resolver is :func:`resolve_db_path`, which also consults
+        the environment override and the platform state directory. An unset
+        ``db_path`` reads as the historical in-tree path here.
+        """
+        return self._join(self._graph.db_path or _DEFAULT_DB_PATH)
 
     # -- Collaboration ergonomics (Plan 226) --------------------------------
     @cached_property
