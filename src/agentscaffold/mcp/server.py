@@ -595,6 +595,81 @@ def _current_project_or_none() -> str | None:
         return None
 
 
+def _scope_sql(arguments: dict[str, Any], column: str = "project") -> tuple[str, dict[str, str]]:
+    """Build the project predicate a read tool must AND into its WHERE clause.
+
+    Returns ``("", {})`` when no filter applies -- a single-project workspace, an
+    explicit ``all_projects``, or a scope that could not be resolved -- so the
+    caller composes it the same way in every case.
+
+    Read tools that build their own SQL do not otherwise pass through the
+    scoping layer that ``hybrid_search`` gives ``scaffold_search``, and a query
+    that omits this returns rows from whichever project happens to sort first.
+
+    Params come back as a dict because the backend binds ``?`` placeholders from
+    ``params.values()``; the scoping helper's list would raise there.
+    """
+    try:
+        from agentscaffold.graph.scoping import resolve_scope, sql_predicate
+
+        scope = resolve_scope(
+            project=arguments.get("project") or None,
+            all_projects=bool(arguments.get("all_projects", False)),
+        )
+        fragment, params = sql_predicate(scope, column)
+        return fragment, ({column: params[0]} if params else {})
+    except Exception:
+        # Fail open rather than erroring the tool: an unresolvable scope in a
+        # single-project workspace is the overwhelmingly common case, and it is
+        # exactly the pre-multi-project behaviour.
+        return ("", {})
+
+
+def _and_where(sql: str, fragment: str) -> str:
+    """AND *fragment* onto a statement that already has a WHERE clause."""
+    return sql if not fragment else f"{sql} AND {fragment}"
+
+
+def _stats_scope_label() -> dict[str, Any]:
+    """Describe what ``scaffold_stats`` counted, so the totals are unambiguous."""
+    label: dict[str, Any] = {"kind": "workspace", "covers": "all projects in this workspace"}
+    try:
+        from agentscaffold.graph.scoping import current_project_name
+        from agentscaffold.paths import load_workspace
+
+        workspace = load_workspace()
+        if not workspace.is_multi_project:
+            label = {"kind": "project", "covers": "the only project in this workspace"}
+        else:
+            label["projects"] = list(workspace.project_names())
+            label["current_project"] = current_project_name()
+    except Exception:  # noqa: BLE001 - labelling must never fail the tool
+        pass
+    return label
+
+
+def _qualified_node_id(raw_id: str, arguments: dict[str, Any]) -> str:
+    """Project-qualify a node ID built from user input, if the scope calls for it.
+
+    Tools that look a node up by constructed ID (rather than by filtering rows)
+    cannot use a WHERE predicate, because in a multi-project workspace the ID
+    itself carries the project. Returns *raw_id* unchanged for a single-project
+    workspace or a federated/unresolvable scope.
+    """
+    try:
+        from agentscaffold.graph.scoping import qualify_id, resolve_scope
+
+        scope = resolve_scope(
+            project=arguments.get("project") or None,
+            all_projects=bool(arguments.get("all_projects", False)),
+        )
+        if scope.is_noop or not scope.project:
+            return raw_id
+        return qualify_id(scope.project, raw_id)
+    except Exception:
+        return raw_id
+
+
 def _effective_mcp_root(start: Path | None = None) -> Path:
     """Resolve the project root for MCP calls launched from a workspace root.
 
@@ -825,6 +900,11 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
     try:
         if name == "scaffold_stats":
             result = store.get_stats()
+            # Counts are workspace-wide by design -- this is the graph's health
+            # dashboard, not a per-project report. Said explicitly because the
+            # tool accepts working_path and its neighbours all scope to one
+            # project, so an unlabelled "functions: 5" reads as this project's 5.
+            result["scope"] = _stats_scope_label()
             result["meta"] = meta
             return result
 
@@ -1017,23 +1097,33 @@ def _tool_context(
         }
     symbol = symbol.strip()
 
+    # Scope to the project this call resolved to. Without it, a symbol that
+    # exists in more than one project of a shared workspace is answered from
+    # whichever row came back first -- a plausible-looking answer about the
+    # wrong project, which is worse than no answer.
+    scope_sql, scope_params = _scope_sql(arguments)
+
     # Search across functions, classes, methods
     results = ql(
         store,
-        sql=(
+        sql=_and_where(
             f'SELECT id AS "fn.id", name AS "fn.name", filePath AS "fn.filePath", '
             f'startLine AS "fn.startLine", endLine AS "fn.endLine", signature AS "fn.signature" '
-            f"FROM Function WHERE name = '{symbol}'"
+            f"FROM Function WHERE name = '{symbol}'",
+            scope_sql,
         ),
+        params=dict(scope_params),
     )
     if not results:
         results = ql(
             store,
-            sql=(
+            sql=_and_where(
                 f'SELECT id AS "c.id", name AS "c.name", filePath AS "c.filePath", '
                 f'startLine AS "c.startLine", endLine AS "c.endLine" '
-                f"FROM Class WHERE name = '{symbol}'"
+                f"FROM Class WHERE name = '{symbol}'",
+                scope_sql,
             ),
+            params=dict(scope_params),
         )
 
     if not results:
@@ -1109,7 +1199,11 @@ def _tool_context(
     )
 
     file_path = node.get("filePath") or ""
-    config_consumers = _config_consumers(store, f"file::{file_path}") if file_path else []
+    config_consumers = (
+        _config_consumers(store, _qualified_node_id(f"file::{file_path}", arguments))
+        if file_path
+        else []
+    )
 
     caller_count = len(callers) + len(method_callers)
     language = language_for_path(file_path)
@@ -1238,7 +1332,12 @@ def _tool_impact(
     except (TypeError, ValueError):
         depth = 2
 
-    file_id = f"file::{target}"
+    # Node IDs are project-qualified in a multi-project workspace
+    # (``alpha::file::src/x.py``), so a bare ``file::`` ID matches nothing there
+    # and every importer and caller list comes back empty -- indistinguishable
+    # from a file that genuinely has no importers. Qualifying here covers the
+    # whole tool, since every query below derives its target from this ID.
+    file_id = _qualified_node_id(f"file::{target}", arguments)
     safe_file_id = file_id.replace("'", "''")
 
     # Transitive importers (multi-hop IMPORTS traversal)

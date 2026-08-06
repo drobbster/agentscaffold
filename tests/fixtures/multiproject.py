@@ -12,6 +12,11 @@ projects are distinguishable, so this builds one deliberately:
   test that only ever asks about unique symbols would pass against broken
   routing. Asking about ``shared_name`` and checking *which* body came back is
   what actually discriminates.
+* Each project has a **second module importing the first**, because a tool can
+  only be caught answering from the wrong project if it has something to say.
+  With one file per project, ``scaffold_impact`` returned empty importer and
+  caller lists for both, which is indistinguishable from correct scoping and
+  from a broken tool. An empty answer discriminates nothing.
 
 The workspace is built once and indexed once, because indexing is the expensive
 part; registration into the per-test registry is cheap and happens per test.
@@ -29,6 +34,11 @@ BETA = "beta"
 ALPHA_ONLY_SYMBOL = "alpha_only_widget"
 BETA_ONLY_SYMBOL = "beta_only_gadget"
 SHARED_SYMBOL = "shared_name"
+
+#: Module name present in both projects with identical *relative* path, so a
+#: path-keyed lookup that ignores the project resolves ambiguously. The importer
+#: of it differs per project, which is what makes impact attributable.
+SHARED_MODULE_RELPATH = "src/shared_module.py"
 
 
 @dataclass(frozen=True)
@@ -54,8 +64,20 @@ class TwoProjectWorkspace:
 
     def source_file(self, name: str) -> Path:
         """A real file inside *name*, suitable for passing as ``working_path``."""
-        role = ALPHA if name == self.alpha_name else BETA
-        return self.project_root(name) / "src" / f"{role}_module.py"
+        return self.project_root(name) / "src" / f"{self.role(name)}_module.py"
+
+    def role(self, name: str) -> str:
+        """The fixture role (``alpha``/``beta``) behind a registered project name."""
+        return ALPHA if name == self.alpha_name else BETA
+
+    def expected_importer(self, name: str) -> str:
+        """The only file importing ``shared_module`` inside *name*.
+
+        Asking impact about :data:`SHARED_MODULE_RELPATH` -- which exists at the
+        same path in both projects -- must come back with this project's
+        consumer and no other.
+        """
+        return f"src/{self.role(name)}_consumer.py"
 
 
 _ALPHA_SOURCE = f'''"""Alpha's only module."""
@@ -74,6 +96,35 @@ def {SHARED_SYMBOL}(value):
 def alpha_caller(value):
     return {SHARED_SYMBOL}(value)
 '''
+
+#: Lives at the *same relative path* in both projects, so a lookup keyed on path
+#: alone cannot tell them apart -- the case that catches a tool resolving by
+#: path without a project. Its importer is named per project, which is what
+#: makes the answer attributable.
+_SHARED_MODULE_SOURCE = '''"""Present in both projects at an identical path."""
+
+
+def shared_entry(value):
+    return value
+'''
+
+
+def _consumer_source(role: str) -> str:
+    # Absolute, not ``from .shared_module import`` -- the resolver turns a
+    # leading-dot module into a path with a doubled separator
+    # (``src//shared_module.py``), which never matches the file map, so a
+    # relative import produces no IMPORTS edge at all. Tracked separately; using
+    # the absolute form here keeps this fixture measuring project scoping rather
+    # than import resolution.
+    return f'''"""Imports the shared module, so impact has an edge to report."""
+
+from shared_module import shared_entry
+
+
+def {role}_consume(value):
+    return shared_entry(value)
+'''
+
 
 _BETA_SOURCE = f'''"""Beta's only module."""
 
@@ -109,6 +160,8 @@ def build_two_project_workspace(
         project = root / role
         (project / "src").mkdir(parents=True, exist_ok=True)
         (project / "src" / f"{role}_module.py").write_text(source)
+        (project / "src" / "shared_module.py").write_text(_SHARED_MODULE_SOURCE)
+        (project / "src" / f"{role}_consumer.py").write_text(_consumer_source(role))
         # The graph path is pinned explicitly so the fixture does not depend on
         # which state directory the workspace id happens to resolve to -- that
         # varies with AGENTSCAFFOLD_HOME, which is isolated per test.

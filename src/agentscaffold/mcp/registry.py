@@ -128,6 +128,7 @@ def _tool_specs() -> list[ToolSpec]:
                 "type": "object",
                 "properties": {
                     "symbol": {"type": "string", "description": "Symbol name to look up"},
+                    **_SCOPE_PROPS,
                 },
                 "required": ["symbol"],
             },
@@ -151,6 +152,7 @@ def _tool_specs() -> list[ToolSpec]:
                         "description": "Traversal depth (default 2)",
                         "default": 2,
                     },
+                    **_SCOPE_PROPS,
                 },
                 "required": ["file_or_symbol"],
             },
