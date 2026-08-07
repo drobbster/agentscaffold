@@ -40,6 +40,24 @@ EMBEDDING_DIM = 384
 # collide with the default Hugging Face cache.
 _model_cache: dict[tuple[str, str | None], Any] = {}
 
+# Upper bound on resident models (Plan 249, Step A7c). Step A7c removed the
+# reason this grew with project count -- the default cache dir is now shared, so
+# N projects produce one key rather than N. This bound is defence in depth for
+# genuinely distinct models, and it is safe in a way the graph handle pool's
+# ceiling was not: dropping a model from this dict does not invalidate a
+# reference a caller already holds, whereas closing a DuckDB connection breaks an
+# in-flight reader. So a plain bound suffices here; no lease or refcount.
+MAX_CACHED_MODELS = 4
+
+
+def _remember_model(key: tuple[str, str | None], model: Any) -> Any:
+    """Store *model* under *key*, evicting the oldest entry past the bound."""
+    _model_cache[key] = model
+    while len(_model_cache) > MAX_CACHED_MODELS:
+        _model_cache.pop(next(iter(_model_cache)))
+    return model
+
+
 # Process-wide embedding configuration (Plan 227, Tier 2a). Set once from
 # ``scaffold.yaml`` via ``configure_embeddings`` at a CLI/MCP entrypoint; all
 # embedding/search code then loads the same model from the same pinned cache,
@@ -49,20 +67,27 @@ _configured_cache_dir: str | None = None
 
 
 def _resolve_cache_dir(cache_dir: str | None) -> str | None:
-    """Resolve a (possibly relative) cache dir against the project root."""
+    """Resolve a weights cache dir, sharing the shipped default across projects.
+
+    Delegates to :func:`agentscaffold.paths.resolve_model_cache_dir` so there is
+    one rule rather than two. Before Plan 249 Step A7c this resolved relative
+    paths against the project root unconditionally, which meant the default
+    ``.scaffold/models`` gave every project its own copy of identical weights.
+    """
     if not cache_dir:
         return None
     from pathlib import Path
 
-    path = Path(cache_dir)
-    if not path.is_absolute():
-        try:
-            from agentscaffold.paths import resolve_root
+    try:
+        from agentscaffold.config import ScaffoldConfig, SearchConfig
+        from agentscaffold.paths import resolve_model_cache_dir
 
-            path = Path(resolve_root()) / path
-        except Exception:
-            path = path.resolve()
-    return str(path)
+        resolved = resolve_model_cache_dir(ScaffoldConfig(search=SearchConfig(cache_dir=cache_dir)))
+        return str(resolved) if resolved is not None else None
+    except Exception:
+        # Path policy must never be the reason search fails to start.
+        path = Path(cache_dir)
+        return str(path if path.is_absolute() else path.resolve())
 
 
 def configure_embeddings(model_name: str | None = None, cache_dir: str | None = None) -> None:
@@ -111,8 +136,7 @@ def _get_model(model_name: str | None = None, cache_dir: str | None = None) -> A
             logging.disable(logging.NOTSET)
             logging.root.setLevel(_prev_level)
 
-    _model_cache[key] = model
-    return model
+    return _remember_model(key, model)
 
 
 def warm_model(model_name: str | None = None, cache_dir: str | None = None) -> str:

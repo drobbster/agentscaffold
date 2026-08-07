@@ -196,6 +196,14 @@ def _python_module_to_path(
     2. Package init (__init__.py)
     3. Relative import resolution
     """
+    # A relative import resolves within one package and nowhere else. Handled
+    # first and returned unconditionally, because the strategies below are for
+    # absolute module names: letting `.core` fall through to them matches a
+    # top-level core.py belonging to nobody, which is a worse answer than no
+    # answer for a tool that reports blast radius.
+    if module.startswith("."):
+        return _relative_module_to_path(module, source_file, root)
+
     parts = module.split(".")
 
     # Strategy 1: direct file
@@ -225,6 +233,56 @@ def _python_module_to_path(
         if (root / candidate).is_file():
             return candidate
         candidate = prefix + "/".join(parts) + "/__init__.py"
+        if (root / candidate).is_file():
+            return candidate
+
+    return None
+
+
+def _relative_module_to_path(
+    module: str,
+    source_file: str,
+    root: Path,
+) -> str | None:
+    """Resolve a PEP 328 relative import against the importing file's package.
+
+    The leading dots are a count, not punctuation to be stripped. One dot means
+    the importing file's own package; each additional dot ascends one level. So
+    ``..core`` from ``src/pkg/sub/mod.py`` is ``src/pkg/core.py`` -- discarding
+    the dots instead would name ``src/pkg/sub/core.py``, a different file that
+    may well exist.
+
+    Resolution is confined to the directory the dots land on. A relative import
+    naming a module that is not there is unresolved, never something similarly
+    named elsewhere in the tree.
+    """
+    dot_count = len(module) - len(module.lstrip("."))
+    remainder = module[dot_count:]
+
+    # The package containing the importer. For a regular module that is its
+    # directory; for __init__.py the directory *is* the module's own package,
+    # so the same expression is right for both.
+    base_parts = list(Path(source_file).parent.parts)
+    if base_parts == ["."]:
+        base_parts = []
+
+    levels_up = dot_count - 1
+    if levels_up > len(base_parts):
+        # Ascending above the repository root. Nothing here can satisfy it.
+        return None
+    if levels_up:
+        base_parts = base_parts[:-levels_up]
+
+    parts = [part for part in remainder.split(".") if part]
+
+    # `from . import name` carries no module after the dots; the dependency is
+    # on the package itself.
+    if not parts:
+        candidate = "/".join([*base_parts, "__init__.py"])
+        return candidate if (root / candidate).is_file() else None
+
+    stem = "/".join([*base_parts, *parts])
+    for candidate in (f"{stem}.py", f"{stem}/__init__.py"):
         if (root / candidate).is_file():
             return candidate
 

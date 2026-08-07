@@ -43,7 +43,20 @@ def conn():
 
 
 def test_schema_version():
-    assert SCHEMA_VERSION == 9  # bumped in Plan 227 (EmbeddingStore model/text_hash)
+    assert SCHEMA_VERSION == 10  # bumped in Plan 252 (relative-import IMPORTS edges)
+
+
+def test_the_plan_252_bump_changed_no_tables():
+    """Version 10 is a *derivation* change, not a DDL one.
+
+    Plan 252 bumped the version to force existing graphs through a rebuild, so
+    they gain the IMPORTS edges that relative imports should always have
+    produced. No table was added or altered. The two counts below being
+    unchanged across the bump is what distinguishes that case from a real schema
+    migration, and keeps the bump from being read later as evidence of one.
+    """
+    assert len(NODE_TABLES) == 21
+    assert len(EDGE_TABLES) == 37
 
 
 def test_node_table_count():

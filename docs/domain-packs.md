@@ -63,7 +63,7 @@ scaffold domains list
 
 Existing files are not overwritten. If a file already exists, the install skips it.
 
-In a workspace with `asset_layout.layout: shared_workspace` (Plan 234), domain
+In a workspace with `asset_layout.layout: shared_workspace`, domain
 pack prompts, standards, and security templates install to the **workspace-shared**
 paths by default (resolved via the same path rules as the rest of the toolchain),
 so a pack is installed once for the whole workspace rather than duplicated per

@@ -77,7 +77,7 @@ def workspace_grep(
             continue
         data = obj.get("data") or {}
         path_text = (data.get("path") or {}).get("text") or ""
-        line_num = (data.get("line_number") or 0)
+        line_num = data.get("line_number") or 0
         lines = data.get("lines") or {}
         text = (lines.get("text") or "").rstrip("\n")
         try:

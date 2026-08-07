@@ -560,8 +560,7 @@ class TestCallCompressionEmptySearch:
             observations=[
                 f"Fused fields present: {fused}",
                 f"why_empty={('why_empty' in graph_response)}",
-                f"grep_fallback_count="
-                f"{(graph_response.get('grep_fallback') or {}).get('count')}",
+                f"grep_fallback_count={(graph_response.get('grep_fallback') or {}).get('count')}",
             ],
         )
         collect_efficiency(eff)

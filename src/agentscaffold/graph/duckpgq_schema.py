@@ -56,7 +56,15 @@ from typing import TYPE_CHECKING, NamedTuple
 if TYPE_CHECKING:
     import duckdb
 
-SCHEMA_VERSION = 9
+# Bumped to 10 by Plan 252 without a DDL change. The tables are identical; what
+# changed is what gets *derived* into them -- relative Python imports now produce
+# IMPORTS edges instead of being dropped. A graph built before that fix is
+# structurally valid and quietly incomplete, which is the worst state for impact
+# analysis to be in, because an under-reported blast radius is indistinguishable
+# from a small one. Bumping the version routes those graphs through the existing
+# governance-preserving rebuild so they heal on the next index rather than
+# waiting for someone to read a warning and act on it.
+SCHEMA_VERSION = 10
 
 # ---------------------------------------------------------------------------
 # Node table DDL (20 tables)

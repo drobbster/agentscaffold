@@ -75,47 +75,61 @@ scaffold agents skills --force         # overwrite even user-authored skills
 
 `--force` always writes a `.bak` snapshot (`AGENTS.md.bak`, `testing.md.bak`, ...) of the previous content before overwriting, so a forced rewrite is still recoverable.
 
-## Isolated Install: Two Venvs
+## Isolated Install
 
-If your project already has a virtual environment and you want to keep agentscaffold's
-dependencies separate — or if there are version conflicts between your project's deps and
-agentscaffold's (duckdb, sentence-transformers, graspologic, etc.) — install agentscaffold
-into a dedicated venv and point the MCP config at the full path.
+If your project has version conflicts with agentscaffold's dependencies (duckdb,
+sentence-transformers, graspologic, etc.), install agentscaffold separately from the
+project it works on.
 
-### Setup
-
-```bash
-# From your project root
-python -m venv .venv-scaffold
-.venv-scaffold/bin/pip install "agentscaffold[all]"
-```
-
-Or with uv:
+One install serves every registered project, so this is a single user-level install
+rather than one per repository. The best option is a tool installer that puts
+`scaffold` on your `PATH` for you:
 
 ```bash
-uv venv .venv-scaffold
-uv pip install "agentscaffold[all]" --python .venv-scaffold/bin/python
+uv tool install "agentscaffold[all]"
+# or
+pipx install "agentscaffold[all]"
 ```
 
-Then use the full path in your MCP config instead of `scaffold`:
+Then the standard setup applies:
+
+```bash
+scaffold mcp install
+```
+
+### If you must use a dedicated venv
+
+```bash
+python -m venv ~/.venvs/agentscaffold
+~/.venvs/agentscaffold/bin/pip install "agentscaffold[all]"
+```
+
+Put it on your `PATH` and run `scaffold mcp install` normally. Only if you cannot
+do that, point the MCP config at the full path by hand:
 
 ```json
 {
   "mcpServers": {
     "agentscaffold": {
-      "command": "/absolute/path/to/your-project/.venv-scaffold/bin/scaffold",
+      "command": "/absolute/path/to/.venvs/agentscaffold/bin/scaffold",
       "args": ["mcp"]
     }
   }
 }
 ```
 
-The `scaffold` CLI commands (e.g. `scaffold index`, `scaffold validate`) still work from
-your project root when you run them from this venv:
+**Understand the trade-off before choosing this.** An entry naming an absolute
+interpreter keeps launching whatever is at that path. Rebuild the venv and the entry
+breaks; upgrade elsewhere and the entry keeps working against the old install, so the
+server answers with a stale AgentScaffold and nothing indicates it. If you take this
+route, run `scaffold doctor` after any upgrade — its version-skew check compares what
+the entry launches against your CLI.
+
+The `scaffold` CLI commands work from your project root when run from this install:
 
 ```bash
-.venv-scaffold/bin/scaffold index
-.venv-scaffold/bin/scaffold validate
+~/.venvs/agentscaffold/bin/scaffold index
+~/.venvs/agentscaffold/bin/scaffold validate
 ```
 
 Or activate it temporarily:
@@ -269,7 +283,18 @@ Cursor reads `.cursor/rules.md` and `.cursor/rules/` files automatically when yo
 
 ### MCP Setup
 
-Add to your Cursor MCP settings (`.cursor/mcp.json` in your project, or global settings):
+The supported way to write the entry is:
+
+```bash
+scaffold mcp install
+```
+
+This writes one entry to `~/.cursor/mcp.json` and leaves your other MCP servers
+alone. Restart Cursor afterwards. The MCP tools (`scaffold_context`,
+`scaffold_search`, `scaffold_impact`, etc.) then appear in the agent's tool
+palette.
+
+The entry it writes is:
 
 ```json
 {
@@ -282,28 +307,31 @@ Add to your Cursor MCP settings (`.cursor/mcp.json` in your project, or global s
 }
 ```
 
-If you installed `agentscaffold` in a virtualenv, use the full path:
+**Do not put an absolute path to a virtualenv's `scaffold` in `command`.** It
+breaks when the virtualenv is rebuilt, and — worse — keeps working against a
+stale install after an upgrade, so the server answers with an old AgentScaffold
+and nothing says so. Resolving `scaffold` through `PATH` avoids both. If you
+installed into a virtualenv, run `scaffold mcp install` from inside it or put it
+on your `PATH`. `scaffold doctor` reports entries that pin an interpreter, and
+`scaffold mcp install --migrate` replaces them.
 
-```json
-{
-  "mcpServers": {
-    "agentscaffold": {
-      "command": "/path/to/venv/bin/scaffold",
-      "args": ["mcp"]
-    }
-  }
-}
+One entry serves **every** registered project, so you do not add an entry per
+repository. Register each project once:
+
+```bash
+scaffold project register /path/to/repo --name api
 ```
 
-After adding the config, restart Cursor. The MCP tools (`scaffold_context`, `scaffold_search`, `scaffold_impact`, etc.) appear in the agent's tool palette.
+See [Multi-Project Workspaces](multi-project.md).
 
 ### Multi-project workspaces: pin the MCP anchor
 
-The MCP server resolves the active project from its process working directory.
-When Cursor opens a **parent** folder (a monorepo root or your home directory)
-instead of the AgentScaffold project, no-argument tools such as `scaffold_orient`
-would otherwise read governance from the wrong path. Pin the resolution anchor
-with `--workspace` / `--project`:
+A tool call resolves to a project from its `working_path` argument, or an
+explicit `project`, before falling back to the server's startup anchor. Agents
+pass `working_path` automatically — the generated rule files instruct them to —
+so most setups need no anchor at all.
+
+Pin one only if you want a specific default for calls that carry neither:
 
 ```json
 {
@@ -324,13 +352,17 @@ export AGENTSCAFFOLD_WORKSPACE_ROOT=/abs/path/to/workspace-root
 export AGENTSCAFFOLD_PROJECT=api
 ```
 
-Precedence (highest first): an explicit `--project` (resolved within the
-workspace), the `AGENTSCAFFOLD_PROJECT` / `AGENTSCAFFOLD_WORKSPACE_ROOT` env vars,
-then a walk-up from the working directory (the previous behavior; sufficient when
-the IDE is already focused on the project). When `scaffold init` / `scaffold
-agents cursor` runs inside a registered multi-project workspace, the generated
-`.cursor/mcp.json` includes these args automatically; if you have a stale
-hand-written `mcp.json`, the skip-if-exists message prints the suggested args.
+Full precedence, highest first:
+
+1. An explicit `project` argument on the tool call.
+2. `working_path` on the tool call, matched against registered roots — the
+   longest matching root wins.
+3. The server's startup anchor: `--project` / `--workspace`, or the
+   `AGENTSCAFFOLD_PROJECT` / `AGENTSCAFFOLD_WORKSPACE_ROOT` env vars.
+4. A sole registered project, when only one is registered.
+
+If none of these resolves, the call is refused with `ambiguous_project` and the
+candidates are named, rather than answered from a guess.
 
 ### Personal overlays (do not untrack team files)
 

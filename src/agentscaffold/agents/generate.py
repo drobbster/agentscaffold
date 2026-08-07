@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Callable
 from pathlib import Path
 
 from rich.console import Console
 
 from agentscaffold.config import ScaffoldConfig, WorkspaceConfig, find_config, load_config
 from agentscaffold.rendering import (
+    canonical_guidance_document,
+    canonical_guidance_path,
     get_default_context,
     get_graph_context,
+    guidance_hash,
     render_template,
+    stamp_guidance,
+    write_canonical_guidance,
     write_gitignore_block,
     write_managed_block,
 )
@@ -89,6 +96,21 @@ def write_workspace_agents_router(
     )
     dest = workspace_root / "AGENTS.md"
     return write_managed_block(dest, content, force=force)
+
+
+def _guidance_stamper(config: ScaffoldConfig, project_root: Path) -> Callable[[str], str]:
+    """Return a function that stamps rule content with the canonical hash.
+
+    Identity for a lone or ``project_local`` repo, which has no canonical file to
+    cite and whose generated output must stay byte-for-byte as before (ADR-024).
+    """
+    canonical = canonical_guidance_path(project_root)
+    if canonical is None:
+        return lambda content: content
+
+    sha = guidance_hash(canonical_guidance_document(config))
+    source = os.path.relpath(canonical, project_root).replace(os.sep, "/")
+    return lambda content: stamp_guidance(content, sha, source)
 
 
 def _report_managed_write(status: str, label: str) -> None:
@@ -217,6 +239,22 @@ def run_agents_generate_all_platforms(
         "project": [],
     }
 
+    # Canonical routing guidance (shared workspaces only). Written before the
+    # per-project rule files so the hash they are stamped with cites a file that
+    # already exists on disk.
+    if not dry_run:
+        canonical_result = write_canonical_guidance(project_root, config)
+        if canonical_result is not None:
+            canonical_path, canonical_status = canonical_result
+            if canonical_status == "unchanged":
+                console.print(f"[dim]Unchanged[/dim] {canonical_path}")
+            else:
+                console.print(f"[green]Wrote[/green] {canonical_path} [dim](canonical)[/dim]")
+            written["project"].append(canonical_path)
+    elif canonical_guidance_path(project_root) is not None:
+        console.print("[dim]dry-run[/dim] would write canonical routing guidance")
+    stamp = _guidance_stamper(config, project_root)
+
     # .gitignore (co-owned -- managed block ignoring runtime artifacts; never clobbered)
     gitignore_path = project_root / ".gitignore"
     if not dry_run:
@@ -260,7 +298,7 @@ def run_agents_generate_all_platforms(
     # Claude Code: CLAUDE.md (project-owned -- managed block) + subagents
     claude_md = project_root / "CLAUDE.md"
     if not dry_run:
-        status = write_managed_block(claude_md, generate_claude_rules(config), force=force)
+        status = write_managed_block(claude_md, stamp(generate_claude_rules(config)), force=force)
         _report_managed_write(status, "CLAUDE.md")
     else:
         console.print(
@@ -294,16 +332,19 @@ def run_agents_generate_all_platforms(
     legacy_md = cursor_dir / "rules" / "agentscaffold.md"
     if not dry_run:
         intent_dest.parent.mkdir(parents=True, exist_ok=True)
+        cursor_intro = [
+            "Use this file for MCP routing behavior and fallback discipline.",
+            "For full process governance, also follow `.cursor/rules.md` and `AGENTS.md`.",
+        ]
         intent_dest.write_text(
-            generate_rule_policy_document(
-                config=config,
-                title="AgentScaffold MCP Rule Routing",
-                intro_lines=[
-                    "Use this file for MCP routing behavior and fallback discipline.",
-                    "For full process governance, also follow `.cursor/rules.md` and `AGENTS.md`.",
-                ],
-                quote_intents=True,
-                always_apply=True,
+            stamp(
+                generate_rule_policy_document(
+                    config=config,
+                    title="AgentScaffold MCP Rule Routing",
+                    intro_lines=cursor_intro,
+                    quote_intents=True,
+                    always_apply=True,
+                )
             )
         )
         if legacy_md.exists():
@@ -341,7 +382,9 @@ def run_agents_generate_all_platforms(
     # Windsurf: .windsurfrules (project-owned -- managed block) + agent stubs
     windsurf_rules = project_root / ".windsurfrules"
     if not dry_run:
-        status = write_managed_block(windsurf_rules, generate_windsurf_rules(config), force=force)
+        status = write_managed_block(
+            windsurf_rules, stamp(generate_windsurf_rules(config)), force=force
+        )
         _report_managed_write(status, ".windsurfrules")
     else:
         console.print(

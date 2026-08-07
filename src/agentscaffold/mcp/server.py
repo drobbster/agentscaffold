@@ -9,13 +9,21 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 from pydantic import AnyUrl
+
+from agentscaffold.active_root import active_root
+from agentscaffold.mcp.registry import WRITE_TOOLS, tool_specs
+from agentscaffold.mcp.resources import (
+    GUIDANCE_ROUTING_URI,
+    guidance_resource_definition,
+    read_guidance_routing,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,17 +41,10 @@ _MCP_EXTRAS_MSG = "MCP server requires extra dependencies: pip install agentscaf
 # Tools that mutate the graph and must wait for the exclusive write lock.
 # All other tools open read-preferring (Plan 244) so async freshness refresh
 # does not block interactive reads for ~20s+.
-_GRAPH_WRITE_TOOLS: frozenset[str] = frozenset(
-    {
-        "scaffold_record_finding",
-        "scaffold_resolve_finding",
-        "scaffold_record_findings_batch",
-        "scaffold_record_backlog_item",
-        "scaffold_resolve_backlog_item",
-        "scaffold_begin_plan",
-        "scaffold_complete_plan",
-    }
-)
+#
+# Imported rather than restated: `doctor --tools` needs the same distinction to
+# decide what it may safely run, and a second copy would drift.
+_GRAPH_WRITE_TOOLS: frozenset[str] = WRITE_TOOLS
 
 # ---------------------------------------------------------------------------
 # Intent metadata: single source of truth for semantic mapping.
@@ -428,6 +429,12 @@ def run_mcp_server() -> None:
 
     install_stdio_safe_console()
 
+    # Legacy per-project entries keep working; the user is told once, at startup,
+    # how to collapse them. Advisory only -- never a reason to fail to start.
+    from agentscaffold.mcp.install import warn_once_about_legacy_entries
+
+    warn_once_about_legacy_entries()
+
     asyncio.run(_serve())
 
 
@@ -437,7 +444,7 @@ async def _serve() -> None:
 
     @server.list_tools()  # type: ignore[no-untyped-call,untyped-decorator]
     async def list_tools() -> list[Tool]:
-        return _with_working_path_arg(_get_tool_definitions())
+        return _get_tool_definitions()
 
     @server.call_tool()  # type: ignore[untyped-decorator]
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
@@ -461,796 +468,24 @@ async def _serve() -> None:
 # ---------------------------------------------------------------------------
 
 
-_WORKING_PATH_PROP = {
-    "type": "string",
-    "description": (
-        "Optional. Absolute or workspace-relative path of the file or directory "
-        "you are currently working on. In a multi-project workspace the server "
-        "resolves the owning project from this path and scopes the call to it, so "
-        "reads follow your active project even though the MCP server runs from a "
-        "single fixed directory. Omit to use the server's default project, or pass "
-        "project / all_projects explicitly."
-    ),
-}
-
-
-def _with_working_path_arg(tools: list[Tool]) -> list[Tool]:
-    """Advertise a uniform ``working_path`` arg on every object-schema tool.
-
-    Enables dynamic per-call project scoping (Cursor MCP cannot infer the active
-    project from a fixed server cwd) without each tool schema hand-declaring the
-    field. Mutates the freshly-built inputSchema dicts in place.
-    """
-    for tool in tools:
-        schema = getattr(tool, "inputSchema", None)
-        if isinstance(schema, dict) and schema.get("type") == "object":
-            props = schema.setdefault("properties", {})
-            if isinstance(props, dict):
-                props.setdefault("working_path", dict(_WORKING_PATH_PROP))
-    return tools
-
-
 def _get_tool_definitions() -> list[Tool]:
-    """Return MCP tool definitions."""
+    """Render the tool registry into MCP SDK objects.
+
+    The declarations live in :mod:`agentscaffold.mcp.registry`, which imports
+    nothing from ``mcp`` so that the agent-file generator and the conformance
+    suite can enumerate the surface without the optional SDK installed. This
+    function is the only place that turns them into SDK types.
+    """
     if not _MCP_AVAILABLE:
         return []
 
     return [
         Tool(
-            name="scaffold_context",
-            description=(
-                "Get call-graph context for a symbol: its definition, the "
-                "functions and methods that call it (callers), and the functions "
-                "it calls (callees). Returns a 'markdown' summary plus structured "
-                "lists. When the symbol is missing, includes inline why_empty and "
-                "grep_fallback -- consume those before a separate diagnosis call."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "symbol": {"type": "string", "description": "Symbol name to look up"},
-                },
-                "required": ["symbol"],
-            },
-        ),
-        Tool(
-            name="scaffold_impact",
-            description=(
-                "Analyze the blast radius of changing a file. Walks IMPORTS edges "
-                "up to 'depth' hops to find transitive importing files, and lists "
-                "the functions and methods that call into the file. Returns a "
-                "'markdown' summary plus structured lists. When empty, also "
-                "includes inline why_empty and grep_fallback -- consume those "
-                "before calling scaffold_why_empty or scaffold_grep_graph."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_or_symbol": {"type": "string", "description": "File path or symbol name"},
-                    "depth": {
-                        "type": "integer",
-                        "description": "Traversal depth (default 2)",
-                        "default": 2,
-                    },
-                },
-                "required": ["file_or_symbol"],
-            },
-        ),
-        Tool(
-            name="scaffold_search",
-            description=(
-                "Search across code definitions using hybrid search "
-                "(structural graph + semantic similarity). Supports keyword, "
-                "semantic, or hybrid modes. When count is 0, the response "
-                "includes inline why_empty and grep_fallback -- use those "
-                "before a separate diagnosis or grep tool call."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Natural language search query"},
-                    "mode": {
-                        "type": "string",
-                        "enum": ["keyword", "semantic", "hybrid"],
-                        "description": "Search mode (default: hybrid)",
-                        "default": "hybrid",
-                    },
-                    "top_k": {
-                        "type": "integer",
-                        "description": "Number of results (default: 10)",
-                        "default": 10,
-                    },
-                    "kind": {
-                        "type": "string",
-                        "enum": ["code", "governance", "all"],
-                        "description": "Search corpus (default: code)",
-                        "default": "code",
-                    },
-                    "rerank": {
-                        "type": "boolean",
-                        "description": "Rerank final results with the configured cross-encoder",
-                        "default": False,
-                    },
-                    "project": {
-                        "type": "string",
-                        "description": (
-                            "Target a specific project in a multi-project workspace "
-                            "(defaults to the current project)"
-                        ),
-                    },
-                    "all_projects": {
-                        "type": "boolean",
-                        "description": "Search across every project in the workspace",
-                        "default": False,
-                    },
-                },
-                "required": ["query"],
-            },
-        ),
-        Tool(
-            name="scaffold_recall_governance",
-            description=(
-                "Semantically recall prior governance knowledge (plans, findings, "
-                "learnings, ADRs, studies, spikes, backlog) for a natural-language query."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Natural language recall query"},
-                    "mode": {
-                        "type": "string",
-                        "enum": ["keyword", "semantic", "hybrid"],
-                        "description": "Search mode (default: hybrid)",
-                        "default": "hybrid",
-                    },
-                    "top_k": {
-                        "type": "integer",
-                        "description": "Number of results (default: 10)",
-                        "default": 10,
-                    },
-                    "project": {
-                        "type": "string",
-                        "description": "Target a specific project in a multi-project workspace",
-                    },
-                    "all_projects": {
-                        "type": "boolean",
-                        "description": "Search governance across every project in the workspace",
-                        "default": False,
-                    },
-                },
-                "required": ["query"],
-            },
-        ),
-        Tool(
-            name="scaffold_validate",
-            description=(
-                "Run validation checks: layer conformance, contract drift, graph "
-                "staleness, or graph coverage (parsed vs structurally-invisible files)."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "check": {
-                        "type": "string",
-                        "enum": ["layers", "contracts", "staleness", "coverage"],
-                        "description": "Validation check to run",
-                    },
-                },
-                "required": ["check"],
-            },
-        ),
-        Tool(
-            name="scaffold_query",
-            description="Execute a raw SQL query against the knowledge graph.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "sql": {"type": "string", "description": "SQL query to execute"},
-                },
-                "required": ["sql"],
-            },
-        ),
-        Tool(
-            name="scaffold_stats",
-            description=(
-                "Get codebase health overview with file/function/edge "
-                "counts and governance summary."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {},
-            },
-        ),
-        Tool(
-            name="scaffold_review_context",
-            description=(
-                "Generate graph-powered review context for a plan. "
-                "Returns brief, adversarial challenges, gap analysis, "
-                "post-implementation verification, or retro enrichment "
-                "depending on review_type."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_number": {
-                        "type": "integer",
-                        "description": "Plan number to review",
-                    },
-                    "review_type": {
-                        "type": "string",
-                        "enum": ["brief", "challenges", "gaps", "verify", "retro", "all"],
-                        "description": "Type of review context to generate",
-                    },
-                    "detail": {
-                        "type": "string",
-                        "enum": ["summary", "full"],
-                        "description": "Token control: summary (default) or full",
-                        "default": "summary",
-                    },
-                },
-                "required": ["plan_number", "review_type"],
-            },
-        ),
-        # --- Composite tools ---
-        Tool(
-            name="scaffold_prepare_review",
-            description=(
-                "Prepare full review context for a plan in one call. Use when the user "
-                "asks to review, critique, prepare, or do devil's advocate on a plan. "
-                "Returns dependency brief, gap analysis, adversarial challenges, "
-                "governing ADRs, validation spikes, and related studies."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_number": {"type": "integer", "description": "Plan number"},
-                    "detail": {
-                        "type": "string",
-                        "enum": ["summary", "full"],
-                        "description": "Token control: summary (default) or full",
-                        "default": "summary",
-                    },
-                },
-                "required": ["plan_number"],
-            },
-        ),
-        Tool(
-            name="scaffold_prepare_implementation",
-            description=(
-                "Prepare implementation context for a plan. Use when the user asks to "
-                "implement, start, or execute a plan. Returns dependency brief, per-file "
-                "blast radius, contract obligations, consumer audit, and dependency status."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_number": {"type": "integer", "description": "Plan number"},
-                    "gate_transition": {
-                        "type": "boolean",
-                        "description": (
-                            "When true, treat call as a strict lifecycle gate transition. "
-                            "If freshness gate is enabled and graph is stale, "
-                            "transition is deferred."
-                        ),
-                    },
-                    "detail": {
-                        "type": "string",
-                        "enum": ["summary", "full"],
-                        "description": "Token control: summary (default) or full",
-                        "default": "summary",
-                    },
-                },
-                "required": ["plan_number"],
-            },
-        ),
-        Tool(
-            name="scaffold_compare_plans",
-            description=(
-                "Compare two plans for conflicts, shared files, and supersession. "
-                "Use when the user asks to compare plans or check for overlap."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_a": {"type": "integer", "description": "First plan number"},
-                    "plan_b": {"type": "integer", "description": "Second plan number"},
-                },
-                "required": ["plan_a", "plan_b"],
-            },
-        ),
-        Tool(
-            name="scaffold_staleness_check",
-            description=(
-                "Check if a plan is stale: overlapping completed plans, missing files, "
-                "changed dependencies, contradicting studies. Use when the user asks "
-                "if a plan is still valid or stale."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_number": {"type": "integer", "description": "Plan number"},
-                },
-                "required": ["plan_number"],
-            },
-        ),
-        Tool(
-            name="scaffold_prepare_rewrite",
-            description=(
-                "Prepare context for rewriting a stale plan. Superset of staleness check "
-                "plus current dependency landscape and new contracts/plans since the plan "
-                "was written. Use when the user asks to rewrite, update, or refresh a plan."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_number": {"type": "integer", "description": "Plan number"},
-                },
-                "required": ["plan_number"],
-            },
-        ),
-        Tool(
-            name="scaffold_prepare_retro",
-            description=(
-                "Prepare retrospective context for a completed plan. Returns verification "
-                "results, retro enrichment, modification frequency, and related studies. "
-                "Use when the user asks for a retrospective or post-implementation review."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_number": {"type": "integer", "description": "Plan number"},
-                },
-                "required": ["plan_number"],
-            },
-        ),
-        Tool(
-            name="scaffold_orient",
-            description=(
-                "Get session orientation: codebase stats, recent plans, hot files, "
-                "recent studies, active ADRs, live workflow state (blockers, next "
-                "steps, in-progress plans), plus recommended_actions, "
-                "plan_progress, and next_action_focus. Use at session start or "
-                "when the user asks where we left off, what's blocked, or what "
-                "to do next. Prefer embedded recommended_actions over a separate "
-                "scaffold_next_action call."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "detail": {
-                        "type": "string",
-                        "enum": ["summary", "full"],
-                        "description": "Token control: summary (default) or full",
-                        "default": "summary",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="scaffold_find_studies",
-            description=(
-                "Search studies by topic keyword or outcome. Use when the user asks "
-                "about studies, experiments, or A/B tests on a topic."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "topic": {"type": "string", "description": "Keyword to search in tags/title"},
-                    "outcome": {
-                        "type": "string",
-                        "description": "Filter by outcome (e.g. baseline_preferred)",
-                    },
-                },
-                "required": ["topic"],
-            },
-        ),
-        Tool(
-            name="scaffold_prior_experiments",
-            description=(
-                "Find prior experiments related to a plan: directly referenced studies, "
-                "tag-matched studies, and file-overlap studies. Use when the user asks "
-                "if something has been tested or what experiments relate to a plan."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_number": {"type": "integer", "description": "Plan number"},
-                },
-                "required": ["plan_number"],
-            },
-        ),
-        Tool(
-            name="scaffold_find_adrs",
-            description=(
-                "Search ADRs by topic keyword or status. Use when the user asks about "
-                "architectural decisions, ADRs, or what governs a particular area."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "topic": {"type": "string", "description": "Keyword to search in ADR titles"},
-                    "status": {
-                        "type": "string",
-                        "description": "Filter by ADR status (e.g. Accepted)",
-                    },
-                },
-                "required": ["topic"],
-            },
-        ),
-        Tool(
-            name="scaffold_decision_context",
-            description=(
-                "Get the full decision chain for a plan: governing ADRs, validation "
-                "spikes, supporting studies, related experiments, and dependency status. "
-                "Use when the user asks about decision history, prior validation, or "
-                "what ADR governs a plan."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_number": {"type": "integer", "description": "Plan number"},
-                },
-                "required": ["plan_number"],
-            },
-        ),
-        Tool(
-            name="scaffold_record_finding",
-            description=(
-                "Record a review finding in the knowledge graph. Creates a ReviewFinding "
-                "node linked to the relevant plan, files, and functions. Use this when "
-                "you identify an issue, concern, or improvement during a code review. "
-                "Findings persist across sessions and surface in future reviews."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_number": {
-                        "type": "integer",
-                        "description": "Plan number this finding relates to",
-                    },
-                    "review_type": {
-                        "type": "string",
-                        "description": (
-                            "Review type (e.g. 'quant_architect', 'security', 'devils_advocate')"
-                        ),
-                    },
-                    "category": {
-                        "type": "string",
-                        "description": (
-                            "Finding category (e.g. 'correctness', 'performance', 'risk')"
-                        ),
-                    },
-                    "finding": {
-                        "type": "string",
-                        "description": "Human-readable description of the finding",
-                    },
-                    "severity": {
-                        "type": "string",
-                        "enum": ["low", "medium", "high", "critical"],
-                        "description": "Severity level (default: medium)",
-                        "default": "medium",
-                    },
-                    "file_paths": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "File paths related to this finding",
-                    },
-                    "function_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Function node IDs related to this finding",
-                    },
-                },
-                "required": ["plan_number", "review_type", "category", "finding"],
-            },
-        ),
-        Tool(
-            name="scaffold_resolve_finding",
-            description=(
-                "Mark a ReviewFinding as resolved. Use this when an issue identified "
-                "during a prior review has been addressed. The finding remains in the "
-                "graph with status='resolved' for audit trail purposes."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "finding_id": {
-                        "type": "string",
-                        "description": (
-                            "The ID of the finding to resolve (from scaffold_record_finding)"
-                        ),
-                    },
-                    "resolution": {
-                        "type": "string",
-                        "description": "Description of how the finding was resolved",
-                    },
-                },
-                "required": ["finding_id", "resolution"],
-            },
-        ),
-        Tool(
-            name="scaffold_record_findings_batch",
-            description=(
-                "Record multiple ReviewFinding nodes in a single transaction. Use this "
-                "when a review produces several findings at once (e.g. post-implementation "
-                "review, plan appendix findings). More efficient than calling "
-                "scaffold_record_finding N times."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_number": {
-                        "type": "integer",
-                        "description": "Plan number all findings relate to",
-                    },
-                    "review_type": {
-                        "type": "string",
-                        "description": "Review type label (e.g. 'quant_architect', 'security')",
-                    },
-                    "findings": {
-                        "type": "array",
-                        "description": "List of finding objects",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "category": {"type": "string"},
-                                "finding": {"type": "string"},
-                                "severity": {
-                                    "type": "string",
-                                    "enum": ["low", "medium", "high", "critical"],
-                                },
-                                "file_paths": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
-                                "function_ids": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
-                            },
-                            "required": ["category", "finding"],
-                        },
-                    },
-                },
-                "required": ["plan_number", "review_type", "findings"],
-            },
-        ),
-        Tool(
-            name="scaffold_record_backlog_item",
-            description=(
-                "Record one or more BacklogItem nodes in the knowledge graph. Use this "
-                "alongside writing to backlog.md — the graph write is additive and enables "
-                "backlog queries in orient and prepare_review. Pass 'items' (array) for "
-                "batch recording (recommended), or 'title' for a single item."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_number": {
-                        "type": "integer",
-                        "description": "Plan number all items relate to",
-                    },
-                    "items": {
-                        "type": "array",
-                        "description": "List of backlog item objects (batch mode)",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "title": {"type": "string"},
-                                "priority": {
-                                    "type": "string",
-                                    "enum": ["P1", "P2", "P3", "P4", "P5"],
-                                },
-                                "effort": {"type": "string"},
-                                "source": {"type": "string"},
-                                "status": {
-                                    "type": "string",
-                                    "enum": ["open", "blocked", "unblockable"],
-                                },
-                            },
-                            "required": ["title"],
-                        },
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": "Short title for a single backlog item",
-                    },
-                    "priority": {
-                        "type": "string",
-                        "enum": ["P1", "P2", "P3", "P4", "P5"],
-                        "description": "Priority for single-item mode (default: P3)",
-                        "default": "P3",
-                    },
-                    "effort": {
-                        "type": "string",
-                        "description": "Effort estimate (e.g. 'Small (2h)', 'Medium (1d)')",
-                    },
-                    "source": {
-                        "type": "string",
-                        "description": "Review source reference (e.g. 'DA Future Regret', 'EX-8')",
-                    },
-                    "status": {
-                        "type": "string",
-                        "enum": ["open", "blocked", "unblockable"],
-                        "description": "Initial status for single-item mode (default: open)",
-                        "default": "open",
-                    },
-                },
-                "required": ["plan_number"],
-            },
-        ),
-        Tool(
-            name="scaffold_resolve_backlog_item",
-            description=(
-                "Mark a BacklogItem as archived (completed). Use this when a backlog item "
-                "is done and being moved from backlog.md to backlog_archive.md. The item "
-                "remains in the graph with status='archived' for retrospective queries."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "item_id": {
-                        "type": "string",
-                        "description": "The ID of the backlog item to archive",
-                    },
-                    "resolution": {
-                        "type": "string",
-                        "description": "Optional note describing how the item was completed",
-                    },
-                },
-                "required": ["item_id"],
-            },
-        ),
-        # --- Agent tool pack (Plan 246) ---
-        Tool(
-            name="scaffold_diff_plan_vs_code",
-            description=(
-                "Compare a plan's File Impact Map and execution checkboxes against "
-                "filesystem and graph reality. Returns next_unchecked_step, "
-                "disk/graph presence, and symbol spot-checks. Preferred "
-                "mid-implementation progress check; prefer over re-reading the "
-                "full plan body for status."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_number": {"type": "integer", "description": "Plan number"},
-                },
-                "required": ["plan_number"],
-            },
-        ),
-        Tool(
-            name="scaffold_grep_graph",
-            description=(
-                "Structured ripgrep of the project workspace (path-sandboxed). "
-                "Fallback when graph search is degraded, coverage is low, or "
-                "inline grep_fallback on an empty search/impact response is "
-                "absent or insufficient."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "pattern": {"type": "string", "description": "Search pattern"},
-                    "path": {
-                        "type": "string",
-                        "description": "Optional subdirectory or file under project root",
-                    },
-                    "glob": {"type": "string", "description": "Optional ripgrep glob filter"},
-                    "max_hits": {
-                        "type": "integer",
-                        "description": "Maximum hits (default 50)",
-                        "default": 50,
-                    },
-                },
-                "required": ["pattern"],
-            },
-        ),
-        Tool(
-            name="scaffold_why_empty",
-            description=(
-                "Explain why a structural or search result was empty: coverage gaps, "
-                "missing args, degraded retrieval, refresh/lock, or unconfirmed static "
-                "analysis. Fallback only -- prefer inline why_empty on empty "
-                "search/impact/context responses when present."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "kind": {
-                        "type": "string",
-                        "enum": ["structural", "search", "impact", "context", "generic"],
-                        "description": "Empty-result category",
-                        "default": "structural",
-                    },
-                    "target": {
-                        "type": "string",
-                        "description": "File path or symbol that returned empty",
-                    },
-                    "query": {"type": "string", "description": "Search query that returned empty"},
-                },
-            },
-        ),
-        Tool(
-            name="scaffold_next_action",
-            description=(
-                "Return 1-3 concrete next moves with suggested MCP tool calls from "
-                "workflow state, in-progress plans, and optional plan_card. "
-                "Fallback only -- prefer recommended_actions from scaffold_orient "
-                "when present."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_number": {
-                        "type": "integer",
-                        "description": "Optional plan to route around",
-                    },
-                },
-            },
-        ),
-        # --- Governed lifecycle composite tools ---
-        Tool(
-            name="scaffold_begin_plan",
-            description=(
-                "Run the full pre-implementation review chain for a plan: orient, "
-                "prepare_review (all three perspectives), auto-write challenges and gaps "
-                "as ReviewFindings to the graph, stamp Plan.reviewedAt. Returns structured "
-                "output with orient summary, review perspectives, findings written, and a "
-                "proceed_prompt for the agent to present to the user. Pass dry_run=true to "
-                "rehearse without writing findings or stamping reviewedAt."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_number": {"type": "integer", "description": "Plan number"},
-                    "dry_run": {
-                        "type": "boolean",
-                        "description": "When true, return review payload without graph writes",
-                        "default": False,
-                    },
-                },
-                "required": ["plan_number"],
-            },
-        ),
-        Tool(
-            name="scaffold_complete_plan",
-            description=(
-                "Run the full post-implementation chain for a plan: prepare_retro, "
-                "auto-write retro insights as ReviewFindings, optionally write backlog items. "
-                "Returns structured output with retro results, findings written, structured "
-                "learnings, and a completion checklist for the agent. Pass dry_run=true to "
-                "rehearse without writing findings or backlog items."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "plan_number": {"type": "integer", "description": "Plan number"},
-                    "dry_run": {
-                        "type": "boolean",
-                        "description": "When true, return retro payload without graph writes",
-                        "default": False,
-                    },
-                    "backlog_items": {
-                        "type": "array",
-                        "description": "Optional backlog items to record",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "title": {"type": "string"},
-                                "priority": {
-                                    "type": "string",
-                                    "enum": ["P1", "P2", "P3", "P4", "P5"],
-                                },
-                                "effort": {"type": "string"},
-                                "source": {"type": "string"},
-                            },
-                            "required": ["title"],
-                        },
-                    },
-                },
-                "required": ["plan_number"],
-            },
-        ),
+            name=spec.name,
+            description=spec.description,
+            inputSchema=spec.input_schema,
+        )
+        for spec in tool_specs()
     ]
 
 
@@ -1277,12 +512,36 @@ def _get_resource_definitions() -> list[Resource]:
             description="Architecture layers with file counts.",
             mimeType="application/json",
         ),
+        guidance_resource_definition(),
     ]
 
 
 # ---------------------------------------------------------------------------
 # Tool dispatch
 # ---------------------------------------------------------------------------
+
+
+_RESTRICT_TO: set[str] = set()
+
+
+def configure_restrict_to(names: Iterable[str] | None) -> None:
+    """Set the ``--restrict-to`` allowlist for this server process.
+
+    Plan 249 Section 11 counts this among the mitigations for the fact that one
+    process can now read every registered project: a user who wants a narrower
+    blast radius can start the server bound to an explicit set. Passing None or
+    an empty iterable clears the restriction rather than denying everything,
+    since an unset allowlist must not fail closed.
+
+    Comma-separated values are split here rather than at the call site, because
+    users reach for both ``--restrict-to a --restrict-to b`` and
+    ``--restrict-to a,b``, and an allowlist entry that is silently parsed into
+    one nonexistent project name would deny access without explaining why.
+    """
+    global _RESTRICT_TO
+    _RESTRICT_TO = {
+        part.strip() for name in (names or ()) for part in str(name).split(",") if part.strip()
+    }
 
 
 def _route_root_for_working_path(working_path: Any) -> Path | None:
@@ -1327,6 +586,81 @@ def _current_project_or_none() -> str | None:
         return resolve_scope().project
     except Exception:
         return None
+
+
+def _scope_sql(arguments: dict[str, Any], column: str = "project") -> tuple[str, dict[str, str]]:
+    """Build the project predicate a read tool must AND into its WHERE clause.
+
+    Returns ``("", {})`` when no filter applies -- a single-project workspace, an
+    explicit ``all_projects``, or a scope that could not be resolved -- so the
+    caller composes it the same way in every case.
+
+    Read tools that build their own SQL do not otherwise pass through the
+    scoping layer that ``hybrid_search`` gives ``scaffold_search``, and a query
+    that omits this returns rows from whichever project happens to sort first.
+
+    Params come back as a dict because the backend binds ``?`` placeholders from
+    ``params.values()``; the scoping helper's list would raise there.
+    """
+    try:
+        from agentscaffold.graph.scoping import resolve_scope, sql_predicate
+
+        scope = resolve_scope(
+            project=arguments.get("project") or None,
+            all_projects=bool(arguments.get("all_projects", False)),
+        )
+        fragment, params = sql_predicate(scope, column)
+        return fragment, ({column: params[0]} if params else {})
+    except Exception:
+        # Fail open rather than erroring the tool: an unresolvable scope in a
+        # single-project workspace is the overwhelmingly common case, and it is
+        # exactly the pre-multi-project behaviour.
+        return ("", {})
+
+
+def _and_where(sql: str, fragment: str) -> str:
+    """AND *fragment* onto a statement that already has a WHERE clause."""
+    return sql if not fragment else f"{sql} AND {fragment}"
+
+
+def _stats_scope_label() -> dict[str, Any]:
+    """Describe what ``scaffold_stats`` counted, so the totals are unambiguous."""
+    label: dict[str, Any] = {"kind": "workspace", "covers": "all projects in this workspace"}
+    try:
+        from agentscaffold.graph.scoping import current_project_name
+        from agentscaffold.paths import load_workspace
+
+        workspace = load_workspace()
+        if not workspace.is_multi_project:
+            label = {"kind": "project", "covers": "the only project in this workspace"}
+        else:
+            label["projects"] = list(workspace.project_names())
+            label["current_project"] = current_project_name()
+    except Exception:  # noqa: BLE001 - labelling must never fail the tool
+        pass
+    return label
+
+
+def _qualified_node_id(raw_id: str, arguments: dict[str, Any]) -> str:
+    """Project-qualify a node ID built from user input, if the scope calls for it.
+
+    Tools that look a node up by constructed ID (rather than by filtering rows)
+    cannot use a WHERE predicate, because in a multi-project workspace the ID
+    itself carries the project. Returns *raw_id* unchanged for a single-project
+    workspace or a federated/unresolvable scope.
+    """
+    try:
+        from agentscaffold.graph.scoping import qualify_id, resolve_scope
+
+        scope = resolve_scope(
+            project=arguments.get("project") or None,
+            all_projects=bool(arguments.get("all_projects", False)),
+        )
+        if scope.is_noop or not scope.project:
+            return raw_id
+        return qualify_id(scope.project, raw_id)
+    except Exception:
+        return raw_id
 
 
 def _effective_mcp_root(start: Path | None = None) -> Path:
@@ -1381,10 +715,7 @@ def _effective_mcp_root(start: Path | None = None) -> Path:
 
 
 def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Dispatch a tool call to the appropriate handler."""
-    from agentscaffold.config import load_config
-    from agentscaffold.graph import GraphLockError, graph_available, open_graph
-
+    """Resolve which project a tool call is about, then run it scoped to that project."""
     # Fail loud on missing/empty required string args before opening the graph.
     for arg_name in _REQUIRED_STRING_ARGS.get(name, ()):
         value = arguments.get(arg_name)
@@ -1394,15 +725,55 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
                 "missing_argument": arg_name,
             }
 
-    root = _effective_mcp_root()
-    # Dynamic per-call project routing for multi-project workspaces: if the caller
-    # tells us the path it is working on, scope the call to that path's project
-    # instead of the server's fixed launch directory. Every project-scoped read
-    # resolves its scope from the cwd, so chdir is sufficient to retarget them.
-    routed_root = _route_root_for_working_path(arguments.get("working_path"))
-    if routed_root is not None:
-        root = routed_root
-    os.chdir(root)
+    # Resolve which project this call is about before touching the graph, so an
+    # unscopeable call costs nothing and cannot read a database it had no
+    # business opening. Replaces the previous behaviour, which swallowed every
+    # resolution failure and federated across all projects -- answering a
+    # question about one project with another's data, silently.
+    from agentscaffold.mcp.errors import McpToolError, to_error_response
+    from agentscaffold.mcp.project_resolution import resolve_project
+
+    try:
+        resolution = resolve_project(
+            project=arguments.get("project"),
+            working_path=arguments.get("working_path"),
+            anchor=_effective_mcp_root(),
+            restrict_to=_RESTRICT_TO or None,
+        )
+    except McpToolError as exc:
+        # scaffold_projects is the documented recovery from an unresolvable
+        # call, so it must answer when resolution fails -- refusing it with the
+        # very error it exists to explain would leave the agent with no way out.
+        if name == "scaffold_projects":
+            from agentscaffold.mcp.projects import build_projects_payload
+
+            return {
+                **build_projects_payload(None, restrict_to=_RESTRICT_TO or None),
+                "unresolved": to_error_response(exc),
+            }
+        return to_error_response(exc)
+
+    if name == "scaffold_projects":
+        from agentscaffold.mcp.projects import build_projects_payload
+
+        return build_projects_payload(resolution, restrict_to=_RESTRICT_TO or None)
+
+    # Project-scoped reads resolve their scope from "where we are", and this is
+    # where the resolved project reaches them. It used to be os.chdir, which is
+    # process-global and therefore only safe while dispatch is serialised (see
+    # finding rf::65b49d5c2a95); an active-root context is per-call, so two
+    # dispatches for different projects can now be in flight at once -- which is
+    # what makes the Step A6 handle pool reachable.
+    with active_root(resolution.root):
+        return _dispatch_resolved(name, arguments, resolution)
+
+
+def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) -> dict[str, Any]:
+    """Run a tool call whose project is already resolved and scoped."""
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import GraphLockError, graph_available, open_graph
+
+    root = resolution.root
     config = load_config(root / "scaffold.yaml")
     # Pin the embedding weights cache from config BEFORE any retrieval-status
     # probe (the meta build below runs evaluate_retrieval). Without this, cold
@@ -1414,16 +785,11 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         configure_embeddings(config.search.embedding_model, config.search.cache_dir)
     except Exception:  # pragma: no cover - defensive; search config optional
         pass
-    # Robust default: if the effective root is not a registered project and the
-    # caller did not scope explicitly, federate across all projects rather than
-    # failing closed with a ScopingError.
-    if not arguments.get("project") and not arguments.get("all_projects"):
-        try:
-            from agentscaffold.graph.scoping import current_project_name
-
-            current_project_name(root)
-        except Exception:
-            arguments = {**arguments, "all_projects": True}
+    # The silent federation fallback that stood here is gone (Plan 249 Step A6b).
+    # It existed because resolution could land on a root that was not a project;
+    # resolve_project now either returns a real project root or refuses, so the
+    # condition it guarded against cannot arise, and quietly widening a call's
+    # scope is the failure this plan exists to remove.
     if not graph_available(config):
         return {"error": "No knowledge graph found. Run 'scaffold index' first."}
 
@@ -1527,6 +893,11 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     try:
         if name == "scaffold_stats":
             result = store.get_stats()
+            # Counts are workspace-wide by design -- this is the graph's health
+            # dashboard, not a per-project report. Said explicitly because the
+            # tool accepts working_path and its neighbours all scope to one
+            # project, so an unlabelled "functions: 5" reads as this project's 5.
+            result["scope"] = _stats_scope_label()
             result["meta"] = meta
             return result
 
@@ -1719,23 +1090,33 @@ def _tool_context(
         }
     symbol = symbol.strip()
 
+    # Scope to the project this call resolved to. Without it, a symbol that
+    # exists in more than one project of a shared workspace is answered from
+    # whichever row came back first -- a plausible-looking answer about the
+    # wrong project, which is worse than no answer.
+    scope_sql, scope_params = _scope_sql(arguments)
+
     # Search across functions, classes, methods
     results = ql(
         store,
-        sql=(
+        sql=_and_where(
             f'SELECT id AS "fn.id", name AS "fn.name", filePath AS "fn.filePath", '
             f'startLine AS "fn.startLine", endLine AS "fn.endLine", signature AS "fn.signature" '
-            f"FROM Function WHERE name = '{symbol}'"
+            f"FROM Function WHERE name = '{symbol}'",
+            scope_sql,
         ),
+        params=dict(scope_params),
     )
     if not results:
         results = ql(
             store,
-            sql=(
+            sql=_and_where(
                 f'SELECT id AS "c.id", name AS "c.name", filePath AS "c.filePath", '
                 f'startLine AS "c.startLine", endLine AS "c.endLine" '
-                f"FROM Class WHERE name = '{symbol}'"
+                f"FROM Class WHERE name = '{symbol}'",
+                scope_sql,
             ),
+            params=dict(scope_params),
         )
 
     if not results:
@@ -1811,7 +1192,11 @@ def _tool_context(
     )
 
     file_path = node.get("filePath") or ""
-    config_consumers = _config_consumers(store, f"file::{file_path}") if file_path else []
+    config_consumers = (
+        _config_consumers(store, _qualified_node_id(f"file::{file_path}", arguments))
+        if file_path
+        else []
+    )
 
     caller_count = len(callers) + len(method_callers)
     language = language_for_path(file_path)
@@ -1940,7 +1325,12 @@ def _tool_impact(
     except (TypeError, ValueError):
         depth = 2
 
-    file_id = f"file::{target}"
+    # Node IDs are project-qualified in a multi-project workspace
+    # (``alpha::file::src/x.py``), so a bare ``file::`` ID matches nothing there
+    # and every importer and caller list comes back empty -- indistinguishable
+    # from a file that genuinely has no importers. Qualifying here covers the
+    # whole tool, since every query below derives its target from this ID.
+    file_id = _qualified_node_id(f"file::{target}", arguments)
     safe_file_id = file_id.replace("'", "''")
 
     # Transitive importers (multi-hop IMPORTS traversal)
@@ -2118,6 +1508,13 @@ def _tool_validate(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) 
     """Handle scaffold_validate tool call."""
     check = arguments.get("check", "")
 
+    if check == "layers":
+        from agentscaffold.graph.layers import check_layers
+
+        scope_sql, scope_params = _scope_sql(arguments)
+        report = check_layers(store, scope_sql, dict(scope_params) if scope_params else None)
+        return {"report": report.to_dict(), "meta": meta}
+
     if check == "staleness":
         from agentscaffold.graph.verify import verify_graph
 
@@ -2210,6 +1607,23 @@ def _tool_review_context(
 # ---------------------------------------------------------------------------
 
 _SEVERITY_ORDER: tuple[str, ...] = ("critical", "high", "medium", "low")
+
+
+def _scope_args(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Read the per-call read scope (Plan 249): default is the resolved project."""
+    return {
+        "project": arguments.get("project") or None,
+        "all_projects": bool(arguments.get("all_projects", False)),
+    }
+
+
+def _scope_echo(scope: dict[str, Any]) -> dict[str, Any]:
+    """Echo a non-default scope so a federated result is never read as local."""
+    if scope["all_projects"]:
+        return {"scope": "all_projects"}
+    if scope["project"]:
+        return {"scope": "project", "project": scope["project"]}
+    return {}
 
 
 def _clean_out_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -2595,9 +2009,7 @@ def _tool_staleness_check(
             continue
         if other_num is None:
             continue
-        other_files = {
-            f.get("f.path", "") for f in get_plan_impacted_files(store, int(other_num))
-        }
+        other_files = {f.get("f.path", "") for f in get_plan_impacted_files(store, int(other_num))}
         completed_file_sets.append((other_num, p, other_files))
         for raw in other_files:
             if not raw:
@@ -2635,8 +2047,7 @@ def _tool_staleness_check(
     if overlapping_completed:
         if lead:
             signals.append(
-                f"{len(overlapping_completed)} completed plans overlap; "
-                f"lead shared path: {lead[0]}"
+                f"{len(overlapping_completed)} completed plans overlap; lead shared path: {lead[0]}"
             )
         else:
             signals.append(
@@ -2892,13 +2303,14 @@ def _tool_find_studies(
 
     topic = arguments.get("topic", "")
     outcome = arguments.get("outcome")
+    scope = _scope_args(arguments)
 
     results: list[dict[str, Any]] = []
     if topic:
-        results = get_studies_by_tags(store, [topic])
+        results = get_studies_by_tags(store, [topic], **scope)
 
     if outcome:
-        outcome_results = get_studies_by_outcome(store, outcome)
+        outcome_results = get_studies_by_outcome(store, outcome, **scope)
         if results:
             existing_ids = {r.get("s.studyId") for r in results}
             for o in outcome_results:
@@ -2912,6 +2324,7 @@ def _tool_find_studies(
         "outcome_filter": outcome,
         "studies": _clean_out_rows(results),
         "count": len(results),
+        **_scope_echo(scope),
         "meta": meta,
     }
 
@@ -2973,8 +2386,9 @@ def _tool_find_adrs(store: Any, arguments: dict[str, Any], meta: dict[str, Any])
 
     topic = arguments.get("topic", "")
     status_filter = arguments.get("status")
+    scope = _scope_args(arguments)
 
-    all_adrs = get_all_adrs(store)
+    all_adrs = get_all_adrs(store, **scope)
     results = all_adrs
 
     if topic:
@@ -2990,6 +2404,7 @@ def _tool_find_adrs(store: Any, arguments: dict[str, Any], meta: dict[str, Any])
         "status_filter": status_filter,
         "adrs": _clean_out_rows(results),
         "count": len(results),
+        **_scope_echo(scope),
         "meta": meta,
     }
 
@@ -3002,6 +2417,7 @@ def _tool_decision_context(
         get_adrs_for_plan,
         get_plan_by_number,
         get_plan_dependencies,
+        get_plan_projects,
         get_spikes_for_plan,
         get_studies_for_plan,
     )
@@ -3010,14 +2426,37 @@ def _tool_decision_context(
     if pn is None:
         return {"error": "plan_number is required.", "meta": meta}
 
-    plan = get_plan_by_number(store, pn)
+    scope = _scope_args(arguments)
+    # A decision chain is a single plan's history, so federating it cannot mean
+    # "merge every project's plan 249" -- that would splice unrelated ADRs and
+    # spikes into one narrative. It means "find which project owns this number".
+    # If more than one does, the number alone is not an answer, so refuse and
+    # name the candidates rather than silently returning whichever came first.
+    if scope["all_projects"]:
+        from agentscaffold.mcp.errors import AmbiguousProjectError, to_error_response
+
+        owners = get_plan_projects(store, pn)
+        if len(owners) > 1:
+            return {
+                **to_error_response(
+                    AmbiguousProjectError(
+                        f"Plan {pn} exists in {len(owners)} projects; "
+                        "name one with the 'project' argument.",
+                        candidates=owners,
+                    )
+                ),
+                "meta": meta,
+            }
+        scope = {"project": owners[0] if owners else None, "all_projects": False}
+
+    plan = get_plan_by_number(store, pn, **scope)
     if not plan:
         return {"error": f"Plan {pn} not found.", "meta": meta}
 
-    adrs = get_adrs_for_plan(store, pn)
-    spikes = get_spikes_for_plan(store, pn)
-    studies = get_studies_for_plan(store, pn)
-    deps = get_plan_dependencies(store, pn)
+    adrs = get_adrs_for_plan(store, pn, **scope)
+    spikes = get_spikes_for_plan(store, pn, **scope)
+    studies = get_studies_for_plan(store, pn, **scope)
+    deps = get_plan_dependencies(store, pn, **scope)
 
     from agentscaffold.review.filters import normalize_plan_status
 
@@ -3031,6 +2470,7 @@ def _tool_decision_context(
         "supporting_studies": _clean_out_rows(studies),
         "plan_dependencies": _clean_out_rows(deps),
         "has_full_decision_chain": bool(adrs or spikes or studies),
+        **({"project": scope["project"]} if scope["project"] else {}),
         # If the graph is empty the chain looks absent even when it exists in
         # docs; flag so a False is not read as a confirmed "no decisions".
         "graph_warning": _empty_graph_warning(store.get_stats()),
@@ -3201,9 +2641,7 @@ def _tool_diff_plan_vs_code(
     return result
 
 
-def _tool_grep_graph(
-    arguments: dict[str, Any], meta: dict[str, Any], root: Path
-) -> dict[str, Any]:
+def _tool_grep_graph(arguments: dict[str, Any], meta: dict[str, Any], root: Path) -> dict[str, Any]:
     from agentscaffold.mcp.workspace_grep import workspace_grep
 
     result = workspace_grep(
@@ -3217,9 +2655,7 @@ def _tool_grep_graph(
     return result
 
 
-def _tool_why_empty(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
-) -> dict[str, Any]:
+def _tool_why_empty(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
     from agentscaffold.mcp.why_empty import explain_why_empty
 
     result = explain_why_empty(
@@ -3610,6 +3046,11 @@ def _dispatch_resource(uri: str) -> dict[str, Any]:
     """Dispatch a resource read to the appropriate handler."""
     from agentscaffold.config import load_config
     from agentscaffold.graph import graph_available, open_graph
+
+    # Routing guidance is static text and is served before the graph check: a
+    # fresh clone with no graph is exactly when an agent needs the policy most.
+    if uri == GUIDANCE_ROUTING_URI:
+        return {"content": read_guidance_routing()}
 
     config = load_config()
     if not graph_available(config):

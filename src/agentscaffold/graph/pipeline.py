@@ -508,10 +508,12 @@ def _governance_fp_path(store: GraphBackend) -> Path | None:
     backends or backends that do not expose a DB path, in which case the caller
     treats governance as always-changed (safe default).
     """
+    from agentscaffold.paths import GOVERNANCE_FINGERPRINT_FILE
+
     db_path = getattr(store, "_db_path", None)
     if db_path is None or str(db_path) == ":memory:":
         return None
-    return Path(db_path).parent / "governance.fingerprint"
+    return Path(db_path).parent / GOVERNANCE_FINGERPRINT_FILE
 
 
 def _write_governance_fingerprint(

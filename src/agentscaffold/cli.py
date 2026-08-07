@@ -20,6 +20,26 @@ app = typer.Typer(
 )
 console = Console()
 
+
+def _version_callback(value: bool) -> None:
+    if value:
+        console.print(f"agentscaffold {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the installed agentscaffold version and exit.",
+    ),
+) -> None:
+    """AgentScaffold -- structured AI-assisted development framework."""
+
+
 # ---------------------------------------------------------------------------
 # Sub-command groups
 # ---------------------------------------------------------------------------
@@ -56,11 +76,14 @@ app.add_typer(session_app, name="session")
 config_app = typer.Typer(help="Configuration inspection.")
 app.add_typer(config_app, name="config")
 
-state_app = typer.Typer(help="Sharded governance-state operations (Plan 226).")
+state_app = typer.Typer(help="Sharded governance-state operations.")
 app.add_typer(state_app, name="state")
 
-workspace_app = typer.Typer(help="Multi-project workspace management (Plan 225).")
+workspace_app = typer.Typer(help="Multi-project workspace management.")
 app.add_typer(workspace_app, name="workspace")
+
+project_app = typer.Typer(help="User-level project registration.")
+app.add_typer(project_app, name="project")
 
 app.add_typer(benchmark_app, name="benchmark")
 
@@ -82,11 +105,16 @@ def init(
         "-y",
         help="Accept all defaults without prompting.",
     ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Report what init would write without writing anything.",
+    ),
 ) -> None:
     """Scaffold a new project with the AgentScaffold framework."""
     from agentscaffold.init_cmd import run_init
 
-    run_init(directory=directory, non_interactive=non_interactive)
+    run_init(directory=directory, non_interactive=non_interactive, dry_run=dry_run)
 
 
 @app.command()
@@ -254,7 +282,7 @@ def plan_claim(
     number: str = typer.Argument(..., help="Plan number to claim (e.g. 225)."),
     owner: str = typer.Option(..., "--owner", "-o", help="Who is claiming the plan."),
 ) -> None:
-    """Record advisory, git-backed ownership of an in-flight plan (Plan 226)."""
+    """Record advisory, git-backed ownership of an in-flight plan."""
     from agentscaffold import collab
     from agentscaffold.config import load_config
     from agentscaffold.paths import ResolvedPaths, resolve_root
@@ -276,7 +304,7 @@ def plan_claim(
 def plan_release(
     number: str = typer.Argument(..., help="Plan number to release."),
 ) -> None:
-    """Clear an advisory plan claim (Plan 226)."""
+    """Clear an advisory plan claim."""
     from agentscaffold import collab
     from agentscaffold.config import load_config
     from agentscaffold.paths import ResolvedPaths, resolve_root
@@ -1329,6 +1357,12 @@ def graph_prune(
         "--archived-backlog-before",
         help="Prune archived backlog items older than this age (e.g. '90d').",
     ),
+    malformed_findings: bool = typer.Option(
+        False,
+        "--malformed-findings",
+        help="Prune plan-appendix findings whose body is a mid-sentence fragment "
+        "(manufactured by the pre-0.9.7 unanchored extractor).",
+    ),
     apply: bool = typer.Option(
         False,
         "--apply",
@@ -1338,17 +1372,20 @@ def graph_prune(
     """Selectively prune old governance knowledge (dry-run by default).
 
     Only status-eligible rows are ever selected: resolved findings, archived
-    backlog items, and sessions past the cutoff. Nothing is deleted unless
-    --apply is given.
+    backlog items, sessions past the cutoff, and malformed plan-appendix
+    findings. Nothing is deleted unless --apply is given.
     """
     from agentscaffold.config import load_config
     from agentscaffold.graph import graph_available, open_graph
     from agentscaffold.graph.prune import apply_prune, select_prunable
 
-    if not any([resolved_findings_before, sessions_before, archived_backlog_before]):
+    if not any(
+        [resolved_findings_before, sessions_before, archived_backlog_before, malformed_findings]
+    ):
         console.print(
             "[yellow]Nothing to prune: specify at least one of "
-            "--resolved-findings-before, --sessions-before, --archived-backlog-before.[/yellow]"
+            "--resolved-findings-before, --sessions-before, --archived-backlog-before, "
+            "--malformed-findings.[/yellow]"
         )
         raise SystemExit(1)
 
@@ -1365,6 +1402,7 @@ def graph_prune(
                 resolved_findings_before=resolved_findings_before,
                 sessions_before=sessions_before,
                 archived_backlog_before=archived_backlog_before,
+                malformed_findings=malformed_findings,
             )
         except ValueError as exc:
             console.print(f"[red]{exc}[/red]")
@@ -1825,8 +1863,16 @@ def session_context() -> None:
 # ---------------------------------------------------------------------------
 
 
-@app.command(name="mcp")
+mcp_app = typer.Typer(
+    help="MCP server: run it (bare `scaffold mcp`) or install its client entry.",
+    invoke_without_command=True,
+)
+app.add_typer(mcp_app, name="mcp")
+
+
+@mcp_app.callback(invoke_without_command=True)
 def mcp_cmd(
+    ctx: typer.Context,
     workspace: str = typer.Option(
         "",
         "--workspace",
@@ -1843,19 +1889,388 @@ def mcp_cmd(
             "No-argument tools then read this project's governance."
         ),
     ),
+    restrict_to: list[str] = typer.Option(
+        [],
+        "--restrict-to",
+        help=(
+            "Limit this server to the named projects. Repeat or comma-separate. "
+            "Calls resolving elsewhere are refused with 'restricted_project'."
+        ),
+    ),
 ) -> None:
     """Start MCP server (stdio mode for Cursor/Claude).
 
     ``--workspace`` / ``--project`` (or the ``AGENTSCAFFOLD_WORKSPACE_ROOT`` /
     ``AGENTSCAFFOLD_PROJECT`` env vars) pin the resolution anchor so no-argument
     tools resolve the intended project even when the MCP process cwd is a parent
-    directory (Plan 234).
+    directory.
+
+    ``--restrict-to`` narrows the blast radius. One server process can read every
+    registered project, so a user who wants a tighter boundary can bind it to an
+    explicit allowlist; anything resolving outside is refused rather than served.
+
+    This is a group callback so that ``scaffold mcp install`` can exist alongside
+    it, but bare ``scaffold mcp`` still starts the server -- which is what every
+    already-installed ``mcp.json`` entry invokes.
     """
-    from agentscaffold.mcp.server import run_mcp_server
+    if ctx.invoked_subcommand is not None:
+        return
+
+    from agentscaffold.mcp.server import configure_restrict_to, run_mcp_server
     from agentscaffold.paths import configure_mcp_start
 
     configure_mcp_start(workspace=workspace or None, project=project or None)
+    configure_restrict_to(restrict_to)
     run_mcp_server()
+
+
+@mcp_app.command("install")
+def mcp_install(
+    config: str = typer.Option(
+        "",
+        "--config",
+        help="Client MCP config to write (default: ~/.cursor/mcp.json).",
+    ),
+    migrate: bool = typer.Option(
+        False,
+        "--migrate",
+        help="Also remove legacy per-project agentscaffold entries (backs up first).",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would change and write nothing."
+    ),
+) -> None:
+    """Install the single AgentScaffold MCP server entry.
+
+    One entry serves every registered project, so registering more projects adds
+    no further entries. Existing per-project entries keep working and are only
+    removed by an explicit ``--migrate``, which backs the file up first.
+
+    ``mcp.json`` is shared with the user and with other tools, so an unrelated
+    server entry is never modified: the resulting document is verified against
+    the original before anything is written, and a config that cannot be parsed
+    is refused outright rather than guessed at.
+    """
+    from agentscaffold.mcp.install import (
+        CANONICAL_ENTRY_NAME,
+        McpConfigError,
+        backup_path,
+        canonical_entry,
+        default_config_path,
+        load_config,
+        plan_changes,
+        render,
+        verify_unrelated_preserved,
+    )
+
+    target = Path(config).expanduser() if config else default_config_path()
+
+    try:
+        original = load_config(target)
+    except McpConfigError as exc:
+        console.print(f"[red]{exc}[/red]")
+        import json as _json
+
+        console.print("\nAdd this entry by hand:")
+        console.print(
+            _json.dumps({"mcpServers": {CANONICAL_ENTRY_NAME: canonical_entry()}}, indent=2)
+        )
+        raise SystemExit(1) from exc
+
+    plan = plan_changes(original, migrate=migrate)
+
+    try:
+        verify_unrelated_preserved(original, plan.document)
+    except McpConfigError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+
+    if plan.legacy and not migrate:
+        console.print(
+            f"[yellow]Legacy per-project entries still present: {', '.join(plan.legacy)}.[/yellow]"
+        )
+        console.print(
+            "They keep working for now. Collapse them with "
+            "[cyan]scaffold mcp install --migrate[/cyan]."
+        )
+
+    if not plan.changed:
+        console.print(f"[green]No changes needed[/green] — {target} is already correct.")
+        return
+
+    if dry_run:
+        console.print(f"[cyan]Dry run[/cyan] — would write {target}:")
+        console.print(render(plan.document))
+        if plan.removed:
+            console.print(f"[yellow]Would remove: {', '.join(plan.removed)}[/yellow]")
+        console.print("Nothing was written. Re-run without --dry-run to apply.")
+        return
+
+    if target.exists():
+        backup = backup_path(target)
+        backup.write_bytes(target.read_bytes())
+        console.print(f"[dim]Backed up prior config to {backup}[/dim]")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(render(plan.document))
+
+    console.print(f"[green]Installed the {CANONICAL_ENTRY_NAME!r} entry[/green] in {target}.")
+    if plan.removed:
+        console.print(f"[green]Removed legacy entries:[/green] {', '.join(plan.removed)}")
+    console.print("Restart your MCP client to pick up the change.")
+
+
+# ---------------------------------------------------------------------------
+# Health checks and reclamation (Plan 249, Step B8)
+# ---------------------------------------------------------------------------
+
+
+_STATUS_STYLE = {
+    "ok": ("[green]ok[/green]", "green"),
+    "warn": ("[yellow]warn[/yellow]", "yellow"),
+    "fail": ("[red]FAIL[/red]", "red"),
+    "skip": ("[dim]skip[/dim]", "dim"),
+    # Distinct from both ok and fail on purpose: another process holding the
+    # graph is transient, and telling someone their tools are broken when an
+    # index is running in the next terminal is how a diagnostic loses trust.
+    "busy": ("[yellow]busy[/yellow]", "yellow"),
+}
+
+
+def _print_tool_probes(context: Any, include_writes: bool) -> bool:
+    """Print the per-tool table. Returns True if any tool actually failed."""
+    from agentscaffold.doctor_tools import probe_tools, summarize
+
+    probes = probe_tools(context, include_writes=include_writes)
+    console.print("\n[bold]MCP tools[/bold]")
+    for probe in probes:
+        label, _style = _STATUS_STYLE[probe.status]
+        line = f"{label} {probe.name}"
+        if probe.status != "skip" and probe.elapsed_ms:
+            line += f" [dim]({probe.elapsed_ms:.0f} ms)[/dim]"
+        console.print(line)
+        if probe.detail and probe.status in {"fail", "busy"}:
+            console.print(f"      [dim]{probe.detail}[/dim]", soft_wrap=True)
+
+    counts = summarize(probes)
+    console.print(
+        "  ".join(f"{status}: {count}" for status, count in sorted(counts.items())),
+        style="dim",
+    )
+    if not include_writes and counts.get("skip"):
+        console.print(
+            "[dim]Write tools were not exercised. "
+            "Add --include-writes to probe them against a scratch project.[/dim]"
+        )
+    return bool(counts.get("fail"))
+
+
+@app.command("doctor")
+def doctor(
+    project_root: str = typer.Option(
+        "", "--project-root", help="Project to diagnose (default: current directory)."
+    ),
+    mcp_config: str = typer.Option(
+        "", "--mcp-config", help="Client MCP config to inspect (default: ~/.cursor/mcp.json)."
+    ),
+    strict: bool = typer.Option(
+        False, "--strict", help="Exit non-zero if any check is not clean (for CI)."
+    ),
+    tools: bool = typer.Option(
+        False, "--tools", help="Also call every MCP tool and report how each behaved."
+    ),
+    include_writes: bool = typer.Option(
+        False,
+        "--include-writes",
+        help="With --tools, also exercise write tools against a scratch project.",
+    ),
+) -> None:
+    """Diagnose an AgentScaffold installation. Reads only; changes nothing.
+
+    The default exit code is always 0, so this is safe in a shell profile or a
+    git hook. ``--strict`` is the CI gate.
+    """
+    from agentscaffold.doctor import (
+        DoctorContext,
+        default_mcp_config_path,
+        run_checks,
+        worst_status,
+    )
+
+    context = DoctorContext(
+        project_root=Path(project_root).expanduser() if project_root else Path.cwd(),
+        mcp_config_path=Path(mcp_config).expanduser() if mcp_config else default_mcp_config_path(),
+    )
+
+    results = run_checks(context)
+    for check, result in results:
+        label, _style = _STATUS_STYLE[result.status]
+        console.print(f"{label} [bold]{check.title}[/bold] — {result.summary}")
+        for detail in result.details:
+            # Details carry paths and ids. Wrapping one mid-token makes it
+            # unusable for the copy-paste it exists to enable.
+            console.print(f"      [dim]{detail}[/dim]", soft_wrap=True)
+        if result.remediation and result.status in {"warn", "fail"}:
+            console.print(f"      [cyan]{result.remediation}[/cyan]")
+
+    tools_failed = _print_tool_probes(context, include_writes) if tools else False
+
+    worst = worst_status(results)
+    if tools_failed and strict:
+        raise SystemExit(1)
+    if worst in {"warn", "fail"}:
+        console.print(
+            "\nRun [cyan]scaffold doctor --strict[/cyan] in CI to make these block a build."
+            if not strict
+            else ""
+        )
+        if strict:
+            raise SystemExit(1)
+    else:
+        console.print("\n[green]Everything checks out.[/green]")
+
+
+@app.command("gc")
+def gc(
+    apply: bool = typer.Option(
+        False, "--apply", help="Actually delete. Without this, gc only reports."
+    ),
+) -> None:
+    """Reclaim state left behind by workspaces that no longer exist.
+
+    Removes only what it can prove is orphaned: a state directory whose recorded
+    workspace root is gone or now resolves to a different id, and registry
+    entries pointing at roots that no longer exist. A state directory with no
+    record of where it came from is reported and kept -- an unnecessary
+    directory costs disk space, a wrongly deleted one costs a full re-index.
+    """
+    from agentscaffold.gc import apply_gc, plan_gc
+
+    plan = plan_gc()
+
+    for directory, reason in plan.orphaned_state:
+        console.print(f"[yellow]orphaned state[/yellow] {directory.name} — {reason}")
+        console.print(f"      [dim]{directory}[/dim]", soft_wrap=True)
+    for workspace_id, root in plan.stale_registry:
+        console.print(
+            f"[yellow]stale registry entry[/yellow] {workspace_id} — {root} is gone",
+            soft_wrap=True,
+        )
+    for directory in plan.unverifiable_state:
+        console.print(
+            f"[dim]kept[/dim] {directory.name} — no record of its workspace, so it is not "
+            "provably orphaned"
+        )
+
+    if not plan.has_work:
+        console.print("[green]Nothing to reclaim.[/green]")
+        return
+
+    if not apply:
+        console.print("\nNothing was deleted. Re-run with [cyan]--apply[/cyan] to reclaim these.")
+        return
+
+    apply_gc(plan)
+    console.print(
+        f"\n[green]Reclaimed[/green] {len(plan.orphaned_state)} state directory(ies) "
+        f"and {len(plan.stale_registry)} registry entry(ies)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Project registration commands (Plan 249)
+# ---------------------------------------------------------------------------
+
+
+@project_app.command("register")
+def project_register(
+    root: str = typer.Argument(..., help="Project or workspace root directory to register."),
+    name: str = typer.Option(
+        "", "--name", help="Project name (defaults to the directory basename)."
+    ),
+) -> None:
+    """Record a root in the user-level registry so one MCP server can resolve it.
+
+    This writes the registry and nothing else. In particular it does not touch
+    any client's ``mcp.json``: installing the server entry is a separate command
+    so that widening what a server can read is never a side effect of onboarding
+    a project (threat model, Vector 1).
+    """
+    from agentscaffold.workspace_registry import RegistryError, register_workspace
+
+    target = Path(root).expanduser()
+    if not target.is_dir():
+        console.print(f"[red]Not a directory: {target}[/red]")
+        raise SystemExit(1)
+
+    try:
+        entry = register_workspace(target, name=name or None)
+    except RegistryError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+
+    registered = ", ".join(p.name for p in entry.projects)
+    console.print(f"[green]Registered {registered!r} at {entry.root}.[/green]")
+    console.print("Run [cyan]scaffold mcp install[/cyan] if the MCP server is not yet installed.")
+
+
+@project_app.command("unregister")
+def project_unregister(
+    name: str = typer.Argument(..., help="Registered project name to forget."),
+) -> None:
+    """Forget a registered project.
+
+    Only the registry entry is removed -- never the project directory. Removing
+    something absent reports the fact but succeeds, so teardown scripts can run
+    this blind without special-casing.
+    """
+    from agentscaffold.workspace_registry import RegistryError, unregister_project
+
+    try:
+        removed = unregister_project(name)
+    except RegistryError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+
+    if removed:
+        console.print(f"[green]Unregistered {name!r}.[/green]")
+    else:
+        console.print(f"[yellow]No registered project named {name!r}; nothing to do.[/yellow]")
+
+
+@project_app.command("list")
+def project_list() -> None:
+    """List every registered project and the root it resolves to.
+
+    This is the server's entire read surface, so it is worth being able to see
+    at a glance (threat model, Vector 1).
+    """
+    from rich.table import Table
+
+    from agentscaffold.workspace_registry import RegistryError, load_registry, registry_path
+
+    try:
+        registry = load_registry()
+    except RegistryError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+
+    if not registry.workspaces:
+        console.print("[yellow]No projects registered.[/yellow]")
+        console.print(
+            "Register one with [cyan]scaffold project register <path>[/cyan]. "
+            "A lone repo does not need to be registered."
+        )
+        return
+
+    tbl = Table(title=f"Registered projects ({registry_path()})", show_header=True)
+    tbl.add_column("Project", style="green")
+    tbl.add_column("Root")
+    tbl.add_column("Workspace ID", style="dim")
+    for workspace in registry.workspaces:
+        for entry in workspace.projects:
+            tbl.add_row(entry.name, str(workspace.project_root(entry)), workspace.id)
+    console.print(tbl)
 
 
 # ---------------------------------------------------------------------------
@@ -1902,7 +2317,7 @@ def workspace_onboard(
         "--shared-layout",
         help=(
             "Write asset_layout: shared_workspace into workspace.yaml so reusable "
-            "process assets are shared at the workspace root (Plan 234)."
+            "process assets are shared at the workspace root."
         ),
     ),
 ) -> None:
@@ -1961,8 +2376,29 @@ def workspace_onboard(
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from exc
 
+    # Generate the workspace id on first write and never regenerate it: it keys
+    # this workspace's state directory, so a new id would orphan the graph
+    # (ADR-025, which is also why it is opaque rather than derived from the path).
+    # An already-registered root adopts the id the registry gave it, because that
+    # is the id its existing state is keyed to -- minting a fresh one here is the
+    # dangerous direction, and the reason the id is adopted rather than assigned.
+    if not workspace.id:
+        from agentscaffold.workspace_ids import generate_workspace_id
+
+        registered_id = None
+        try:
+            from agentscaffold.workspace_registry import load_registry
+
+            existing_entry = load_registry().find_workspace_by_root(ws_root)
+            registered_id = existing_entry.id if existing_entry is not None else None
+        except Exception:
+            registered_id = None
+
+        workspace.id = registered_id or generate_workspace_id()
+
     manifest_out: dict = {
-        "projects": [{"name": p.name, "path": p.path} for p in workspace.projects]
+        "id": workspace.id,
+        "projects": [{"name": p.name, "path": p.path} for p in workspace.projects],
     }
     existing_layout = workspace.asset_layout
     if shared_layout:
@@ -1972,6 +2408,23 @@ def workspace_onboard(
     elif existing_layout is not None:
         manifest_out["asset_layout"] = existing_layout.model_dump()
     manifest_path.write_text(yaml.safe_dump(manifest_out, sort_keys=False))
+
+    # Mirror the manifest into the user-level registry so the single project-aware
+    # MCP server can resolve these projects (Plan 249). Onboarding is an explicit
+    # user action, which is the only context in which registration may happen
+    # (threat model, Vector 1). A registry failure must not lose the manifest that
+    # was just written, so it degrades to a warning.
+    try:
+        from agentscaffold.workspace_registry import register_workspace
+
+        register_workspace(
+            ws_root,
+            projects=[(p.name, p.path) for p in workspace.projects],
+        )
+    except Exception as exc:  # noqa: BLE001 - manifest is written; this is advisory
+        console.print(f"[yellow]Manifest written, but registry update failed: {exc}[/yellow]")
+        console.print("Run [cyan]scaffold project register[/cyan] to retry.")
+
     console.print(f"[green]Registered project {proj_name!r} at {stored_path}.[/green]")
     if shared_layout:
         console.print("[cyan]Wrote asset_layout: shared_workspace.[/cyan]")
@@ -1981,6 +2434,45 @@ def workspace_onboard(
 
     if migrate_existing:
         _onboard_migrate(ws_root, migrate_existing)
+
+
+@workspace_app.command("migrate-state")
+def workspace_migrate_state_cmd(
+    apply: bool = typer.Option(
+        False, "--apply", help="Apply the migration (default is a non-mutating dry-run)."
+    ),
+    restore: bool = typer.Option(
+        False, "--restore", help="Move state back into the tree (the rollback path)."
+    ),
+) -> None:
+    """Move this workspace's graph state out of the source tree.
+
+    Relocates the graph database and the files beside it to the platform state
+    directory, keyed by workspace id, by copying, verifying, and only then
+    removing the original. Refuses to start while another process holds the
+    database. Default posture is a non-mutating dry-run; pass ``--apply``.
+    """
+    from agentscaffold.workspace_migrate_state import StateMigrationError, migrate_state
+
+    try:
+        result = migrate_state(apply=apply, restore=restore)
+    except StateMigrationError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+
+    if not result.needed:
+        console.print(f"[dim]{result.reason}[/dim]")
+        return
+
+    if result.applied:
+        console.print(
+            f"[green]Moved[/green] {result.source}\n     [green]to[/green] {result.destination}"
+        )
+        for path in result.copied[1:]:
+            console.print(f"[dim]  also moved {path.name}[/dim]")
+    else:
+        console.print(f"[yellow]dry-run[/yellow] {result.reason}")
+        console.print("[dim]Re-run with --apply to perform the move.[/dim]")
 
 
 @workspace_app.command("migrate-layout")
@@ -1997,14 +2489,12 @@ def workspace_migrate_layout(
     keep_diverged: bool = typer.Option(
         False, "--keep-diverged", help="Leave diverged files as project-local (do not promote)."
     ),
-    force: bool = typer.Option(
-        False, "--force", help="Allow --apply on a dirty git worktree."
-    ),
+    force: bool = typer.Option(False, "--force", help="Allow --apply on a dirty git worktree."),
     json_output: bool = typer.Option(
         False, "--json", help="Emit the machine-readable report as JSON."
     ),
 ) -> None:
-    """Migrate a multi-project workspace to the shared asset layout (Plan 234).
+    """Migrate a multi-project workspace to the shared asset layout.
 
     Promotes duplicated reusable process assets (prompts, standards, templates,
     protocol, commands, shared security templates) to the workspace root and

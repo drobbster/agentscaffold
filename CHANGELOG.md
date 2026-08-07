@@ -8,6 +8,209 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-07
+
+**One MCP server for a whole workspace, and a graph that sees your relative imports.**
+
+The headline is Plan 249: AgentScaffold no longer needs one MCP server process per
+project. A single project-aware server resolves which project each call belongs to from
+the path you are working on, which is what makes monorepos and multi-repo workspaces
+practical. Alongside it, generated guidance and mutable state stop being copied into
+every project root.
+
+Phases A and B ship together deliberately. Phase A alone would have delivered a breaking
+change to MCP registration plus a state migration with no tool to tell you whether the
+migration worked. That tool is ``scaffold doctor``, and it lands in Phase B. Releasing a
+migration a version ahead of its diagnostic would create exactly the kind of invisible
+failure this work exists to remove.
+
+Because Phase A changed how *every* tool resolves the project it answers from, the
+release was gated on a per-tool conformance sweep rather than on the unit suite alone.
+That sweep (Phase F) is what produced most of the fixes below, including two defects it
+found in the graph itself.
+
+Also included: the finding-extraction fix from Plan 250, the relative-import fix from
+Plan 252, and the parts of Plan 251 that were completed early because the conformance
+work depended on them — the ``layers`` check and the scoping conformance suite.
+
+**Two things to know before upgrading.** Your graph rebuilds on the first ``scaffold
+index`` (see *Fixed*, relative imports). And if you have been running one MCP server per
+project, see *Changed* for the migration — old registrations keep working behind a
+deprecation notice rather than breaking.
+
+### Added
+- **``scaffold doctor``** (Plan 249 Phase B) diagnoses an installation: registered roots
+  that no longer exist, a workspace recorded under two different ids, generated rule
+  files that have drifted from their canonical source, legacy or interpreter-pinned MCP
+  entries, version skew between the MCP server and your CLI, and where the graph
+  actually resolves. It only reads — it never repairs — so it is safe to run on a setup
+  you already believe is broken. The default exits 0 whatever it finds, so it is safe in
+  a shell profile or a hook; ``--strict`` exits non-zero and is the CI gate.
+- **``scaffold doctor --tools``** calls every MCP tool once and reports how each behaved,
+  answering the question the configuration checks cannot: whether the tools work in your
+  installation right now. A graph held by another process reports as ``busy`` rather than
+  as a failure, because an index running in the next terminal is routine and a diagnostic
+  that cries wolf during it stops being read. Write tools are skipped by default;
+  ``--include-writes`` exercises them against a temporary throwaway project with its own
+  database, so the command cannot leave findings or backlog items in your governance
+  record either way. A database predating the current schema reports once as "graph schema
+  is out of date" rather than as a dozen broken tools.
+- **``scaffold_validate`` with ``check="layers"``** now works. It was advertised in the
+  tool schema and returned "not yet implemented" when called. It enforces the layering
+  rule your ``AGENTS.md`` states — a component consumes the layer directly below it and
+  does not bypass intermediate ones — reporting both shapes that break it: an
+  **inversion**, where a lower layer imports a higher one, and a **skip**, which reaches
+  past an intermediate layer.
+
+  It has a third answer besides pass and fail. The check needs layer definitions from
+  ``system_architecture.md`` and code files matching their path patterns in the *same*
+  graph, and plenty of repositories have one without the other — an architecture document
+  governing a codebase that lives elsewhere, for instance. In that case it returns
+  ``not_evaluable`` with a reason and a remediation, rather than an empty violation list.
+  "No violations found" from a graph containing no layered files would be a claim about
+  nothing while reading as a clean bill of health, which for a drift-detection check is
+  the most convincing way it could mislead you. Treat ``not_evaluable`` as unknown, never
+  as fine.
+- **``scaffold graph prune --malformed-findings``** removes findings created by the
+  extraction defect described below. Removal covers both the graph and the
+  ``governance.json`` artifact that re-indexing restores from — purging only the graph
+  would let the next index bring them straight back. Dry run by default, like the rest of
+  ``prune``; a clean project reports nothing to remove.
+- **The version-skew check** compares what each MCP entry actually launches against the
+  running CLI. An entry naming an absolute interpreter keeps launching whatever is left
+  at that path after a virtualenv rebuild; the server still starts, just with an old
+  AgentScaffold, and nothing says so. It reads the console script's shebang and asks that
+  interpreter directly, so it works against installs too old to answer ``--version``.
+- **``scaffold gc``** reclaims state directories for workspaces that are gone and
+  registry entries pointing at missing roots. It reports only; ``--apply`` is required to
+  delete. It removes only what it can *prove* is orphaned, from a record each state
+  directory keeps of the root it was created for — a workspace absent from the registry
+  is **not** treated as an orphan, because the manifest is the source of truth and its
+  graph is live. Directories predating that record are reported and kept.
+- **``scaffold --version``**.
+- **``scaffold workspace migrate-state``** moves an existing graph out of the working
+  tree, with copy-verify-remove semantics and ``--restore`` to go back. Dry run is the
+  default. It refuses while any process holds the database, so a live MCP server cannot
+  have a file moved out from under it.
+- **``scaffold init --dry-run``** reports what init would write without writing it.
+- **Canonical routing guidance.** A workspace using the shared asset layout gets one
+  committed source of routing policy at its root, and each project's generated rule files
+  carry a copy stamped with its content hash. The policy stays inline rather than being
+  replaced by a pointer — an agent has to act on the rules without a tool call to fetch
+  them — and the stamp is what makes the duplication safe, since a copy that has fallen
+  behind becomes detectable rather than merely different. Also served as the
+  ``agentscaffold://guidance/routing`` MCP resource. Single-project repositories are
+  unaffected and emit byte-identical output to 0.9.x.
+- **One project-aware MCP server** (Plan 249 Phase A). A single MCP entry now serves
+  every registered project, replacing one server per repository. New user-level registry
+  at ``~/.agentscaffold/registry.yaml`` (or ``$AGENTSCAFFOLD_HOME``), maintained with
+  ``scaffold project register/unregister/list``.
+- ``scaffold mcp install [--migrate] [--dry-run] [--config <path>]`` writes exactly one
+  entry: ``{"command": "scaffold", "args": ["mcp"]}``. No ``cd`` binding, no launcher
+  hook, no hardcoded interpreter path, so it survives a virtualenv rebuild and resolves
+  ``scaffold.exe`` through ``PATH`` on Windows. Unrelated entries in a shared
+  ``mcp.json`` are verified unchanged before anything is written, and an unparseable
+  config is refused rather than guessed at.
+- ``scaffold_projects`` MCP tool enumerates registered projects and reports which one a
+  call resolved to and why. It is the recovery path from an ``ambiguous_project``
+  refusal.
+- Opt-in federated discovery: ``all_projects=true`` extends from ``scaffold_search`` to
+  the governance discovery tools, with ``project`` provenance on every hit.
+- ``--restrict-to`` limits a server instance to an explicit allowlist of projects.
+
+### Changed
+- **The graph now lives outside your working tree — for registered projects only.**
+  A registered workspace resolves to
+  ``~/.local/state/agentscaffold/<workspace-id>/graph.duckdb`` (honouring
+  ``$XDG_STATE_HOME``; ``%LOCALAPPDATA%\agentscaffold\State`` on native Windows),
+  created readable and writable by you alone. An unregistered repository is unchanged
+  and keeps ``<repo>/.scaffold/graph.duckdb``. ``AGENTSCAFFOLD_DB_PATH`` and an explicit
+  ``graph.db_path`` still take precedence, in that order.
+- **Upgrading does not move your graph.** An existing in-tree database keeps winning over
+  an empty state directory, because flipping a default is not a migration: doing so
+  would point resolution at nothing, silently re-index from scratch, and leave your
+  populated database orphaned in the tree. Move it deliberately with
+  ``scaffold workspace migrate-state --apply``.
+- ``scaffold init`` inside a workspace now joins it — registering the project in both the
+  manifest and the registry under one shared id — instead of cloning the workspace's
+  shared assets into the project. Re-running it reports "no changes" and writes zero
+  bytes.
+- **Breaking: an unscopeable tool call is now refused, not federated.** A call that
+  cannot be narrowed to exactly one project returns a structured ``ambiguous_project``
+  error naming the candidates and the remediation, instead of quietly searching
+  everything. Silently answering from the wrong project is worse than an actionable
+  error.
+- Tool calls scope per call through a context variable rather than by ``os.chdir``, so
+  two projects can be active at once and the graph handle pool is actually reachable.
+- Embedding weights resolve to one user-level cache (``~/.cache/agentscaffold/models``,
+  honouring ``XDG_CACHE_HOME``) instead of one copy per repository. Measured at 87 MB
+  per project across four projects on one machine. Repositories with an already-warm
+  local cache keep using it, so existing installs do not re-download.
+- Registry roots are compared as paths rather than strings, and matching is
+  path-flavour correct: case-insensitive for Windows and UNC roots, case-sensitive for
+  POSIX and WSL ``/mnt/<drive>`` roots. Windows and WSL roots do not cross-match, since
+  the two have separate registries and ``/mnt`` mappings cannot be known from here.
+
+### Deprecated
+- **Per-project MCP entries.** They keep working. The server names them once at startup
+  along with the command that collapses them. Entries in your shared ``mcp.json`` are
+  removed by ``scaffold mcp install --migrate``, which backs the file up first;
+  per-repository ``.cursor/mcp.json`` files are reported but never edited
+  automatically, because they are often committed and a deletion could reach another
+  checkout.
+
+### Fixed
+- **Finding extraction matched ``[CATEGORY]`` tokens anywhere in a line** (Plan 250),
+  instead of only at the start where a real finding marker sits. Ordinary prose that
+  happened to mention one produced a garbled finding with truncated text — including,
+  with some irony, the plan documents that described the bug, which regenerated the bad
+  rows on every re-index. The pattern is now anchored to the line start and a write-time
+  guard rejects malformed text before it reaches the graph. Existing bad rows are not
+  removed automatically; see ``scaffold graph prune --malformed-findings`` above.
+- **Relative Python imports produced no ``IMPORTS`` edge** (Plan 252), so ``scaffold
+  impact`` under-reported blast radius on any package that uses them — 22.8% of ``from``
+  statements across 88 real packages, with 75 of the 88 affected. ``from .core import x``
+  built a candidate path with a doubled separator (``src/pkg//core.py``); ``is_file()``
+  normalised that and returned true, so the resolver reported success and returned a
+  string the file map could never match, and the import was filed unresolved. Relative
+  imports now resolve by counting the leading dots — one dot is the importing file's own
+  package, each further dot ascends a level — within that package only. A relative import
+  naming a module that is not there stays unresolved rather than matching a same-named
+  file elsewhere in the tree.
+
+  AgentScaffold's own source contains no relative imports at all, which is why indexing
+  itself constantly never revealed this.
+
+  **Existing graphs are affected and heal automatically.** A graph built before this fix
+  is structurally valid and quietly missing edges, which is the worst state for impact
+  analysis: an under-reported blast radius is indistinguishable from a small one. The
+  graph schema version is bumped from 9 to 10 so those graphs rebuild on the next index,
+  preserving findings, sessions and backlog items as any schema rebuild does. No action is
+  required beyond running ``scaffold index`` as usual; the first run after upgrading will
+  take a full-rebuild's time rather than an incremental one.
+- A workspace could end up recorded under two different ids: ``scaffold workspace
+  onboard`` generated one into ``workspace.yaml`` while registration independently minted
+  another for the registry. Resolution prefers the manifest, so the graph kept working
+  while the registry reported an id that keyed nothing — and removing the manifest would
+  have re-keyed state and orphaned a populated graph. An id that already exists in either
+  place is now adopted rather than regenerated.
+- ``scaffold workspace migrate-state`` left the freshness watermark and governance
+  fingerprint behind, so a freshly migrated graph looked stale and re-indexed on first
+  use — the exact failure the sidecar handling existed to prevent. It carried a list of
+  two filenames (``freshness.json``, ``graph_meta.json``) that nothing in the codebase
+  has ever written, and the test seeded those same invented names, so both agreed with
+  each other and neither matched the disk. The filenames now come from one shared
+  constant that the writers and the migration both import.
+- ``mcp/freshness.py`` resolved the database path itself instead of going through the
+  shared resolver, so freshness could be tracked against a different file than the graph
+  was read from.
+- Registry writes are serialised by a lock spanning the whole read-modify-write cycle.
+  Atomic writes (added earlier in this phase) ruled out torn reads but not lost updates:
+  registering is read-modify-write, and two interleaved cycles could discard one
+  workspace while leaving a well-formed file.
+- ``scaffold workspace onboard`` now mirrors its manifest into the user-level registry,
+  so the existing onboarding path does not need a second registration step.
+
 ## [0.9.6] - 2026-07-15
 
 ### Fixed
