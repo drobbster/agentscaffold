@@ -123,15 +123,14 @@ def shared_entry(value):
 
 
 def _consumer_source(role: str) -> str:
-    # Absolute, not ``from .shared_module import`` -- the resolver turns a
-    # leading-dot module into a path with a doubled separator
-    # (``src//shared_module.py``), which never matches the file map, so a
-    # relative import produces no IMPORTS edge at all. Tracked separately; using
-    # the absolute form here keeps this fixture measuring project scoping rather
-    # than import resolution.
+    # Relative, the form real packages use. It was absolute here only while
+    # Plan 252 was open: a leading-dot module resolved to a doubled-separator
+    # path that never matched the file map, so this import produced no IMPORTS
+    # edge and impact reported no importers. Restoring it keeps the fixture
+    # honest about how packages are actually written.
     return f'''"""Imports the shared module, so impact has an edge to report."""
 
-from shared_module import shared_entry
+from .shared_module import shared_entry
 
 
 def {role}_consume(value):

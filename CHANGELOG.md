@@ -119,6 +119,27 @@ the unit suite alone.
   checkout.
 
 ### Fixed
+- **Relative Python imports produced no ``IMPORTS`` edge** (Plan 252), so ``scaffold
+  impact`` under-reported blast radius on any package that uses them — 22.8% of ``from``
+  statements across 88 real packages, with 75 of the 88 affected. ``from .core import x``
+  built a candidate path with a doubled separator (``src/pkg//core.py``); ``is_file()``
+  normalised that and returned true, so the resolver reported success and returned a
+  string the file map could never match, and the import was filed unresolved. Relative
+  imports now resolve by counting the leading dots — one dot is the importing file's own
+  package, each further dot ascends a level — within that package only. A relative import
+  naming a module that is not there stays unresolved rather than matching a same-named
+  file elsewhere in the tree.
+
+  AgentScaffold's own source contains no relative imports at all, which is why indexing
+  itself constantly never revealed this.
+
+  **Existing graphs are affected and heal automatically.** A graph built before this fix
+  is structurally valid and quietly missing edges, which is the worst state for impact
+  analysis: an under-reported blast radius is indistinguishable from a small one. The
+  graph schema version is bumped from 9 to 10 so those graphs rebuild on the next index,
+  preserving findings, sessions and backlog items as any schema rebuild does. No action is
+  required beyond running ``scaffold index`` as usual; the first run after upgrading will
+  take a full-rebuild's time rather than an incremental one.
 - A workspace could end up recorded under two different ids: ``scaffold workspace
   onboard`` generated one into ``workspace.yaml`` while registration independently minted
   another for the registry. Resolution prefers the manifest, so the graph kept working

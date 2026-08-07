@@ -230,11 +230,33 @@ reports anything it cannot. See [Reclaiming space](multi-project.md#reclaiming-s
 ### `scaffold graph prune`
 
 ```bash
-scaffold graph prune                     # dry run
+scaffold graph prune                          # dry run
 scaffold graph prune --apply
+scaffold graph prune --malformed-findings     # dry run: list malformed rows
+scaffold graph prune --malformed-findings --apply
 ```
 
-Drops old governance rows from the graph. Dry run is the default.
+Drops old governance rows from the graph. Dry run is the default, so the plain
+form only reports what it would remove.
+
+`--malformed-findings` targets a specific historical defect rather than age.
+Before 0.10.0, finding extraction matched a `[CATEGORY]` token anywhere in a line
+instead of only at the start, so ordinary prose that happened to mention one --
+including the plan documents describing the bug -- produced garbled findings with
+truncated text. The extraction is fixed, but rows already written stay until
+removed.
+
+Removal is permanent in both places that matter: the graph and the
+`governance.json` artifact re-indexing restores from. Pruning only the graph
+would let the next index bring them straight back.
+
+```bash
+scaffold graph prune --malformed-findings          # see what would go
+scaffold graph prune --malformed-findings --apply  # then remove it
+```
+
+Run this once after upgrading if your findings list contains entries with
+truncated or nonsensical text. A clean project will report nothing to prune.
 
 ---
 
