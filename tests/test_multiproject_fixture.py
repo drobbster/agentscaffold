@@ -91,11 +91,29 @@ def test_each_project_owns_a_distinctly_numbered_plan(
     two_project_workspace: TwoProjectWorkspace,
 ):
     """Governance reads need to be attributable the same way code reads are."""
-    alpha_plans = list((two_project_workspace.alpha / "docs/ai/plans").glob("*.md"))
-    beta_plans = list((two_project_workspace.beta / "docs/ai/plans").glob("*.md"))
+    alpha_plans = sorted(
+        p.name for p in (two_project_workspace.alpha / "docs/ai/plans").glob("*.md")
+    )
+    beta_plans = sorted(p.name for p in (two_project_workspace.beta / "docs/ai/plans").glob("*.md"))
 
-    assert [p.name for p in alpha_plans] == ["101-alpha-plan.md"]
-    assert [p.name for p in beta_plans] == ["202-beta-plan.md"]
+    assert alpha_plans == ["101-alpha-feature.md", "102-alpha-followup.md"]
+    assert beta_plans == ["202-beta-feature.md", "203-beta-followup.md"]
+
+
+def test_no_governance_identifier_is_shared_between_the_projects(
+    two_project_workspace: TwoProjectWorkspace,
+):
+    """The property the whole C4 extension rests on.
+
+    If any identifier appeared in both projects, a tool answering from the wrong
+    one would return something the test recognises as correct. The fixture would
+    then certify scoping it never checked.
+    """
+    alpha = two_project_workspace.artifacts(two_project_workspace.alpha_name)
+    beta = two_project_workspace.artifacts(two_project_workspace.beta_name)
+
+    shared = {k for k in alpha if alpha[k] == beta[k]}
+    assert not shared, f"identifiers collide across projects: {shared}"
 
 
 def test_working_path_points_at_a_real_file_in_each_project(

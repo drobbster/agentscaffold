@@ -70,6 +70,19 @@ class TwoProjectWorkspace:
         """The fixture role (``alpha``/``beta``) behind a registered project name."""
         return ALPHA if name == self.alpha_name else BETA
 
+    def artifacts(self, name: str) -> dict[str, str]:
+        """The governance identifiers belonging to *name*, and to it alone.
+
+        A conformance test asserts that a tool asked from this project returns
+        these and never the other project's, which is the whole point of keeping
+        the two sets disjoint.
+        """
+        return _artifact_ids(self.role(name))
+
+    def other(self, name: str) -> str:
+        """The registered name of the project that is *not* *name*."""
+        return self.beta_name if name == self.alpha_name else self.alpha_name
+
     def expected_importer(self, name: str) -> str:
         """The only file importing ``shared_module`` inside *name*.
 
@@ -181,39 +194,242 @@ def build_two_project_workspace(
 
 
 def _write_governance(project: Path, name: str) -> None:
-    """Seed the minimum governance a discovery tool can return something from.
+    """Seed governance content that is *attributable* to one project.
 
-    Each project gets exactly one plan, numbered differently, so a governance
-    read is as attributable as a code read: plan 101 means alpha answered.
+    Every artifact here is numbered or named so that seeing it in a response
+    proves which project answered: plan 101 means alpha, plan 202 means beta,
+    and so on across ADRs, spikes, studies, learnings, contracts and backlog.
+
+    The original fixture carried one plan per project, which was enough to prove
+    a governance read is scoped but not enough to exercise the twenty-odd
+    governance tools individually -- a tool that reads ADRs cannot be caught
+    answering from the wrong project in a workspace with no ADRs, because an
+    empty answer discriminates nothing (L249-16). Each artifact type below
+    exists so a specific group of tools has something project-specific to be
+    right or wrong about.
+
+    Two plans per project, not one, so ``scaffold_compare_plans`` has a pair to
+    compare within a single project.
     """
+    ids = _artifact_ids(name)
+
     plans = project / "docs" / "ai" / "plans"
     plans.mkdir(parents=True, exist_ok=True)
-    number = "101" if name == ALPHA else "202"
-    (plans / f"{number}-{name}-plan.md").write_text(
-        f"""# Plan {number}: {name} feature
+    for number, suffix in ((ids["plan"], "feature"), (ids["plan_b"], "followup")):
+        (plans / f"{number}-{name}-{suffix}.md").write_text(_plan_source(number, name, suffix, ids))
+
+    adrs = project / "docs" / "ai" / "adrs"
+    adrs.mkdir(parents=True, exist_ok=True)
+    # The topic goes in the *title*: scaffold_find_adrs matches a topic against
+    # the ADR title alone, so a title without it makes the tool unable to find
+    # its own project's ADR and unable to discriminate anything.
+    (adrs / f"{ids['adr']}-{name}-decision.md").write_text(
+        f"""# ADR-{ids["adr"]}: {name} {ids["topic"]} storage decision
+
+## Status
+
+Accepted
+
+## Date
+
+2026-01-02
+
+## Context
+
+A decision recorded only in {name}, about {ids["topic"]}.
+
+## Decision
+
+Use the {name} approach for {ids["topic"]}.
+
+## Consequences
+
+Only {name} is affected.
+"""
+    )
+
+    spikes = project / "docs" / "ai" / "spikes"
+    spikes.mkdir(parents=True, exist_ok=True)
+    (spikes / f"SPIKE-2026-01-03-{name}-probe.md").write_text(
+        f"""# Spike: {name} {ids["topic"]} probe
 
 ## Metadata
 
-- Status: Draft
-- Owner: fixture
-- Created: 2026-01-01
+- Status: Complete
+- Related Plan: {ids["plan"]}
+- Time Box: 2 hours
 
-## 1. Objective
+## Question
 
-A plan that exists only in {name}, so a governance read names the project it
-came from.
+Does the {name} approach to {ids["topic"]} hold up?
 
-## Execution Steps
+## Findings
 
-- [ ] Step 1: do the {name} thing
+It does, in {name}.
+"""
+    )
+
+    studies = project / "docs" / "studies"
+    studies.mkdir(parents=True, exist_ok=True)
+    (studies / f"STU-2026-01-04-{name}-experiment.md").write_text(
+        f"""---
+study_id: {ids["study"]}
+title: {name} {ids["topic"]} experiment
+study_type: ab_test
+status: complete
+outcome: positive
+confidence: high
+tags: [{ids["topic"]}]
+related_plans: [{ids["plan"]}]
+started: 2026-01-04
+completed: 2026-01-05
+---
+
+# {name} experiment
+
+An experiment run only in {name}.
+"""
+    )
+
+    contracts = project / "docs" / "ai" / "contracts"
+    contracts.mkdir(parents=True, exist_ok=True)
+    (contracts / f"{name}_module_interface.md").write_text(
+        f"""# {name} module interface
+
+Version: 1.0
+
+## Exports
+
+- `{ids["topic"]}` -- provided only by {name}.
 """
     )
 
     state = project / "docs" / "ai" / "state"
     state.mkdir(parents=True, exist_ok=True)
     (state / "workflow_state.md").write_text(
-        f"# Workflow State\n\n## Current Focus\n\nThe {name} project.\n\n## Blockers\n\nNone.\n"
+        f"""# Workflow State
+
+## Current Focus
+
+The {name} project, working on plan {ids["plan"]}.
+
+## Blockers
+
+{ids["blocker"]}
+"""
     )
+    # The table form, not the prose form the governance repo happens to use --
+    # the parser recognises tables and a "### L042-1" list, and prose silently
+    # yields zero learnings. Built separately because the row has to stay on one
+    # physical line for the parser and does not fit the line limit inline.
+    learning_row = (
+        f"| {ids['learning']} | {ids['plan']} | A lesson about {ids['topic']}, "
+        f"recorded only in {name} | AGENTS.md | Pending |"
+    )
+    (state / "learnings_tracker.md").write_text(
+        f"""# Learnings Tracker
+
+## Pending
+
+| ID | Plan | Description | Target | Status |
+|----|------|-------------|--------|--------|
+{learning_row}
+
+## Incorporated
+"""
+    )
+
+    (project / "docs" / "ai" / "backlog.md").write_text(
+        f"""# Backlog
+
+Last Updated: 2026-01-06
+
+| ID | Title | Priority | Effort | Status | Source |
+|----|-------|----------|--------|--------|--------|
+| {ids["backlog"]} | A {name} backlog item about {ids["topic"]} | P2 | Small | Open | fixture |
+"""
+    )
+
+
+def _artifact_ids(name: str) -> dict[str, str]:
+    """Per-project artifact identifiers, disjoint between the two projects.
+
+    Nothing here may collide across projects: a shared identifier would make a
+    cross-project answer look correct, which is the failure these fixtures exist
+    to detect.
+    """
+    if name == ALPHA:
+        return {
+            "plan": "101",
+            "plan_b": "102",
+            "adr": "011",
+            "study": "STU-2026-01-04-alpha-experiment",
+            "learning": "L101-1",
+            "backlog": "B-ALPHA-1",
+            "topic": "alpha_widgets",
+            "blocker": "Waiting on the alpha widget review.",
+        }
+    return {
+        "plan": "202",
+        "plan_b": "203",
+        "adr": "022",
+        "study": "STU-2026-01-04-beta-experiment",
+        "learning": "L202-1",
+        "backlog": "B-BETA-1",
+        "topic": "beta_gadgets",
+        "blocker": "Waiting on the beta gadget review.",
+    }
+
+
+def _plan_source(number: str, name: str, suffix: str, ids: dict[str, str]) -> str:
+    return f"""# Plan {number}: {name} {suffix}
+
+## Metadata
+
+- Status: Draft
+- Owner: fixture
+- Created: 2026-01-01
+- Last Updated: 2026-01-01
+
+## 1. Objective
+
+A plan that exists only in {name}, about {ids["topic"]}, so a governance read
+names the project it came from.
+
+## 2. Non-Goals
+
+Anything belonging to the other project.
+
+## 3. Constraints / Invariants
+
+- Must not break: {ids["topic"]}
+
+## 6. File Impact Map
+
+| File | Change Type | Notes |
+|------|-------------|-------|
+| `src/{name}_module.py` | Modify | the {name} module |
+
+## 7. Tests
+
+| Test File | Coverage Target | Notes |
+|-----------|-----------------|-------|
+| `tests/test_{name}.py` | 90% | fixture |
+
+## 8. Execution Steps
+
+- [ ] Step 1: do the {name} thing
+
+## 9. Validation
+
+```bash
+pytest -q
+```
+
+## 10. Rollback Plan
+
+Revert the commit.
+"""
 
 
 def index_workspace(workspace: TwoProjectWorkspace) -> None:
