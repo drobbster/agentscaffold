@@ -565,7 +565,7 @@ def run_init(directory: Path, non_interactive: bool = False, dry_run: bool = Fal
 
     # On a fresh init (scaffold.yaml was just created) generate the full,
     # platform-specific rule set: the MCP routing + graph trust discipline doc
-    # (.cursor/rules/agentscaffold.md), .cursor/mcp.json, per-reviewer rules,
+    # (.cursor/rules/agentscaffold.mdc), .cursor/mcp.json, per-reviewer rules,
     # lifecycle hooks, CLAUDE.md + .claude/agents, and Windsurf artifacts.
     # This is gated on a fresh init so that re-running `scaffold init` stays
     # idempotent. Project-owned docs (AGENTS.md, CLAUDE.md, .windsurfrules) are

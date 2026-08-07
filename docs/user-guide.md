@@ -843,7 +843,7 @@ This creates or updates `CLAUDE.md` with the full intent map. If you already hav
 content, merge or append the generated policy. The routing rules are what cause the agent
 to call these tools automatically when you use trigger phrases.
 
-For Cursor, the routing policy goes into `.cursor/rules/agentscaffold.md`:
+For Cursor, the routing policy goes into `.cursor/rules/agentscaffold.mdc`:
 
 ```bash
 scaffold agents cursor

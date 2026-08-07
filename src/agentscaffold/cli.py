@@ -598,7 +598,7 @@ def agents_cursor(
 ) -> None:
     """Generate .cursor/rules.md and intent mapping from config.
 
-    The machine-owned .cursor/rules/agentscaffold.md routing policy is always
+    The machine-owned .cursor/rules/agentscaffold.mdc routing policy is always
     regenerated; .cursor/rules.md is project-owned and updated via a managed block
     (existing content preserved). --force rewrites the whole file.
     """
@@ -783,7 +783,7 @@ def agents_generate_all(
     Project-owned docs (AGENTS.md, CLAUDE.md, .windsurfrules) are never clobbered:
     generated guidance is written into a managed block (created/refreshed/appended)
     so existing content is preserved. --force rewrites them whole. Machine-owned
-    files (.cursor/rules/agentscaffold.md, reviewer rules, enforcement hooks) are
+    files (.cursor/rules/agentscaffold.mdc, reviewer rules, enforcement hooks) are
     always regenerated.
     """
     from agentscaffold.agents.generate import run_agents_generate_all_platforms
