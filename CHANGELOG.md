@@ -8,6 +8,28 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Fixed
+- **The Cursor routing-policy reviewer hint never fired.** `scaffold_prepare_review`
+  looks for `.cursor/rules/agentscaffold.md` and adds it to the reviewer hints. Cursor
+  only loads `.mdc` rule files, so the generator writes that extension and deletes any
+  stale `.md` beside it — meaning the file being looked for is one no current project
+  has. The lookup now prefers `.mdc` and falls back to `.md` for projects that have not
+  regenerated since the rename.
+
+  The existing test passed throughout, because it created the `.md` file itself and
+  asserted on the world the code expected rather than the one the generator produces.
+
+### Documentation
+- Corrected `.cursor/rules/agentscaffold.md` to `.mdc` across the README, getting
+  started, platform integration, and user guide, plus the source docstrings. Every one
+  named a file that is removed on each run.
+- Fixed two README commands that did not exist: `scaffold retro check` and `scaffold ci
+  setup` are `scaffold retro` and `scaffold ci`.
+- The README documents all 31 MCP tools (13 were missing, including the
+  `scaffold_begin_plan` / `scaffold_complete_plan` lifecycle pair), the 0.10.0 setup
+  path (`scaffold mcp install`, `scaffold project register`, `scaffold doctor`,
+  `scaffold gc`), where the graph actually lives now, and what skills are.
+
 ## [0.10.0] - 2026-08-07
 
 **One MCP server for a whole workspace, and a graph that sees your relative imports.**

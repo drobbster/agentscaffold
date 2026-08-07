@@ -82,7 +82,7 @@ my-project/
   scaffold.yaml          # Framework configuration
   .cursor/
     rules.md             # Cursor process rules
-    rules/agentscaffold.md  # MCP routing + graph trust-discipline policy
+    rules/agentscaffold.mdc # MCP routing + graph trust-discipline policy
     mcp.json             # Cursor MCP server registration
   .claude/agents/        # One subagent file per configured reviewer
   docs/

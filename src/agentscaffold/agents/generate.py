@@ -30,7 +30,7 @@ console = Console()
 # "managed block" instead: when the file is absent the block is created, when the
 # file already contains the markers only that region is refreshed, and when the
 # file exists WITHOUT markers (fully user-owned) a fresh block is appended without
-# touching existing content. Machine-owned files (.cursor/rules/agentscaffold.md,
+# touching existing content. Machine-owned files (.cursor/rules/agentscaffold.mdc,
 # per-reviewer rules, enforcement hooks, agent stubs) are still regenerated via
 # write_text so policy/config updates always land; mcp.json stays skip-if-exists.
 
@@ -199,7 +199,7 @@ def run_agents_generate_all_platforms(
     overwritten: the generated guidance is written into a managed block (created,
     block-refreshed, or appended) so org/user content is always preserved. *force*
     rewrites those files wholesale, keeping a ``.bak`` snapshot. Machine-owned files
-    (.cursor/rules/agentscaffold.md, per-reviewer rules, enforcement hooks, agent
+    (.cursor/rules/agentscaffold.mdc, per-reviewer rules, enforcement hooks, agent
     stubs) are always regenerated so policy/config updates land; mcp.json remains
     skip-if-exists.
 

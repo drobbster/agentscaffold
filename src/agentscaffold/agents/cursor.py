@@ -117,7 +117,7 @@ def run_cursor_setup(force: bool = False) -> None:
     written into a managed block, so an existing/hand-authored file is never
     clobbered (created, block-refreshed, or appended). *force* rewrites it whole,
     keeping a ``.bak`` snapshot. The machine-owned routing/trust policy
-    ``.cursor/rules/agentscaffold.md`` and the per-reviewer rules are always
+    ``.cursor/rules/agentscaffold.mdc`` and the per-reviewer rules are always
     regenerated so policy updates land.
     """
     config_path = find_config()
