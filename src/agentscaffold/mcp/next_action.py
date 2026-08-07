@@ -89,8 +89,7 @@ def next_actions(
                     {
                         "priority": 2,
                         "action": (
-                            f"Close out Plan {card['plan_number']} "
-                            "with post-implementation review."
+                            f"Close out Plan {card['plan_number']} with post-implementation review."
                         ),
                         "tool": "scaffold_complete_plan",
                         "arguments": {"plan_number": card["plan_number"], "dry_run": True},

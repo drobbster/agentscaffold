@@ -106,10 +106,11 @@ def index(
     Pass ``quiet=True`` when indexing inside an MCP stdio process so Rich
     progress cannot corrupt the JSON-RPC stdout channel.
     """
+    from agentscaffold.active_root import default_start
     from agentscaffold.graph.pipeline import run_pipeline
 
     return run_pipeline(
-        root=path or Path.cwd(),
+        root=path or default_start(),
         config=config,
         incremental=incremental,
         embeddings=embeddings,

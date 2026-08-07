@@ -247,7 +247,7 @@ Only applies when `profile: semi_autonomous` or `semi_autonomous.enabled: true`.
 
 ## collab
 
-Collaboration ergonomics (Plan 226). Opt-in sharding of high-contention
+Collaboration ergonomics. Opt-in sharding of high-contention
 governance files plus an advisory plan-ownership convention. All fields default
 to today's single-file behavior, so a repo that does not set `collab.sharded`
 is unaffected.

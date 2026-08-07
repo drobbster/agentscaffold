@@ -90,9 +90,9 @@ class TestPlanTemplateReadability:
             category="readability",
         )
         collect_result(result)
-        assert (
-            passed
-        ), f"Enrichment degraded readability by {abs(delta):.2f}: {enriched_report.observations}"
+        assert passed, (
+            f"Enrichment degraded readability by {abs(delta):.2f}: {enriched_report.observations}"
+        )
 
 
 class TestCritiqueReadability:

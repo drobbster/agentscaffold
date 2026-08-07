@@ -6,7 +6,10 @@ for injecting knowledge graph data into templates and prompts.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -273,10 +276,7 @@ _MANAGED_BLOCK_NOTE = (
 def render_managed_block(content: str) -> str:
     """Wrap *content* in AgentScaffold managed-section markers with a notice."""
     return (
-        f"{MANAGED_BLOCK_BEGIN}\n"
-        f"{_MANAGED_BLOCK_NOTE}\n\n"
-        f"{content.strip()}\n\n"
-        f"{MANAGED_BLOCK_END}"
+        f"{MANAGED_BLOCK_BEGIN}\n{_MANAGED_BLOCK_NOTE}\n\n{content.strip()}\n\n{MANAGED_BLOCK_END}"
     )
 
 
@@ -329,18 +329,46 @@ def _upsert_block(
     marker-specific behavior. Returns one of ``"created"``, ``"appended"``,
     ``"block-updated"``, ``"unchanged"``, ``"overwritten"``.
     """
+    status, updated = _plan_block(path, block, begin_marker, end_marker, force=force)
+
+    if status == "unchanged" or updated is None:
+        return status
+
+    if status == "overwritten" and backup:
+        existing = path.read_text()
+        if existing.strip():
+            path.with_suffix(path.suffix + ".bak").write_text(existing)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(updated)
+    return status
+
+
+def _plan_block(
+    path: Path,
+    block: str,
+    begin_marker: str,
+    end_marker: str,
+    *,
+    force: bool = False,
+) -> tuple[str, str | None]:
+    """Decide what :func:`_upsert_block` would do, without doing it.
+
+    Split out so a dry run can predict the outcome from the same code that
+    performs it. A predictor that reimplements the decision is a second source of
+    truth, and the whole value of a dry run is that it cannot disagree with the
+    real thing.
+
+    Returns the status and the text that would be written (``None`` when nothing
+    would be).
+    """
     if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(block + "\n")
-        return "created"
+        return "created", block + "\n"
 
     existing = path.read_text()
 
     if force:
-        if backup and existing.strip():
-            path.with_suffix(path.suffix + ".bak").write_text(existing)
-        path.write_text(block + "\n")
-        return "overwritten"
+        return "overwritten", block + "\n"
 
     begin = existing.find(begin_marker)
     end = existing.find(end_marker)
@@ -348,14 +376,12 @@ def _upsert_block(
         end_full = end + len(end_marker)
         updated = existing[:begin] + block + existing[end_full:]
         if updated == existing:
-            return "unchanged"
-        path.write_text(updated)
-        return "block-updated"
+            return "unchanged", None
+        return "block-updated", updated
 
     # No valid markers: this file is owned by the user/org. Append, never clobber.
     prefix = existing if existing.endswith("\n") else existing + "\n"
-    path.write_text(prefix + "\n" + block + "\n")
-    return "appended"
+    return "appended", prefix + "\n" + block + "\n"
 
 
 # Managed .gitignore block. Uses ``#``-comment markers (a ``.gitignore`` treats
@@ -391,12 +417,7 @@ GITIGNORE_MANAGED_PATTERNS: tuple[str, ...] = (
 def render_gitignore_block() -> str:
     """Wrap the managed ignore patterns in ``#``-comment markers with a notice."""
     patterns = "\n".join(GITIGNORE_MANAGED_PATTERNS)
-    return (
-        f"{GITIGNORE_BLOCK_BEGIN}\n"
-        f"{_GITIGNORE_BLOCK_NOTE}\n"
-        f"{patterns}\n"
-        f"{GITIGNORE_BLOCK_END}"
-    )
+    return f"{GITIGNORE_BLOCK_BEGIN}\n{_GITIGNORE_BLOCK_NOTE}\n{patterns}\n{GITIGNORE_BLOCK_END}"
 
 
 def write_gitignore_block(path: Path) -> str:
@@ -417,3 +438,190 @@ def write_gitignore_block(path: Path) -> str:
         GITIGNORE_BLOCK_END,
         force=False,
     )
+
+
+def gitignore_block_status(path: Path) -> str:
+    """What :func:`write_gitignore_block` would return, without writing."""
+    status, _ = _plan_block(
+        path,
+        render_gitignore_block(),
+        GITIGNORE_BLOCK_BEGIN,
+        GITIGNORE_BLOCK_END,
+        force=False,
+    )
+    return status
+
+
+# ---------------------------------------------------------------------------
+# Canonical routing guidance (Plan 249 Phase B, ADR-025 Decision 6 as amended)
+# ---------------------------------------------------------------------------
+#
+# One committed file at the workspace root is the source every per-project rule
+# file is generated from. The copies keep their policy body inline -- editors
+# inject them into agent context verbatim, so emptying them to a pointer would
+# make the routing guidance conditional on an agent following it -- and each
+# carries the canonical content hash so a stale or hand-edited copy is
+# detectable instead of silently divergent.
+#
+# Emission is a shared_workspace feature. A lone or project_local repo has no
+# workspace root to be canonical about, and per ADR-024 its generation is
+# unchanged: no canonical file, no stamp, nothing to drift.
+
+GUIDANCE_STAMP_KEY = "agentscaffold-guidance-sha256"
+
+_GUIDANCE_STAMP_RE = re.compile(
+    rf"<!--\s*{re.escape(GUIDANCE_STAMP_KEY)}:\s*(?P<sha>[0-9a-f]{{64}})\s+source:\s*(?P<source>\S+)\s*-->"
+)
+
+# Rule files generated from the canonical guidance, relative to a project root.
+GUIDANCE_COPY_RELPATHS = (
+    Path(".cursor") / "rules" / "agentscaffold.mdc",
+    Path("CLAUDE.md"),
+    Path(".windsurfrules"),
+)
+
+
+@dataclass(frozen=True)
+class GuidanceStamp:
+    """The canonical hash and source path recorded in a generated rule file."""
+
+    sha256: str
+    source: str
+
+
+@dataclass(frozen=True)
+class GuidanceDrift:
+    """A generated rule file that no longer matches its canonical source.
+
+    *reason* is ``"stale"`` (generated from an older canonical), ``"unstamped"``
+    (hand-authored, or generated before Plan 249), or ``"missing_canonical"``
+    (the source it cites is gone, so there is nothing to compare against).
+    """
+
+    path: Path
+    reason: str
+    expected: str | None = None
+    found: str | None = None
+
+
+def guidance_hash(text: str) -> str:
+    """Return the content hash recorded in and compared against rule files."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def canonical_guidance_document(config: ScaffoldConfig) -> str:
+    """Render the canonical routing guidance for *config*."""
+    from agentscaffold.agents.rule_policy import generate_canonical_guidance_body  # noqa: PLC0415
+
+    return generate_canonical_guidance_body(config)
+
+
+def _shared_workspace_root(project_root: Path) -> tuple[Path, Any] | None:
+    """Return (workspace_root, workspace) when *project_root* opts into sharing."""
+    try:
+        from agentscaffold.paths import load_workspace, resolve_workspace_root  # noqa: PLC0415
+
+        workspace = load_workspace(project_root)
+        if workspace.is_shared_workspace:
+            return resolve_workspace_root(project_root), workspace
+    except Exception:
+        logger.debug("No shared workspace resolved from %s", project_root, exc_info=True)
+    return None
+
+
+def canonical_guidance_path(project_root: Path) -> Path | None:
+    """Where the canonical guidance lives for *project_root*, if anywhere.
+
+    Returns None for a lone or ``project_local`` repo, which has no workspace
+    root and therefore no dedup relationship to maintain.
+    """
+    resolved = _shared_workspace_root(project_root)
+    if resolved is None:
+        return None
+    workspace_root, workspace = resolved
+
+    from agentscaffold.config import effective_asset_layout  # noqa: PLC0415
+
+    layout = effective_asset_layout(workspace)
+    return workspace_root / layout.shared.routing_guidance_file
+
+
+def write_canonical_guidance(project_root: Path, config: ScaffoldConfig) -> tuple[Path, str] | None:
+    """Write the canonical guidance for *project_root*'s workspace.
+
+    Returns ``(path, status)`` where status is ``"created"``, ``"updated"`` or
+    ``"unchanged"``, or None when the project is not in a shared workspace.
+    """
+    path = canonical_guidance_path(project_root)
+    if path is None:
+        return None
+
+    content = canonical_guidance_document(config)
+    if path.is_file():
+        if path.read_text() == content:
+            return path, "unchanged"
+        status = "updated"
+    else:
+        status = "created"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    return path, status
+
+
+def render_guidance_stamp(canonical_sha: str, source: str) -> str:
+    """Render the provenance comment embedded in each generated rule file.
+
+    An HTML comment because it has to survive unread in Markdown, in Cursor's
+    ``.mdc``, and in ``.windsurfrules`` alike.
+    """
+    return f"<!-- {GUIDANCE_STAMP_KEY}: {canonical_sha} source: {source} -->"
+
+
+def read_guidance_stamp(text: str) -> GuidanceStamp | None:
+    """Parse the guidance stamp out of *text*, or None if it carries none."""
+    match = _GUIDANCE_STAMP_RE.search(text)
+    if match is None:
+        return None
+    return GuidanceStamp(sha256=match.group("sha"), source=match.group("source"))
+
+
+def stamp_guidance(content: str, canonical_sha: str, source: str) -> str:
+    """Append the guidance stamp to generated rule-file *content*.
+
+    Appended rather than inserted so it cannot disturb the frontmatter Cursor
+    requires on the first line of an ``.mdc``.
+    """
+    return f"{content.rstrip()}\n\n{render_guidance_stamp(canonical_sha, source)}\n"
+
+
+def detect_guidance_drift(project_root: Path) -> list[GuidanceDrift]:
+    """Report generated rule files that no longer match the canonical source.
+
+    Empty for a lone repo, which has no canonical file by design.
+    """
+    canonical = canonical_guidance_path(project_root)
+    if canonical is None:
+        return []
+
+    present = [
+        project_root / relpath
+        for relpath in GUIDANCE_COPY_RELPATHS
+        if (project_root / relpath).is_file()
+    ]
+
+    if not canonical.is_file():
+        return [GuidanceDrift(path=path, reason="missing_canonical") for path in present]
+
+    expected = guidance_hash(canonical.read_text())
+
+    drift: list[GuidanceDrift] = []
+    for path in present:
+        stamp = read_guidance_stamp(path.read_text())
+        if stamp is None:
+            drift.append(GuidanceDrift(path=path, reason="unstamped", expected=expected))
+        elif stamp.sha256 != expected:
+            drift.append(
+                GuidanceDrift(path=path, reason="stale", expected=expected, found=stamp.sha256)
+            )
+    return drift

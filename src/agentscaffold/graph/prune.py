@@ -67,14 +67,15 @@ def select_prunable(
     resolved_findings_before: str | None = None,
     sessions_before: str | None = None,
     archived_backlog_before: str | None = None,
+    malformed_findings: bool = False,
     project: str | None = None,
     all_projects: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     """Select governance rows eligible for pruning. Read-only.
 
     Returns a dict with keys ``resolved_findings``, ``sessions``,
-    ``archived_backlog`` mapping to lists of row dicts. Only categories whose
-    corresponding ``*_before`` argument is provided are populated. In a
+    ``archived_backlog``, ``malformed_findings`` mapping to lists of row dicts.
+    Only categories whose corresponding argument is provided are populated. In a
     multi-project workspace selection is scoped to the current project (or
     ``project=``/``all_projects=``) so a prune never reaches into siblings.
     """
@@ -82,8 +83,25 @@ def select_prunable(
         "resolved_findings": [],
         "sessions": [],
         "archived_backlog": [],
+        "malformed_findings": [],
     }
     scope = _scope_and(project, all_projects)
+
+    if malformed_findings:
+        # Plan 250: rows the unanchored extractor manufactured out of prose. The
+        # parser fix stops new ones, but nothing removes what is already stored:
+        # create_node uses ON CONFLICT DO NOTHING, so re-indexing never deletes,
+        # and purging the serialized export just gets overwritten from the store
+        # on the next index. A store-level delete is the only durable remedy.
+        from agentscaffold.graph.findings import is_malformed_finding
+
+        rows = store.query(
+            "SELECT id, planNumber, severity, category, finding FROM ReviewFinding"
+            f" WHERE reviewType = 'plan_appendix'{scope}"
+        )
+        selection["malformed_findings"] = [
+            r for r in rows if is_malformed_finding(str(r.get("finding") or ""))
+        ]
 
     if resolved_findings_before is not None:
         # ReviewFinding has no timestamp; eligibility is by 'resolved' status only.
@@ -114,21 +132,39 @@ def apply_prune(store: GraphBackend, selection: dict[str, list[dict[str, Any]]])
     """Delete the selected rows and their edges. Mutating.
 
     Returns per-category deletion counts.
+
+    Deletions are written through to the git-backed governance artifact, which is
+    the system of record: ``index`` restores the graph from it, so a prune that
+    only touched the derived store would be undone by the next index. Every other
+    governance mutation already syncs; the delete helpers did not, which made
+    pruning silently non-durable for all categories (Plan 250).
     """
     from agentscaffold.graph.backlog import delete_backlog_item
     from agentscaffold.graph.findings import delete_finding
+    from agentscaffold.graph.governance_store import sync_if_enabled
     from agentscaffold.graph.sessions import delete_session
 
-    counts = {"resolved_findings": 0, "sessions": 0, "archived_backlog": 0}
+    counts = {
+        "resolved_findings": 0,
+        "sessions": 0,
+        "archived_backlog": 0,
+        "malformed_findings": 0,
+    }
 
     for row in selection.get("resolved_findings", []):
         delete_finding(store, row["id"])
         counts["resolved_findings"] += 1
+    for row in selection.get("malformed_findings", []):
+        delete_finding(store, row["id"])
+        counts["malformed_findings"] += 1
     for row in selection.get("sessions", []):
         delete_session(store, row["id"])
         counts["sessions"] += 1
     for row in selection.get("archived_backlog", []):
         delete_backlog_item(store, row["id"])
         counts["archived_backlog"] += 1
+
+    if any(counts.values()):
+        sync_if_enabled(store)
 
     return counts

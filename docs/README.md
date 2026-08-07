@@ -13,6 +13,8 @@ AgentScaffold supports two interaction modes that complement each other:
 Most teams use NL+MCP for day-to-day flow and explicit CLI for verification steps
 (`scaffold validate`, `scaffold graph verify`, `scaffold index --incremental`).
 
+Every command is listed in the [CLI Reference](cli-reference.md).
+
 If you already used the governance framework before knowledge graph and MCP tooling,
 see the "Migration Guide for Governance-First Users" section in the [User Guide](user-guide.md).
 
@@ -30,6 +32,8 @@ When you run `scaffold init`, AgentScaffold installs the full core planning temp
 | Document | Description |
 |----------|-------------|
 | [Getting Started](getting-started.md) | Installation, init, first plan, knowledge graph, review, execution, NL+MCP switch |
+| [CLI Reference](cli-reference.md) | Every `scaffold` command, its options, environment variables, troubleshooting |
+| [Multi-Project Workspaces](multi-project.md) | One MCP server across several projects, registration, where the graph lives, `doctor`, `gc` |
 | [User Guide](user-guide.md) | Full session workflow, NL intent routing reference, greenfield onboarding, MCP tools (all 26), session tracking |
 | [Platform Integration](platform-integration.md) | Cursor, Claude Code, Windsurf, Cline, Continue, aider, Codex, MCP setup, all MCP tools |
 | [Configuration](configuration.md) | Full scaffold.yaml reference, gates, rigor presets |

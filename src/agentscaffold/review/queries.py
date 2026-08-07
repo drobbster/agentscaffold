@@ -51,6 +51,20 @@ def _graph_scope(scope: Any, alias: str) -> str:
     return f" AND {alias}.project = '{scope.project}'"
 
 
+def _provenance_select(scope: Any, alias: str, column: str = "project") -> str:
+    """Trailing ``, project AS "<alias>.project"`` for federated reads, else ''.
+
+    A federated read merges rows from several projects into one list, so without
+    this the caller cannot tell which project any given row came from -- and a
+    plan number or file path is not unique across projects. Emitted only when
+    federating: a scoped read already knows its project, and a NULL provenance
+    column on every row of a single-project graph reads as missing data.
+    """
+    if not getattr(scope, "is_federated", False):
+        return ""
+    return f', {column} AS "{alias}.project"'
+
+
 # ---------------------------------------------------------------------------
 # Dependency queries
 # ---------------------------------------------------------------------------
@@ -485,6 +499,20 @@ def get_recurring_finding_patterns(
     )
 
 
+def get_plan_projects(store: GraphBackend, number: int) -> list[str]:
+    """Return every project owning a plan with this number, across the workspace.
+
+    Plan numbers are allocated per project, so the same number routinely names
+    different plans in different projects. Callers that federate need to know
+    whether a number is unique before answering with one project's plan.
+    """
+    rows = ql(
+        store,
+        sql=f'SELECT DISTINCT project AS "p.project" FROM Plan WHERE number = {number}',
+    )
+    return sorted({str(r.get("p.project")) for r in rows if r.get("p.project")})
+
+
 def get_plan_dependencies(
     store: GraphBackend,
     plan_number: int,
@@ -552,7 +580,8 @@ def get_studies_by_tags(
 ) -> list[dict[str, Any]]:
     """Return studies matching any of the given tags (substring match on tags field)."""
     sql_conditions = " OR ".join(f"CONTAINS(tags, '{t}')" for t in tags)
-    scope = _sql_scope(_resolve_scope(project, all_projects), "AND")
+    resolved = _resolve_scope(project, all_projects)
+    scope = _sql_scope(resolved, "AND")
     return ql(
         store,
         sql=(
@@ -562,6 +591,7 @@ def get_studies_by_tags(
             ' outcome AS "s.outcome",'
             ' confidence AS "s.confidence",'
             ' tags AS "s.tags"'
+            f"{_provenance_select(resolved, 's')}"
             f" FROM Study WHERE ({sql_conditions}){scope}"
             " ORDER BY started DESC"
         ),
@@ -577,7 +607,8 @@ def get_studies_by_outcome(
 ) -> list[dict[str, Any]]:
     """Return studies with a specific outcome."""
     escaped = sql_escape(outcome)
-    scope = _sql_scope(_resolve_scope(project, all_projects), "AND")
+    resolved = _resolve_scope(project, all_projects)
+    scope = _sql_scope(resolved, "AND")
     return ql(
         store,
         sql=(
@@ -587,6 +618,7 @@ def get_studies_by_outcome(
             ' outcome AS "s.outcome",'
             ' confidence AS "s.confidence",'
             ' tags AS "s.tags"'
+            f"{_provenance_select(resolved, 's')}"
             f" FROM Study WHERE outcome = '{escaped}'{scope}"
             " ORDER BY started DESC"
         ),
@@ -710,7 +742,8 @@ def get_all_adrs(
     all_projects: bool = False,
 ) -> list[dict[str, Any]]:
     """Return all ADRs ordered by number."""
-    scope = _sql_scope(_resolve_scope(project, all_projects), "WHERE")
+    resolved = _resolve_scope(project, all_projects)
+    scope = _sql_scope(resolved, "WHERE")
     return ql(
         store,
         sql=(
@@ -719,6 +752,7 @@ def get_all_adrs(
             ' status AS "a.status",'
             ' date AS "a.date",'
             ' supersededBy AS "a.supersededBy"'
+            f"{_provenance_select(resolved, 'a')}"
             f" FROM ADR{scope} ORDER BY number"
         ),
     )

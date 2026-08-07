@@ -80,9 +80,7 @@ def diff_plan_vs_code(
         markdown_paths = [row["path"] for row in impact_rows]
 
     graph_paths = [
-        f.get("f.path", "")
-        for f in get_plan_impacted_files(store, plan_number)
-        if f.get("f.path")
+        f.get("f.path", "") for f in get_plan_impacted_files(store, plan_number) if f.get("f.path")
     ]
     planned = markdown_paths or graph_paths
 
