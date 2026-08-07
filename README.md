@@ -106,11 +106,21 @@ Behavioral and quality-adjusted values come from replay traces (observed tool-ca
 ```bash
 pip install agentscaffold
 cd my-project
-scaffold init           # Scaffolds docs + generates the full rule set
-scaffold index          # Build the knowledge graph
+scaffold init                 # Scaffolds docs + generates the full rule set
+scaffold index                # Build the knowledge graph
 scaffold agents generate-all  # Re-generate rules with graph context (after indexing)
-scaffold mcp            # Start MCP server for tool access
+scaffold mcp install          # Register the MCP server with your agent client
+scaffold doctor               # Confirm the setup resolves the way you expect
 ```
+
+`scaffold mcp install` writes the server entry into your client's `mcp.json`
+(`~/.cursor/mcp.json` by default; `--config` for another client). You install
+**one** entry, not one per project — see [Multi-Project
+Workspaces](#multi-project-workspaces) for why that changed in 0.10.0.
+
+Bare `scaffold mcp` runs the server in the foreground. You rarely invoke it
+yourself; the client launches it from the entry `install` wrote. It is useful for
+watching the server's output while debugging.
 
 The `init` command scaffolds your project and, on a fresh init, generates the
 complete rule set for every supported platform:
@@ -118,8 +128,11 @@ complete rule set for every supported platform:
 - `docs/ai/` — templates, prompts, standards, state files
 - `scaffold.yaml` — your project's framework configuration
 - `AGENTS.md` — rules your AI agent follows automatically
-- `.cursor/rules.md` + `.cursor/rules/agentscaffold.md` — Cursor process rules and the MCP routing / graph trust-discipline policy
-- `.cursor/mcp.json` — Cursor MCP server registration
+- `.cursor/rules.md` + `.cursor/rules/agentscaffold.mdc` — Cursor process rules and the MCP routing / graph trust-discipline policy
+- `.cursor/mcp.json` — a per-project Cursor MCP registration. Still written for
+  single-repo use, but superseded by `scaffold mcp install` for workspaces: one
+  project-aware server replaces one entry per project. Existing per-project entries
+  keep working behind a one-time deprecation notice
 - `CLAUDE.md` and `.claude/agents/` — Claude Code rules and one subagent file per configured reviewer
 - `.windsurfrules` — Windsurf rules
 - Lifecycle hooks for each enabled platform
@@ -137,14 +150,26 @@ already own. Project-owned docs (`AGENTS.md`, `CLAUDE.md`, `.windsurfrules`,
 existing files are appended to (or the block is refreshed in place), never
 overwritten, and anything outside the block is always preserved. User-authored
 skills (`SKILL.md` without a `managed_by: agentscaffold` marker) are left untouched.
-Only machine-owned policy files (`.cursor/rules/agentscaffold.md`, reviewer rules,
+Only machine-owned policy files (`.cursor/rules/agentscaffold.mdc`, reviewer rules,
 enforcement hooks) are regenerated each run. Pass `--force` to rewrite a file whole;
 a `.bak` snapshot is always kept. The project `.gitignore` is treated as co-owned:
 AgentScaffold only ever creates it, refreshes its own managed block, or appends the
 block — it never rewrites your `.gitignore` whole, even under `--force`. See
 [File Safety](docs/platform-integration.md#file-safety-what-agentscaffold-will-and-will-not-overwrite).
 
-The `index` command builds the knowledge graph (a DuckDB + DuckPGQ database at `.scaffold/graph.duckdb`), enabling search, reviews, impact analysis, and session memory.
+The `index` command builds the knowledge graph — a DuckDB + DuckPGQ database — enabling search, reviews, impact analysis, and session memory.
+
+**Where the graph lives.** An unregistered repo keeps it in-tree at
+`.scaffold/graph.duckdb`. A workspace registered with `scaffold project register`
+resolves it under your platform state directory, keyed by workspace id, so
+generated state stops accumulating inside the source tree.
+
+Upgrading never moves it. An existing in-tree database always wins over an empty
+state directory, because flipping a default is not a migration: silently
+re-resolving would index from scratch and orphan the populated database. Move it
+deliberately with `scaffold workspace migrate-state` (dry run by default; it
+copies, verifies, then removes, and refuses to start while another process holds
+the source). `scaffold doctor` reports where the graph actually resolves.
 
 ### Async freshness (low-latency graph updates for MCP)
 
@@ -167,7 +192,7 @@ freshness:
   background_queue_enabled: true
 ```
 
-**Single-writer model (teams):** the graph is one DuckDB file (`.scaffold/graph.duckdb`) and only one process may write it at a time. The async refresh serializes refresh *scheduling* per workspace, but it does not make concurrent writers safe. Each developer should keep their own local graph rather than sharing a single file over a network mount; running `scaffold index` while the MCP server holds the graph open raises a clear `GraphLockError` (after a short retry) and MCP tool calls return `{"graph_locked": true}` instead of crashing.
+**Single-writer model (teams):** the graph is one DuckDB file and only one process may write it at a time. The async refresh serializes refresh *scheduling* per workspace, but it does not make concurrent writers safe. Each developer should keep their own local graph rather than sharing a single file over a network mount; running `scaffold index` while the MCP server holds the graph open raises a clear `GraphLockError` (after a short retry) and MCP tool calls return `{"graph_locked": true}` instead of crashing.
 
 **Collaboration ergonomics (opt-in):** for teams where several people (or agents) work the same repo, two features reduce git contention on shared governance files. With `collab.sharded: true`, the high-churn `workflow_state.md` / `backlog.md` can be stored as per-entry fragments so concurrent writers touch different files (`scaffold state split` shards an existing file reversibly; `scaffold state render` reassembles the canonical file deterministically). Advisory plan claims (`scaffold plan claim <n> --owner <who>` / `scaffold plan release`) record git-backed, visible ownership of an in-flight plan — visibility, not an enforced lock. Both default off, so existing repos are unaffected.
 
@@ -188,6 +213,47 @@ scaffold workspace onboard services/api        # register a project (creates wor
 scaffold workspace onboard apps/web             # second project -> workspace is now multi-project
 scaffold workspace list                         # show projects + mode
 ```
+
+#### One server, not one per project
+
+Before 0.10.0 an MCP server was bound to a single directory, so a monorepo needed
+one server entry per project — each with its own process, its own graph handle, and
+its own copy of the generated guidance. That does not scale, and it puts the agent
+in the position of choosing which server to ask.
+
+A single **project-aware** server now serves the whole workspace. Each call resolves
+its own project from the path being worked on, so the agent never picks a server and
+never has to be told where it is.
+
+```bash
+scaffold project register ~/dev/trading-stack   # record a root the server may resolve
+scaffold project list                           # what is registered
+scaffold mcp install                            # install the one server entry
+scaffold mcp install --migrate                  # and retire legacy per-project entries
+scaffold doctor                                 # verify registrations, entries, and skew
+scaffold gc                                     # reclaim state from workspaces that are gone
+```
+
+`install` writes to `~/.cursor/mcp.json` by default (`--config` for another
+client) and supports `--dry-run`. It never modifies an unrelated server entry: the
+resulting document is verified against the original before anything is written,
+and a config it cannot parse is refused rather than guessed at. Legacy
+per-project entries keep working and are only removed by an explicit `--migrate`,
+which backs the file up first.
+
+One server process can read every registered project. If you want a tighter
+boundary, `scaffold mcp --restrict-to <names>` binds the server to an explicit
+allowlist and refuses anything resolving outside it — add it to the entry's `args`
+in `mcp.json`.
+
+Registering a root and installing the server are **separate commands on purpose**.
+Widening what a server is allowed to read should never be a side effect of
+onboarding a project.
+
+When a call cannot be attributed to a project, the server refuses rather than
+guessing and answering from a default — a wrong project's answer is worse than no
+answer, because nothing about it looks wrong. `scaffold_projects` is the recovery
+path: it reports what is registered, which project the call resolved to, and why.
 
 Once a workspace has more than one project, every node is namespaced by project (`{project}::{raw_id}`) and stamped with a `project` column. **Reads default to the current project**, so an agent working in `api` never misreads `web`'s plans, findings, or learnings (even when both have a `plan 12` or a `src/utils.py`). Widen explicitly when you want to:
 
@@ -290,6 +356,21 @@ Teams usually get best UX with NL+MCP for day-to-day flow, then use explicit CLI
 
 You don't need to memorize tool names. AgentScaffold teaches the agent how to interpret user intent in natural conversation, map that intent to the right MCP workflow, and only fall back to direct reads/search when tool output is insufficient.
 
+There are **31 tools**. The list below is complete; `scaffold doctor --tools` calls
+every one of them against your installation and reports which respond.
+
+**Governed lifecycle** — the two-phase chain that wraps implementation:
+
+| Tool | What It Does |
+|------|-------------|
+| `scaffold_begin_plan` | Phase 1: orientation plus the full pre-implementation review, records findings, stamps the plan as reviewed, returns a proceed prompt |
+| `scaffold_complete_plan` | Phase 2: retrospective, records retro insights and any backlog items, returns a completion checklist |
+
+These are the framework's spine. Phase 1 runs before code is written and Phase 2
+after, and the boundary is deliberate: the tools own graph state, the agent owns
+file state. When strict gating is enabled, a plan that has not been through Phase 1
+cannot enter implementation.
+
 **Composite tools** — single calls that replace entire multi-step workflows:
 
 | Tool | What It Replaces |
@@ -300,16 +381,28 @@ You don't need to memorize tool names. AgentScaffold teaches the agent how to in
 | `scaffold_decision_context` | Tracing the full decision chain (ADRs, spikes, studies) behind a plan |
 | `scaffold_staleness_check` | Manually comparing plan dates, file changes, and overlapping completed work |
 | `scaffold_compare_plans` | Reading two plans and their file impacts to identify conflicts |
+| `scaffold_prepare_rewrite` | Staleness check plus the dependency landscape and contracts added since the plan was written |
 | `scaffold_prepare_retro` | Gathering verification results, study outcomes, and retro insights |
 | `scaffold_find_studies` | Searching study files by topic, tags, or outcome |
 | `scaffold_find_adrs` | Searching architecture decision records by topic or status |
+| `scaffold_prior_experiments` | Finding experiments linked to a plan by reference, tag overlap, or file overlap |
+| `scaffold_recall_governance` | Semantic recall across plans, findings, learnings, ADRs, studies, spikes, and backlog |
+| `scaffold_diff_plan_vs_code` | Checking a plan against disk and graph mid-implementation: next unchecked step, missing files, symbol spot-checks |
 
-**Write tools** — close the review loop by persisting findings into the graph:
+**Write tools** — close the review loop by persisting into the graph:
 
 | Tool | Purpose | Latency |
 |------|---------|---------|
 | `scaffold_record_finding` | Persist a review finding (severity, category, affected files) | < 200 ms |
+| `scaffold_record_findings_batch` | Persist several findings in one transaction — the batch lands whole or not at all | < 200 ms |
 | `scaffold_resolve_finding` | Mark a finding resolved with resolution text | < 200 ms |
+| `scaffold_record_backlog_item` | Persist backlog items, singly or in batch, so they surface in orientation and reviews | < 200 ms |
+| `scaffold_resolve_backlog_item` | Archive a completed backlog item, retained for retrospective queries | < 200 ms |
+
+Nothing is deleted. Resolved findings and archived items keep their history and drop
+out of active review output rather than disappearing. The backlog write is
+*additive* to `backlog.md`: the markdown stays the human-readable source, and the
+graph copy is what makes items queryable.
 
 Findings recorded via `scaffold_record_finding` appear in all future `scaffold_prepare_review` calls for the same plan, ordered by severity. Resolved findings are retained for retrospectives but filtered from active review output.
 
@@ -330,6 +423,28 @@ Findings recorded via `scaffold_record_finding` appear in all future `scaffold_p
 | `scaffold_stats` | Scanning the entire directory tree to understand codebase shape |
 | `scaffold_validate` | Running separate staleness checks and contract verification |
 | `scaffold_query` | Writing ad-hoc queries against the knowledge graph |
+| `scaffold_projects` | Asking which projects are registered and which one a call resolved to |
+
+**Routing and fallback** — for when a query comes back empty:
+
+| Tool | What It Does |
+|------|-------------|
+| `scaffold_why_empty` | Explains why a search, impact, or context call returned nothing, and what to do instead |
+| `scaffold_grep_graph` | Text search across the workspace, for the file types structural queries cannot see |
+| `scaffold_next_action` | Routes to the next tool when intent is ambiguous |
+
+You will rarely need these three directly, because the answers they give are
+already attached to the responses that would send you looking for them: an empty
+`scaffold_search` carries its own `why_empty` and `grep_fallback`, and
+`scaffold_orient` carries its own recommended next actions. They exist as
+standalone tools for the cases where those inline fields are absent.
+
+That inlining matters more than it sounds. **An empty result means *unconfirmed*,
+not *unused*.** Structural edges exist only for parsed languages, and static
+analysis cannot see dynamic dispatch, reflection, or config-driven wiring — so
+"0 callers" from the graph is a reason to grep, not a licence to delete. Shipping
+the explanation and the fallback command inside the empty response is what stops
+that misreading from costing a round trip, or worse, going unnoticed.
 
 ### CLI (for humans)
 
@@ -338,14 +453,14 @@ scaffold plan create my-feature            # Create a plan from template
 scaffold plan lint --plan 001              # Validate plan structure
 scaffold plan status                       # Dashboard of all plans
 scaffold validate                          # Run all enforcement checks
-scaffold retro check                       # Find missing retrospectives
+scaffold retro                             # Find plans missing retrospectives
 scaffold agents generate-all   # Regenerate all platform agent files
 scaffold agents cursor # Cursor rules only
 scaffold agents claude # Claude Code agent files only
-scaffold agents skills                     # Generate skill disclosure files
+scaffold agents skills                     # Generate SKILL.md files from your standards
 scaffold plugins package trading           # Package a domain pack as a wheel
 scaffold import chat.json --format chatgpt # Import conversation
-scaffold ci setup                          # Generate CI workflows
+scaffold ci                                # Generate CI workflows
 scaffold metrics                           # Plan analytics
 scaffold graph search "data routing"       # Hybrid search (keyword + semantic)
 scaffold graph search "data routing" --all-projects  # Federate across a multi-project workspace
@@ -357,6 +472,49 @@ scaffold review brief 42                   # Pre-review brief for plan 42
 scaffold review challenges 42              # Adversarial challenges with evidence
 scaffold session start --plan 42           # Start a tracked coding session
 ```
+
+**Setup and health:**
+
+```bash
+scaffold project register ~/dev/my-workspace  # Record a root the MCP server may resolve
+scaffold project list                         # Show registered roots
+scaffold mcp install                          # Install the MCP server entry into your client
+scaffold doctor                               # Diagnose the installation (read-only)
+scaffold doctor --strict                      # Same, but exits non-zero — the CI gate
+scaffold doctor --tools                       # Call every MCP tool and report which respond
+scaffold gc                                   # Reclaim state from workspaces that no longer exist
+scaffold workspace migrate-state              # Move graph state out of the source tree
+scaffold graph prune --malformed-findings     # Remove findings left by the pre-0.10.0 extraction bug
+```
+
+`doctor` only reads. It never repairs, creates, or migrates, so it is safe to run
+on a setup you already believe is broken — which is the only time anyone runs it.
+It exits 0 whatever it finds, so it is safe in a shell profile or a git hook;
+`--strict` is the gate to put in CI. `gc` and `prune` are dry-run by default and
+need `--apply` to remove anything.
+
+`--tools` answers a different question from the rest: not "is this configured
+correctly" but "does each tool actually respond". Write tools are skipped unless
+you pass `--include-writes`, which runs them against a disposable scratch project
+so your real graph is never touched. A graph held by another process reports as
+`busy` rather than as a failure — an index running in the next terminal is routine,
+and a diagnostic that cries wolf during one stops being read.
+
+### Skills
+
+`scaffold agents skills` compiles your standards into `SKILL.md` files under
+`.claude/skills/` and `.cursor/skills/`, so agents that support progressive
+disclosure can load a standard on demand instead of carrying all of them in
+context. Each file gets frontmatter with a one-line description and a short
+catalog entry, and the full standard sits below it — the agent reads the summary
+and pulls the body only when the task calls for it.
+
+The set is **derived, not fixed**: one skill per standards file. Adding a domain
+pack adds its standards, and therefore its skills, which is why the count grows
+with your configuration rather than being a number this README could state.
+User-authored `SKILL.md` files (those without a `managed_by: agentscaffold`
+frontmatter marker) are never overwritten. `--if-standards-changed` regenerates
+only when a standard is newer than its skill, which is what you want in a hook.
 
 ## Execution Profiles
 
@@ -402,9 +560,13 @@ Full documentation is in [docs/](https://github.com/drobbster/agentscaffold/tree
 
 - [Getting Started](https://github.com/drobbster/agentscaffold/blob/staging/docs/getting-started.md) — installation, init, first plan
 - [User Guide](https://github.com/drobbster/agentscaffold/blob/staging/docs/user-guide.md) — session workflow, knowledge graph, review patterns
+- [CLI Reference](https://github.com/drobbster/agentscaffold/blob/staging/docs/cli-reference.md) — every command, flag, and exit code
 - [Platform Integration](https://github.com/drobbster/agentscaffold/blob/staging/docs/platform-integration.md) — Cursor, Claude Code, Windsurf, Cline, aider, Codex, MCP setup
+- [Multi-Project Workspaces](https://github.com/drobbster/agentscaffold/blob/staging/docs/multi-project.md) — monorepos, project scoping, the shared graph
 - [Configuration Reference](https://github.com/drobbster/agentscaffold/blob/staging/docs/configuration.md) — full scaffold.yaml reference
 - [Domain Packs](https://github.com/drobbster/agentscaffold/blob/staging/docs/domain-packs.md) — available packs and installation
+- [Creating Domain Packs](https://github.com/drobbster/agentscaffold/blob/staging/docs/creating-domain-packs.md) — build a pack for your own domain
+- [Importing Conversations](https://github.com/drobbster/agentscaffold/blob/staging/docs/importing-conversations.md) — bring existing chat history into project docs
 - [Semi-Autonomous Guide](https://github.com/drobbster/agentscaffold/blob/staging/docs/semi-autonomous-guide.md) — CLI/CI agent mode
 - [CI Integration](https://github.com/drobbster/agentscaffold/blob/staging/docs/ci-integration.md) — GitHub Actions workflows
 

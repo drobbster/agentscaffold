@@ -82,11 +82,31 @@ def test_build_hints_empty_paths(tmp_path: Path):
 
     hints = _build_reviewer_hints(tmp_path, [])
     assert isinstance(hints, list)
-    # No .cursor/rules/agentscaffold.md exists in tmp_path → empty
+    # No .cursor/rules/agentscaffold.* exists in tmp_path → empty
     assert hints == []
 
 
 def test_build_hints_includes_agentscaffold_rule(tmp_path: Path):
+    """The hint fires for ``.mdc`` -- the layout a real project actually has.
+
+    This test previously created ``agentscaffold.md`` and asserted the hint
+    appeared. It passed, but against a layout AgentScaffold does not produce:
+    Cursor only loads ``.mdc``, so the generator writes that and deletes any
+    ``.md`` beside it. The lookup checked ``.md`` only, so the hint was dead in
+    every real project while the test built the one world where it worked.
+    """
+    from agentscaffold.mcp.server import _build_reviewer_hints
+
+    rules_dir = tmp_path / ".cursor" / "rules"
+    rules_dir.mkdir(parents=True)
+    (rules_dir / "agentscaffold.mdc").write_text("# scaffold rules")
+
+    hints = _build_reviewer_hints(tmp_path, [])
+    assert ".cursor/rules/agentscaffold.mdc" in hints
+
+
+def test_build_hints_falls_back_to_legacy_md(tmp_path: Path):
+    """A project that has not regenerated since the rename still gets the hint."""
     from agentscaffold.mcp.server import _build_reviewer_hints
 
     rules_dir = tmp_path / ".cursor" / "rules"
@@ -95,6 +115,20 @@ def test_build_hints_includes_agentscaffold_rule(tmp_path: Path):
 
     hints = _build_reviewer_hints(tmp_path, [])
     assert ".cursor/rules/agentscaffold.md" in hints
+
+
+def test_build_hints_prefers_mdc_over_legacy_md(tmp_path: Path):
+    """With both present, the hint names the one Cursor will actually load."""
+    from agentscaffold.mcp.server import _build_reviewer_hints
+
+    rules_dir = tmp_path / ".cursor" / "rules"
+    rules_dir.mkdir(parents=True)
+    (rules_dir / "agentscaffold.mdc").write_text("# scaffold rules")
+    (rules_dir / "agentscaffold.md").write_text("# stale")
+
+    hints = _build_reviewer_hints(tmp_path, [])
+    assert ".cursor/rules/agentscaffold.mdc" in hints
+    assert ".cursor/rules/agentscaffold.md" not in hints
 
 
 def test_build_hints_domain_match_adds_standards(tmp_path: Path):

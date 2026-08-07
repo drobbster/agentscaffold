@@ -1713,9 +1713,16 @@ def _build_reviewer_hints(root: Path, impacted_paths: list[str]) -> list[str]:
     if root is None:
         return hints
 
-    agentscaffold_rule = root / ".cursor" / "rules" / "agentscaffold.md"
-    if agentscaffold_rule.is_file():
-        hints.append(".cursor/rules/agentscaffold.md")
+    # ``.mdc`` first: Cursor only loads that extension, so it is what the
+    # generator writes and what every current project has. ``.md`` is checked
+    # after it for projects that have not regenerated since the rename -- looking
+    # for it alone silently emitted no hint at all, because the generator removes
+    # any stale ``.md`` it finds.
+    for suffix in ("mdc", "md"):
+        relative = f".cursor/rules/agentscaffold.{suffix}"
+        if (root / relative).is_file():
+            hints.append(relative)
+            break
 
     matched_standards: set[str] = set()
     for pack in _get_available_packs():
