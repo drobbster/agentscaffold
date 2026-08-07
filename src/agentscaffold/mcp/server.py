@@ -1508,6 +1508,13 @@ def _tool_validate(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) 
     """Handle scaffold_validate tool call."""
     check = arguments.get("check", "")
 
+    if check == "layers":
+        from agentscaffold.graph.layers import check_layers
+
+        scope_sql, scope_params = _scope_sql(arguments)
+        report = check_layers(store, scope_sql, dict(scope_params) if scope_params else None)
+        return {"report": report.to_dict(), "meta": meta}
+
     if check == "staleness":
         from agentscaffold.graph.verify import verify_graph
 
