@@ -100,6 +100,38 @@ def test_plan_lint_valid(tmp_project: Path, cli_runner: CliRunner) -> None:
         os.chdir(orig_cwd)
 
 
+def test_plan_lint_accepts_a_bugfix_plan(tmp_project: Path, cli_runner: CliRunner) -> None:
+    """A bugfix plan says "Bug Description" where a feature plan says "Objective".
+
+    The linter previously knew only the feature template, so every bugfix plan
+    written exactly to its own template failed the Draft -> Review gate that
+    AGENTS.md requires it to pass.
+    """
+    orig_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_project)
+        plans_dir = tmp_project / "docs/ai/plans"
+        (plans_dir / "002-bugfix-plan.md").write_text(
+            "---\ntitle: Bugfix Plan\nstatus: draft\n---\n\n"
+            "## Metadata\n\n"
+            "## Bug Description\n\nThe thing is broken.\n\n"
+            "## Root Cause\n\nIt was never right.\n\n"
+            "## File Impact Map\n\n"
+            "| File | Action |\n|------|--------|\n| src/foo.py | Fix |\n\n"
+            "## Execution Steps\n\n"
+            "- [ ] Step one\n"
+            "- [ ] Step two\n\n"
+            "## Tests\n\ntest_foo.py\n\n"
+            "## Validation\n\n```bash\npytest\n```\n\n"
+            "## Rollback Plan\n\nRevert the commit.\n"
+        )
+        result = cli_runner.invoke(app, ["plan", "lint", "-p", "002"])
+        assert result.exit_code == 0, result.output
+        assert "PASS" in result.output
+    finally:
+        os.chdir(orig_cwd)
+
+
 def test_plan_lint_missing_sections(tmp_project: Path, cli_runner: CliRunner) -> None:
     """lint a plan missing required sections -- should fail."""
     orig_cwd = os.getcwd()
