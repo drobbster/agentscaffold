@@ -54,9 +54,7 @@ def attach_empty_fallback(
         "count": grep.get("count", 0),
         "hits": grep.get("hits", [])[:max_grep_hits],
         "engine": grep.get("engine"),
-        "hint": (
-            "Inline fallback so empty graph/search does not require a second tool call"
-        ),
+        "hint": ("Inline fallback so empty graph/search does not require a second tool call"),
     }
     if grep.get("count"):
         prior = [s for s in why.get("suggestions", []) if "grep" not in s.lower()]

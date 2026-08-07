@@ -159,7 +159,9 @@ freshness:
   background_queue_enabled: true
 
 graph:
-  db_path: ".scaffold/graph.duckdb"
+  # db_path is unset on purpose: the graph then lives under the platform state
+  # directory for a registered workspace, and in .scaffold/graph.duckdb
+  # otherwise. Set it to pin a location; AGENTSCAFFOLD_DB_PATH still overrides.
   backend: duckpgq
   incremental_community_refresh: structure
   incremental_community_threshold: 25

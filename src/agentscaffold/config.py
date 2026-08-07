@@ -10,6 +10,8 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
+from agentscaffold.active_root import default_start
+
 # ---------------------------------------------------------------------------
 # Gate configuration
 # ---------------------------------------------------------------------------
@@ -270,6 +272,7 @@ class SharedAssetPaths(BaseModel):
     security_dir: str = "docs/security/"
     collaboration_protocol_file: str = "docs/ai/collaboration_protocol.md"
     commands_file: str = "docs/ai/commands.md"
+    routing_guidance_file: str = "docs/ai/agent_routing.md"
 
 
 class ProjectAssetPaths(BaseModel):
@@ -319,9 +322,7 @@ class AssetLayoutConfig(BaseModel):
             return "project_local"
         policy = str(value)
         if policy not in ("project_local", "shared_workspace"):
-            raise ValueError(
-                "asset_layout.layout must be one of: project_local, shared_workspace"
-            )
+            raise ValueError("asset_layout.layout must be one of: project_local, shared_workspace")
         return policy
 
 
@@ -335,6 +336,10 @@ class WorkspaceConfig(BaseModel):
     ``project_local`` for full backward compatibility.
     """
 
+    #: Stable opaque workspace id (Plan 249). Written on first manifest write and
+    #: never derived from the path, so moving or renaming a workspace root does
+    #: not orphan the state keyed by it. None for a manifest predating Plan 249.
+    id: str | None = None
     projects: list[ProjectEntry] = Field(default_factory=list)
     asset_layout: AssetLayoutConfig | None = None
 
@@ -414,7 +419,7 @@ def derive_project_name(root: Path, explicit: str | None = None) -> str:
 
 def find_workspace_config(start: Path | None = None) -> Path | None:
     """Walk up from *start* looking for workspace.yaml. Return path or None."""
-    current = (start or Path.cwd()).resolve()
+    current = (start or default_start()).resolve()
     for parent in [current, *current.parents]:
         candidate = parent / WORKSPACE_FILENAME
         if candidate.is_file():
@@ -452,7 +457,16 @@ class LayerMapping(BaseModel):
 
 
 class GraphConfig(BaseModel):
-    db_path: str = ".scaffold/graph.duckdb"
+    # None means "use the platform default" (Plan 249 Step B4): the state
+    # directory for a registered workspace, or the historical in-tree path when
+    # there is no workspace id to key state by. A string here means the user
+    # chose a location and it is honored unchanged.
+    #
+    # The meaning lives in the value rather than in Pydantic's
+    # ``model_fields_set`` because ``apply_rigor_preset`` round-trips the config
+    # through ``model_dump`` and re-validation, which marks every field as
+    # explicitly set under the ``minimal`` and ``strict`` presets.
+    db_path: str | None = None
     backend: str = "duckpgq"
     languages: list[str] | None = None
     ignore: list[str] = Field(default_factory=list)
@@ -683,7 +697,7 @@ class ConfigError(Exception):
 
 def find_config(start: Path | None = None) -> Path | None:
     """Walk up from *start* looking for scaffold.yaml. Return path or None."""
-    current = (start or Path.cwd()).resolve()
+    current = (start or default_start()).resolve()
     for parent in [current, *current.parents]:
         candidate = parent / CONFIG_FILENAME
         if candidate.is_file():

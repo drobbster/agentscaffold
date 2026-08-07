@@ -1179,7 +1179,7 @@ When running the MCP server (`scaffold mcp`), 26 tools are available to AI agent
 | `scaffold_recall_governance` | Semantic recall across plans, findings, learnings, ADRs, studies, spikes, backlog |
 | `scaffold_context` | Full context for a symbol (definition, callers, layer, plan history) |
 | `scaffold_impact` | Blast radius analysis for a file or symbol |
-| `scaffold_validate` | Validation checks (layers, contracts, staleness) |
+| `scaffold_validate` | Validation checks (layers, contracts, staleness) — see [The `layers` check](#the-layers-check) |
 | `scaffold_review_context` | Low-level review context (brief, challenges, gaps, verify, retro) for a plan |
 
 **Governance & Review Tools** — composite workflows triggered by natural language:
@@ -1211,6 +1211,47 @@ When running the MCP server (`scaffold mcp`), 26 tools are available to AI agent
 | `scaffold_complete_plan` | "wrap up plan X" / "close out plan X" | Phase 2: retro, auto-writes retro findings, optional backlog items, returns a completion checklist |
 
 The MCP tools return both structured JSON and formatted markdown, so agents can parse the data programmatically or display it directly.
+
+### The `layers` check
+
+`scaffold_validate` with `check="layers"` enforces the layering rule your
+`AGENTS.md` states: a component consumes the layer directly below it and does not
+bypass intermediate ones. It reads the numbered layers and their path patterns
+from `docs/ai/system_architecture.md`, maps files to layers, and examines every
+import that crosses a layer boundary.
+
+Two shapes are reported. An **inversion** runs upward — a lower layer importing a
+higher one, so the foundation depends on what is built on top of it. A **skip**
+reaches past an intermediate layer, which is the bypass the rule names directly.
+Imports inside one layer, and imports into the layer immediately below, are
+permitted and never flagged.
+
+**A third answer: `not_evaluable`.** This is the one to understand, because it is
+common and it is not a failure. The check needs both halves in the same graph:
+layer definitions from the architecture document, and code files whose paths match
+those layers' patterns. If either is missing it returns `not_evaluable` with a
+reason and a remediation, rather than reporting zero violations.
+
+That distinction is deliberate. A graph containing no layered files would produce
+an empty violation list, and "no violations found" is indistinguishable from a
+clean architecture while being a claim about nothing at all. For a check meant to
+catch structural drift, answering "clean" on the strength of having looked at
+nothing is the most convincing way it could mislead you.
+
+The usual cause is a split repository — the architecture document governing one
+codebase while the code lives in another — so neither graph holds both halves. If
+you see `not_evaluable` with "no files are mapped", check that the path patterns
+in `system_architecture.md` match your actual layout, then re-run `scaffold
+index`. Layer counts and the number of imports skipped for want of a mapping are
+included in the report, so you can tell how much the check could see.
+
+| `status` | Means |
+|---|---|
+| `pass` | Every cross-layer import consumes the layer below |
+| `fail` | At least one inversion or skip; each violation names both files |
+| `not_evaluable` | The check could not see enough to answer; read `reason` |
+
+Treat `not_evaluable` as "unknown", never as "fine".
 
 ### Review Findings: Continuous Improvement Feedback Loop
 
@@ -1436,6 +1477,11 @@ scaffold index
 
 ### Schema upgrades preserve your findings and sessions
 
+> **Upgrading to 0.10.0 rebuilds your graph on the first `scaffold index`.**
+> Nothing is required of you beyond running it as usual, but expect a full
+> rebuild's time rather than an incremental one, and see below for why this
+> particular version bump matters more than most.
+
 When AgentScaffold's graph schema version changes (after an upgrade), the next
 `scaffold index` rebuilds the graph. As of 0.6.0 this is a **safe, recoverable**
 operation: before the rebuild, preserved governance (review findings, backlog
@@ -1449,6 +1495,24 @@ If some data is schema-incompatible and cannot be re-imported, the export file
 is kept and a message tells you where it is. The export file contains only
 project governance text (no secrets) and is safe to delete once you have
 confirmed the rebuild succeeded.
+
+**Why 0.10.0 bumps the version without changing any table.** Before 0.10.0,
+relative Python imports (`from .module import name`) produced no import edge at
+all. The path built for them was subtly malformed, the check for its existence
+normalised the malformation and reported success, and the resulting string then
+failed to match anything — so the import was silently filed as unresolved. Any
+project using relative imports has a graph that is missing real dependencies.
+
+That matters most for `scaffold_impact`, which walks import edges to answer "what
+else does this change affect?". A missing edge means the answer is too small, and
+an under-reported blast radius looks exactly like a genuinely contained change.
+There is no warning to notice, which is why the version bump exists: rather than
+leaving those graphs quietly incomplete until someone thought to rebuild, the
+version change routes them through the normal preserving rebuild automatically.
+
+If your project has no relative imports, the rebuild costs you time and changes
+nothing. If it does, the graph gains edges it should always have had, and impact
+results will legitimately grow.
 
 **If you see "Aborting schema rebuild ... failed to export preserved governance":**
 the rebuild was halted and nothing was deleted. The message includes the graph

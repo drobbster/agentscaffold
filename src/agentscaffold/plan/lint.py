@@ -15,7 +15,12 @@ from agentscaffold.paths import ResolvedPaths, resolve_root
 console = Console()
 
 REQUIRED_SECTIONS: list[tuple[str, ...]] = [
-    ("Objective", "Goal", "Purpose"),
+    # "Bug Description" is the bugfix template's name for this slot -- a bugfix
+    # plan states what is broken where a feature plan states what success means.
+    # Without the alias the linter demanded a heading that template does not
+    # have, so every correctly-written bugfix plan failed the Draft -> Review
+    # gate that AGENTS.md requires it to pass.
+    ("Objective", "Goal", "Purpose", "Bug Description"),
     ("File Impact Map", "Files Changed", "Impact"),
     ("Execution Steps", "Steps", "Implementation"),
     ("Tests", "Test Plan", "Testing"),
