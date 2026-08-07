@@ -8,6 +8,14 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-08-07
+
+A documentation-accuracy release. Nothing here requires action on upgrade.
+
+The README on PyPI described a system a version behind in the places that matter most
+to a new user, and correcting it turned up one live defect — the reviewer hint below,
+which had been silently dead since the Cursor rules file was renamed.
+
 ### Fixed
 - **The Cursor routing-policy reviewer hint never fired.** `scaffold_prepare_review`
   looks for `.cursor/rules/agentscaffold.md` and adds it to the reviewer hints. Cursor

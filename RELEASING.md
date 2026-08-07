@@ -88,20 +88,34 @@ uv run pytest -q
 ```bash
 git commit -m "Release agentscaffold X.Y.Z"
 git push -u origin release/agentscaffold-X.Y.Z
-gh pr create --base main --head release/agentscaffold-X.Y.Z
+gh pr create --base staging --head release/agentscaffold-X.Y.Z
 ```
 
-This PR's base is `main`. It is the promotion.
+This PR's base is **`staging`**, not `main`.
 
-### 7. Confirm the gate before tagging
+That is easy to get wrong, and the first cut following this document did. The
+release branch is cut *from* staging, so it is tempting to treat it as already
+gated and promote it straight to `main`. But step 4 and step 5 add a commit —
+the version bump and the dated changelog — and that commit is the one that gets
+tagged. Basing this PR on `main` means the tagged commit is the single commit in
+the release that `staging` never saw, and step 7's check fails by construction.
+
+### 7. Promote staging to main
+
+```bash
+gh pr create --base main --head staging --title "Promote staging to main for X.Y.Z"
+```
+
+Then confirm the gate before tagging:
 
 ```bash
 git checkout main && git pull --ff-only
 git merge-base --is-ancestor HEAD origin/staging && echo "OK: staging saw this"
 ```
 
-If that fails, the release skipped the gate. Do not tag. Merge to `staging` first
-and work out how it was bypassed.
+If that fails, the release skipped the gate. Do not tag. Work out how it was
+bypassed rather than tagging anyway — the check is only worth having if it is
+allowed to stop a release.
 
 ### 8. Tag
 
@@ -173,3 +187,18 @@ There is no `chore/sync-staging-*` step in the process above. Under the correct
 order it cannot be needed: `staging` is already ahead of `main` by construction. If
 you ever find yourself wanting to sync staging *from* main, something upstream went
 in the wrong direction — fix that rather than papering over it.
+
+## The first cut under this document found a hole in it
+
+0.10.1 was the first release to follow these steps, and step 6 originally said to
+PR the release branch to `main`. The gate check in step 7 then refused it, exactly
+as designed: the version-bump commit is created after the branch is cut from
+staging, so the commit being tagged had never been on staging even though
+everything beneath it had.
+
+Both steps have been corrected above. Worth recording rather than quietly fixing,
+for two reasons. The wrong version was subtle — the release branch really is cut
+from staging, so it looks gated, and only the one commit that matters is not. And
+the check earned its place: it was written as a formality to express an invariant
+already believed to hold, and the first time it ran in anger it stopped a release
+that would otherwise have looked completely normal.
