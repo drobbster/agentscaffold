@@ -155,6 +155,28 @@ def test_install_handles_a_config_with_no_mcp_servers_key(tmp_path, cli_runner):
 # --------------------------------------------------------------------------
 
 
+def test_install_reports_a_superseded_per_project_config(tmp_path, cli_runner, monkeypatch):
+    """The per-project config is redundant the moment the shared entry lands.
+
+    Saying so here is what stops ``scaffold doctor`` reporting, later and out of
+    context, a problem the user created by following the quick start (Plan 253).
+    """
+    target = tmp_path / "mcp.json"
+    project = tmp_path / "proj"
+    (project / ".cursor").mkdir(parents=True)
+    per_project = project / ".cursor" / "mcp.json"
+    per_project.write_text(json.dumps({"mcpServers": {"agentscaffold": {"command": "scaffold"}}}))
+    monkeypatch.chdir(project)
+
+    result = cli_runner.invoke(app, ["mcp", "install", "--config", str(target)])
+
+    assert result.exit_code == 0
+    assert "Superseded" in result.output
+    # Reported, never deleted. These files are per-repo and often committed, so
+    # removing one on the user's behalf could reach a colleague's checkout.
+    assert per_project.exists()
+
+
 def test_plain_install_leaves_legacy_entries_alone(tmp_path, cli_runner):
     """Per-project entries keep working through the deprecation window.
 

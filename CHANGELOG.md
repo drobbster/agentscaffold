@@ -8,6 +8,47 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-08-07
+
+Fixes a regression, reported from the field, in which the last step of the documented
+0.10 upgrade undid the first one.
+
+**Upgrade note.** If you already ran `scaffold agents generate-all` after migrating,
+check for a `.cursor/mcp.json` in your project roots and delete any that contain an
+`agentscaffold` entry. `scaffold doctor` now finds them for you. They are not removed
+automatically because these files are per-repo and often committed, so deleting one on
+your behalf could travel into a colleague's checkout through version control.
+
+### Fixed
+- **`scaffold agents generate-all` recreated the per-project MCP config that
+  `scaffold mcp install --migrate` exists to retire.** Running the two commands in the
+  documented order left you back where you started, and the README recommends
+  `generate-all` right after `index` — the closing step of the upgrade sequence. Two
+  plans had drifted apart: one taught the generator to write a per-project config pinning
+  the resolution anchor, and 0.10 replaced per-project servers with a single shared one
+  without retiring that writer. The contradiction was already sitting in the source,
+  where `mcp/install.py` classifies the very same file as a deprecated registration and
+  asks you to delete it.
+
+  The generator now skips the per-project config when a shared server already covers the
+  repo — when the root is registered, or when the canonical entry is installed. A lone
+  repo with neither still gets the file, so `scaffold init` continues to work with no
+  further setup.
+
+- **`generate-all --dry-run` wrote `.cursor/mcp.json` for real.** The writer took no
+  dry-run argument, so the caller had nothing to pass and the guard was bypassed rather
+  than mislabelled. It also ran its own `mkdir`, so a dry run created `.cursor/` as well.
+  Both now touch nothing. `scaffold init --dry-run` was never affected.
+
+- **`scaffold doctor` could not see a stray per-project config** and reported the
+  migration as clean while one sat on disk, making the regression invisible to the
+  command meant to verify it. It now scans registered roots, and flags a per-project
+  config only when a shared server exists to make it redundant — a lone repo whose
+  per-project config is its only registration is not misconfigured.
+
+  The one existing warning about these files was emitted through the logger from inside
+  the MCP server process, where no human reads it.
+
 ## [0.10.1] - 2026-08-07
 
 A documentation-accuracy release. Nothing here requires action on upgrade.

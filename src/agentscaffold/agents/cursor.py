@@ -13,15 +13,6 @@ from agentscaffold.rendering import get_default_context, render_template, write_
 
 console = Console()
 
-_MCP_JSON_CONTENT: dict[str, object] = {
-    "mcpServers": {
-        "agentscaffold": {
-            "command": "scaffold",
-            "args": ["mcp"],
-        }
-    }
-}
-
 
 def _mcp_json_content(
     workspace_root: str | None = None,
@@ -70,26 +61,68 @@ def _detect_workspace_context(project_root: Path) -> tuple[str | None, str | Non
         return None, None
 
 
+def _canonical_entry_installed() -> bool:
+    """True when the shared server is registered in the default client config.
+
+    Registering a project and installing the server are separate steps:
+    ``scaffold project register`` only writes a registry row. Skipping the
+    per-project config on the strength of registration alone could therefore
+    leave a project with no server at all, so the skip checks and says so.
+
+    Answers False on any read failure, which at worst prints an extra pointer to
+    a harmless command.
+    """
+    try:
+        from agentscaffold.mcp.install import (
+            CANONICAL_ENTRY_NAME,
+            SERVERS_KEY,
+            default_config_path,
+            load_config,
+        )
+
+        document = load_config(default_config_path())
+    except Exception:  # noqa: BLE001 - advisory only; never block generation
+        return False
+    return CANONICAL_ENTRY_NAME in (document.get(SERVERS_KEY) or {})
+
+
 def write_cursor_mcp_json(
     cursor_dir: Path,
     workspace_root: str | None = None,
     project_name: str | None = None,
+    *,
+    dry_run: bool = False,
 ) -> None:
     """Write ``.cursor/mcp.json`` with the agentscaffold MCP server config.
+
+    Skipped when a shared server already covers this repo -- either because the
+    root is registered, or because the canonical entry is installed in the client
+    config. Since 0.10 one project-aware server serves every registered project,
+    so a per-project config alongside it is the legacy registration that
+    ``scaffold mcp install --migrate`` exists to retire; generating one undoes
+    that migration, which is what this guard prevents (Plan 253).
+
+    Both conditions are needed, and each catches a case the other misses.
+    Registration alone misses a fresh project created after ``scaffold mcp
+    install``, which is never registered yet and would otherwise get a duplicate
+    server on the documented quick-start path. An installed entry alone misses a
+    registered project on a machine whose client config lives elsewhere.
+
+    A lone repo with neither still gets the file, because where no shared server
+    covers it, this is the only registration there is -- that is what makes
+    ``scaffold init`` work with no further setup.
 
     When *workspace_root*/*project_name* are not supplied they are auto-detected
     from ``cursor_dir``'s parent, so a registered project in a multi-project
     workspace emits ``["mcp", "--workspace", ..., "--project", ...]`` (Plan 234).
 
     If the file already exists, skip writing and emit a diff-suggestion to
-    stdout so existing custom configs are not overwritten.
+    stdout so existing custom configs are not overwritten. *dry_run* reports what
+    would happen and touches nothing, the parent directory included.
     """
+    from agentscaffold.mcp.install import is_registered_root
+
     mcp_path = cursor_dir / "mcp.json"
-
-    if workspace_root is None and project_name is None:
-        workspace_root, project_name = _detect_workspace_context(cursor_dir.parent)
-
-    content = _mcp_json_content(workspace_root, project_name)
 
     def _display(p: Path) -> str:
         try:
@@ -97,12 +130,41 @@ def write_cursor_mcp_json(
         except ValueError:
             return str(p)
 
+    registered = is_registered_root(cursor_dir.parent)
+    shared_installed = _canonical_entry_installed()
+    if registered or shared_installed:
+        reason = "registered project" if registered else "shared server already installed"
+        console.print(
+            f"[dim]Skipping[/dim] {_display(mcp_path)} "
+            f"({reason} — one shared AgentScaffold server serves it)"
+        )
+        if mcp_path.exists():
+            console.print(
+                "  This file is a legacy per-project registration. Remove it so the "
+                "client loads only the shared server."
+            )
+        if not shared_installed:
+            console.print(
+                "  [yellow]No shared server is registered with the client.[/yellow] "
+                "Run `scaffold mcp install` so this project has one."
+            )
+        return
+
+    if workspace_root is None and project_name is None:
+        workspace_root, project_name = _detect_workspace_context(cursor_dir.parent)
+
+    content = _mcp_json_content(workspace_root, project_name)
+
     if mcp_path.exists():
         console.print(
             f"[yellow]Skipping[/yellow] {_display(mcp_path)} "
             "(already exists — verify it contains the agentscaffold server entry)"
         )
         console.print("  Suggested content:\n" + json.dumps(content, indent=2))
+        return
+
+    if dry_run:
+        console.print(f"[dim]dry-run[/dim] would write {_display(mcp_path)}")
         return
 
     cursor_dir.mkdir(parents=True, exist_ok=True)

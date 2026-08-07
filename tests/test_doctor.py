@@ -364,6 +364,80 @@ def test_mcp_check_accepts_the_canonical_entry(
     assert result.exit_code == 0
 
 
+def test_mcp_check_flags_a_stray_per_project_config(
+    state_home: Path, tmp_path: Path, cli_runner: CliRunner
+):
+    """A clean shared config says nothing about per-project files (Plan 253).
+
+    Clients load both. A `.cursor/mcp.json` in a registered root is a second,
+    project-scoped server -- exactly what the 0.10 migration collapses. Reporting
+    the migration as clean while one sits on disk made the regression invisible
+    to the command whose job is to verify it.
+    """
+    project = _project(tmp_path)
+    _register(project)
+    config = _mcp_config(
+        tmp_path / "mcp.json", {"agentscaffold": {"command": "scaffold", "args": ["mcp"]}}
+    )
+    _mcp_config(
+        project / ".cursor" / "mcp.json",
+        {"agentscaffold": {"command": "scaffold", "args": ["mcp", "--project", "proj"]}},
+    )
+
+    result = _run(cli_runner, "--project-root", str(project), "--mcp-config", str(config))
+
+    assert ".cursor/mcp.json" in result.output.replace("\\", "/")
+    assert "warn" in result.output.lower()
+
+
+def test_mcp_check_does_not_flag_a_per_project_config_without_a_shared_server(
+    state_home: Path, tmp_path: Path, cli_runner: CliRunner
+):
+    """Redundant only if there is a shared server to be redundant with.
+
+    A lone repo whose per-project config is its *only* registration is not
+    misconfigured. Flagging it would be crying wolf, and the missing shared entry
+    is already reported on its own.
+    """
+    project = _project(tmp_path)
+    _register(project)
+    config = _mcp_config(tmp_path / "mcp.json", {"unrelated": {"command": "other"}})
+    _mcp_config(
+        project / ".cursor" / "mcp.json",
+        {"agentscaffold": {"command": "scaffold", "args": ["mcp"]}},
+    )
+
+    result = _run(cli_runner, "--project-root", str(project), "--mcp-config", str(config))
+
+    assert ".cursor/mcp.json" not in result.output.replace("\\", "/")
+
+
+def test_mcp_check_ignores_a_per_project_config_without_an_agentscaffold_entry(
+    state_home: Path, tmp_path: Path, cli_runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+):
+    """Only *our* entries are ours to complain about.
+
+    Plenty of repos keep a `.cursor/mcp.json` for unrelated servers. Flagging
+    those would make the check noise, and noise is what stops it being read.
+    """
+    import agentscaffold.doctor as doctor
+    from agentscaffold import __version__
+
+    project = _project(tmp_path)
+    _register(project)
+    config = _mcp_config(
+        tmp_path / "mcp.json", {"agentscaffold": {"command": "scaffold", "args": ["mcp"]}}
+    )
+    _mcp_config(project / ".cursor" / "mcp.json", {"some-other-server": {"command": "other"}})
+    monkeypatch.setattr(doctor, "probe_launched_version", lambda command: __version__)
+
+    result = _run(
+        cli_runner, "--project-root", str(project), "--mcp-config", str(config), "--strict"
+    )
+
+    assert result.exit_code == 0
+
+
 # ---------------------------------------------------------------------------
 # Version skew -- the failure this command was specified to catch
 # ---------------------------------------------------------------------------

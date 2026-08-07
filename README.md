@@ -144,6 +144,14 @@ project — for example after `scaffold index` so `AGENTS.md` picks up graph
 context (hot spots, volatile modules, active contracts), or after editing
 `scaffold.yaml`.
 
+`.cursor/mcp.json` is written only for a repo that no shared server covers, which
+is what makes a lone repo work with no further setup. Once the root is registered
+or `scaffold mcp install` has run, one project-aware server serves the project and
+the per-project file is skipped — regenerating rules will not undo the single-entry
+setup. If you have an older per-project file left over, `scaffold mcp install` and
+`scaffold doctor` both point it out; remove it by hand, since these files are
+frequently committed.
+
 **File safety.** AgentScaffold never silently clobbers agent or skill files you
 already own. Project-owned docs (`AGENTS.md`, `CLAUDE.md`, `.windsurfrules`,
 `.cursor/rules.md`) receive generated guidance inside a delimited managed block —

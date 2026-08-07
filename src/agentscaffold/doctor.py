@@ -245,12 +245,49 @@ def check_mcp_registration(context: DoctorContext) -> CheckResult:
                 f"({entry.get('command')}) instead of `scaffold` on PATH"
             )
 
+    # Per-project configs the client also loads. A clean shared config says
+    # nothing about these: a `.cursor/mcp.json` holding an agentscaffold entry is
+    # a project-scoped server by construction, which is what the 0.10 migration
+    # collapses. Checking only the shared config made that regression invisible
+    # to the command whose job is to verify the migration (Plan 253).
+    from agentscaffold.mcp.install import find_legacy_project_configs, registered_roots
+
+    # Only redundant if a shared server exists to make it redundant. A lone repo
+    # whose per-project config is its *only* registration is not misconfigured,
+    # and flagging it would be crying wolf -- the absent shared entry is already
+    # reported above.
+    stray: list[Path] = []
+    if CANONICAL_ENTRY_NAME in entries:
+        scan_roots: list[Path] = []
+        seen: set[str] = set()
+        for root in [context.project_root, *registered_roots()]:
+            key = str(root)
+            if key not in seen:
+                seen.add(key)
+                scan_roots.append(root)
+        stray = find_legacy_project_configs(scan_roots)
+    for path in stray:
+        problems.append(f"{path}: project-scoped server config, loaded alongside the shared one")
+
     if problems:
+        remediation = "Run `scaffold mcp install --migrate`, then restart the client."
+        if stray:
+            # Deliberately not offered as an automatic removal: these files are
+            # per-repo and often committed, so deleting one on the user's behalf
+            # could reach a colleague's checkout through version control.
+            removals = " ".join(f"rm {path}" for path in stray)
+            remediation = (
+                f"Remove the project-scoped config(s) by hand: {removals}. "
+                "The shared server already serves these projects."
+            )
+            if len(problems) > len(stray):
+                remediation += " Then run `scaffold mcp install --migrate`."
+            remediation += " Restart the client afterwards."
         return CheckResult(
             status="warn",
             summary=f"{len(problems)} problem(s) with the registered server entries.",
             details=problems,
-            remediation="Run `scaffold mcp install --migrate`, then restart the client.",
+            remediation=remediation,
         )
     return CheckResult(status="ok", summary=f"One canonical entry at {context.mcp_config_path}.")
 

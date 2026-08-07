@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from agentscaffold.hooks.config import EnforcementConfig, HookRuleConfig, PlatformHooksConfig
 from agentscaffold.hooks.engine import HookEngine
 from agentscaffold.hooks.events import HookEvent
@@ -353,6 +355,227 @@ def test_write_cursor_mcp_json_skips_existing(tmp_path: Path, capsys) -> None:
     # Original content must be preserved
     data = json.loads(mcp_path.read_text())
     assert "other" in data["mcpServers"]
+
+
+# ---------------------------------------------------------------------------
+# Plan 253: the per-project config must not undo the single-server migration
+#
+# Since 0.10 one project-aware server serves every registered project, so a
+# per-project `.cursor/mcp.json` in a registered root is the legacy registration
+# that `scaffold mcp install --migrate` exists to retire. Generating one there
+# reverts the migration along the documented upgrade path.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def isolated_client_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the developer's real ``~/.cursor/mcp.json`` out of these results.
+
+    The generator now consults the client config to decide whether a shared
+    server already covers a repo, so without this the outcome of several tests
+    would depend on whether whoever runs the suite happens to have AgentScaffold
+    installed -- passing on one laptop and failing on the next.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path / "clean-home"))
+
+
+def _install_canonical_entry(home: Path) -> Path:
+    """Put a canonical shared-server entry in the client config under *home*."""
+    config = home / ".cursor" / "mcp.json"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(json.dumps({"mcpServers": {"agentscaffold": {"command": "scaffold"}}}))
+    return config
+
+
+def test_write_cursor_mcp_json_dry_run_writes_nothing_at_all(tmp_path: Path, capsys) -> None:
+    """A dry run must not create the file *or* its parent directory.
+
+    The directory matters: the writer used to run its own ``mkdir``, duplicating
+    the one the caller already guarded, so a fix that only skips the file write
+    would still leave ``.cursor/`` behind and pass a weaker assertion.
+    """
+    from agentscaffold.agents.cursor import write_cursor_mcp_json
+
+    cursor_dir = tmp_path / ".cursor"
+    write_cursor_mcp_json(cursor_dir, dry_run=True)
+
+    assert not (cursor_dir / "mcp.json").exists()
+    assert not cursor_dir.exists()
+    assert "dry-run" in capsys.readouterr().out.lower()
+
+
+def test_write_cursor_mcp_json_skipped_for_a_registered_root(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """The reported regression: a registered root must not get a per-project file."""
+    from agentscaffold.agents.cursor import write_cursor_mcp_json
+    from agentscaffold.workspace_registry import register_workspace
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _install_canonical_entry(tmp_path / "home")
+    root = tmp_path / "repo"
+    root.mkdir()
+    register_workspace(root)
+
+    write_cursor_mcp_json(root / ".cursor")
+
+    assert not (root / ".cursor" / "mcp.json").exists()
+    assert "skip" in capsys.readouterr().out.lower()
+
+
+def test_write_cursor_mcp_json_still_written_for_an_unregistered_root(tmp_path: Path) -> None:
+    """Zero-config setup must survive the fix.
+
+    A lone repo that has only ever run ``scaffold init`` is not in the registry
+    and has no shared server, so the per-project file is its only registration.
+    This fails if the skip is made unconditional.
+    """
+    from agentscaffold.agents.cursor import write_cursor_mcp_json
+
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    write_cursor_mcp_json(root / ".cursor")
+
+    assert (root / ".cursor" / "mcp.json").exists()
+
+
+def test_write_cursor_mcp_json_skipped_when_the_shared_server_is_already_installed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A project created after ``scaffold mcp install`` is not registered yet.
+
+    Registration alone would miss it, so the documented quick start would hand a
+    brand-new project two servers: ``scaffold init`` writes the per-project file
+    and ``scaffold mcp install`` then adds the shared entry beside it.
+    """
+    from agentscaffold.agents.cursor import write_cursor_mcp_json
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _install_canonical_entry(tmp_path / "home")
+    root = tmp_path / "repo"
+    root.mkdir()  # deliberately never registered
+
+    write_cursor_mcp_json(root / ".cursor")
+
+    assert not (root / ".cursor" / "mcp.json").exists()
+
+
+def test_write_cursor_mcp_json_skipped_for_a_registered_workspace_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A workspace root whose projects live in subdirectories is registered too.
+
+    ``scaffold project register`` records a lone repo as a workspace root holding
+    one project at ``.``; a ``workspace.yaml`` records subdirectories. Matching
+    only project paths passes the lone-repo test and still fails in the field.
+    """
+    from agentscaffold.agents.cursor import write_cursor_mcp_json
+    from agentscaffold.workspace_registry import register_workspace
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _install_canonical_entry(tmp_path / "home")
+    workspace = tmp_path / "ws"
+    (workspace / "alpha").mkdir(parents=True)
+    (workspace / "beta").mkdir(parents=True)
+    register_workspace(workspace, projects=[("alpha", "alpha"), ("beta", "beta")])
+
+    write_cursor_mcp_json(workspace / ".cursor")
+
+    assert not (workspace / ".cursor" / "mcp.json").exists()
+
+
+def test_write_cursor_mcp_json_matches_a_root_spelled_differently(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The registry stores a resolved path; callers arrive with any spelling.
+
+    Observed for real: the registry held ``/private/tmp/x`` while the working
+    directory was ``/tmp/x``. A string comparison silently fails to match, the
+    skip never fires, and the bug survives a test written with one spelling.
+    """
+    from agentscaffold.agents.cursor import write_cursor_mcp_json
+    from agentscaffold.workspace_registry import register_workspace
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _install_canonical_entry(tmp_path / "home")
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    register_workspace(real)
+
+    write_cursor_mcp_json(link / ".cursor")
+
+    assert not (link / ".cursor" / "mcp.json").exists()
+
+
+def test_write_cursor_mcp_json_writes_when_the_registry_cannot_be_read(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Generation must not depend on a readable registry.
+
+    The lookup is advisory, so an unreadable registry falls back to the previous
+    behaviour rather than failing the whole generate run. Anything written this
+    way is caught by ``scaffold doctor``.
+    """
+    import agentscaffold.workspace_registry as registry_module
+    from agentscaffold.agents.cursor import write_cursor_mcp_json
+
+    def _boom(*args, **kwargs):
+        raise OSError("registry unreadable")
+
+    monkeypatch.setattr(registry_module, "load_registry", _boom)
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    write_cursor_mcp_json(root / ".cursor")
+
+    assert (root / ".cursor" / "mcp.json").exists()
+
+
+def test_write_cursor_mcp_json_names_the_install_step_when_no_server_is_registered(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Registered does not imply installed.
+
+    ``scaffold project register`` only writes a registry row. Skipping on the
+    strength of registration alone can leave a project with no server at all, so
+    the skip has to say what to run.
+    """
+    from agentscaffold.agents.cursor import write_cursor_mcp_json
+    from agentscaffold.workspace_registry import register_workspace
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # no canonical entry installed
+    root = tmp_path / "repo"
+    root.mkdir()
+    register_workspace(root)
+
+    write_cursor_mcp_json(root / ".cursor")
+
+    assert not (root / ".cursor" / "mcp.json").exists()
+    assert "scaffold mcp install" in capsys.readouterr().out
+
+
+def test_run_cursor_setup_also_skips_a_registered_root(tmp_path: Path, monkeypatch) -> None:
+    """``scaffold agents cursor`` is the second caller and the quieter route.
+
+    Fixing only ``generate-all`` leaves this path recreating the same file.
+    """
+    from agentscaffold.agents.cursor import run_cursor_setup
+    from agentscaffold.workspace_registry import register_workspace
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _install_canonical_entry(tmp_path / "home")
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "scaffold.yaml").write_text("framework:\n  project_name: repo\n")
+    register_workspace(root)
+    monkeypatch.chdir(root)
+
+    run_cursor_setup()
+
+    assert not (root / ".cursor" / "mcp.json").exists()
 
 
 # ---------------------------------------------------------------------------
