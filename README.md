@@ -408,6 +408,8 @@ Full documentation is in [docs/](https://github.com/drobbster/agentscaffold/tree
 - [Semi-Autonomous Guide](https://github.com/drobbster/agentscaffold/blob/staging/docs/semi-autonomous-guide.md) — CLI/CI agent mode
 - [CI Integration](https://github.com/drobbster/agentscaffold/blob/staging/docs/ci-integration.md) — GitHub Actions workflows
 
+For maintainers: [Releasing](https://github.com/drobbster/agentscaffold/blob/staging/RELEASING.md) — branch flow, version bump, tag, publish.
+
 ## License
 
 MIT
