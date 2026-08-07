@@ -2017,6 +2017,21 @@ def mcp_install(
     console.print(f"[green]Installed the {CANONICAL_ENTRY_NAME!r} entry[/green] in {target}.")
     if plan.removed:
         console.print(f"[green]Removed legacy entries:[/green] {', '.join(plan.removed)}")
+
+    # A per-project config becomes redundant the moment the shared entry lands,
+    # so say so here rather than leaving `scaffold doctor` to report it later as
+    # a problem the user did not know they had created. Reported, never deleted:
+    # these files are per-repo and often committed (Plan 253).
+    from agentscaffold.mcp.install import find_legacy_project_configs
+
+    superseded = find_legacy_project_configs([Path.cwd()])
+    for path in superseded:
+        console.print(
+            f"[yellow]Superseded:[/yellow] {path} registers a project-scoped server "
+            "that the client will load alongside this one. Remove it with "
+            f"`rm {path}`."
+        )
+
     console.print("Restart your MCP client to pick up the change.")
 
 

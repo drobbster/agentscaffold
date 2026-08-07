@@ -5,10 +5,23 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
 from agentscaffold.cli import app
+
+
+@pytest.fixture(autouse=True)
+def isolated_client_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the developer's real ``~/.cursor/mcp.json`` out of these results.
+
+    ``init`` generates a per-project MCP config only when no shared server
+    already covers the repo, so without this the suite would pass or fail
+    depending on whether whoever runs it has run ``scaffold mcp install`` —
+    green on a fresh checkout and red on a maintainer's laptop.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path / "clean-home"))
 
 
 def test_init_creates_structure(tmp_path: Path, cli_runner: CliRunner) -> None:
