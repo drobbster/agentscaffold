@@ -322,7 +322,7 @@ def run_agents_generate_all_platforms(
     cursor_dir = project_root / ".cursor"
     if not dry_run:
         cursor_dir.mkdir(parents=True, exist_ok=True)
-    write_cursor_mcp_json(cursor_dir)
+    write_cursor_mcp_json(cursor_dir, dry_run=dry_run)
     # MCP routing + graph trust discipline doc (kept in parity with `agents cursor`).
     # Cursor only loads rules with the `.mdc` extension; a plain `.md` in
     # `.cursor/rules/` is ignored. Emit `.mdc` with `alwaysApply: true` so the

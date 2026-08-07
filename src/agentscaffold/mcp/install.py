@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -153,6 +154,68 @@ def _scan_roots() -> list[Path]:
             seen.add(resolved)
             unique.append(resolved)
     return unique
+
+
+def _comparison_key(path: Path) -> str:
+    """Normalise *path* so two spellings of one directory compare equal.
+
+    The registry stores a resolved path. A caller arrives with whatever the user
+    typed, and the two need not match textually -- observed in the field as
+    ``/private/tmp/x`` in the registry against ``/tmp/x`` on the command line.
+    ``normcase`` additionally folds case on the platforms where it is not
+    significant, so a Windows root does not miss on drive-letter casing.
+    """
+    try:
+        resolved = path.resolve()
+    except OSError:  # a path that cannot be stat'ed still has an absolute form
+        resolved = path.absolute()
+    return os.path.normcase(str(resolved))
+
+
+def registered_roots() -> list[Path]:
+    """Every directory the registry knows: workspace roots and project roots.
+
+    Both shapes, because they arise from different commands.
+    ``scaffold project register <root>`` records a lone repo as a workspace root
+    holding one project at ``.``, so the two coincide; a ``workspace.yaml``
+    records projects in subdirectories, where the workspace root is not itself a
+    project root. Matching only project paths handles the common case and still
+    misses real multi-project layouts.
+
+    Never raises. An unreadable registry yields an empty list so callers fall
+    back to their previous behaviour instead of failing over an advisory lookup.
+    """
+    try:
+        from agentscaffold.workspace_registry import load_registry
+
+        registry = load_registry()
+    except Exception:  # noqa: BLE001 - an advisory lookup must not break callers
+        logger.debug("Could not load registry to list registered roots", exc_info=True)
+        return []
+
+    roots: list[Path] = []
+    for workspace in registry.workspaces:
+        try:
+            workspace_root = Path(workspace.root)
+        except Exception:  # noqa: BLE001 - skip a malformed entry, keep going
+            continue
+        roots.append(workspace_root)
+        for project in workspace.projects:
+            try:
+                roots.append(workspace_root / project.path)
+            except Exception:  # noqa: BLE001 - skip a malformed entry, keep going
+                continue
+    return roots
+
+
+def is_registered_root(path: Path) -> bool:
+    """True when *path* is a workspace root or project root in the registry.
+
+    Used to decide whether the shared server already covers a directory, so a
+    per-project config need not be generated for it (Plan 253).
+    """
+    key = _comparison_key(path)
+    return any(_comparison_key(root) == key for root in registered_roots())
 
 
 def _registered_project_roots() -> list[Path]:
