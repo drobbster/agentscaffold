@@ -1357,6 +1357,12 @@ def graph_prune(
         "--archived-backlog-before",
         help="Prune archived backlog items older than this age (e.g. '90d').",
     ),
+    malformed_findings: bool = typer.Option(
+        False,
+        "--malformed-findings",
+        help="Prune plan-appendix findings whose body is a mid-sentence fragment "
+        "(manufactured by the pre-0.9.7 unanchored extractor).",
+    ),
     apply: bool = typer.Option(
         False,
         "--apply",
@@ -1366,17 +1372,20 @@ def graph_prune(
     """Selectively prune old governance knowledge (dry-run by default).
 
     Only status-eligible rows are ever selected: resolved findings, archived
-    backlog items, and sessions past the cutoff. Nothing is deleted unless
-    --apply is given.
+    backlog items, sessions past the cutoff, and malformed plan-appendix
+    findings. Nothing is deleted unless --apply is given.
     """
     from agentscaffold.config import load_config
     from agentscaffold.graph import graph_available, open_graph
     from agentscaffold.graph.prune import apply_prune, select_prunable
 
-    if not any([resolved_findings_before, sessions_before, archived_backlog_before]):
+    if not any(
+        [resolved_findings_before, sessions_before, archived_backlog_before, malformed_findings]
+    ):
         console.print(
             "[yellow]Nothing to prune: specify at least one of "
-            "--resolved-findings-before, --sessions-before, --archived-backlog-before.[/yellow]"
+            "--resolved-findings-before, --sessions-before, --archived-backlog-before, "
+            "--malformed-findings.[/yellow]"
         )
         raise SystemExit(1)
 
@@ -1393,6 +1402,7 @@ def graph_prune(
                 resolved_findings_before=resolved_findings_before,
                 sessions_before=sessions_before,
                 archived_backlog_before=archived_backlog_before,
+                malformed_findings=malformed_findings,
             )
         except ValueError as exc:
             console.print(f"[red]{exc}[/red]")

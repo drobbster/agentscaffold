@@ -333,15 +333,26 @@ def _parse_learnings(filepath: Path) -> list[dict[str, Any]]:
 # come AFTER their longer variants so the alternation prefers the longest match.
 # The optional (?P<severity>!{1,2}) consumes the "!"/"!!" severity markers the
 # formatters append (e.g. "[DEPENDENCY]!! ..."), keeping them out of the text.
+#
+# Anchored to line start (Plan 250). Unanchored, the pattern also fired on
+# category names mentioned in ordinary prose -- including inside inline code
+# spans -- and captured the rest of the sentence as the finding body. Over the
+# 44-plan governance corpus that was a 100 per cent false-positive rate, because
+# review appendices there are written as prose per AGENTS.md and never use this
+# format. The optional bullet/number prefix keeps normal appendix formatting
+# working; the continuation guard mirrors it so a wrapped finding still attaches
+# to its marker rather than starting a new one.
+_LINE_PREFIX = r"[ \t]*(?:[-*+]|\d+\.)?[ \t]*"
 _FINDING_RE = re.compile(
-    r"\[(?P<category>"
+    r"^" + _LINE_PREFIX + r"\[(?P<category>"
     r"DEPENDENCY_COMPLETENESS|DEPENDENCY|"
     r"CONSUMER_AUDIT|CONSUMER|"
     r"SIMILAR_PATTERN|PATTERN|"
     r"INTEGRATION_POINTS|TEST_COVERAGE|"
     r"HISTORY|LEARNING|LAYER|CONTRACT|PERFORMANCE|"
     r"FINDING|RISK|GAP|EDGE_CASE"
-    r")\](?P<severity>!{1,2})?\s*(?P<text>[^\n]+(?:\n(?!\[)[^\n]+)*)",
+    r")\](?P<severity>!{1,2})?[ \t]*"
+    r"(?P<text>[^\n]+(?:\n(?!" + _LINE_PREFIX + r"\[)[^\n]+)*)",
     re.MULTILINE,
 )
 
@@ -381,9 +392,13 @@ def _ingest_plan_findings(store: GraphBackend, plan_number: int, text: str) -> i
     create_node's ON CONFLICT DO NOTHING semantics, so this is idempotent
     across re-indexing and never clobbers a finding already marked resolved.
     """
-    from agentscaffold.graph.findings import _finding_id
+    from agentscaffold.graph.findings import _finding_id, is_malformed_finding
 
-    raw = _parse_review_findings(text, plan_number, _PLAN_APPENDIX_REVIEW_TYPE)
+    raw = [
+        f
+        for f in _parse_review_findings(text, plan_number, _PLAN_APPENDIX_REVIEW_TYPE)
+        if not is_malformed_finding(f["finding"])
+    ]
     for f in raw:
         finding_id = _finding_id(
             plan_number, _PLAN_APPENDIX_REVIEW_TYPE, f["category"], f["finding"]
