@@ -8,15 +8,35 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
-Phases A and B of Plan 249 are complete and release together as 0.10.0. Phase A alone
-would have shipped a breaking change to MCP registration plus a state migration with no
-tool to tell you whether the migration worked; that tool is ``scaffold doctor`` and it
-lands in Phase B. Releasing the migration a version ahead of its diagnostic would create
-exactly the kind of invisible failure this work exists to remove.
+## [0.10.0] - 2026-08-07
 
-**Not yet cut.** Phase A changed how every MCP tool resolves the project it answers from,
-so the release is gated on Phase F verifying each tool against that change rather than on
-the unit suite alone.
+**One MCP server for a whole workspace, and a graph that sees your relative imports.**
+
+The headline is Plan 249: AgentScaffold no longer needs one MCP server process per
+project. A single project-aware server resolves which project each call belongs to from
+the path you are working on, which is what makes monorepos and multi-repo workspaces
+practical. Alongside it, generated guidance and mutable state stop being copied into
+every project root.
+
+Phases A and B ship together deliberately. Phase A alone would have delivered a breaking
+change to MCP registration plus a state migration with no tool to tell you whether the
+migration worked. That tool is ``scaffold doctor``, and it lands in Phase B. Releasing a
+migration a version ahead of its diagnostic would create exactly the kind of invisible
+failure this work exists to remove.
+
+Because Phase A changed how *every* tool resolves the project it answers from, the
+release was gated on a per-tool conformance sweep rather than on the unit suite alone.
+That sweep (Phase F) is what produced most of the fixes below, including two defects it
+found in the graph itself.
+
+Also included: the finding-extraction fix from Plan 250, the relative-import fix from
+Plan 252, and the parts of Plan 251 that were completed early because the conformance
+work depended on them — the ``layers`` check and the scoping conformance suite.
+
+**Two things to know before upgrading.** Your graph rebuilds on the first ``scaffold
+index`` (see *Fixed*, relative imports). And if you have been running one MCP server per
+project, see *Changed* for the migration — old registrations keep working behind a
+deprecation notice rather than breaking.
 
 ### Added
 - **``scaffold doctor``** (Plan 249 Phase B) diagnoses an installation: registered roots
@@ -35,6 +55,27 @@ the unit suite alone.
   database, so the command cannot leave findings or backlog items in your governance
   record either way. A database predating the current schema reports once as "graph schema
   is out of date" rather than as a dozen broken tools.
+- **``scaffold_validate`` with ``check="layers"``** now works. It was advertised in the
+  tool schema and returned "not yet implemented" when called. It enforces the layering
+  rule your ``AGENTS.md`` states — a component consumes the layer directly below it and
+  does not bypass intermediate ones — reporting both shapes that break it: an
+  **inversion**, where a lower layer imports a higher one, and a **skip**, which reaches
+  past an intermediate layer.
+
+  It has a third answer besides pass and fail. The check needs layer definitions from
+  ``system_architecture.md`` and code files matching their path patterns in the *same*
+  graph, and plenty of repositories have one without the other — an architecture document
+  governing a codebase that lives elsewhere, for instance. In that case it returns
+  ``not_evaluable`` with a reason and a remediation, rather than an empty violation list.
+  "No violations found" from a graph containing no layered files would be a claim about
+  nothing while reading as a clean bill of health, which for a drift-detection check is
+  the most convincing way it could mislead you. Treat ``not_evaluable`` as unknown, never
+  as fine.
+- **``scaffold graph prune --malformed-findings``** removes findings created by the
+  extraction defect described below. Removal covers both the graph and the
+  ``governance.json`` artifact that re-indexing restores from — purging only the graph
+  would let the next index bring them straight back. Dry run by default, like the rest of
+  ``prune``; a clean project reports nothing to remove.
 - **The version-skew check** compares what each MCP entry actually launches against the
   running CLI. An entry naming an absolute interpreter keeps launching whatever is left
   at that path after a virtualenv rebuild; the server still starts, just with an old
@@ -119,6 +160,13 @@ the unit suite alone.
   checkout.
 
 ### Fixed
+- **Finding extraction matched ``[CATEGORY]`` tokens anywhere in a line** (Plan 250),
+  instead of only at the start where a real finding marker sits. Ordinary prose that
+  happened to mention one produced a garbled finding with truncated text — including,
+  with some irony, the plan documents that described the bug, which regenerated the bad
+  rows on every re-index. The pattern is now anchored to the line start and a write-time
+  guard rejects malformed text before it reaches the graph. Existing bad rows are not
+  removed automatically; see ``scaffold graph prune --malformed-findings`` above.
 - **Relative Python imports produced no ``IMPORTS`` edge** (Plan 252), so ``scaffold
   impact`` under-reported blast radius on any package that uses them — 22.8% of ``from``
   statements across 88 real packages, with 75 of the 88 affected. ``from .core import x``
