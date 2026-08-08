@@ -8,6 +8,8 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-08-07
+
 ### Fixed
 - **Abandoned graph write locks no longer block every writer for ten minutes.**
   When a holder dies without cleaning up `.scaffold/graph.write.lock/`, waiters
