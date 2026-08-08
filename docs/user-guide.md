@@ -1468,7 +1468,21 @@ concurrent writers safe -- it still assumes a single writer.
 
 To resolve a lock, stop any running MCP server first (`Ctrl-C` or kill the
 process) and ensure no other `scaffold` command is running, then re-run your
-command. If the file is genuinely corrupted, rebuild it:
+command.
+
+**Abandoned write-lock directory.** AgentScaffold also uses a small filesystem
+lock beside the database (`.scaffold/graph.write.lock/`, or next to a migrated
+graph under the platform state directory). If a writer crashes, that directory
+can be left behind. As of 0.10.3 the next waiter removes it when `owner.json`
+names a process that is no longer alive. If you still see
+`graph_locked` / `Timed out waiting for graph write lock` and no AgentScaffold
+process is running, remove the lock directory named in the error and retry:
+
+```bash
+rm -rf .scaffold/graph.write.lock
+```
+
+If the DuckDB file itself is genuinely corrupted, rebuild it:
 
 ```bash
 rm .scaffold/graph.duckdb

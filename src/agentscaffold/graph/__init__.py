@@ -69,10 +69,9 @@ def open_graph(
 
         if not read_only:
             if not wait_for_graph_write_lock_clear(db_path, timeout=lock_timeout):
-                raise GraphLockError(
-                    f"Could not open the knowledge graph at {db_path}: another "
-                    "AgentScaffold graph write is still running."
-                )
+                from agentscaffold.graph.locks import open_graph_lock_message
+
+                raise GraphLockError(open_graph_lock_message(db_path))
         store = DuckPGQBackend(db_path, read_only=read_only)
         if not read_only:
             # Enable git-backed governance write-through (Plan 222): runtime
