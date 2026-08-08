@@ -15,13 +15,25 @@ that receives what was already published, and the question "has this soaked with
 the other pending changes?" can no longer be asked, because the answer arrives
 after the artifact is on PyPI and cannot be recalled.
 
-**The rule that keeps this honest:** never tag or publish a commit that is not
-already reachable from `staging`.
+**The rule that keeps this honest:** never tag or publish content that `staging`
+has not seen.
 
 ```bash
-# Must print the commit. If it prints nothing, stop -- staging has not seen this.
-git merge-base --is-ancestor <commit> origin/staging && echo "reachable from staging"
+# Must print OK. If it does not, main holds something staging never saw.
+[ "$(git rev-parse main^{tree})" = "$(git rev-parse origin/staging^{tree})" ] \
+  && echo "OK: main's content is exactly staging's"
 ```
+
+Compare **trees**, not commits. The obvious phrasing — is this commit reachable
+from `staging`? — cannot work here: merging `staging` into `main` creates a new
+merge commit that by definition exists only on `main`, so the check fails on a
+perfectly correct release. A check that fails on everything is not a check, and
+would be switched off the first time it blocked a good release.
+
+The tree comparison asks the question actually worth asking: does `main` contain
+any content that did not come through `staging`? Verified to discriminate in both
+directions on a scratch repository — it passes a staging-merged release and fails
+a commit made straight to `main`.
 
 ## Steps
 
@@ -110,7 +122,8 @@ Then confirm the gate before tagging:
 
 ```bash
 git checkout main && git pull --ff-only
-git merge-base --is-ancestor HEAD origin/staging && echo "OK: staging saw this"
+[ "$(git rev-parse main^{tree})" = "$(git rev-parse origin/staging^{tree})" ] \
+  && echo "OK: staging saw this" || echo "STOP: main has content staging never saw"
 ```
 
 If that fails, the release skipped the gate. Do not tag. Work out how it was
@@ -188,17 +201,29 @@ order it cannot be needed: `staging` is already ahead of `main` by construction.
 you ever find yourself wanting to sync staging *from* main, something upstream went
 in the wrong direction — fix that rather than papering over it.
 
-## The first cut under this document found a hole in it
+## The first cut under this document found two holes in it
 
-0.10.1 was the first release to follow these steps, and step 6 originally said to
-PR the release branch to `main`. The gate check in step 7 then refused it, exactly
-as designed: the version-bump commit is created after the branch is cut from
-staging, so the commit being tagged had never been on staging even though
-everything beneath it had.
+0.10.1 was the first release to follow these steps, and it did not survive them
+unchanged.
 
-Both steps have been corrected above. Worth recording rather than quietly fixing,
-for two reasons. The wrong version was subtle — the release branch really is cut
-from staging, so it looks gated, and only the one commit that matters is not. And
-the check earned its place: it was written as a formality to express an invariant
-already believed to hold, and the first time it ran in anger it stopped a release
-that would otherwise have looked completely normal.
+**Step 6 named the wrong base.** It said to PR the release branch to `main`. But
+steps 4 and 5 add a commit *after* the branch is cut from staging — the version
+bump and the dated changelog — and that commit is the one that gets tagged.
+Basing the PR on `main` leaves it as the single commit in the release that
+`staging` never saw. Subtle, because the release branch really is cut from
+staging, so it looks gated; only the commit that matters is not.
+
+**The gate check itself was unrunnable.** It asked whether the commit being
+tagged is reachable from `staging`. Merging `staging` into `main` creates a merge
+commit that exists only on `main`, so the check failed on a completely correct
+release. It had been written to express an invariant already believed to hold,
+and was never run against a merge-based promotion, so its failure mode went
+unnoticed until the release it was meant to protect.
+
+That is the more instructive of the two. A check that says no to everything looks
+exactly like a strict check right up to the moment you need to trust it, and the
+natural response to one blocking a release you know is good is to stop running
+it. The replacement compares trees, and was verified on a scratch repository to
+pass a staging-merged release *and* fail a commit made straight to `main` — both
+directions, before being written down. The original was only ever confirmed in
+the direction that agreed with it.

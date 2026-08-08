@@ -8,6 +8,19 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-08-07
+
+### Fixed
+- **Abandoned graph write locks no longer block every writer for ten minutes.**
+  When a holder dies without cleaning up `.scaffold/graph.write.lock/`, waiters
+  (MCP writes at 8s, index at 30s) used to fail with `graph_locked` while the
+  reaper waited for a 600s mtime gate. The reaper now clears the lock immediately
+  when `owner.json` records a dead pid, keeps the mtime fallback for missing
+  metadata / unknown liveness, and releases the directory if owner metadata
+  cannot be written after acquire. Timeout and `GraphLockError` messages name the
+  lock path and stop claiming a writer is "still running" when clearing may be
+  what is needed.
+
 ## [0.10.2] - 2026-08-07
 
 Fixes a regression, reported from the field, in which the last step of the documented
