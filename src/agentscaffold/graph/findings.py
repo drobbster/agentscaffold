@@ -166,6 +166,40 @@ def record_finding(
     }
 
 
+def _returning_id(rows: list[dict[str, Any]]) -> str | None:
+    """Id from UPDATE ... RETURNING, or None.
+
+    DuckDB UPDATE without RETURNING yields ``[{Count: 0}]`` -- a non-empty list.
+    Only a row with an ``id`` key counts as a hit.
+    """
+    for row in rows:
+        rid = row.get("id")
+        if rid:
+            return str(rid)
+    return None
+
+
+def _id_candidates(raw_id: str, project: str | None) -> list[str]:
+    """Exact-id forms to try: as given, plus Plan 225 qualified/unqualified."""
+    raw_id = raw_id.strip()
+    if not raw_id:
+        return []
+    out = [raw_id]
+    if not project:
+        return out
+    from agentscaffold.graph.scoping import qualify_id, unqualify_id  # noqa: PLC0415
+
+    prefix = f"{project}::"
+    if not raw_id.startswith(prefix):
+        qualified = qualify_id(project, raw_id)
+        if qualified not in out:
+            out.append(qualified)
+    _head, rest = unqualify_id(raw_id, known_projects={project})
+    if rest and rest not in out:
+        out.append(rest)
+    return out
+
+
 def resolve_finding(
     store: GraphBackend,
     finding_id: str,
@@ -174,6 +208,10 @@ def resolve_finding(
     project: str | None = None,
 ) -> dict[str, Any]:
     """Mark a ReviewFinding as resolved.
+
+    A miss returns ``status="not_found"`` and does not fabricate success.
+    ``finding_id`` may be the canonical ``rf::`` hash or its project-qualified
+    form. There is no human-id / title lookup (finding bodies are free text).
 
     Args:
         store: Open GraphBackend instance.
@@ -186,21 +224,54 @@ def resolve_finding(
         Dict with ``id``, ``status``, and timing info.
     """
     t0 = time.monotonic()
-    proj_filter = f" AND project = '{_esc(project)}'" if project else ""
+    caller_id = (finding_id or "").strip()
+    candidates = _id_candidates(caller_id, project)
 
     from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
 
     with governance_write_lock(store):
-        store.execute(
-            f"UPDATE ReviewFinding SET status = 'resolved', resolution = '{_esc(resolution)}'"
-            f" WHERE id = '{_esc(finding_id)}'{proj_filter}"
-        )
+        canonical_id = None
+        if candidates:
+            placeholders = ", ".join(["?"] * len(candidates))
+            params: dict[str, Any] = {f"id{i}": v for i, v in enumerate(candidates)}
+            sql = f"SELECT id FROM ReviewFinding WHERE id IN ({placeholders})"
+            if project:
+                sql += " AND project = ?"
+                params["project"] = project
+            hits = store.query(sql, params)
+            hit_ids = list(dict.fromkeys(str(r["id"]) for r in hits if r.get("id")))
+            if len(hit_ids) == 1:
+                canonical_id = hit_ids[0]
+            elif len(hit_ids) > 1:
+                elapsed_ms = (time.monotonic() - t0) * 1000
+                return {
+                    "id": caller_id,
+                    "status": "ambiguous",
+                    "candidates": [{"id": i} for i in hit_ids],
+                    "elapsed_ms": elapsed_ms,
+                }
+
+        if canonical_id is None:
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            return {"id": caller_id, "status": "not_found", "elapsed_ms": elapsed_ms}
+
+        upd: dict[str, Any] = {"resolution": resolution, "id": canonical_id}
+        upd_sql = "UPDATE ReviewFinding SET status = 'resolved', resolution = ? WHERE id = ?"
+        if project:
+            upd_sql += " AND project = ?"
+            upd["project"] = project
+        upd_sql += " RETURNING id"
+        rows = store.query(upd_sql, upd)
+        matched = _returning_id(rows)
+        if matched is None:
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            return {"id": caller_id, "status": "not_found", "elapsed_ms": elapsed_ms}
 
         _sync_governance(store)
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {
-        "id": finding_id,
+        "id": matched,
         "status": "resolved",
         "resolution": resolution,
         "elapsed_ms": elapsed_ms,

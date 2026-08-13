@@ -1198,10 +1198,10 @@ When running the MCP server (`scaffold mcp`), 26 tools are available to AI agent
 | `scaffold_find_adrs` | "any ADRs about X" / "what ADR governs X" | Search architectural decision records by topic or status |
 | `scaffold_decision_context` | "decision history for plan X" / "trace the decisions for plan X" | Full decision chain: governing ADRs, validation spikes, supporting studies, dependency status |
 | `scaffold_record_finding` | "record finding" / "log this review finding" | Create a ReviewFinding node linked to a plan, files, and functions — persists across sessions |
-| `scaffold_resolve_finding` | "mark finding resolved" / "resolve this finding" | Mark a finding as resolved; retained in graph for audit trail |
+| `scaffold_resolve_finding` | "mark finding resolved" / "resolve this finding" | Mark a finding as resolved; retained in graph for audit trail. `finding_id` is the `rf::` id from record/orient; a miss returns `not_found`. |
 | `scaffold_record_findings_batch` | "record all findings" / "log these findings" | Create multiple ReviewFinding nodes in a single transaction (efficient for post-review batches) |
 | `scaffold_record_backlog_item` | "add backlog item" / "track backlog item" | Create one or more BacklogItem nodes (additive to `backlog.md`; enables backlog queries in orient/prepare_review) |
-| `scaffold_resolve_backlog_item` | "resolve backlog item" / "archive backlog item" | Mark a BacklogItem archived; retained in graph for retrospective queries |
+| `scaffold_resolve_backlog_item` | "resolve backlog item" / "archive backlog item" | Mark a BacklogItem archived. Pass the `bi::` id from record/orient, or a unique human id / title prefix (`DQ-043`). A miss returns `not_found`; the optional `resolution` note is stored. |
 
 **Governed Lifecycle Tools** — the two-phase chain that wraps implementation:
 
@@ -1277,8 +1277,11 @@ the graph, not in context.
    ```
    "mark finding rf::abc123 resolved -- added retry backoff in commit abc456"
    ```
-   The finding status flips to `resolved`. It is retained in the graph for retrospective
-   audit but filtered from active review output.
+   Use the `rf::` id from `scaffold_record_finding` or from orient /
+   prepare_review -- not a human label. A miss returns `status: not_found`
+   rather than pretending the write succeeded. The finding status flips to
+   `resolved`. It is retained in the graph for retrospective audit but
+   filtered from active review output.
 
 4. **Retrospective** — `scaffold_prepare_retro` surfaces resolved findings as part of the
    post-implementation record, showing what was caught in review and how it was addressed.

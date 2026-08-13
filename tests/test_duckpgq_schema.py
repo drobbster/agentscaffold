@@ -46,6 +46,39 @@ def test_schema_version():
     assert SCHEMA_VERSION == 10  # bumped in Plan 252 (relative-import IMPORTS edges)
 
 
+def test_backlogitem_ddl_includes_resolution():
+    backlog_ddl = next(s for s in NODE_TABLES if "BacklogItem" in s)
+    assert "resolution" in backlog_ddl
+
+
+def test_backlogitem_resolution_column_added_to_existing_table(conn):
+    """Plan 255: ALTER adds resolution without a SCHEMA_VERSION rebuild."""
+    conn.execute("DROP TABLE IF EXISTS BacklogItem")
+    conn.execute(
+        """
+        CREATE TABLE BacklogItem (
+            id VARCHAR PRIMARY KEY,
+            planNumber BIGINT,
+            title VARCHAR,
+            priority VARCHAR,
+            effort VARCHAR,
+            status VARCHAR,
+            source VARCHAR,
+            createdAt VARCHAR,
+            archivedAt VARCHAR
+        )
+        """
+    )
+    init_schema(conn)
+    cols = [
+        str(r[0]).lower()
+        for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'BacklogItem'"
+        ).fetchall()
+    ]
+    assert "resolution" in cols
+
+
 def test_the_plan_252_bump_changed_no_tables():
     """Version 10 is a *derivation* change, not a DDL one.
 
@@ -54,6 +87,10 @@ def test_the_plan_252_bump_changed_no_tables():
     produced. No table was added or altered. The two counts below being
     unchanged across the bump is what distinguishes that case from a real schema
     migration, and keeps the bump from being read later as evidence of one.
+
+    Plan 255 later added BacklogItem.resolution at this same version, via an
+    additive ALTER rather than a bump. So version 10 is not a promise that the
+    columns never moved -- only that the set of tables did not.
     """
     assert len(NODE_TABLES) == 21
     assert len(EDGE_TABLES) == 37

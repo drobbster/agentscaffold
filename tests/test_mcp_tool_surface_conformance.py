@@ -203,6 +203,23 @@ def test_every_tool_advertises_working_path(spec):
     )
 
 
+@pytest.mark.parametrize("spec", tool_specs(), ids=lambda s: s.name)
+def test_every_declared_argument_describes_itself(spec):
+    """A property key with stray whitespace is silently not a description.
+
+    Nothing else fails when it happens: the schema stays valid JSON, lint sees a
+    well-formed dict literal, and the tool keeps working. The only casualty is
+    the guidance the agent needed to call the tool correctly.
+    """
+    for prop_name, prop in spec.input_schema.get("properties", {}).items():
+        assert all(key == key.strip() for key in prop), (
+            f"{spec.name}.{prop_name} has a whitespace-padded schema key: {list(prop)}"
+        )
+        assert prop.get("description", "").strip(), (
+            f"{spec.name}.{prop_name} has no description for the agent to read"
+        )
+
+
 @pytest.mark.parametrize(
     "name",
     [n for n in tool_names() if n in {"scaffold_context", "scaffold_impact", "scaffold_search"}],
