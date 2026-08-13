@@ -260,3 +260,66 @@ def test_batch_and_single_coexist(store):
     ids = {r["id"] for r in rows}
     assert single["id"] in ids
     assert batch["ids"][0] in ids
+
+
+def test_resolve_finding_bogus_id_is_not_found(store):
+    from agentscaffold.graph.findings import resolve_finding
+
+    result = resolve_finding(store, "rf::deadbeefdeadbeef-does-not-exist", resolution="nope")
+    assert result["status"] == "not_found"
+    rows = store.query(
+        "SELECT count(*) AS c FROM ReviewFinding WHERE id = 'rf::deadbeefdeadbeef-does-not-exist'"
+    )
+    assert rows[0]["c"] == 0
+
+
+def test_mcp_resolve_finding_bogus_id_has_error_code(store):
+    from agentscaffold.mcp.server import _tool_resolve_finding
+
+    result = _tool_resolve_finding(
+        store,
+        {"finding_id": "rf::deadbeefdeadbeef-does-not-exist", "resolution": "nope"},
+        {},
+    )
+    assert result["status"] == "not_found"
+    assert result["error_code"] == "not_found"
+    assert "not found" in str(result["error"]).lower()
+
+
+def test_resolve_finding_persists_resolution(store):
+    from agentscaffold.graph.findings import record_finding, resolve_finding
+
+    created = record_finding(
+        store,
+        plan_number=151,
+        review_type="quant_architect",
+        category="correctness",
+        finding="bounds missing",
+    )
+    result = resolve_finding(store, created["id"], resolution="added a check")
+    assert result["status"] == "resolved"
+    rows = store.query(f"SELECT status, resolution FROM ReviewFinding WHERE id = '{created['id']}'")
+    assert rows[0]["status"] == "resolved"
+    assert rows[0]["resolution"] == "added a check"
+
+
+def test_resolve_finding_qualified_id_forms(store):
+    from agentscaffold.graph.findings import resolve_finding
+
+    store.create_node(
+        "ReviewFinding",
+        {
+            "id": "alpha::rf::cafebabeface",
+            "reviewType": "pre_review",
+            "planNumber": 1,
+            "severity": "medium",
+            "category": "correctness",
+            "finding": "prefixed finding",
+            "resolution": "",
+            "status": "open",
+            "project": "alpha",
+        },
+    )
+    result = resolve_finding(store, "rf::cafebabeface", resolution="fixed", project="alpha")
+    assert result["status"] == "resolved"
+    assert result["id"] == "alpha::rf::cafebabeface"

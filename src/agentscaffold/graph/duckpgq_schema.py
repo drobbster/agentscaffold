@@ -282,7 +282,8 @@ _AUTHORED_NODE_TABLES: list[str] = [
         status     VARCHAR,
         source     VARCHAR,
         createdAt  VARCHAR,
-        archivedAt VARCHAR
+        archivedAt VARCHAR,
+        resolution VARCHAR DEFAULT ''
     )
     """,
     # --- Metadata nodes ---
@@ -529,6 +530,17 @@ def init_schema(conn: duckdb.DuckDBPyConnection, *, force_recreate_graph: bool =
         conn.execute(stmt)
     for stmt in AUXILIARY_TABLES:
         conn.execute(stmt)
+    # Additive column for existing databases (Plan 255). CREATE TABLE IF NOT EXISTS
+    # does not add columns to an already-created table; this ALTER is idempotent
+    # and avoids a SCHEMA_VERSION bump / full rebuild for one VARCHAR.
+    try:
+        conn.execute(
+            "ALTER TABLE BacklogItem ADD COLUMN IF NOT EXISTS resolution VARCHAR DEFAULT ''"
+        )
+    except Exception as exc:
+        # Older DuckDB without IF NOT EXISTS: ignore "already exists".
+        if "already exists" not in str(exc).lower():
+            raise
     if force_recreate_graph:
         conn.execute(DROP_PROPERTY_GRAPH_SQL)
         conn.execute(CREATE_PROPERTY_GRAPH_SQL)

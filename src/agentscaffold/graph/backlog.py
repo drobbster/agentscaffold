@@ -3,7 +3,11 @@
 Provides ``record_backlog_item()`` and ``resolve_backlog_item()`` that persist
 BacklogItem nodes in the DuckPGQ knowledge graph.
 
-BacklogItem IDs follow the existing project convention: ``B-{plan}-{seq}``.
+BacklogItem IDs are content hashes ``bi::`` + SHA1 of
+``{project?}backlog::{plan_number}::{title[:64]}``, not the human IDs in
+``backlog.md``. ``resolve_backlog_item`` accepts the hash, a Plan 225
+project-qualified form, or a unique human-id / title prefix.
+
 The markdown files (backlog.md, backlog_archive.md, plan appendices) remain the
 human-readable record -- graph writes are strictly additive.
 
@@ -90,6 +94,7 @@ def record_backlog_item(
         "source": source,
         "createdAt": now,
         "archivedAt": "",
+        "resolution": "",
         "project": project or "",
     }
 
@@ -171,6 +176,7 @@ def record_backlog_items_batch(
                     "source": item.get("source", ""),
                     "createdAt": now,
                     "archivedAt": "",
+                    "resolution": "",
                     "project": project or "",
                 }
                 store.create_node("BacklogItem", props)
@@ -195,6 +201,90 @@ def record_backlog_items_batch(
     }
 
 
+def _returning_id(rows: list[dict[str, Any]]) -> str | None:
+    """Id from UPDATE ... RETURNING, or None.
+
+    DuckDB UPDATE without RETURNING yields ``[{Count: 0}]`` -- a non-empty list.
+    Only a row with an ``id`` key counts as a hit.
+    """
+    for row in rows:
+        rid = row.get("id")
+        if rid:
+            return str(rid)
+    return None
+
+
+def _id_candidates(raw_id: str, project: str | None) -> list[str]:
+    """Exact-id forms to try: as given, plus Plan 225 qualified/unqualified."""
+    raw_id = raw_id.strip()
+    if not raw_id:
+        return []
+    out = [raw_id]
+    if not project:
+        return out
+    from agentscaffold.graph.scoping import qualify_id, unqualify_id  # noqa: PLC0415
+
+    prefix = f"{project}::"
+    if not raw_id.startswith(prefix):
+        qualified = qualify_id(project, raw_id)
+        if qualified not in out:
+            out.append(qualified)
+    _head, rest = unqualify_id(raw_id, known_projects={project})
+    if rest and rest not in out:
+        out.append(rest)
+    return out
+
+
+def _lookup_backlog_canonical(
+    store: GraphBackend,
+    item_id: str,
+    project: str | None,
+) -> dict[str, Any]:
+    """Resolve caller input to a stored BacklogItem id, or a miss/ambiguous dict.
+
+    Returns ``{"status": "ok", "id": canonical}`` on a unique match.
+    """
+    candidates = _id_candidates(item_id, project)
+    if not candidates:
+        return {"status": "not_found"}
+
+    placeholders = ", ".join(["?"] * len(candidates))
+    params: dict[str, Any] = {f"id{i}": v for i, v in enumerate(candidates)}
+    sql = f"SELECT id, title FROM BacklogItem WHERE id IN ({placeholders})"
+    if project:
+        sql += " AND project = ?"
+        params["project"] = project
+    exact = store.query(sql, params)
+    exact_ids = list(dict.fromkeys(str(r["id"]) for r in exact if r.get("id")))
+    if len(exact_ids) == 1:
+        return {"status": "ok", "id": exact_ids[0]}
+    if len(exact_ids) > 1:
+        return {
+            "status": "ambiguous",
+            "candidates": [{"id": r["id"], "title": r.get("title", "")} for r in exact],
+        }
+
+    title_params: dict[str, Any] = {"title": item_id, "colon": f"{item_id}:"}
+    title_sql = "SELECT id, title FROM BacklogItem WHERE (title = ? OR starts_with(title, ?)"
+    if "-" in item_id:
+        title_sql += " OR starts_with(title, ?)"
+        title_params["space"] = f"{item_id} "
+    title_sql += ")"
+    if project:
+        title_sql += " AND project = ?"
+        title_params["project"] = project
+    titles = store.query(title_sql, title_params)
+    title_ids = list(dict.fromkeys(str(r["id"]) for r in titles if r.get("id")))
+    if len(title_ids) == 1:
+        return {"status": "ok", "id": title_ids[0]}
+    if len(title_ids) > 1:
+        return {
+            "status": "ambiguous",
+            "candidates": [{"id": r["id"], "title": r.get("title", "")} for r in titles],
+        }
+    return {"status": "not_found"}
+
+
 def resolve_backlog_item(
     store: GraphBackend,
     item_id: str,
@@ -204,8 +294,14 @@ def resolve_backlog_item(
 ) -> dict[str, Any]:
     """Mark a BacklogItem as archived (completed).
 
-    Sets status to 'archived' and records the archived timestamp. The item
-    remains in the graph for retrospective queries.
+    Sets status to 'archived' and records the archived timestamp and optional
+    resolution note. The item remains in the graph for retrospective queries.
+
+    ``item_id`` may be the canonical ``bi::`` hash (or its project-qualified
+    form), or a unique human id / title prefix (``DQ-043``, ``B-249-1``).
+
+    A miss returns ``status="not_found"`` and does not fabricate success. Two
+    or more title matches return ``status="ambiguous"``.
 
     Args:
         store: Open GraphBackend instance.
@@ -219,21 +315,48 @@ def resolve_backlog_item(
     """
     t0 = time.monotonic()
     now = datetime.now(timezone.utc).isoformat()
-    proj_filter = f" AND project = '{_esc(project)}'" if project else ""
+    caller_id = (item_id or "").strip()
 
     from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
 
     with governance_write_lock(store):
-        store.execute(
-            f"UPDATE BacklogItem SET status = 'archived', archivedAt = '{now}'"
-            f" WHERE id = '{_esc(item_id)}'{proj_filter}"
+        looked = _lookup_backlog_canonical(store, caller_id, project)
+        if looked["status"] != "ok":
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            payload: dict[str, Any] = {
+                "id": caller_id,
+                "status": looked["status"],
+                "elapsed_ms": elapsed_ms,
+            }
+            if looked["status"] == "ambiguous":
+                payload["candidates"] = looked.get("candidates", [])
+            return payload
+
+        canonical_id = looked["id"]
+        params: dict[str, Any] = {
+            "archivedAt": now,
+            "resolution": resolution,
+            "id": canonical_id,
+        }
+        sql = (
+            "UPDATE BacklogItem SET status = 'archived', archivedAt = ?, resolution = ?"
+            " WHERE id = ?"
         )
+        if project:
+            sql += " AND project = ?"
+            params["project"] = project
+        sql += " RETURNING id"
+        rows = store.query(sql, params)
+        matched = _returning_id(rows)
+        if matched is None:
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            return {"id": caller_id, "status": "not_found", "elapsed_ms": elapsed_ms}
 
         _sync_governance(store)
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {
-        "id": item_id,
+        "id": matched,
         "status": "archived",
         "resolution": resolution,
         "archived_at": now,

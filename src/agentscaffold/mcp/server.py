@@ -2532,6 +2532,57 @@ def _tool_resolve_finding(
     result = resolve_finding(
         store, finding_id, resolution=resolution, project=_current_project_or_none()
     )
+    return _wrap_resolve_result(
+        result,
+        meta,
+        kind="ReviewFinding",
+        remediation=(
+            "Pass the rf:: id from scaffold_record_finding or from "
+            "orient / prepare_review. A miss returns not_found rather than "
+            "a fake resolve."
+        ),
+    )
+
+
+def _wrap_resolve_result(
+    result: dict[str, Any],
+    meta: dict[str, Any],
+    *,
+    kind: str,
+    remediation: str,
+) -> dict[str, Any]:
+    """Attach MCP error_code when a resolve write matched nothing or was ambiguous."""
+    from agentscaffold.mcp.errors import AmbiguousIdError, NotFoundError  # noqa: PLC0415
+
+    status = result.get("status")
+    if status == "not_found":
+        payload = NotFoundError(
+            f"{kind} not found: {result.get('id')!r}.",
+            remediation=remediation,
+        ).to_response()
+        payload["id"] = result.get("id")
+        payload["status"] = "not_found"
+        payload["meta"] = meta
+        return payload
+    if status == "ambiguous":
+        raw = result.get("candidates") or []
+        labels = []
+        for item in raw:
+            if isinstance(item, dict):
+                iid = item.get("id", "")
+                title = item.get("title") or ""
+                labels.append(f"{iid}: {title}" if title else str(iid))
+            else:
+                labels.append(str(item))
+        payload = AmbiguousIdError(
+            f"Multiple {kind} rows match {result.get('id')!r}.",
+            candidates=labels,
+            remediation=remediation,
+        ).to_response()
+        payload["id"] = result.get("id")
+        payload["status"] = "ambiguous"
+        payload["meta"] = meta
+        return payload
     result["meta"] = meta
     return result
 
@@ -2625,8 +2676,16 @@ def _tool_resolve_backlog_item(
         resolution=arguments.get("resolution", ""),
         project=_current_project_or_none(),
     )
-    result["meta"] = meta
-    return result
+    return _wrap_resolve_result(
+        result,
+        meta,
+        kind="BacklogItem",
+        remediation=(
+            "Pass the bi:: id from scaffold_record_backlog_item or from "
+            "orient.open_backlog_top3 / prepare_review.open_backlog_items. "
+            "Human IDs like DQ-043 are accepted when they uniquely prefix a title."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

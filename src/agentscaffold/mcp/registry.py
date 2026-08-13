@@ -609,7 +609,10 @@ def _tool_specs() -> list[ToolSpec]:
             description=(
                 "Mark a ReviewFinding as resolved. Use this when an issue identified "
                 "during a prior review has been addressed. The finding remains in the "
-                "graph with status='resolved' for audit trail purposes."
+                "graph with status='resolved' for audit trail purposes. finding_id must "
+                "be the rf:: id from scaffold_record_finding or from orient / "
+                "prepare_review. A miss returns status=not_found (error_code not_found) "
+                "rather than a fake resolve."
             ),
             input_schema={
                 "type": "object",
@@ -617,7 +620,9 @@ def _tool_specs() -> list[ToolSpec]:
                     "finding_id": {
                         "type": "string",
                         "description": (
-                            "The ID of the finding to resolve (from scaffold_record_finding)"
+                            "The rf:: id of the finding to resolve, from "
+                            "scaffold_record_finding or from orient / prepare_review. "
+                            "Not a human label."
                         ),
                     },
                     "resolution": {
@@ -744,14 +749,22 @@ def _tool_specs() -> list[ToolSpec]:
             description=(
                 "Mark a BacklogItem as archived (completed). Use this when a backlog item "
                 "is done and being moved from backlog.md to backlog_archive.md. The item "
-                "remains in the graph with status='archived' for retrospective queries."
+                "remains in the graph with status='archived' for retrospective queries. "
+                "item_id must be the bi:: id from scaffold_record_backlog_item / "
+                "orient.open_backlog_top3 / prepare_review.open_backlog_items, or a "
+                "human id / title prefix that uniquely matches one item (e.g. DQ-043). "
+                "A miss returns status=not_found rather than a fake archive."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "item_id": {
                         "type": "string",
-                        "description": "The ID of the backlog item to archive",
+                        "description": (
+                            "The bi:: id from record_backlog_item / orient / "
+                            "prepare_review, or a unique human id / title prefix "
+                            "(e.g. DQ-043). Not sufficient to guess among duplicates."
+                        ),
                     },
                     "resolution": {
                         "type": "string",
