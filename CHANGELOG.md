@@ -8,6 +8,12 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.10.5] - 2026-08-13
+
+**Upgrade note.** Restart the MCP server after upgrading. Writable opens apply
+any missing additive columns (including `BacklogItem.resolution` from 0.10.4)
+automatically; no re-index or hand ALTER is required. Schema version stays 10.
+
 ### Fixed
 - **Opening a graph now applies additive columns that `init_schema` used to own.**
   0.10.4 added `BacklogItem.resolution` only inside `init_schema`, so MCP writes
@@ -18,8 +24,9 @@ introduce additive features and small behavior changes).
 
 ## [0.10.4] - 2026-08-12
 
-**Upgrade note.** 0.10.5 applies the missing `BacklogItem.resolution` column on
-writable open. Until you upgrade, re-index (`scaffold index`) or run
+**Upgrade note (superseded by 0.10.5).** 0.10.5 applies the missing
+`BacklogItem.resolution` column on writable open. On 0.10.4 alone, re-index
+(`scaffold index`) or run
 `ALTER TABLE BacklogItem ADD COLUMN IF NOT EXISTS resolution VARCHAR DEFAULT ''`
 on `.scaffold/graph.duckdb`. No graph rebuild is required.
 
