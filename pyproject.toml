@@ -65,7 +65,7 @@ search = [
     "sentence-transformers>=3.0.0",
 ]
 mcp = [
-    "mcp>=1.0.0",
+    "mcp>=1.0.0,<2",
 ]
 benchmark = [
     "mini-swe-agent>=2.0.0",
