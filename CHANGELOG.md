@@ -8,6 +8,8 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.10.7] - 2026-08-13
+
 ### Fixed
 - **The MCP extra no longer installs `mcp` 2.x.** 0.10.6's extra was
   `mcp>=1.0.0` with no upper bound, so a fresh `uv tool install
