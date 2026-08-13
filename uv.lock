@@ -16,7 +16,7 @@ resolution-markers = [
 
 [[package]]
 name = "agentscaffold"
-version = "0.10.7"
+version = "0.10.8"
 source = { editable = "." }
 dependencies = [
     { name = "graspologic" },

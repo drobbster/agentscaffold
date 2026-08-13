@@ -8,6 +8,8 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.10.8] - 2026-08-13
+
 ### Fixed
 - **The graph extra no longer installs DuckDB 1.5.5.** That version has no
   community `duckpgq` build, so a fresh extras install opened the MCP server
