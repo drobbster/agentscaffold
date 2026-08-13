@@ -38,12 +38,14 @@ class ToolSpec:
 _WORKING_PATH_PROP = {
     "type": "string",
     "description": (
-        "Optional. Absolute or workspace-relative path of the file or directory "
-        "you are currently working on. In a multi-project workspace the server "
-        "resolves the owning project from this path and scopes the call to it, so "
-        "reads follow your active project even though the MCP server runs from a "
-        "single fixed directory. Omit to use the server's default project, or pass "
-        "project / all_projects explicitly."
+        "Path of the file or directory you are working on: absolute, or relative "
+        "to a registered workspace root. The server resolves the owning project "
+        "from it and scopes the call, which is how a call follows your active "
+        "project even though one server serves every workspace from a single fixed "
+        "directory. Pass it whenever you know the file. With several projects "
+        "registered there is no default to fall back on, so omitting it may be "
+        "refused with 'ambiguous_project'; pass project=<name> instead when you "
+        "have no path, or all_projects=true to read across every project."
     ),
 }
 

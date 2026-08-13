@@ -326,45 +326,50 @@ scaffold project register /path/to/repo --name api
 
 See [Multi-Project Workspaces](multi-project.md).
 
-### Multi-project workspaces: pin the MCP anchor
+### Multi-project workspaces: how a call finds the project
 
 A tool call resolves to a project from its `working_path` argument, or an
-explicit `project`, before falling back to the server's startup anchor. Agents
-pass `working_path` automatically — the generated rule files instruct them to —
-so most setups need no anchor at all.
+explicit `project`, before considering the server's startup anchor. Agents
+should pass `working_path` on every project-scoped call — the generated rule
+files instruct them to. That is the only per-call signal that stays correct
+when one server process serves every workspace from a single launch directory.
 
-Pin one only if you want a specific default for calls that carry neither:
+**Do not pin `--workspace` in a shared `mcp.json` if you have more than one
+workspace.** The flag is a process-wide default. One `scaffold mcp` process
+serves every window, so pinning would make calls from a second workspace
+answer from the pinned one.
+
+Pin an anchor only on a **single-workspace** machine, when you want a default
+for calls that carry neither `working_path` nor `project`:
 
 ```json
 {
   "mcpServers": {
     "agentscaffold": {
       "command": "scaffold",
-      "args": ["mcp", "--workspace", "/abs/path/to/workspace-root", "--project", "api"]
+      "args": ["mcp", "--workspace", "/abs/path/to/that-one-repo"]
     }
   }
 }
 ```
 
-For a **user-level** MCP install (where you cannot edit a per-project
-`mcp.json`), use the equivalent environment variables on the MCP process:
-
-```bash
-export AGENTSCAFFOLD_WORKSPACE_ROOT=/abs/path/to/workspace-root
-export AGENTSCAFFOLD_PROJECT=api
-```
+The equivalent environment variables are `AGENTSCAFFOLD_WORKSPACE_ROOT` and
+`AGENTSCAFFOLD_PROJECT`.
 
 Full precedence, highest first:
 
 1. An explicit `project` argument on the tool call.
 2. `working_path` on the tool call, matched against registered roots — the
-   longest matching root wins.
-3. The server's startup anchor: `--project` / `--workspace`, or the
-   `AGENTSCAFFOLD_PROJECT` / `AGENTSCAFFOLD_WORKSPACE_ROOT` env vars.
+   longest matching root wins. A relative path is interpreted against those
+   roots, not against the server's launch directory.
+3. The server's startup anchor, only when that directory is itself a project
+   (not a container that merely holds registered projects).
 4. A sole registered project, when only one is registered.
 
-If none of these resolves, the call is refused with `ambiguous_project` and the
-candidates are named, rather than answered from a guess.
+If none of these resolves, the call is refused with `ambiguous_project`. The
+payload names the candidates and `retry_with` (the arguments that would make
+the same call succeed). A successful response's `meta` names the project that
+answered and the tier that decided.
 
 ### Personal overlays (do not untrack team files)
 
