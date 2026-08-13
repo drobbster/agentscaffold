@@ -260,8 +260,11 @@ onboarding a project.
 
 When a call cannot be attributed to a project, the server refuses rather than
 guessing and answering from a default — a wrong project's answer is worse than no
-answer, because nothing about it looks wrong. `scaffold_projects` is the recovery
+answer, because nothing about it looks wrong. With several workspaces registered,
+a call that omits both `working_path` and `project` is refused: the launch
+directory is a container, not a project. `scaffold_projects` is the recovery
 path: it reports what is registered, which project the call resolved to, and why.
+Do not pin `--workspace` in a shared `mcp.json` on a multi-workspace machine.
 
 Once a workspace has more than one project, every node is namespaced by project (`{project}::{raw_id}`) and stamped with a `project` column. **Reads default to the current project**, so an agent working in `api` never misreads `web`'s plans, findings, or learnings (even when both have a `plan 12` or a `src/utils.py`). Widen explicitly when you want to:
 

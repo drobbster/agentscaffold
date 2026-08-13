@@ -54,10 +54,11 @@ ADR-026.
   which is why a mis-scoped answer was indistinguishable from a correct one.
 - **`ambiguous_project` carries `retry_with`**, naming the arguments that would
   make the same call succeed.
-- **`scaffold doctor` reports manifest-versus-registry drift.** A project
-  declared in a registered workspace's `workspace.yaml` but never registered is
-  invisible to every registry-driven read -- it cannot be named with `project=`
-  and never appears among the candidates in a refusal.
+- **Package docs match the refusal.** `docs/multi-project.md`,
+  `docs/platform-integration.md`, `docs/cli-reference.md`, `docs/user-guide.md`
+  and the README now say that a no-argument call with several workspaces
+  registered is refused, and that `--workspace` in a shared `mcp.json` is a
+  single-workspace option only.
 
 ## [0.10.5] - 2026-08-13
 
