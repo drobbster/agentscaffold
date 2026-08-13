@@ -115,7 +115,7 @@ def test_working_path_is_described_as_the_thing_to_send_but_stays_optional():
         assert not description.startswith("Optional"), f"{spec.name} understates the consequence"
         assert "ambiguous_project" in description, f"{spec.name} does not say what omitting costs"
         assert "working_path" not in spec.input_schema.get("required", []), (
-            f"{spec.name} makes working_path mandatory, which breaks calls made before a file is open"
+            f"{spec.name} makes working_path mandatory; that breaks calls before a file is open"
         )
 
 
