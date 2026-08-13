@@ -8,6 +8,15 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.10.7] - 2026-08-13
+
+### Fixed
+- **The MCP extra no longer installs `mcp` 2.x.** 0.10.6's extra was
+  `mcp>=1.0.0` with no upper bound, so a fresh `uv tool install
+  'agentscaffold[all]'` pulled the 2.0 SDK. That SDK's `Server` has no
+  `list_tools`, and the process exits before handshake. The extra is now
+  `mcp>=1.0.0,<2`. Restart the MCP server after upgrading.
+
 ## [0.10.6] - 2026-08-13
 
 **Upgrade note (multi-workspace installs only).** A tool call that omits both

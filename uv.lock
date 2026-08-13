@@ -16,7 +16,7 @@ resolution-markers = [
 
 [[package]]
 name = "agentscaffold"
-version = "0.10.6"
+version = "0.10.7"
 source = { editable = "." }
 dependencies = [
     { name = "graspologic" },
@@ -116,7 +116,7 @@ requires-dist = [
     { name = "graspologic", specifier = ">=3.4.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "litellm", marker = "extra == 'benchmark'", specifier = ">=1.50.0" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0,<2" },
     { name = "mini-swe-agent", marker = "extra == 'benchmark'", specifier = ">=2.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
