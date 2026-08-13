@@ -8,6 +8,12 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Fixed
+- **The graph extra no longer installs DuckDB 1.5.5.** That version has no
+  community `duckpgq` build, so a fresh extras install opened the MCP server
+  and then failed every graph read with a 404 on the extension. The extra is
+  now `duckdb>=0.10.0,<1.5.5`. Restart the MCP server after upgrading.
+
 ## [0.10.7] - 2026-08-13
 
 ### Fixed
