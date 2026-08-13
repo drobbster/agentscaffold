@@ -15,3 +15,10 @@ def test_mcp_extra_refuses_sdk_2() -> None:
     text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
     assert '"mcp>=1.0.0,<2"' in text
     assert '"mcp>=1.0.0"' not in text
+
+
+def test_duckpgq_extra_refuses_duckdb_without_duckpgq() -> None:
+    """1.5.5 has no community duckpgq build (HTTP 404), so graphs cannot open."""
+    text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+    assert '"duckdb>=0.10.0,<1.5.5"' in text
+    assert '"duckdb>=0.10.0"' not in text

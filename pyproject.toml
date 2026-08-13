@@ -51,7 +51,7 @@ graph = [
     "tree-sitter-typescript>=0.23.0",
 ]
 graph-duckpgq = [
-    "duckdb>=0.10.0",
+    "duckdb>=0.10.0,<1.5.5",
 ]
 graph-go = ["tree-sitter-go>=0.23.0"]
 graph-rust = ["tree-sitter-rust>=0.23.0"]
