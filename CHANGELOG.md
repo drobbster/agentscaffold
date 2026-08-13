@@ -8,6 +8,8 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.10.6] - 2026-08-13
+
 **Upgrade note (multi-workspace installs only).** A tool call that omits both
 `working_path` and `project`, made against a server whose launch directory
 contains several registered projects, now refuses with `ambiguous_project` where
