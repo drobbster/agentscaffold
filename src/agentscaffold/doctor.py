@@ -112,10 +112,49 @@ def check_registry(context: DoctorContext) -> CheckResult:
             details=missing,
             remediation="Run `scaffold gc --apply` to prune them.",
         )
+    drift = _manifest_registry_drift(registry)
+    if drift:
+        return CheckResult(
+            status="warn",
+            summary=f"{len(drift)} project(s) declared in a workspace.yaml are not registered.",
+            details=drift,
+            remediation=(
+                "Run `scaffold project register <path>` for each, or "
+                "`scaffold workspace onboard` to re-register the workspace."
+            ),
+        )
     return CheckResult(
         status="ok",
         summary=f"{len(registry.workspaces)} workspace(s) registered, all present.",
     )
+
+
+def _manifest_registry_drift(registry: Any) -> list[str]:
+    """Projects a registered workspace declares but has not registered.
+
+    Registration snapshots the manifest, so a project added to ``workspace.yaml``
+    afterwards is invisible to every registry-driven read: it cannot be named with
+    ``project=``, it is absent from the candidate list in a refusal, and it is not
+    a registered root -- which used to mean a call anchored at its workspace could
+    be answered as a synthesised project instead (ADR-026). None of that surfaces
+    as an error, so the drift has to be reported before it can be explained.
+    """
+    from agentscaffold.config import load_workspace_manifest
+
+    drift: list[str] = []
+    for workspace in registry.workspaces:
+        manifest = Path(workspace.root) / "workspace.yaml"
+        if not manifest.is_file():
+            continue
+        try:
+            declared = load_workspace_manifest(manifest).projects
+        except Exception:  # noqa: BLE001 - a malformed manifest is check_config's business
+            continue
+        registered = {entry.name for entry in workspace.projects}
+        for entry in declared:
+            if entry.name not in registered:
+                drift.append(f"{entry.name} (declared in {manifest}, not in the registry)")
+    return drift
 
 
 # ---------------------------------------------------------------------------
