@@ -28,6 +28,9 @@ If you are writing a plan that changes the graph schema, add this checklist
 item to the plan's implementation steps:
   - [ ] Update ``duckpgq_schema.py``: NODE_TABLES DDL and/or EDGE_DEFS +
         SCHEMA_VERSION bump.
+  - [ ] If the change is one additive column and must not rebuild: add it to
+        ``ADDITIVE_COLUMNS`` as well as the CREATE TABLE, and do **not** bump
+        ``SCHEMA_VERSION``. Writable open applies it.
 
 Edge table convention
 ---------------------
@@ -55,6 +58,25 @@ from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     import duckdb
+
+
+class AdditiveColumn(NamedTuple):
+    """A column added in place, without a SCHEMA_VERSION rebuild.
+
+    ``SCHEMA_VERSION`` still means "rebuild the graph." These entries are the
+    cheap ALTER path: applied by ``ensure_additive_columns`` on writable open
+    and during ``init_schema``, so upgrading the package heals an existing
+    graph without waiting for ``scaffold index``.
+    """
+
+    table: str
+    column: str
+    sql_type: str
+
+
+ADDITIVE_COLUMNS: tuple[AdditiveColumn, ...] = (
+    AdditiveColumn("BacklogItem", "resolution", "VARCHAR DEFAULT ''"),
+)
 
 # Bumped to 10 by Plan 252 without a DDL change. The tables are identical; what
 # changed is what gets *derived* into them -- relative Python imports now produce
@@ -507,6 +529,50 @@ def all_edge_ddl() -> list[str]:
     return list(EDGE_TABLES)
 
 
+def ensure_additive_columns(conn: duckdb.DuckDBPyConnection) -> None:
+    """Apply ``ADDITIVE_COLUMNS`` that ``CREATE TABLE IF NOT EXISTS`` will not.
+
+    No-ops when the table does not exist yet (a fresh connection before
+    ``init_schema``). Idempotent when the column is already present.
+    """
+    for spec in ADDITIVE_COLUMNS:
+        try:
+            conn.execute(
+                f"ALTER TABLE {spec.table} ADD COLUMN IF NOT EXISTS {spec.column} {spec.sql_type}"
+            )
+        except Exception as exc:
+            text = str(exc).lower()
+            if "already exists" in text:
+                continue
+            if "does not exist" in text:
+                continue
+            raise
+
+
+def missing_additive_columns(conn: duckdb.DuckDBPyConnection) -> list[tuple[str, str]]:
+    """Return ``(table, column)`` pairs the code expects and the graph lacks.
+
+    A missing *table* is ignored: that is an uninitialized graph, not a
+    schema-behind-code graph. Doctor uses this; it never ALTERs.
+    """
+    missing: list[tuple[str, str]] = []
+    for spec in ADDITIVE_COLUMNS:
+        tables = conn.execute(
+            "SELECT 1 FROM information_schema.tables WHERE lower(table_name) = lower(?)",
+            [spec.table],
+        ).fetchall()
+        if not tables:
+            continue
+        cols = conn.execute(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE lower(table_name) = lower(?) AND lower(column_name) = lower(?)",
+            [spec.table, spec.column],
+        ).fetchall()
+        if not cols:
+            missing.append((spec.table, spec.column))
+    return missing
+
+
 def init_schema(conn: duckdb.DuckDBPyConnection, *, force_recreate_graph: bool = False) -> None:
     """Create all tables and register the property graph.
 
@@ -530,17 +596,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection, *, force_recreate_graph: bool =
         conn.execute(stmt)
     for stmt in AUXILIARY_TABLES:
         conn.execute(stmt)
-    # Additive column for existing databases (Plan 255). CREATE TABLE IF NOT EXISTS
-    # does not add columns to an already-created table; this ALTER is idempotent
-    # and avoids a SCHEMA_VERSION bump / full rebuild for one VARCHAR.
-    try:
-        conn.execute(
-            "ALTER TABLE BacklogItem ADD COLUMN IF NOT EXISTS resolution VARCHAR DEFAULT ''"
-        )
-    except Exception as exc:
-        # Older DuckDB without IF NOT EXISTS: ignore "already exists".
-        if "already exists" not in str(exc).lower():
-            raise
+    ensure_additive_columns(conn)
     if force_recreate_graph:
         conn.execute(DROP_PROPERTY_GRAPH_SQL)
         conn.execute(CREATE_PROPERTY_GRAPH_SQL)

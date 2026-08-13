@@ -79,6 +79,29 @@ def test_backlogitem_resolution_column_added_to_existing_table(conn):
     assert "resolution" in cols
 
 
+def test_ensure_additive_columns_is_noop_when_table_missing(conn):
+    from agentscaffold.graph.duckpgq_schema import ensure_additive_columns
+
+    conn.execute("DROP TABLE IF EXISTS BacklogItem")
+    ensure_additive_columns(conn)
+
+
+def test_missing_additive_columns_detects_pre_255_shape(conn):
+    from agentscaffold.graph.duckpgq_schema import missing_additive_columns
+
+    conn.execute("DROP TABLE IF EXISTS BacklogItem")
+    conn.execute(
+        """
+        CREATE TABLE BacklogItem (
+            id VARCHAR PRIMARY KEY,
+            title VARCHAR,
+            status VARCHAR
+        )
+        """
+    )
+    assert ("BacklogItem", "resolution") in missing_additive_columns(conn)
+
+
 def test_the_plan_252_bump_changed_no_tables():
     """Version 10 is a *derivation* change, not a DDL one.
 

@@ -470,3 +470,69 @@ def test_resolve_backlog_item_strips_whitespace(store):
     result = resolve_backlog_item(store, "  DQ-044  ")
     assert result["status"] == "archived"
     assert result["id"] == created["id"]
+
+
+def _pre255_backlog_table(conn) -> None:
+    """0.10.3 BacklogItem: project column present, resolution absent."""
+    conn.execute(
+        """
+        CREATE TABLE BacklogItem (
+            id VARCHAR PRIMARY KEY,
+            planNumber BIGINT,
+            title VARCHAR,
+            priority VARCHAR,
+            effort VARCHAR,
+            status VARCHAR,
+            source VARCHAR,
+            createdAt VARCHAR,
+            archivedAt VARCHAR,
+            project VARCHAR DEFAULT ''
+        )
+        """
+    )
+
+
+def test_resolve_backlog_item_on_pre_255_file_without_init_schema(tmp_path):
+    """Plan 256: writable open heals a graph that init_schema never saw."""
+    import duckdb
+
+    from agentscaffold.graph.backlog import resolve_backlog_item
+    from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
+
+    db = tmp_path / "g.duckdb"
+    conn = duckdb.connect(str(db))
+    _pre255_backlog_table(conn)
+    conn.execute(
+        "INSERT INTO BacklogItem VALUES ("
+        "'bi::cafe', 256, 'old row', 'P3', '', 'open', '', 't', '', '')"
+    )
+    conn.close()
+
+    store = DuckPGQBackend(db)
+    try:
+        result = resolve_backlog_item(store, "bi::cafe", resolution="healed")
+        assert result["status"] == "archived"
+        rows = store.query("SELECT status, resolution FROM BacklogItem WHERE id = 'bi::cafe'")
+        assert rows[0]["status"] == "archived"
+        assert rows[0]["resolution"] == "healed"
+    finally:
+        store.close()
+
+
+def test_read_only_open_does_not_alter_pre_255_schema(tmp_path):
+    import duckdb
+
+    from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
+    from agentscaffold.graph.duckpgq_schema import missing_additive_columns
+
+    db = tmp_path / "g.duckdb"
+    conn = duckdb.connect(str(db))
+    _pre255_backlog_table(conn)
+    conn.close()
+
+    store = DuckPGQBackend(db, read_only=True)
+    try:
+        missing = missing_additive_columns(store._conn)
+        assert ("BacklogItem", "resolution") in missing
+    finally:
+        store.close()
