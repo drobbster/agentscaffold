@@ -185,9 +185,12 @@ def test_resolve_backlog_item_sets_archived(store):
     assert resolved["status"] == "archived"
     assert resolved["id"] == item_id
 
-    rows = store.query(f"SELECT status, archivedAt FROM BacklogItem WHERE id = '{item_id}'")
+    rows = store.query(
+        f"SELECT status, archivedAt, resolution FROM BacklogItem WHERE id = '{item_id}'"
+    )
     assert rows[0]["status"] == "archived"
     assert rows[0]["archivedAt"] != ""
+    assert rows[0]["resolution"] == "Fixed in Plan 151"
 
 
 def test_resolve_backlog_item_elapsed_ms(store):
@@ -343,3 +346,127 @@ def test_mcp_resolve_backlog_item_missing_id(store):
 
     result = _tool_resolve_backlog_item(store, {}, {})
     assert "error" in result
+
+
+def test_resolve_backlog_item_bogus_id_is_not_found(store):
+    from agentscaffold.graph.backlog import resolve_backlog_item
+
+    result = resolve_backlog_item(store, "TOTALLY-BOGUS-ID-THAT-CANNOT-EXIST")
+    assert result["status"] == "not_found"
+    assert "archived_at" not in result
+    rows = store.query(
+        "SELECT count(*) AS c FROM BacklogItem WHERE id = 'TOTALLY-BOGUS-ID-THAT-CANNOT-EXIST'"
+    )
+    assert rows[0]["c"] == 0
+
+
+def test_mcp_resolve_backlog_item_bogus_id_has_error_code(store):
+    from agentscaffold.mcp.server import _tool_resolve_backlog_item
+
+    result = _tool_resolve_backlog_item(
+        store, {"item_id": "TOTALLY-BOGUS-ID-THAT-CANNOT-EXIST"}, {}
+    )
+    assert result["status"] == "not_found"
+    assert result["error_code"] == "not_found"
+    assert "not found" in str(result["error"]).lower()
+
+
+def test_resolve_backlog_item_human_id_colon_prefix(store):
+    from agentscaffold.graph.backlog import record_backlog_item, resolve_backlog_item
+
+    created = record_backlog_item(store, plan_number=151, title="DQ-043: example item")
+    result = resolve_backlog_item(store, "DQ-043", resolution="done via human id")
+    assert result["status"] == "archived"
+    assert result["id"] == created["id"]
+    rows = store.query(f"SELECT status, resolution FROM BacklogItem WHERE id = '{created['id']}'")
+    assert rows[0]["status"] == "archived"
+    assert rows[0]["resolution"] == "done via human id"
+
+
+def test_resolve_backlog_item_hyphen_gated_space_prefix(store):
+    from agentscaffold.graph.backlog import record_backlog_item, resolve_backlog_item
+
+    created = record_backlog_item(store, plan_number=151, title="B-249-1 Fix the lock")
+    result = resolve_backlog_item(store, "B-249-1")
+    assert result["status"] == "archived"
+    assert result["id"] == created["id"]
+
+
+def test_resolve_backlog_item_space_prefix_refused_without_hyphen(store):
+    from agentscaffold.graph.backlog import record_backlog_item, resolve_backlog_item
+
+    created = record_backlog_item(store, plan_number=151, title="Plan 255 follow-up")
+    result = resolve_backlog_item(store, "Plan")
+    assert result["status"] == "not_found"
+    rows = store.query(f"SELECT status FROM BacklogItem WHERE id = '{created['id']}'")
+    assert rows[0]["status"] == "open"
+
+
+def test_resolve_backlog_item_ambiguous_title_prefix(store):
+    from agentscaffold.graph.backlog import record_backlog_item, resolve_backlog_item
+
+    a = record_backlog_item(store, plan_number=151, title="DQ-043: first")
+    b = record_backlog_item(store, plan_number=151, title="DQ-043: second")
+    result = resolve_backlog_item(store, "DQ-043")
+    assert result["status"] == "ambiguous"
+    assert len(result["candidates"]) >= 2
+    for item_id in (a["id"], b["id"]):
+        rows = store.query(f"SELECT status FROM BacklogItem WHERE id = '{item_id}'")
+        assert rows[0]["status"] == "open"
+
+
+def test_resolve_backlog_item_exact_id_wins_over_title(store):
+    from agentscaffold.graph.backlog import record_backlog_item, resolve_backlog_item
+
+    created = record_backlog_item(store, plan_number=151, title="exact-id-item")
+    # A second row whose title equals the first row's bi:: id would be a title
+    # match, but exact id must still win.
+    record_backlog_item(store, plan_number=151, title=created["id"])
+    result = resolve_backlog_item(store, created["id"])
+    assert result["status"] == "archived"
+    assert result["id"] == created["id"]
+
+
+def test_resolve_backlog_item_qualified_id_forms(store):
+    from agentscaffold.graph.backlog import resolve_backlog_item
+
+    store.create_node(
+        "BacklogItem",
+        {
+            "id": "alpha::bi::cafebabeface",
+            "planNumber": 1,
+            "title": "prefixed item",
+            "priority": "P3",
+            "effort": "",
+            "status": "open",
+            "source": "",
+            "createdAt": "",
+            "archivedAt": "",
+            "resolution": "",
+            "project": "alpha",
+        },
+    )
+    result = resolve_backlog_item(store, "bi::cafebabeface", project="alpha")
+    assert result["status"] == "archived"
+    assert result["id"] == "alpha::bi::cafebabeface"
+
+
+def test_resolve_backlog_item_project_filter_miss(store):
+    from agentscaffold.graph.backlog import record_backlog_item, resolve_backlog_item
+
+    created = record_backlog_item(
+        store, plan_number=151, title="other-project item", project="beta"
+    )
+    result = resolve_backlog_item(store, created["id"], project="alpha")
+    assert result["status"] == "not_found"
+    rows = store.query(f"SELECT status FROM BacklogItem WHERE id = '{created['id']}'")
+    assert rows[0]["status"] == "open"
+
+
+def test_resolve_backlog_item_strips_whitespace(store):
+    from agentscaffold.graph.backlog import record_backlog_item, resolve_backlog_item
+
+    created = record_backlog_item(store, plan_number=151, title="DQ-044: spaced")
+    result = resolve_backlog_item(store, "  DQ-044  ")
+    assert result["status"] == "archived"
+    assert result["id"] == created["id"]

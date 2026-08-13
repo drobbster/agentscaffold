@@ -8,6 +8,17 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-08-12
+
+### Fixed
+- **Resolve tools no longer report success for writes that did not happen.**
+  `scaffold_resolve_backlog_item` and `scaffold_resolve_finding` used to echo
+  `archived` / `resolved` after a zero-row `UPDATE`, and backlog `resolution`
+  notes were accepted then discarded (`BacklogItem` had no column). A miss now
+  returns `status: not_found` with `error_code: not_found`. Backlog resolution
+  notes are stored. Human IDs like `DQ-043` archive a uniquely matching title;
+  ambiguous prefixes refuse rather than guess.
+
 ## [0.10.3] - 2026-08-07
 
 ### Fixed

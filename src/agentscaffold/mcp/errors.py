@@ -26,6 +26,8 @@ class ErrorCode:
     GRAPH_MISSING = "graph_missing"
     INVALID_ARGUMENT = "invalid_argument"
     INTERNAL_ERROR = "internal_error"
+    NOT_FOUND = "not_found"
+    AMBIGUOUS_ID = "ambiguous_id"
 
 
 class McpToolError(Exception):
@@ -121,6 +123,25 @@ class InvalidArgumentError(McpToolError):
     """The call was malformed or its configuration could not be loaded."""
 
     error_code = ErrorCode.INVALID_ARGUMENT
+
+
+class NotFoundError(McpToolError):
+    """A write named a node that is not in the graph."""
+
+    error_code = ErrorCode.NOT_FOUND
+    default_remediation = (
+        "Pass the id returned by the matching record tool, or the id field "
+        "from orient / prepare_review."
+    )
+
+
+class AmbiguousIdError(McpToolError):
+    """A human id / title prefix matched more than one node. Do not guess."""
+
+    error_code = ErrorCode.AMBIGUOUS_ID
+    default_remediation = (
+        "Pass the canonical bi:: or rf:: id from record / orient / prepare_review."
+    )
 
 
 def to_error_response(exc: BaseException) -> dict[str, Any]:
