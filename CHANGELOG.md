@@ -8,6 +8,8 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-08-12
+
 ### Fixed
 - **Resolve tools no longer report success for writes that did not happen.**
   `scaffold_resolve_backlog_item` and `scaffold_resolve_finding` used to echo
