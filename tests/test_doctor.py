@@ -654,3 +654,61 @@ def test_matching_ids_are_not_reported(state_home: Path, tmp_path: Path, cli_run
     result = _run(cli_runner, "--project-root", str(workspace / "alpha"), "--strict")
 
     assert result.exit_code == 0
+
+
+def test_graph_schema_check_flags_a_missing_additive_column(state_home: Path, tmp_path: Path):
+    import duckdb
+
+    from agentscaffold.doctor import DoctorContext, check_graph_schema
+    from agentscaffold.paths import resolve_db_path
+
+    project = _project(tmp_path)
+    _register(project)
+    db = resolve_db_path(None, project)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(str(db))
+    conn.execute("CREATE TABLE BacklogItem (id VARCHAR PRIMARY KEY, title VARCHAR, status VARCHAR)")
+    conn.close()
+
+    result = check_graph_schema(
+        DoctorContext(project_root=project, mcp_config_path=tmp_path / "mcp.json")
+    )
+    assert result.status == "fail"
+    assert any("resolution" in detail for detail in result.details)
+    assert result.remediation
+
+
+def test_graph_schema_check_skips_when_there_is_no_graph(state_home: Path, tmp_path: Path):
+    from agentscaffold.doctor import DoctorContext, check_graph_schema
+
+    project = _project(tmp_path)
+    _register(project)
+    result = check_graph_schema(
+        DoctorContext(project_root=project, mcp_config_path=tmp_path / "mcp.json")
+    )
+    assert result.status == "skip"
+
+
+def test_graph_schema_check_skips_when_the_graph_is_locked(
+    state_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import duckdb
+
+    from agentscaffold.doctor import DoctorContext, check_graph_schema
+    from agentscaffold.paths import resolve_db_path
+
+    project = _project(tmp_path)
+    _register(project)
+    db = resolve_db_path(None, project)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    db.write_bytes(b"not a real duckdb, just needs to exist")
+
+    def _locked(*_args, **_kwargs):
+        raise OSError("Could not set lock on file: conflicting lock")
+
+    monkeypatch.setattr(duckdb, "connect", _locked)
+    result = check_graph_schema(
+        DoctorContext(project_root=project, mcp_config_path=tmp_path / "mcp.json")
+    )
+    assert result.status == "skip"
+    assert "locked" in result.summary.lower()

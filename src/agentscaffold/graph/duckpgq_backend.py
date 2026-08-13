@@ -206,6 +206,10 @@ class DuckPGQBackend:
         # project-qualify IDs and stamp the project column at this choke point.
         self._write_project: str | None = None
         self._load_extension()
+        if not self._read_only:
+            from agentscaffold.graph.duckpgq_schema import ensure_additive_columns
+
+            ensure_additive_columns(self._conn)
 
     def _ensure_writable(self) -> None:
         if self._read_only:

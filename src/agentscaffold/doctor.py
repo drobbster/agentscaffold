@@ -513,6 +513,71 @@ def check_workspace_id(context: DoctorContext) -> CheckResult:
     return CheckResult(status="ok", summary=f"Manifest and registry agree on {manifest_id}.")
 
 
+# ---------------------------------------------------------------------------
+# Graph schema vs installed code
+# ---------------------------------------------------------------------------
+
+
+def check_graph_schema(context: DoctorContext) -> CheckResult:
+    """Whether the on-disk graph has every additive column the code expects.
+
+    Plan 255 added ``BacklogItem.resolution`` only inside ``init_schema``, so
+    upgrading the package did not heal an existing graph. 0.10.5 applies those
+    columns on writable open; this check reports a graph that is still behind
+    without writing anything. A missing graph, or one we cannot open because
+    the MCP server holds the file lock, is skip -- not fail.
+    """
+    from agentscaffold.graph.duckpgq_schema import missing_additive_columns
+    from agentscaffold.paths import resolve_db_path
+
+    try:
+        resolved = resolve_db_path(None, context.project_root)
+    except Exception as exc:  # pragma: no cover - unresolvable layout
+        return CheckResult(
+            status="fail",
+            summary="Could not resolve the graph location.",
+            details=[str(exc)],
+        )
+    if not resolved.is_file():
+        return CheckResult(status="skip", summary="No graph to inspect.")
+
+    try:
+        import duckdb
+
+        conn = duckdb.connect(str(resolved), read_only=True)
+        try:
+            missing = missing_additive_columns(conn)
+        finally:
+            conn.close()
+    except Exception as exc:
+        message = str(exc).lower()
+        if "lock" in message:
+            return CheckResult(
+                status="skip",
+                summary="Graph is locked; could not inspect schema.",
+                details=[str(exc)],
+            )
+        return CheckResult(
+            status="warn",
+            summary="Could not inspect graph schema.",
+            details=[str(exc)],
+        )
+
+    if not missing:
+        return CheckResult(status="ok", summary="Graph columns match the installed code.")
+    details = [f"{table}.{column}" for table, column in missing]
+    return CheckResult(
+        status="fail",
+        summary="Graph schema is behind the installed code.",
+        details=details,
+        remediation=(
+            "Restart the MCP server after upgrading to 0.10.5+, or run "
+            "`scaffold index`. Additive columns are applied on writable open "
+            "and during index; no rebuild is required."
+        ),
+    )
+
+
 CHECKS: list[Check] = [
     Check("registry", "Workspace registry", check_registry),
     Check("workspace_id", "Workspace identity", check_workspace_id),
@@ -520,6 +585,7 @@ CHECKS: list[Check] = [
     Check("mcp_registration", "MCP registration", check_mcp_registration),
     Check("version_skew", "Version skew", check_version_skew),
     Check("state_location", "Graph state location", check_state_location),
+    Check("graph_schema", "Graph schema", check_graph_schema),
 ]
 
 

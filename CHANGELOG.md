@@ -8,7 +8,20 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Fixed
+- **Opening a graph now applies additive columns that `init_schema` used to own.**
+  0.10.4 added `BacklogItem.resolution` only inside `init_schema`, so MCP writes
+  against a pre-0.10.4 graph raised `BinderException: Referenced update column
+  resolution not found in table!`. Writable opens now reconcile
+  `ADDITIVE_COLUMNS`; `scaffold doctor` reports a graph that is still behind
+  without writing anything. No rebuild; schema version stays 10.
+
 ## [0.10.4] - 2026-08-12
+
+**Upgrade note.** 0.10.5 applies the missing `BacklogItem.resolution` column on
+writable open. Until you upgrade, re-index (`scaffold index`) or run
+`ALTER TABLE BacklogItem ADD COLUMN IF NOT EXISTS resolution VARCHAR DEFAULT ''`
+on `.scaffold/graph.duckdb`. No graph rebuild is required.
 
 ### Fixed
 - **Resolve tools no longer report success for writes that did not happen.**
