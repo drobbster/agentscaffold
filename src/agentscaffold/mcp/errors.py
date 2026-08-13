@@ -35,6 +35,9 @@ class McpToolError(Exception):
 
     error_code: str = ErrorCode.INTERNAL_ERROR
     default_remediation: str = ""
+    #: Arguments that would make the same call succeed. Prose tells an agent what
+    #: went wrong; this tells it what to send, which is the part it has to act on.
+    default_retry_with: dict[str, Any] | None = None
 
     def __init__(
         self,
@@ -42,11 +45,13 @@ class McpToolError(Exception):
         *,
         candidates: list[str] | None = None,
         remediation: str | None = None,
+        retry_with: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.candidates = list(candidates or [])
         self.remediation = remediation or self.default_remediation
+        self.retry_with = retry_with if retry_with is not None else self.default_retry_with
 
     def to_response(self) -> dict[str, Any]:
         """Render as the JSON payload a tool returns in place of a result."""
@@ -63,6 +68,8 @@ class McpToolError(Exception):
             payload["candidates"] = []
         if self.remediation:
             payload["remediation"] = self.remediation
+        if self.retry_with:
+            payload["retry_with"] = self.retry_with
         return payload
 
 
@@ -77,16 +84,28 @@ class AmbiguousProjectError(McpToolError):
 
     error_code = ErrorCode.AMBIGUOUS_PROJECT
     default_remediation = (
-        "Pass project=<name> or working_path=<file or dir>. "
-        "Run 'scaffold workspace list' to see registered projects."
+        "Pass working_path=<the file or directory you are working on>, or "
+        "project=<one of the candidates>. Call scaffold_projects to see what this "
+        "server can answer for, or run 'scaffold project list' in a terminal."
     )
+    # Named 'scaffold project list' rather than 'scaffold workspace list': the
+    # candidates in this error come from the user-level registry, and
+    # 'workspace list' reports the projects in the current workspace manifest --
+    # a different set, which cannot explain this refusal.
+    default_retry_with = {
+        "working_path": "<absolute path of the file or directory you are working on>",
+        "project": "<one of the names in candidates>",
+    }
 
 
 class UnknownProjectError(McpToolError):
     """An explicit project name matched nothing in the registry."""
 
     error_code = ErrorCode.UNKNOWN_PROJECT
-    default_remediation = "Run 'scaffold workspace list' to see registered projects."
+    default_remediation = (
+        "Call scaffold_projects for the names this server serves, or run "
+        "'scaffold project list' in a terminal."
+    )
 
 
 class RestrictedProjectError(McpToolError):
@@ -108,7 +127,7 @@ class RegistryUnavailableError(McpToolError):
 
     error_code = ErrorCode.REGISTRY_ERROR
     default_remediation = (
-        "Check ~/.agentscaffold/registry.yaml, or re-register with 'scaffold workspace register'."
+        "Check ~/.agentscaffold/registry.yaml, or re-register with 'scaffold project register'."
     )
 
 

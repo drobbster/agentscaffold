@@ -147,8 +147,12 @@ Runs the server. Your MCP client invokes this; you rarely run it by hand.
 ```bash
 scaffold mcp
 scaffold mcp --restrict-to api,web        # limit this server to named projects
-scaffold mcp --workspace /root --project api   # pin the resolution anchor
+scaffold mcp --workspace /root --project api   # pin the resolution anchor (single-workspace only)
 ```
+
+`--workspace` / `--project` set a process-wide default. Do not put them in a
+shared `mcp.json` if several workspaces are registered; pass `working_path` (or
+`project`) on each call instead. See [Multi-Project Workspaces](multi-project.md).
 
 ### `scaffold workspace migrate-state`
 
@@ -478,8 +482,8 @@ Requires the `benchmark` extra: `pip install "agentscaffold[benchmark]"`.
 |---|---|
 | `AGENTSCAFFOLD_DB_PATH` | Absolute path to the graph database. Overrides everything else |
 | `AGENTSCAFFOLD_HOME` | Where the user-level registry lives (default `~/.agentscaffold`) |
-| `AGENTSCAFFOLD_WORKSPACE_ROOT` | Pin the MCP server's workspace anchor |
-| `AGENTSCAFFOLD_PROJECT` | Pin the MCP server's project anchor |
+| `AGENTSCAFFOLD_WORKSPACE_ROOT` | Pin the MCP server's workspace anchor (single-workspace installs only) |
+| `AGENTSCAFFOLD_PROJECT` | Pin the MCP server's project anchor (single-workspace installs only) |
 | `XDG_STATE_HOME` | Base for graph state (default `~/.local/state`) |
 | `XDG_CACHE_HOME` | Base for the embedding model cache (default `~/.cache`) |
 
@@ -504,10 +508,13 @@ across projects.
 
 ### An MCP tool call fails with `ambiguous_project`
 
-The call could not be narrowed to one project. Run `scaffold project list` to
-see the candidates, then pass `working_path` (pointing at the file you are
-working on) or `project` explicitly. If the path is not under any registered
-root, register it with `scaffold project register`.
+The call could not be narrowed to one project. On a multi-workspace install
+that is expected when neither `working_path` nor `project` was passed. Run
+`scaffold project list` (or call `scaffold_projects`) to see the candidates,
+then pass `working_path` (the file you are working on) or `project` explicitly.
+If the path is not under any registered root, register it with
+`scaffold project register`. Do not add `--workspace` to the shared MCP entry
+unless this machine has only one workspace.
 
 ### The MCP tools behave as if they are an old version
 

@@ -1335,13 +1335,15 @@ scaffold workspace onboard services/api --shared-layout
 scaffold workspace onboard apps/web
 ```
 
-### Nested IDE focus and MCP anchors
+### Nested IDE focus and MCP routing
 
 Each registered project root keeps a **stub** `AGENTS.md` (pointers to the shared
-process assets), and the workspace root gets a thin router `AGENTS.md`. When your
-IDE opens a parent folder, pin the MCP resolution anchor with `scaffold mcp
---workspace <root> --project <name>` or the `AGENTSCAFFOLD_WORKSPACE_ROOT` /
-`AGENTSCAFFOLD_PROJECT` env vars (see the platform-integration guide).
+process assets), and the workspace root gets a thin router `AGENTS.md`. Pass
+`working_path` on project-scoped MCP calls so the one server can tell which
+project you mean; the generated rule files already instruct agents to. Do not
+pin `--workspace` in a shared `mcp.json` if several workspaces are registered —
+that default would apply to every window. Pinning is a single-workspace option
+only (see the platform-integration guide).
 
 Personalize with `*.local` overlays (`AGENTS.local.md`,
 `.cursor/rules/local.*.mdc`) -- never by gitignoring the team `AGENTS.md`.

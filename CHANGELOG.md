@@ -8,6 +8,60 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.10.6] - 2026-08-13
+
+**Upgrade note (multi-workspace installs only).** A tool call that omits both
+`working_path` and `project`, made against a server whose launch directory
+contains several registered projects, now refuses with `ambiguous_project` where
+it previously answered. The previous answer came from a project that does not
+exist in your registry, so it was describing a different codebase than the one
+you asked about. Pass `working_path` (the file or directory you are working on)
+or `project=<name>`; `scaffold_projects` lists what the server can answer for.
+Single-workspace installs are unaffected. Breaking contract change behind
+ADR-026.
+
+### Fixed
+- **A no-argument MCP call can no longer be answered from the wrong project.**
+  With several workspaces registered, a call carrying no `working_path` was
+  answered from a project synthesised out of the launch directory's basename:
+  well-formed, plausible, and about somebody else's code. One field report saw
+  942 files and 0 plans returned for a project holding 274 files and 23 plans.
+  Two things composed into it -- a one-level-deep glob that could only ever find
+  a shallow workspace, so "exactly one match" reflected directory layout rather
+  than intent, and a marker check that accepted any directory holding a
+  `scaffold.yaml` or `.git`, including a home directory with a dotfiles repo. A
+  directory with registered project roots beneath it is now treated as a place
+  that *contains* projects rather than being one, and the glob stands down once
+  the registry has something better to say.
+- **A relative `working_path` now resolves against your registered roots.** It
+  was joined onto the server's own launch directory, which is a launch artefact
+  unrelated to your workspace, so `src/main.py` matched nothing and the call
+  quietly fell back to the anchor. A relative path is accepted when exactly one
+  registered root explains it, and left unmatched when several do.
+- **A synthesised project uses the name its `workspace.yaml` declares.** Falling
+  back to the directory basename let resolution succeed while every scoped read
+  filtered on a name no row had been written under: results were empty and
+  nothing said why.
+- **Refusals name commands that exist.** `ambiguous_project` and
+  `unknown_project` pointed at `scaffold workspace list`, which reports the
+  current workspace manifest rather than the registry the candidates come from;
+  a registry error pointed at `scaffold workspace register`, which is not a
+  command. They now name `scaffold project list` and `scaffold_projects`.
+
+### Added
+- **Responses say which project answered and why.** Tool `meta` now carries
+  `project`, `project_root`, `resolution_source` and `project_registered`, plus
+  `working_path_unmatched` when a supplied path resolved to no project and was
+  therefore ignored. Previously only `scaffold_projects` disclosed any of this,
+  which is why a mis-scoped answer was indistinguishable from a correct one.
+- **`ambiguous_project` carries `retry_with`**, naming the arguments that would
+  make the same call succeed.
+- **Package docs match the refusal.** `docs/multi-project.md`,
+  `docs/platform-integration.md`, `docs/cli-reference.md`, `docs/user-guide.md`
+  and the README now say that a no-argument call with several workspaces
+  registered is refused, and that `--workspace` in a shared `mcp.json` is a
+  single-workspace option only.
+
 ## [0.10.5] - 2026-08-13
 
 **Upgrade note.** Restart the MCP server after upgrading. Writable opens apply

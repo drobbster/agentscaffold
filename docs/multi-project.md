@@ -69,16 +69,37 @@ With one server serving many projects, every tool call resolves to exactly one:
 1. An explicit `project` argument.
 2. `working_path`, matched against registered roots — the **longest** matching
    root wins, so an inner project is never answered from its enclosing workspace.
-3. The server's startup anchor (`--workspace` / `--project`, or
-   `AGENTSCAFFOLD_WORKSPACE_ROOT` / `AGENTSCAFFOLD_PROJECT`).
+   A relative path is interpreted against those roots, not against the server's
+   own launch directory, and is accepted only when exactly one registered root
+   explains it.
+3. The server's startup anchor, **only when that directory is itself a project**
+   (registered, or an unregistered repo that does not contain other registered
+   projects). A home directory, a folder that merely contains workspaces, or a
+   dotfiles repo wrapping several checkouts is a container, not a project, and
+   is declined.
 4. A sole registered project, when there is only one.
 
 If none of these resolves, the call is **refused** with `ambiguous_project`
 rather than guessed at, because silently answering from the wrong project is a
-worse outcome than an error you can act on. The error names the candidates.
+worse outcome than an error you can act on. The error names the candidates and
+the arguments that would make the same call succeed (`retry_with`).
 
-Agents should pass `working_path` on project-scoped tool calls; the generated
-rule files already instruct them to.
+**With several workspaces registered, omit both `working_path` and `project`
+and the call will usually refuse.** One MCP process serves every workspace from
+a single fixed directory, so the launch directory is not a statement of which
+project you meant. Pass `working_path` (the file or directory you are working
+on) on project-scoped calls. The generated rule files already tell agents to
+do this. If you have no path, pass `project=<name>`, or call `scaffold_projects`
+to see what the server can answer for. A successful response's `meta` names the
+project that answered and the tier that decided; `working_path_unmatched: true`
+means a path was supplied but ignored.
+
+**Do not pin `--workspace` in a shared `mcp.json` on a multi-workspace
+machine.** That flag is a launch-time default for the whole process. One
+process serves every workspace, so pinning would make every other workspace's
+no-argument calls answer from the pinned one. Pinning is a single-workspace
+option only (`scaffold mcp --workspace /path/to/that-one-repo`, or the
+`AGENTSCAFFOLD_WORKSPACE_ROOT` / `AGENTSCAFFOLD_PROJECT` environment variables).
 
 ### Narrowing what one server can reach
 
@@ -216,7 +237,7 @@ scaffold doctor --strict   # exit non-zero if anything is not clean
 
 | Check | Tells you |
 |---|---|
-| Workspace registry | Registered roots and projects that no longer exist |
+| Workspace registry | Registered roots that no longer exist, and projects declared in a `workspace.yaml` but never registered |
 | Workspace identity | `workspace.yaml` and the registry naming one workspace differently |
 | Routing guidance | Generated rule files stale against the canonical source |
 | MCP registration | Legacy per-project entries, directory binding, hardcoded interpreters |
@@ -281,9 +302,25 @@ ask to free.
 
 ### A tool call fails with `ambiguous_project`
 
-The call could not be narrowed to one project. Run `scaffold project list`, then
-pass `working_path` or `project` explicitly. If the path is not under any
+The call could not be narrowed to one project. That is expected on a
+multi-workspace install when neither `working_path` nor `project` was passed.
+The refusal names `retry_with` (the arguments that would make the same call
+succeed) and `candidates`.
+
+Recover by passing `working_path` pointing at the file you are working on, or
+`project` with one of the candidate names, or by calling `scaffold_projects`
+(agent) / `scaffold project list` (terminal). If the path is not under any
 registered root, register it.
+
+Do not try to "fix" this by adding `--workspace` to the shared MCP entry unless
+this machine has only one workspace.
+
+### `scaffold doctor` warns that a project is declared but not registered
+
+A `workspace.yaml` lists a project the user-level registry does not.
+Registration snapshots the manifest, so a project added afterwards cannot be
+named with `project=` and will not appear among the candidates in a refusal.
+Register it with `scaffold project register /path/to/the-new-project`.
 
 ### The server reports a deprecation notice at startup
 

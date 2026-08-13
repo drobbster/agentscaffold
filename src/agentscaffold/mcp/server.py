@@ -663,6 +663,22 @@ def _qualified_node_id(raw_id: str, arguments: dict[str, Any]) -> str:
         return raw_id
 
 
+def _registered_workspace_count() -> int:
+    """How many workspaces the user-level registry holds, or 0 if unreadable.
+
+    An absent or malformed registry is not an error here: it is the lone-repo
+    case, which must keep working with no registration at all. Swallowing the
+    failure matches the discipline of the caller, where anything unexpected falls
+    back to the launch directory rather than failing a tool call.
+    """
+    try:
+        from agentscaffold.workspace_registry import load_registry
+
+        return len(load_registry().workspaces)
+    except Exception:  # noqa: BLE001 - an unreadable registry must not break dispatch
+        return 0
+
+
 def _effective_mcp_root(start: Path | None = None) -> Path:
     """Resolve the project root for MCP calls launched from a workspace root.
 
@@ -691,7 +707,20 @@ def _effective_mcp_root(start: Path | None = None) -> Path:
         # (for this devbox, /home/drobb) while the AgentScaffold workspace is a
         # child folder. If there is exactly one child workspace manifest, use it
         # as the MCP workspace root so no-arg tools still resolve project state.
-        if workspace_root == current and not (current / "workspace.yaml").is_file():
+        #
+        # The glob looks exactly one level down, so a registered workspace nested
+        # deeper is invisible to it. That makes "exactly one match" a property of
+        # directory layout rather than a statement of intent -- and the condition
+        # is most likely to hold precisely when the other candidates are too deep
+        # to be seen. So the shortcut only stands while there is nothing better to
+        # go on: with several workspaces registered the registry is the informed
+        # signal and the glob is the least informed one available, so we leave the
+        # anchor alone and let resolve_project refuse rather than guess (ADR-026).
+        if (
+            workspace_root == current
+            and not (current / "workspace.yaml").is_file()
+            and _registered_workspace_count() <= 1
+        ):
             child_workspaces = [
                 p.parent
                 for p in current.glob("*/workspace.yaml")
@@ -867,6 +896,7 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
 
     meta = _build_meta(store, root, freshness_meta)
     meta.update(_maybe_schedule_embedding_lane(root, config, meta))
+    meta.update(_resolution_meta(resolution, arguments))
     if read_preferring:
         try:
             from agentscaffold.graph.locks import graph_write_lock_held
@@ -1005,6 +1035,33 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
 
     finally:
         store.close()
+
+
+def _resolution_meta(resolution: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Say which project answered and what decided it (Plan 257, B3).
+
+    Until this existed, ``scaffold_projects`` was the only tool that revealed any
+    of it, so a reply scoped to the wrong project was indistinguishable from a
+    correct one: the field report behind ADR-026 had to be diagnosed by reading
+    resolution source rather than by looking at a response.
+
+    ``working_path_unmatched`` is the load-bearing one. A path that resolved to no
+    project is silently ignored, and the call is then answered from the anchor --
+    which looks like the path was honoured. Naming it turns that into something an
+    agent can notice and correct.
+    """
+    from agentscaffold.mcp.project_resolution import ResolutionSource
+
+    source = resolution.source.value
+    meta: dict[str, Any] = {
+        "project": resolution.project.name,
+        "project_root": str(resolution.root),
+        "resolution_source": source,
+        "project_registered": resolution.project.workspace_id is not None,
+    }
+    if arguments.get("working_path") and source != ResolutionSource.WORKING_PATH.value:
+        meta["working_path_unmatched"] = True
+    return meta
 
 
 def _build_meta(
