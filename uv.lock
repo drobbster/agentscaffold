@@ -16,7 +16,7 @@ resolution-markers = [
 
 [[package]]
 name = "agentscaffold"
-version = "0.10.7"
+version = "0.10.8"
 source = { editable = "." }
 dependencies = [
     { name = "graspologic" },
@@ -112,7 +112,7 @@ requires-dist = [
     { name = "agentscaffold", extras = ["graph", "graph-go", "graph-rust", "graph-java", "graph-c", "graph-cpp"], marker = "extra == 'graph-all-languages'" },
     { name = "agentscaffold", extras = ["graph", "mcp"], marker = "extra == 'dev'" },
     { name = "datasets", marker = "extra == 'benchmark'", specifier = ">=3.0.0" },
-    { name = "duckdb", marker = "extra == 'graph-duckpgq'", specifier = ">=0.10.0" },
+    { name = "duckdb", marker = "extra == 'graph-duckpgq'", specifier = ">=0.10.0,<1.5.5" },
     { name = "graspologic", specifier = ">=3.4.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "litellm", marker = "extra == 'benchmark'", specifier = ">=1.50.0" },
