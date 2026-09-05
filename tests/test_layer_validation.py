@@ -62,6 +62,23 @@ def test_no_layers_defined_is_not_evaluable():
     assert "no architecture layers" in report.reason.lower()
 
 
+def test_layers_with_empty_path_patterns_is_no_data_not_conformant():
+    """Plan 261: empty patterns are 'no data ingested', not a clean pass."""
+    report = check_layers(
+        FakeStore(
+            layers=[
+                {"id": "layer::1", "number": 1, "name": "One", "pathPatterns": ""},
+                {"id": "layer::2", "number": 2, "name": "Two", "pathPatterns": ""},
+            ]
+        )
+    )
+
+    assert report.evaluable is False
+    assert report.status == "not_evaluable"
+    assert "path pattern" in report.reason.lower()
+    assert report.status != "pass"
+
+
 def test_layers_defined_but_no_files_mapped_is_not_evaluable():
     """The exact state of this repository's split between governance and code.
 
@@ -171,9 +188,9 @@ def test_imports_involving_an_unmapped_file_are_ignored_not_guessed():
 
     assert report.status == "pass"
     assert report.violations == []
-    assert report.unmapped_import_count == 1, (
-        "an ignored import must still be counted, or the report overstates its own coverage"
-    )
+    assert (
+        report.unmapped_import_count == 1
+    ), "an ignored import must still be counted, or the report overstates its own coverage"
 
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +30,179 @@ if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Artifact registry (Plan 261)
+# ---------------------------------------------------------------------------
+# Zero rows means three different things. The declaration lives in one table so
+# a future parser cannot inherit silence by being forgotten.
+
+
+@dataclass(frozen=True)
+class ArtifactSpec:
+    """Zero-row policy for one governance artifact type."""
+
+    name: str
+    shape: str  # whole_file | per_file | opportunistic
+    zero_policy: str  # defect | legitimate
+    expected_format: str
+    populated_hint: str | None = None
+
+    @property
+    def phase(self) -> str:
+        return f"governance:{self.name}"
+
+
+ARTIFACT_REGISTRY: dict[str, ArtifactSpec] = {
+    "learnings": ArtifactSpec(
+        name="learnings",
+        shape="whole_file",
+        zero_policy="defect",
+        expected_format=(
+            "pipe table (| ID | Plan | Description | ...), "
+            "### L<plan>-<n> heading list, or bold-bullet "
+            "`- **L<plan>-<n> (<date>, Plan <n> ...): title**`"
+        ),
+        populated_hint=r"L\d+-\d+",
+    ),
+    "layers": ArtifactSpec(
+        name="layers",
+        shape="whole_file",
+        zero_policy="defect",
+        expected_format=(
+            "## Layer N: Name with path patterns in a Components Paths column, "
+            "a **Paths**/**Location** line, or inline backticked repo paths"
+        ),
+        populated_hint=None,  # real vs placeholder headings are checked below
+    ),
+    "plans": ArtifactSpec(
+        name="plans",
+        shape="per_file",
+        zero_policy="defect",
+        expected_format="plan markdown whose filename contains a numeric plan number",
+    ),
+    "contracts": ArtifactSpec(
+        name="contracts",
+        shape="per_file",
+        zero_policy="defect",
+        expected_format="contract markdown (not README.md or contract_template.md)",
+    ),
+    "adrs": ArtifactSpec(
+        name="adrs",
+        shape="per_file",
+        zero_policy="defect",
+        expected_format="ADR markdown with a numeric heading",
+    ),
+    "studies": ArtifactSpec(
+        name="studies",
+        shape="per_file",
+        zero_policy="defect",
+        expected_format="study markdown with YAML frontmatter",
+    ),
+    "spikes": ArtifactSpec(
+        name="spikes",
+        shape="per_file",
+        zero_policy="defect",
+        expected_format="spike markdown",
+    ),
+    "findings": ArtifactSpec(
+        name="findings",
+        shape="opportunistic",
+        zero_policy="legitimate",
+        expected_format="[CATEGORY] markers anchored at line start (Plan 250)",
+    ),
+}
+
+# Parser name -> registry key. The coverage-guard test fails if a parser is
+# wired into ingestion without a row here.
+REGISTERED_PARSERS: dict[str, str] = {
+    "_parse_learnings": "learnings",
+    "parse_architecture_layers": "layers",
+    "_parse_plan": "plans",
+    "_parse_contract": "contracts",
+    "_parse_adr": "adrs",
+    "_parse_study": "studies",
+    "_parse_spike": "spikes",
+    "_parse_review_findings": "findings",
+}
+
+
+def _source_appears_populated(spec: ArtifactSpec, text: str) -> bool:
+    """True when the file looks like it contains artifacts of this type."""
+    if not text.strip():
+        return False
+    if spec.name == "layers":
+        from agentscaffold.graph.architecture import has_real_layer_headings
+
+        return has_real_layer_headings(text)
+    if spec.populated_hint is None:
+        return True
+    flags = re.MULTILINE if spec.populated_hint.startswith("^") else 0
+    return re.search(spec.populated_hint, text, flags) is not None
+
+
+def _emit_zero_row_warning(
+    store: GraphBackend,
+    artifact: str,
+    file_path: str,
+    *,
+    extra: str = "",
+    severity: str = "warning",
+    warning_id: str | None = None,
+) -> None:
+    spec = ARTIFACT_REGISTRY[artifact]
+    if spec.zero_policy != "defect":
+        return
+    message = extra or (
+        f"{spec.name} source parsed to zero rows. Expected format: {spec.expected_format}."
+    )
+    store.add_parsing_warning(
+        warning_id or f"pw::governance::{artifact}::{file_path}",
+        file_path,
+        spec.phase,
+        message,
+        severity,
+    )
+
+
+def _maybe_warn_whole_file(
+    store: GraphBackend,
+    artifact: str,
+    path: Path,
+    row_count: int,
+) -> None:
+    spec = ARTIFACT_REGISTRY[artifact]
+    if spec.shape != "whole_file" or spec.zero_policy != "defect":
+        return
+    if not path.is_file() or row_count > 0:
+        return
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return
+    if not _source_appears_populated(spec, text):
+        return
+    _emit_zero_row_warning(store, artifact, str(path))
+
+
+def _maybe_warn_per_file(store: GraphBackend, artifact: str, path: Path) -> None:
+    spec = ARTIFACT_REGISTRY[artifact]
+    if spec.shape != "per_file" or spec.zero_policy != "defect":
+        return
+    _emit_zero_row_warning(store, artifact, str(path))
+
+
+def _known_top_level_dirs(root: Path) -> list[str]:
+    skip = {".git", ".venv", "node_modules", "__pycache__", ".scaffold", ".tox"}
+    if not root.is_dir():
+        return []
+    return sorted(
+        p.name
+        for p in root.iterdir()
+        if p.is_dir() and p.name not in skip and not p.name.startswith(".")
+    )
+
 
 # ---------------------------------------------------------------------------
 # Plan parsing
@@ -280,14 +454,61 @@ _LEARNING_RE_LIST = re.compile(
     re.MULTILINE,
 )
 
+# Bold-bullet prose: - **L249-17 (2026-08-06, Plan 249 Step F6): title**
+_LEARNING_RE_BOLD = re.compile(
+    r"^-\s+\*\*(?P<id>L(?P<plan>\d+)-\d+)\s*\([^)]*\):\s*(?P<desc>.+?)\*\*",
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def _status_from_section_heading(heading: str) -> str:
+    key = heading.lower()
+    if "incorporated" in key:
+        return "Incorporated"
+    if "pending" in key:
+        return "Pending"
+    return "Pending"
+
+
+def _parse_learnings_bold(text: str) -> list[dict[str, Any]]:
+    """Parse the bold-bullet prose format used by agentscaffold-governance."""
+    learnings: list[dict[str, Any]] = []
+    chunks = re.split(r"^##\s+", text, flags=re.MULTILINE)
+    for index, chunk in enumerate(chunks):
+        if index == 0 and not text.lstrip().startswith("##"):
+            heading = ""
+            body = chunk
+        else:
+            newline = chunk.find("\n")
+            heading = chunk[:newline] if newline != -1 else chunk
+            body = chunk[newline + 1 :] if newline != -1 else ""
+        status = _status_from_section_heading(heading)
+        target = heading.strip() or "unspecified"
+        for m in _LEARNING_RE_BOLD.finditer(body):
+            description = re.sub(r"\s+", " ", m.group("desc")).strip()
+            if not description:
+                continue
+            learnings.append(
+                {
+                    "learning_id": m.group("id").strip(),
+                    "plan_number": int(m.group("plan")),
+                    "description": description,
+                    "target": target,
+                    "status": status,
+                }
+            )
+    return learnings
+
 
 def _parse_learnings(filepath: Path) -> list[dict[str, Any]]:
     """Parse the learnings tracker in any of the supported formats.
 
-    Supports three formats:
+    Supports:
     - 5-column table: ``| ID | Plan | Description | Target | Status |``
     - 4-column table: ``| ID | Learning | Target | Status |`` (plan in ID)
+    - 3-column table: ``| ID | Learning | Target |``
     - YAML-like list:  ``### L042-1`` with ``- Plan:`` / ``- Description:`` fields
+    - Bold-bullet prose: ``- **L249-17 (date, Plan N ...): title**``
     """
     try:
         text = filepath.read_text(errors="replace")
@@ -320,6 +541,12 @@ def _parse_learnings(filepath: Path) -> list[dict[str, Any]]:
                         "status": status,
                     }
                 )
+
+    for row in _parse_learnings_bold(text):
+        if row["learning_id"] in seen_ids:
+            continue
+        seen_ids.add(row["learning_id"])
+        learnings.append(row)
     return learnings
 
 
@@ -717,6 +944,7 @@ def _ingest_architecture_layers(
     store: GraphBackend,
     architecture_doc: Path,
     file_id_map: dict[str, str],
+    known_top_level_dirs: list[str] | None = None,
 ) -> tuple[int, int]:
     """Ingest ArchitectureLayer nodes and BELONGS_TO_LAYER edges.
 
@@ -731,10 +959,14 @@ def _ingest_architecture_layers(
     if not architecture_doc.is_file():
         return (0, 0)
 
-    layers = parse_architecture_layers(architecture_doc.read_text(errors="replace"))
+    layers = parse_architecture_layers(
+        architecture_doc.read_text(errors="replace"),
+        known_top_level_dirs=known_top_level_dirs,
+    )
     if not layers:
         return (0, 0)
 
+    doc_path = str(architecture_doc)
     for layer in layers:
         store.create_node(
             "ArchitectureLayer",
@@ -746,6 +978,28 @@ def _ingest_architecture_layers(
                 "pathPatterns": ",".join(layer.path_patterns),
             },
         )
+        if layer.provenance == "empty":
+            _emit_zero_row_warning(
+                store,
+                "layers",
+                doc_path,
+                extra=(
+                    f"Layer {layer.number} ({layer.name}) yielded zero path patterns. "
+                    f"Expected format: {ARTIFACT_REGISTRY['layers'].expected_format}."
+                ),
+                warning_id=f"pw::governance::layers::{doc_path}::L{layer.number}::empty",
+            )
+        elif layer.provenance == "inferred":
+            store.add_parsing_warning(
+                f"pw::governance::layers::{doc_path}::L{layer.number}::inferred",
+                doc_path,
+                "governance:layers",
+                (
+                    f"Layer {layer.number} ({layer.name}) path patterns were inferred "
+                    f"from inline backticked paths: {', '.join(layer.path_patterns)}."
+                ),
+                "info",
+            )
 
     edge_count = 0
     # Only layers that actually declare patterns can own files.
@@ -839,8 +1093,12 @@ def process_governance(
     # still completes, mirroring the governance-artifact restore contract.
     try:
         layer_count, layer_edge_count = _ingest_architecture_layers(
-            store, architecture_doc, file_id_map
+            store,
+            architecture_doc,
+            file_id_map,
+            known_top_level_dirs=_known_top_level_dirs(root),
         )
+        _maybe_warn_whole_file(store, "layers", architecture_doc, layer_count)
     except Exception as exc:  # noqa: BLE001 - layer ingestion must not break indexing
         logger.warning("Architecture layer ingestion failed: %s", exc)
 
@@ -854,6 +1112,7 @@ def process_governance(
         for plan_file in sorted(plans_dir.glob("*.md")):
             data = _parse_plan(plan_file)
             if data is None:
+                _maybe_warn_per_file(store, "plans", plan_file)
                 continue
 
             plan_id = f"plan::{data['number']}"
@@ -917,6 +1176,7 @@ def process_governance(
                 continue
             data = _parse_contract(contract_file)
             if data is None:
+                _maybe_warn_per_file(store, "contracts", contract_file)
                 continue
 
             contract_id = f"contract::{contract_file.stem}"
@@ -994,7 +1254,9 @@ def process_governance(
 
     # --- Learnings ---
     if learnings_file.is_file():
-        for lr in _parse_learnings(learnings_file):
+        parsed_learnings = _parse_learnings(learnings_file)
+        _maybe_warn_whole_file(store, "learnings", learnings_file, len(parsed_learnings))
+        for lr in parsed_learnings:
             lr_id = f"learning::{lr['learning_id']}"
             store.create_node(
                 "Learning",
@@ -1028,6 +1290,7 @@ def process_governance(
                 continue
             data = _parse_study(study_file)
             if data is None:
+                _maybe_warn_per_file(store, "studies", study_file)
                 continue
 
             sid = f"study::{data['study_id']}"
@@ -1070,6 +1333,7 @@ def process_governance(
                 continue
             data = _parse_spike(spike_file)
             if data is None:
+                _maybe_warn_per_file(store, "spikes", spike_file)
                 continue
 
             spk_id = f"spike::{spike_file.stem}"
@@ -1103,6 +1367,7 @@ def process_governance(
                 continue
             data = _parse_adr(adr_file)
             if data is None:
+                _maybe_warn_per_file(store, "adrs", adr_file)
                 continue
 
             aid = f"adr::{data['number']}"
