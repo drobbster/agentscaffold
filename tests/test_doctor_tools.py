@@ -34,9 +34,9 @@ def test_every_registered_tool_is_reported(context):
     doctor_context, _ = context
     probes = probe_tools(doctor_context)
 
-    assert {p.name for p in probes} == set(tool_names()), (
-        f"table does not cover the registry; missing={set(tool_names()) - {p.name for p in probes}}"
-    )
+    assert {p.name for p in probes} == set(
+        tool_names()
+    ), f"table does not cover the registry; missing={set(tool_names()) - {p.name for p in probes}}"
 
 
 def test_write_tools_are_skipped_by_default(context):
@@ -53,9 +53,9 @@ def test_write_tools_are_skipped_by_default(context):
     for name in WRITE_TOOLS:
         probe = by_name[name]
         assert probe.status == "skip", f"{name} ran without --include-writes ({probe.status})"
-        assert "write" in (probe.detail or "").lower(), (
-            f"{name} was skipped without saying it was skipped for being a write: {probe.detail}"
-        )
+        assert (
+            "write" in (probe.detail or "").lower()
+        ), f"{name} was skipped without saying it was skipped for being a write: {probe.detail}"
 
 
 def test_read_tools_actually_run_by_default(context):
@@ -88,9 +88,9 @@ def test_include_writes_does_not_touch_the_real_project(context, tmp_path):
         store.close()
 
     probes = probe_tools(doctor_context, include_writes=True)
-    assert any(p.name == "scaffold_record_finding" and p.status != "skip" for p in probes), (
-        "--include-writes did not exercise any write tool"
-    )
+    assert any(
+        p.name == "scaffold_record_finding" and p.status != "skip" for p in probes
+    ), "--include-writes did not exercise any write tool"
 
     store = DuckPGQBackend(workspace.db_path)
     try:
@@ -98,9 +98,9 @@ def test_include_writes_does_not_touch_the_real_project(context, tmp_path):
     finally:
         store.close()
 
-    assert after == before, (
-        f"--include-writes wrote {after - before} findings into the real project's graph"
-    )
+    assert (
+        after == before
+    ), f"--include-writes wrote {after - before} findings into the real project's graph"
 
 
 def test_a_busy_graph_reports_as_busy_not_as_a_broken_tool(context, monkeypatch):
@@ -126,9 +126,9 @@ def test_a_busy_graph_reports_as_busy_not_as_a_broken_tool(context, monkeypatch)
         f"a held graph was reported as something other than busy: "
         f"{[(p.name, p.status) for p in ran if p.status != 'busy']}"
     )
-    assert all("retry" in (p.detail or "").lower() for p in ran), (
-        "busy result does not tell the user to retry"
-    )
+    assert all(
+        "retry" in (p.detail or "").lower() for p in ran
+    ), "busy result does not tell the user to retry"
 
 
 def test_a_genuinely_broken_tool_is_reported_as_failing(context, monkeypatch):
@@ -147,9 +147,9 @@ def test_a_genuinely_broken_tool_is_reported_as_failing(context, monkeypatch):
 
     assert probes, "nothing ran"
     assert all(p.status == "fail" for p in probes)
-    assert any("exploded" in (p.detail or "") for p in probes), (
-        "failure detail does not carry the underlying error"
-    )
+    assert any(
+        "exploded" in (p.detail or "") for p in probes
+    ), "failure detail does not carry the underlying error"
 
 
 def test_one_broken_tool_does_not_hide_the_others(context, monkeypatch):

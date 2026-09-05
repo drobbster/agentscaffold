@@ -104,9 +104,9 @@ class TestIncrementalIdempotency:
         # Counts may shift slightly if definitions changed, but must stay in the
         # same order of magnitude (no 2x+ duplication).
         for key in ("IMPORTS", "CALLS"):
-            assert after[key] <= baseline[key] * 2 + 5, (
-                f"{key} duplicated: {baseline[key]} -> {after[key]}"
-            )
+            assert (
+                after[key] <= baseline[key] * 2 + 5
+            ), f"{key} duplicated: {baseline[key]} -> {after[key]}"
 
 
 class TestGovernanceRefreshedIncrementally:

@@ -72,14 +72,16 @@ domain assets project-local (the per-project escape hatch).
 
 ## How Domain Packs Affect AGENTS.md
 
-When you run `scaffold agents generate`, the generated AGENTS.md includes:
+Domain-pack references live in the **scaffolded governance manual** (the unmanaged half of `AGENTS.md`), not in the routing block. A fresh `scaffold init` after the pack is configured writes them once. On an existing project, `scaffold agents generate` will not rewrite that manual.
 
-- References to domain review prompts in the Review -> Ready gate
-- References to domain standards in the Standards Compliance section
-- Domain-specific approval gates in the Approval Gates table
-- Domain-specific review criteria (e.g. "If trading/risk/backtest plan: Quant architect review")
+To pull pack references into a manual you already own:
 
-The agent reads AGENTS.md and applies these rules during plan review and execution.
+```bash
+scaffold agents diff-manual           # dry run
+scaffold agents diff-manual --apply   # unambiguous sections only
+```
+
+Those references include domain review prompts in the Review -> Ready gate, domain standards, approval gates, and domain-specific review criteria. The agent still reads `AGENTS.md` and applies them during plan review and execution.
 
 ## NL Prompt Patterns After Installation
 

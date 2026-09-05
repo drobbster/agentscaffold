@@ -8,6 +8,39 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Breaking
+- **`AGENTS.md`'s managed block is routing only (Plan 260 / ADR-027).** The
+  governance manual is scaffolded once by `init` and never regenerated. On
+  upgrade, `generate-all` lifts the old managed manual out of the markers
+  (keeps a `.bak`) and writes the smaller routing block, including Session
+  Working Rhythm. Ownership is `<!-- agentscaffold: managed=false -->`. A
+  marker-less file that already looks generated refuses unless you pass
+  `--allow-append`. `--force` still replaces the entire file and is not that
+  escape. `scaffold agents repair` de-duplicates existing copies (dry run by
+  default; refuses when the copies differ). `scaffold agents diff-manual`
+  offers template updates against the provenance stamp. `scaffold doctor`
+  reports heading overlap. Domain-pack references in the manual travel with
+  that stamp: after `init`, pull them with `diff-manual`, not `generate`.
+
+### Added
+- **Session MCP surface (Plan 263).** `scaffold_session_start`,
+  `scaffold_session_end`, `scaffold_session_list`, `scaffold_session_context`,
+  and typed `scaffold_session_record_decision` (`kind`: strategic /
+  architectural / operational). The generated routing block includes a Session
+  Working Rhythm stanza.
+- **Plan execution steps in the graph (Plan 265).** `PlanStep` nodes and
+  `PLAN_HAS_STEP` edges. Optional plan metadata `Step dependencies:` writes
+  `DEPENDS_ON_STEPS`. `scaffold_compare_plans` returns pairwise
+  `dependency_cycle`: `none`, `apparent`, or `genuine`. Graph schema version
+  is 11.
+- **Evidence on findings and learnings (Plan 264).** `evidenceKind` /
+  `evidence` on ReviewFinding and Learning. Omit means `unspecified`.
+  Resolving a finding against a Plan vertex writes `FINDING_ADDRESSED_BY`.
+- **Class hierarchy edges (Plan 262).** Python `EXTENDS` is populated from the
+  existing parse capture. `IMPLEMENTS` is still deferred.
+- **Governance ingest (Plan 261).** Learnings and `BELONGS_TO_LAYER` rows are
+  written from populated source files instead of silently yielding zero.
+
 ## [0.10.8] - 2026-08-13
 
 ### Fixed

@@ -89,6 +89,9 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "scaffold_resolve_backlog_item",
         "scaffold_begin_plan",
         "scaffold_complete_plan",
+        "scaffold_session_start",
+        "scaffold_session_end",
+        "scaffold_session_record_decision",
     }
 )
 
@@ -396,7 +399,9 @@ def _tool_specs() -> list[ToolSpec]:
             name="scaffold_compare_plans",
             description=(
                 "Compare two plans for conflicts, shared files, and supersession. "
-                "Use when the user asks to compare plans or check for overlap."
+                "Also reports a pairwise dependency_cycle (none / apparent / genuine) "
+                "when the plans depend on each other. Use when the user asks to "
+                "compare plans or check for overlap."
             ),
             input_schema={
                 "type": "object",
@@ -561,7 +566,9 @@ def _tool_specs() -> list[ToolSpec]:
                 "Record a review finding in the knowledge graph. Creates a ReviewFinding "
                 "node linked to the relevant plan, files, and functions. Use this when "
                 "you identify an issue, concern, or improvement during a code review. "
-                "Findings persist across sessions and surface in future reviews."
+                "Pass function_ids when the finding is about a symbol, not only a file. "
+                "Omit evidence_kind to record unspecified; set inferred when the claim "
+                "was not measured. Findings persist across sessions."
             ),
             input_schema={
                 "type": "object",
@@ -600,7 +607,31 @@ def _tool_specs() -> list[ToolSpec]:
                     "function_ids": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Function node IDs related to this finding",
+                        "description": (
+                            "Function node IDs related to this finding. Prefer "
+                            "this over file_paths alone when the finding is "
+                            "about a symbol."
+                        ),
+                    },
+                    "evidence_kind": {
+                        "type": "string",
+                        "enum": [
+                            "command",
+                            "test",
+                            "file_ref",
+                            "graph_query",
+                            "external_doc",
+                            "inferred",
+                            "unspecified",
+                        ],
+                        "description": (
+                            "How the finding was established. Omit for "
+                            "unspecified. Use inferred when it was not measured."
+                        ),
+                    },
+                    "evidence": {
+                        "type": "string",
+                        "description": "Citation: command, test id, path:line, or SQL",
                     },
                 },
                 "required": ["plan_number", "review_type", "category", "finding"],
@@ -630,6 +661,13 @@ def _tool_specs() -> list[ToolSpec]:
                     "resolution": {
                         "type": "string",
                         "description": "Description of how the finding was resolved",
+                    },
+                    "resolved_by_plan": {
+                        "type": "integer",
+                        "description": (
+                            "Plan number that addressed the finding. Creates "
+                            "FINDING_ADDRESSED_BY only when that Plan vertex exists."
+                        ),
                     },
                 },
                 "required": ["finding_id", "resolution"],
@@ -674,6 +712,19 @@ def _tool_specs() -> list[ToolSpec]:
                                     "type": "array",
                                     "items": {"type": "string"},
                                 },
+                                "evidence_kind": {
+                                    "type": "string",
+                                    "enum": [
+                                        "command",
+                                        "test",
+                                        "file_ref",
+                                        "graph_query",
+                                        "external_doc",
+                                        "inferred",
+                                        "unspecified",
+                                    ],
+                                },
+                                "evidence": {"type": "string"},
                             },
                             "required": ["category", "finding"],
                         },
@@ -924,6 +975,155 @@ def _tool_specs() -> list[ToolSpec]:
                     },
                 },
                 "required": ["plan_number"],
+            },
+        ),
+        ToolSpec(
+            name="scaffold_session_start",
+            description=(
+                "Start a working session in the knowledge graph. Returns the session "
+                "id. If a session is already open for this project, returns that id "
+                "instead of minting a second one."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "plan_numbers": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Plan numbers this session is working on",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "Optional opening summary",
+                    },
+                },
+            },
+        ),
+        ToolSpec(
+            name="scaffold_session_end",
+            description=(
+                "Close a working session with a summary, decisions, and optional "
+                "files. Omitting session_id closes the open session for this project."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session id to close; omit to close the open session",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "Final session summary",
+                    },
+                    "plan_numbers": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Plan numbers to store on the session",
+                    },
+                    "decisions": {
+                        "type": "array",
+                        "description": (
+                            "Structured decisions: {decision, evidence, status} "
+                            "where status is observed or inferred"
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "decision": {"type": "string"},
+                                "evidence": {"type": "string"},
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["observed", "inferred"],
+                                },
+                            },
+                            "required": ["decision"],
+                        },
+                    },
+                    "files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Files touched. Always stored on the session; "
+                            "SESSION_MODIFIED edges only when a File vertex exists"
+                        ),
+                    },
+                },
+            },
+        ),
+        ToolSpec(
+            name="scaffold_session_context",
+            description=(
+                "Recent session summaries, hot files, and plan numbers. Fallback "
+                "only -- prefer the session_context field already embedded in "
+                "scaffold_orient when sessions exist."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of recent sessions to include",
+                        "default": 3,
+                    },
+                },
+            },
+        ),
+        ToolSpec(
+            name="scaffold_session_record_decision",
+            description=(
+                "Record a strategic, architectural, or operational decision on "
+                "the open working session. Opens a session if none is open. "
+                "Use for approve / defer / stay-the-course / change-scope "
+                "calls. Do not record findings or backlog items here -- those "
+                "have their own tools."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "decision": {
+                        "type": "string",
+                        "description": "What was decided",
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": ["strategic", "architectural", "operational"],
+                        "description": (
+                            "strategic = approve/defer/stay-the-course; "
+                            "architectural = structure or contract; "
+                            "operational = how we execute this session"
+                        ),
+                    },
+                    "evidence": {
+                        "type": "string",
+                        "description": "Citation or basis for the decision",
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["observed", "inferred"],
+                        "description": "observed if measured; inferred otherwise",
+                    },
+                    "plan_numbers": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Plan numbers this decision applies to",
+                    },
+                },
+                "required": ["decision"],
+            },
+        ),
+        ToolSpec(
+            name="scaffold_session_list",
+            description=("List recent working sessions for this project, most recent first."),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of sessions to return",
+                        "default": 10,
+                    },
+                },
             },
         ),
     ]

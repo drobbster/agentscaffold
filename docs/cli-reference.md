@@ -381,7 +381,9 @@ scaffold study create "Compare retrieval strategies"
 | Command | Does |
 |---|---|
 | `scaffold agents generate-all` | Generate every platform artifact at once |
-| `scaffold agents generate` | `AGENTS.md` |
+| `scaffold agents generate` | Routing block in `AGENTS.md` |
+| `scaffold agents repair` | De-duplicate `AGENTS.md` headings (dry run; `--apply` writes) |
+| `scaffold agents diff-manual` | Compare the project-owned manual to the template (dry run; `--apply` writes) |
 | `scaffold agents cursor` | `.cursor/rules.md` and rule files |
 | `scaffold agents claude` | `CLAUDE.md` |
 | `scaffold agents windsurf` | `.windsurfrules` |
@@ -391,10 +393,19 @@ scaffold study create "Compare retrieval strategies"
 
 ```bash
 scaffold agents generate-all
+scaffold agents generate-all --allow-append   # append routing when the overlap guard refuses
+scaffold agents repair                        # dry run
+scaffold agents repair --apply
+scaffold agents diff-manual                   # dry run
+scaffold agents diff-manual --apply
 ```
 
-Run this after changing `scaffold.yaml`, and whenever `scaffold doctor` reports
-that generated rule files have drifted.
+`--force` rewrites the whole file. `--allow-append` only appends. They are not
+the same flag.
+
+Run `generate-all` after changing `scaffold.yaml`, and whenever `scaffold doctor`
+reports that generated rule files have drifted. Use `repair` on a duplicated
+`AGENTS.md`. Use `diff-manual` to pull template updates into a manual you own.
 
 ---
 
@@ -406,6 +417,13 @@ that generated rule files have drifted.
 | `scaffold session end` | Finalize a session |
 | `scaffold session list` | Recent sessions |
 | `scaffold session context` | Cross-session context: hot files, recent plans |
+
+Agents should prefer the MCP session tools (`scaffold_session_start`,
+`scaffold_session_record_decision`, `scaffold_session_end`) described in the
+generated routing block. `scaffold_session_record_decision` takes `kind`
+(`strategic` / `architectural` / `operational`) and is not for findings or
+backlog items. `scaffold review compare` / `scaffold_compare_plans` now also
+returns pairwise `dependency_cycle` when plans declare `Step dependencies:`.
 
 ```bash
 scaffold session start "Add rate limiting"

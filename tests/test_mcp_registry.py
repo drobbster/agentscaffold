@@ -60,6 +60,11 @@ EXPECTED_TOOLS = (
     "scaffold_next_action",
     "scaffold_begin_plan",
     "scaffold_complete_plan",
+    "scaffold_session_start",
+    "scaffold_session_end",
+    "scaffold_session_context",
+    "scaffold_session_record_decision",
+    "scaffold_session_list",
 )
 
 
@@ -114,9 +119,9 @@ def test_working_path_is_described_as_the_thing_to_send_but_stays_optional():
         description = spec.input_schema["properties"]["working_path"]["description"]
         assert not description.startswith("Optional"), f"{spec.name} understates the consequence"
         assert "ambiguous_project" in description, f"{spec.name} does not say what omitting costs"
-        assert "working_path" not in spec.input_schema.get("required", []), (
-            f"{spec.name} makes working_path mandatory; that breaks calls before a file is open"
-        )
+        assert "working_path" not in spec.input_schema.get(
+            "required", []
+        ), f"{spec.name} makes working_path mandatory; that breaks calls before a file is open"
 
 
 def test_specs_are_well_formed():

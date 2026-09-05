@@ -34,7 +34,7 @@ When you run `scaffold init`, AgentScaffold installs the full core planning temp
 | [Getting Started](getting-started.md) | Installation, init, first plan, knowledge graph, review, execution, NL+MCP switch |
 | [CLI Reference](cli-reference.md) | Every `scaffold` command, its options, environment variables, troubleshooting |
 | [Multi-Project Workspaces](multi-project.md) | One MCP server across several projects, registration, where the graph lives, `doctor`, `gc` |
-| [User Guide](user-guide.md) | Full session workflow, NL intent routing reference, greenfield onboarding, MCP tools (all 26), session tracking |
+| [User Guide](user-guide.md) | Full session workflow, NL intent routing reference, greenfield onboarding, MCP tools (including session continuity), session tracking |
 | [Platform Integration](platform-integration.md) | Cursor, Claude Code, Windsurf, Cline, Continue, aider, Codex, MCP setup, all MCP tools |
 | [Configuration](configuration.md) | Full scaffold.yaml reference, gates, rigor presets |
 | [Domain Packs](domain-packs.md) | Available packs, installation, using multiple packs |
@@ -55,9 +55,10 @@ The most common trigger phrases and what they invoke:
 | "is plan X stale" / "is plan X still valid" | `scaffold_staleness_check` |
 | "retro on plan X" / "post-implementation review" | `scaffold_prepare_retro` |
 | "decision history for plan X" / "what ADR governs plan X" | `scaffold_decision_context` |
-| "compare plan X and Y" / "do plans overlap" | `scaffold_compare_plans` |
+| "compare plan X and Y" / "do plans overlap" | `scaffold_compare_plans` (includes `dependency_cycle`) |
+| "start a session" / "record this decision" / "close the session" | `scaffold_session_start` / `scaffold_session_record_decision` / `scaffold_session_end` |
 
-For the full routing table (all 26 MCP tools + trigger phrases), see the
+For the full routing table (MCP tools + trigger phrases), see the
 [NL Intent Routing Reference](user-guide.md#nl-intent-routing-reference) section of the User Guide.
 
 ## Internal (dev_docs/, not shipped to PyPI)

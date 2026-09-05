@@ -44,6 +44,25 @@ _INTENT_NOTES: dict[str, str] = {
     "scaffold_next_action": (
         "Fallback only. Prefer `recommended_actions` from `scaffold_orient` when present."
     ),
+    "scaffold_session_context": (
+        "Fallback only. Prefer the `session_context` field already embedded "
+        "in `scaffold_orient` when sessions exist."
+    ),
+    "scaffold_session_start": (
+        "Open a graph Session at the start of a working session so later "
+        "orientation can read it back. A second start while one is open "
+        "returns the same id."
+    ),
+    "scaffold_session_end": (
+        "Close the open Session with a summary. Extra decisions on end "
+        "are appended, not replaced. Findings and backlog stay on their "
+        "own tools -- they are not session decisions."
+    ),
+    "scaffold_session_record_decision": (
+        "Record a strategic, architectural, or operational call "
+        "(approve, defer, stay the course, change scope). Do not record "
+        "findings, backlog items, or micro-implementation choices."
+    ),
 }
 
 
@@ -76,8 +95,14 @@ def _tool_selection_policy_lines() -> list[str]:
         "  call `scaffold_next_action` unless those fields are absent)",
         "- Mid-implementation progress / what's left on a plan ->",
         "  `scaffold_diff_plan_vs_code` first",
-        "- Decision lineage (ADR/spike/study) -> `scaffold_decision_context` first",
+        "- Decision lineage (ADR/spike/study plus session decisions) ->",
+        "  `scaffold_decision_context` first",
+        "- A strategic, architectural, or operational call (approve, defer,",
+        "  stay the course, change scope) -> `scaffold_session_record_decision`",
         "- Symbol context/impact -> `scaffold_context` or `scaffold_impact` first",
+        "- Open or close a working session -> `scaffold_session_start` /",
+        "  `scaffold_session_end` (prefer `session_context` already embedded",
+        "  in `scaffold_orient` over a follow-up `scaffold_session_context`)",
         "- Empty search/impact/context -> consume inline `why_empty` +",
         "  `grep_fallback` on that same response before extra tool hops",
         "",
@@ -98,6 +123,26 @@ def _tool_selection_policy_lines() -> list[str]:
         "  insufficient.",
         "- Prefer `scaffold_diff_plan_vs_code` over dumping or re-reading the",
         "  full plan file just to check progress.",
+        "- After `scaffold_orient`, use embedded `session_context` rather than",
+        "  calling `scaffold_session_context` unless that field is absent.",
+        "",
+    ]
+
+
+def _session_working_rhythm_lines() -> list[str]:
+    return [
+        "## Session Working Rhythm",
+        "",
+        "At session start, call `scaffold_session_start` before other writes.",
+        "When a strategic, architectural, or operational call is made",
+        "(approve, defer, stay the course, change scope), call",
+        "`scaffold_session_record_decision` immediately with `kind` and evidence.",
+        "Do not record findings, backlog items, or micro-implementation choices",
+        "as decisions. Those have their own tools.",
+        "At session end, call `scaffold_session_end`. Extra decisions on end append.",
+        "Decision lineage for a plan: `scaffold_decision_context` (ADRs, spikes,",
+        "studies, plus session decisions for that plan). Prefer that over",
+        "re-reading prose.",
         "",
     ]
 
@@ -121,6 +166,10 @@ def _graph_trust_discipline_lines() -> list[str]:
         "  `coverage` field on tool output; heed any `caveat`.",
         "- Static analysis cannot see dynamic dispatch, reflection (`getattr`),",
         "  dependency-injection registries, or config/string-driven wiring.",
+        "- A non-empty result is also not proof of completeness. `EXTENDS`",
+        "  shows the declared class hierarchy; it does not show decorator",
+        "  registries, YAML wiring, or other dynamic registration. Do not treat",
+        '  "all subclasses of X" as "every registered X".',
         "- Before changing safety-critical, cross-language, or dynamically-wired",
         "  code, confirm usage with a text search (grep) in addition to the graph",
         "  (inline `grep_fallback` counts when present).",
@@ -219,6 +268,7 @@ def generate_canonical_guidance_body(config: ScaffoldConfig) -> str:
     """
     lines: list[str] = ["# AgentScaffold Routing Guidance", ""]
     lines.extend(_tool_selection_policy_lines())
+    lines.extend(_session_working_rhythm_lines())
     lines.extend(_graph_trust_discipline_lines())
     lines.extend(_workspace_scope_discipline_lines())
     lines.extend(_governance_guardrails_lines(config))
@@ -241,6 +291,7 @@ def generate_rule_policy_document(
         lines.extend(intro_lines)
         lines.append("")
     lines.extend(_tool_selection_policy_lines())
+    lines.extend(_session_working_rhythm_lines())
     lines.extend(_graph_trust_discipline_lines())
     lines.extend(_workspace_scope_discipline_lines())
     lines.extend(_governance_guardrails_lines(config))

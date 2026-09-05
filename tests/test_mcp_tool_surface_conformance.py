@@ -84,13 +84,13 @@ def test_context_answers_from_the_project_the_working_path_resolves_to(two_proje
         callees = [c.get("name") for c in (payload.get("callees") or [])]
 
         # Positive assertion per project, not "the two differ".
-        assert own_symbol in callees, (
-            f"asked from {project}, expected its own {own_symbol} among callees, got {callees}"
-        )
+        assert (
+            own_symbol in callees
+        ), f"asked from {project}, expected its own {own_symbol} among callees, got {callees}"
         foreign = {ALPHA_ONLY_SYMBOL, BETA_ONLY_SYMBOL} - {own_symbol}
-        assert not foreign & set(callees), (
-            f"asked from {project}, leaked another project's symbol: {callees}"
-        )
+        assert not foreign & set(
+            callees
+        ), f"asked from {project}, leaked another project's symbol: {callees}"
 
 
 def test_impact_answers_from_the_project_the_working_path_resolves_to(two_project_workspace):
@@ -114,9 +114,9 @@ def test_impact_answers_from_the_project_the_working_path_resolves_to(two_projec
             f"among importers, got {sorted(importers)}"
         )
         other = ws.beta_name if project == ws.alpha_name else ws.alpha_name
-        assert ws.expected_importer(other) not in importers, (
-            f"asked from {project}, leaked {other}'s importer: {sorted(importers)}"
-        )
+        assert (
+            ws.expected_importer(other) not in importers
+        ), f"asked from {project}, leaked {other}'s importer: {sorted(importers)}"
 
 
 def test_search_answers_from_the_project_the_working_path_resolves_to(two_project_workspace):
@@ -168,9 +168,9 @@ def test_a_symbol_only_in_a_sibling_project_is_reported_not_found(two_project_wo
 
     ws = two_project_workspace
     payload = _dispatch("scaffold_context", ws, ws.alpha_name, symbol=BETA_ONLY_SYMBOL)
-    assert payload.get("error"), (
-        f"expected not-found for beta's symbol asked from alpha, got {list(payload)}"
-    )
+    assert payload.get(
+        "error"
+    ), f"expected not-found for beta's symbol asked from alpha, got {list(payload)}"
 
 
 def test_stats_labels_its_totals_as_workspace_wide(two_project_workspace):
@@ -185,9 +185,9 @@ def test_stats_labels_its_totals_as_workspace_wide(two_project_workspace):
     scope = payload.get("scope") or {}
 
     assert scope.get("kind") == "workspace", f"stats did not label its scope: {scope}"
-    assert set(ws.names) <= set(scope.get("projects") or []), (
-        f"scope names the wrong projects: {scope}"
-    )
+    assert set(ws.names) <= set(
+        scope.get("projects") or []
+    ), f"scope names the wrong projects: {scope}"
     assert scope.get("current_project") == ws.alpha_name
 
 
@@ -198,9 +198,9 @@ def test_stats_labels_its_totals_as_workspace_wide(two_project_workspace):
 
 @pytest.mark.parametrize("spec", tool_specs(), ids=lambda s: s.name)
 def test_every_tool_advertises_working_path(spec):
-    assert "working_path" in spec.input_schema.get("properties", {}), (
-        f"{spec.name} does not accept working_path, so it cannot be project-scoped"
-    )
+    assert "working_path" in spec.input_schema.get(
+        "properties", {}
+    ), f"{spec.name} does not accept working_path, so it cannot be project-scoped"
 
 
 @pytest.mark.parametrize("spec", tool_specs(), ids=lambda s: s.name)
@@ -212,12 +212,12 @@ def test_every_declared_argument_describes_itself(spec):
     the guidance the agent needed to call the tool correctly.
     """
     for prop_name, prop in spec.input_schema.get("properties", {}).items():
-        assert all(key == key.strip() for key in prop), (
-            f"{spec.name}.{prop_name} has a whitespace-padded schema key: {list(prop)}"
-        )
-        assert prop.get("description", "").strip(), (
-            f"{spec.name}.{prop_name} has no description for the agent to read"
-        )
+        assert all(
+            key == key.strip() for key in prop
+        ), f"{spec.name}.{prop_name} has a whitespace-padded schema key: {list(prop)}"
+        assert prop.get(
+            "description", ""
+        ).strip(), f"{spec.name}.{prop_name} has no description for the agent to read"
 
 
 @pytest.mark.parametrize(

@@ -46,4 +46,6 @@ Thumbs.db
 .venv-scaffold/
 *.duckdb
 *.duckdb.wal
+AGENTS.local.md
+.cursor/rules/local.*.mdc
 # END AGENTSCAFFOLD MANAGED SECTION

@@ -7,6 +7,8 @@ edges (including placeholder skipping and idempotent re-runs).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from agentscaffold.graph.architecture import (
     ArchitectureLayerDef,
     match_layer_for_file,
@@ -78,6 +80,21 @@ def test_parse_extracts_path_globs():
         "graph/incremental.py",
     ]
     assert layers[1].path_patterns == ["graph/"]
+
+
+def test_parse_prose_layout_yields_nonempty_patterns():
+    """Plan 261: Components tables without a Paths column still extract paths."""
+    fixture = Path(__file__).parent / "fixtures" / "architecture_prose_layout.md"
+    layers = parse_architecture_layers(
+        fixture.read_text(),
+        known_top_level_dirs=["data", "libs", "pipeline", "apps"],
+    )
+    assert [layer.number for layer in layers] == [1, 2, 3, 4, 5, 6]
+    for layer in layers:
+        assert layer.path_patterns, f"layer {layer.number} produced no patterns"
+    assert layers[2].provenance == "curated"  # **Location**:
+    assert layers[3].provenance == "curated"  # **Paths**:
+    assert layers[1].provenance == "inferred"
 
 
 def test_parse_empty_or_placeholder_only_doc():
@@ -176,6 +193,69 @@ def test_ingest_creates_layers_and_edges(tmp_path):
         assert backend_layer["l.number"] == 2
 
         assert get_file_layer(store, "docs/readme.md") is None
+    finally:
+        store.close()
+
+
+def test_ingest_prose_layout_creates_nonzero_edges(tmp_path):
+    """Regression Plan 237 never made: layers defined => BELONGS_TO_LAYER > 0."""
+    from agentscaffold.graph.governance import _ingest_architecture_layers
+
+    fixture = Path(__file__).parent / "fixtures" / "architecture_prose_layout.md"
+    doc = tmp_path / "system_architecture.md"
+    doc.write_text(fixture.read_text())
+
+    store = _store()
+    try:
+        file_id_map = _seed_files(
+            store,
+            [
+                "data/adapters/polygon.py",
+                "libs/strategies/momentum.py",
+                "libs/selection/selector.py",
+                "pipeline/portfolio_construction.py",
+                "libs/risk/posture.py",
+                "apps/execution/router.py",
+                "docs/readme.md",
+            ],
+        )
+        layer_count, edge_count = _ingest_architecture_layers(
+            store,
+            doc,
+            file_id_map,
+            known_top_level_dirs=["data", "libs", "pipeline", "apps"],
+        )
+        assert layer_count == 6
+        assert edge_count > 0
+        rows = store.query("SELECT src, dst FROM BELONGS_TO_LAYER")
+        assert len(rows) == edge_count
+        # At most one layer per file.
+        srcs = [r["src"] for r in rows]
+        assert len(srcs) == len(set(srcs))
+    finally:
+        store.close()
+
+
+def test_layer_with_no_paths_emits_warning(tmp_path):
+    from agentscaffold.graph.governance import _ingest_architecture_layers
+
+    doc = tmp_path / "system_architecture.md"
+    doc.write_text(
+        "## Layer 1: Empty\n\n### Purpose\nNo paths here.\n\n"
+        "## Layer 2: Has Paths\n\n**Paths**: `libs/foo/`\n"
+    )
+    store = _store()
+    try:
+        _ingest_architecture_layers(
+            store, doc, _seed_files(store, ["libs/foo/bar.py"]), known_top_level_dirs=["libs"]
+        )
+        warns = store.query(
+            "SELECT phase, message, severity FROM ParsingWarning WHERE phase = 'governance:layers'"
+        )
+        empty = [w for w in warns if "Layer 1" in w["message"] and "zero path" in w["message"]]
+        inferred = [w for w in warns if w["severity"] == "info"]
+        assert empty
+        assert not inferred  # layer 2 is curated via **Paths**
     finally:
         store.close()
 

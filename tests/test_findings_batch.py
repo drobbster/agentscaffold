@@ -74,8 +74,9 @@ def test_record_findings_batch_persists_to_db(store):
     ]
     record_findings_batch(store, plan_number=151, review_type="devils_advocate", findings=findings)
 
-    rows = store.query("SELECT id FROM ReviewFinding WHERE planNumber = 151")
+    rows = store.query("SELECT id, evidenceKind FROM ReviewFinding WHERE planNumber = 151")
     assert len(rows) == 2
+    assert all(r["evidenceKind"] == "unspecified" for r in rows)
 
 
 def test_record_findings_batch_default_severity(store):

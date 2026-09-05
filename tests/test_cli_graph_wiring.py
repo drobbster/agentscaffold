@@ -89,9 +89,9 @@ class TestPlanCreateWithGraph:
 
 
 class TestAgentsGenerateWithGraph:
-    """Test that scaffold agents generate injects graph context."""
+    """Generate writes routing, not the graph-stats section (Plan 260)."""
 
-    def test_agents_md_has_codebase_intelligence(self, indexed_project, monkeypatch):
+    def test_agents_md_is_routing_only(self, indexed_project, monkeypatch):
         monkeypatch.chdir(indexed_project)
 
         from agentscaffold.agents.generate import run_agents_generate
@@ -101,10 +101,10 @@ class TestAgentsGenerateWithGraph:
         agents_md = indexed_project / "AGENTS.md"
         assert agents_md.exists()
         content = agents_md.read_text()
-        assert "Codebase Intelligence" in content
-        assert "scaffold index" in content
+        assert "Session Working Rhythm" in content
+        assert "Codebase Intelligence" not in content
 
-    def test_agents_md_contains_stats(self, indexed_project, monkeypatch):
+    def test_agents_md_does_not_embed_graph_stats(self, indexed_project, monkeypatch):
         monkeypatch.chdir(indexed_project)
 
         from agentscaffold.agents.generate import run_agents_generate
@@ -112,8 +112,8 @@ class TestAgentsGenerateWithGraph:
         run_agents_generate()
 
         content = (indexed_project / "AGENTS.md").read_text()
-        assert "Files" in content
-        assert "Functions" in content
+        assert "Session Working Rhythm" in content
+        assert "Import edges" not in content
 
 
 # ---------------------------------------------------------------------------
@@ -227,5 +227,5 @@ class TestCLIWithoutGraph:
         run_agents_generate()
 
         content = (tmp_path / "AGENTS.md").read_text()
-        assert "Planning Rules" in content
+        assert "Session Working Rhythm" in content
         assert "Codebase Intelligence" not in content

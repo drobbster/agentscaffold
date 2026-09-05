@@ -76,7 +76,7 @@ After init, your project contains:
 
 ```
 my-project/
-  AGENTS.md              # Rules your AI agent follows
+  AGENTS.md              # Governance manual (yours) + managed routing block
   CLAUDE.md              # Claude Code rules
   .windsurfrules         # Windsurf rules
   scaffold.yaml          # Framework configuration
@@ -100,8 +100,13 @@ my-project/
   Makefile               # Task runner (if generated)
 ```
 
-- **AGENTS.md**: The agent reads this file to learn the plan lifecycle, gates, and collaboration protocol.
-- **Platform rule files** (`CLAUDE.md`, `.windsurfrules`, `.cursor/rules/`, `.claude/agents/`): generated automatically on a fresh init. Regenerate them after editing `scaffold.yaml` with `scaffold agents generate-all`.
+- **AGENTS.md**: The agent reads the project-owned governance manual (plan
+  lifecycle, gates, collaboration protocol) and the managed routing block (MCP
+  tool selection, Session Working Rhythm). `init` writes the manual once.
+  `scaffold agents generate-all` refreshes routing only. Use
+  `scaffold agents repair` if headings are duplicated, and
+  `scaffold agents diff-manual` to pull later template updates.
+- **Platform rule files** (`CLAUDE.md`, `.windsurfrules`, `.cursor/rules/`, `.claude/agents/`): generated automatically on a fresh init. Regenerate the routing files after editing `scaffold.yaml` with `scaffold agents generate-all`.
 - **.gitignore**: a managed block is added ignoring AgentScaffold runtime artifacts (`.scaffold/` graph DB and model cache, `.venv-scaffold/`, `*.duckdb`) so they never get committed. An existing `.gitignore` is appended to, never overwritten.
 - **scaffold.yaml**: Edit this to change rigor, gates, domains, or semi-autonomous settings.
 - **docs/ai/**: Source of truth for templates, prompts, and state. The agent references these paths.

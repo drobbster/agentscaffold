@@ -47,46 +47,45 @@ class TestPlanTemplateEnrichment:
         assert len(enriched) >= len(baseline), "Enriched template should be at least as long"
 
 
-class TestAgentsMdEnrichment:
-    """Benchmark: AGENTS.md rendering with vs without graph."""
+class TestAgentsMdGenerationPath:
+    """Plan 260: generate writes routing, not a graph dump into the manual."""
 
     @timed
-    def test_agents_md_enriched_vs_baseline(self, indexed_sim):
-        """Graph-enriched AGENTS.md should contain codebase intelligence section."""
+    def test_agents_md_generate_path_is_routing(self, indexed_sim):
+        """Init scaffolds the manual; generate owns routing only.
+
+        The leftover ``{% if graph_stats %}`` block in ``agents_md.md.j2`` is a
+        dead writer: ``scaffold agents generate`` no longer renders that
+        template. Measuring it as "enrichment" would advertise a token cost
+        the product no longer pays on the generate path.
+        """
         root, store, config = indexed_sim
-        from agentscaffold.rendering import get_default_context, get_graph_context, render_template
+        from agentscaffold.agents.generate import render_agents_routing
+        from agentscaffold.rendering import get_default_context, render_template
 
-        graph_ctx = get_graph_context(config)
         default_ctx = get_default_context(config)
+        manual = render_template("agents/agents_md.md.j2", default_ctx)
+        routing = render_agents_routing(config)
 
-        enriched_ctx = {**default_ctx, **graph_ctx}
-        baseline_ctx = {**default_ctx}
-
-        enriched = render_template("agents/agents_md.md.j2", enriched_ctx)
-        baseline = render_template("agents/agents_md.md.j2", baseline_ctx)
-
-        enrichment_result = score_graph_enrichment(
-            enriched,
-            baseline,
-            markers=[
-                "Graph-Generated",
-                "graph stats",
-                "hot spot",
-                "volatile",
-                "scaffold graph",
-            ],
+        routing_ok = (
+            "## Session Working Rhythm" in routing
+            and "scaffold_session_record_decision" in routing
+            and "## Plan Lifecycle" not in routing
+            and "Codebase Intelligence" not in routing
         )
+        manual_ok = "## Plan Lifecycle" in manual and "Codebase Intelligence" not in manual
 
-        benchmark = BenchmarkResult(
-            scenario_name="agents_md_enrichment",
-            with_graph_count=len(enriched),
-            without_graph_count=len(baseline),
-            delta=len(enriched) - len(baseline),
+        result = EvalResult(
+            scenario="agents_md_generation_path",
+            passed=routing_ok and manual_ok,
+            score=1.0 if routing_ok and manual_ok else 0.0,
+            expected="Generate writes routing only; init manual has no graph dump",
+            actual=f"routing_ok={routing_ok}, manual_ok={manual_ok}",
+            category="benchmark",
         )
-        collect_benchmark(benchmark)
-        collect_result(enrichment_result)
-
-        assert len(enriched) > len(baseline), "Enriched AGENTS.md should be longer"
+        collect_result(result)
+        assert routing_ok, f"Routing block is not the generate contract: {routing[:400]}"
+        assert manual_ok, "Init manual should keep Plan Lifecycle and omit Codebase Intelligence"
 
 
 class TestCritiqueTemplateEnrichment:

@@ -109,6 +109,8 @@ def format_context_markdown(
     method_callers: list[dict[str, Any]] | None = None,
     caveat: str | None = None,
     config_consumers: list[dict[str, Any]] | None = None,
+    bases: list[dict[str, Any]] | None = None,
+    subclasses: list[dict[str, Any]] | None = None,
 ) -> str:
     """Render a markdown summary of a symbol and its call relationships."""
     method_callers = method_callers or []
@@ -121,6 +123,25 @@ def format_context_markdown(
     sig = symbol.get("signature")
     if sig:
         lines.append(f"\nSignature: `{sig}`")
+
+    if bases:
+        lines.append(f"\n### Bases ({len(bases)})")
+        for base in bases:
+            label = base.get("name") or base.get("baseName") or "?"
+            suffix = "" if base.get("resolved") else " (unresolved)"
+            loc_b = base.get("filePath") or ""
+            loc_bit = f" — `{loc_b}`" if loc_b else ""
+            lines.append(f"- `{label}`{suffix}{loc_bit}")
+
+    if subclasses:
+        lines.append(f"\n### Subclasses ({len(subclasses)}, transitive)")
+        for sub in subclasses:
+            label = sub.get("name") or "?"
+            depth = sub.get("depth")
+            depth_bit = f" depth {depth}" if depth is not None else ""
+            loc_s = sub.get("filePath") or ""
+            loc_bit = f" — `{loc_s}`" if loc_s else ""
+            lines.append(f"- `{label}`{depth_bit}{loc_bit}")
 
     lines.append(_section_header("Callers", callers))
     lines.extend(_bullet_list(callers, show_confidence=True))

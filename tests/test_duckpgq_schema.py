@@ -43,7 +43,7 @@ def conn():
 
 
 def test_schema_version():
-    assert SCHEMA_VERSION == 10  # bumped in Plan 252 (relative-import IMPORTS edges)
+    assert SCHEMA_VERSION == 11  # bumped in Plan 265 (PlanStep / DEPENDS_ON_STEPS)
 
 
 def test_backlogitem_ddl_includes_resolution():
@@ -79,11 +79,137 @@ def test_backlogitem_resolution_column_added_to_existing_table(conn):
     assert "resolution" in cols
 
 
+def test_extends_additive_columns_on_existing_table(conn):
+    """Plan 262: resolved/baseName ALTER without a SCHEMA_VERSION rebuild."""
+    from agentscaffold.graph.duckpgq_schema import ensure_additive_columns
+
+    conn.execute("DROP TABLE IF EXISTS EXTENDS")
+    conn.execute("CREATE TABLE EXTENDS (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)")
+    ensure_additive_columns(conn)
+    cols = {
+        str(r[0]).lower()
+        for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'EXTENDS'"
+        ).fetchall()
+    }
+    assert "resolved" in cols
+    assert "basename" in cols
+
+
+def test_schema_version_unchanged_by_extends_columns():
+    assert SCHEMA_VERSION == 11
+
+
+def test_session_additive_columns_on_existing_table(conn):
+    """Plan 263: decisions/endedAt ALTER without a SCHEMA_VERSION rebuild."""
+    from agentscaffold.graph.duckpgq_schema import ensure_additive_columns
+
+    conn.execute("DROP TABLE IF EXISTS Session")
+    conn.execute(
+        """
+        CREATE TABLE Session (
+            id VARCHAR PRIMARY KEY,
+            date VARCHAR,
+            planNumbers VARCHAR,
+            filesModified VARCHAR,
+            summary VARCHAR
+        )
+        """
+    )
+    ensure_additive_columns(conn)
+    cols = {
+        str(r[0]).lower()
+        for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'Session'"
+        ).fetchall()
+    }
+    assert "decisions" in cols
+    assert "endedat" in cols
+
+
+def test_schema_version_unchanged_by_session_columns():
+    assert SCHEMA_VERSION == 11
+
+
+def test_finding_evidence_additive_columns_on_existing_table(conn):
+    """Plan 264: evidenceKind/evidence ALTER without a SCHEMA_VERSION rebuild."""
+    from agentscaffold.graph.duckpgq_schema import ensure_additive_columns
+
+    conn.execute("DROP TABLE IF EXISTS ReviewFinding")
+    conn.execute("DROP TABLE IF EXISTS Learning")
+    conn.execute(
+        """
+        CREATE TABLE ReviewFinding (
+            id VARCHAR PRIMARY KEY,
+            finding VARCHAR,
+            status VARCHAR
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE Learning (
+            id VARCHAR PRIMARY KEY,
+            description VARCHAR
+        )
+        """
+    )
+    ensure_additive_columns(conn)
+    finding_cols = {
+        str(r[0]).lower()
+        for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'ReviewFinding'"
+        ).fetchall()
+    }
+    learning_cols = {
+        str(r[0]).lower()
+        for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns " "WHERE table_name = 'Learning'"
+        ).fetchall()
+    }
+    assert "evidencekind" in finding_cols
+    assert "evidence" in finding_cols
+    assert "evidencekind" in learning_cols
+    assert "evidence" in learning_cols
+
+
+def test_schema_version_unchanged_by_evidence_columns():
+    assert SCHEMA_VERSION == 11
+
+
+def test_planstep_and_depends_on_steps_are_in_schema():
+    assert "PlanStep" in NODE_TABLE_NAMES
+    assert "PLAN_HAS_STEP" in EDGE_TABLE_NAMES
+    assert "DEPENDS_ON_STEPS" in EDGE_TABLE_NAMES
+    depends = next(e for e in EDGE_DEFS if e.name == "DEPENDS_ON_STEPS")
+    assert depends.src == "Plan" and depends.dst == "Plan"
+    cols = {name for name, _sql in depends.properties}
+    assert cols == {"fromStep", "fromStepEnd", "toStep", "toStepEnd"}
+    process = next(e for e in EDGE_DEFS if e.name == "STEP_IN_PROCESS")
+    assert process.src == "Function"
+
+
 def test_ensure_additive_columns_is_noop_when_table_missing(conn):
     from agentscaffold.graph.duckpgq_schema import ensure_additive_columns
 
     conn.execute("DROP TABLE IF EXISTS BacklogItem")
     ensure_additive_columns(conn)
+
+
+def test_fresh_backend_can_init_schema_after_constructor_additive_check(tmp_path):
+    """Constructor calls ensure_additive_columns before tables exist.
+
+    An ALTER on a missing table aborts the DuckDB transaction even when the
+    error is caught; init_schema must still be able to CREATE TABLE.
+    """
+    from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
+
+    store = DuckPGQBackend(tmp_path / "fresh.db")
+    store.init_schema()
+    rows = store.query("SELECT count(*) AS n FROM Session")
+    assert rows[0]["n"] == 0
+    store.close()
 
 
 def test_missing_additive_columns_detects_pre_255_shape(conn):
@@ -115,16 +241,16 @@ def test_the_plan_252_bump_changed_no_tables():
     additive ALTER rather than a bump. So version 10 is not a promise that the
     columns never moved -- only that the set of tables did not.
     """
-    assert len(NODE_TABLES) == 21
-    assert len(EDGE_TABLES) == 37
+    assert len(NODE_TABLES) == 22
+    assert len(EDGE_TABLES) == 39
 
 
 def test_node_table_count():
-    assert len(NODE_TABLES) == 21  # +Project (Plan 225)
+    assert len(NODE_TABLES) == 22  # +PlanStep (Plan 265)
 
 
 def test_edge_table_count():
-    assert len(EDGE_TABLES) == 37  # +CONTRACT_ABOUT_FILE (Plan 237)
+    assert len(EDGE_TABLES) == 39  # +PLAN_HAS_STEP, DEPENDS_ON_STEPS (Plan 265)
 
 
 def test_all_node_ddl_returns_copy():
@@ -139,14 +265,14 @@ def test_all_edge_ddl_returns_copy():
 
 def test_create_property_graph_sql_lists_all_node_tables():
     """Every node table name must appear in the CREATE PROPERTY GRAPH statement."""
-    assert len(NODE_TABLE_NAMES) == 21
+    assert len(NODE_TABLE_NAMES) == 22
     for name in NODE_TABLE_NAMES:
         assert name in CREATE_PROPERTY_GRAPH_SQL, f"Missing vertex: {name}"
 
 
 def test_create_property_graph_sql_lists_all_edge_tables():
     """Every edge type must appear in the CREATE PROPERTY GRAPH statement."""
-    assert len(EDGE_TABLE_NAMES) == 37
+    assert len(EDGE_TABLE_NAMES) == 39
     for name in EDGE_TABLE_NAMES:
         assert name in CREATE_PROPERTY_GRAPH_SQL, f"Missing edge: {name}"
 

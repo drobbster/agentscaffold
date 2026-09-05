@@ -631,6 +631,21 @@ def test_generate_all_force_overwrites_docs_with_backup(tmp_path: Path):
     assert backup.read_text() == "MY CUSTOM AGENTS"
 
 
+def test_generate_all_into_realistic_manual_does_not_duplicate(tmp_path: Path) -> None:
+    from agentscaffold.agents.manual_diff import render_governance_manual, stamp_manual
+
+    config = _make_config([])
+    manual = stamp_manual(render_governance_manual(config))
+    (tmp_path / "AGENTS.md").write_text(manual)
+    _generate_all_with_stubbed_claude(config, tmp_path)
+    text = (tmp_path / "AGENTS.md").read_text()
+    headings = [line for line in text.splitlines() if line.startswith("## ")]
+    assert headings
+    assert len(headings) == len(set(headings))
+    assert "Session Working Rhythm" in text
+    assert "BEGIN AGENTSCAFFOLD MANAGED SECTION" in text
+
+
 def test_generate_all_writes_docs_when_absent(tmp_path: Path):
     config = _make_config([])
 
@@ -690,8 +705,9 @@ def test_full_project_agents_when_project_local(tmp_path: Path):
     config = ScaffoldConfig()
     content = _render_project_agents_md(config, proj, get_default_context(config))
 
-    # No shared workspace -> full template with lifecycle body.
-    assert "## Plan Lifecycle" in content
+    # No shared workspace -> routing-only managed body (manual is scaffolded by init).
+    assert "## Session Working Rhythm" in content
+    assert "## Plan Lifecycle" not in content
 
 
 def test_workspace_router_generated(tmp_path: Path):

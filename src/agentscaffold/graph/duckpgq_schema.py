@@ -76,20 +76,22 @@ class AdditiveColumn(NamedTuple):
 
 ADDITIVE_COLUMNS: tuple[AdditiveColumn, ...] = (
     AdditiveColumn("BacklogItem", "resolution", "VARCHAR DEFAULT ''"),
+    AdditiveColumn("EXTENDS", "resolved", "BOOLEAN DEFAULT false"),
+    AdditiveColumn("EXTENDS", "baseName", "VARCHAR DEFAULT ''"),
+    AdditiveColumn("Session", "decisions", "VARCHAR DEFAULT '[]'"),
+    AdditiveColumn("Session", "endedAt", "VARCHAR DEFAULT ''"),
+    AdditiveColumn("ReviewFinding", "evidenceKind", "VARCHAR DEFAULT 'unspecified'"),
+    AdditiveColumn("ReviewFinding", "evidence", "VARCHAR DEFAULT ''"),
+    AdditiveColumn("Learning", "evidenceKind", "VARCHAR DEFAULT 'unspecified'"),
+    AdditiveColumn("Learning", "evidence", "VARCHAR DEFAULT ''"),
 )
 
-# Bumped to 10 by Plan 252 without a DDL change. The tables are identical; what
-# changed is what gets *derived* into them -- relative Python imports now produce
-# IMPORTS edges instead of being dropped. A graph built before that fix is
-# structurally valid and quietly incomplete, which is the worst state for impact
-# analysis to be in, because an under-reported blast radius is indistinguishable
-# from a small one. Bumping the version routes those graphs through the existing
-# governance-preserving rebuild so they heal on the next index rather than
-# waiting for someone to read a warning and act on it.
-SCHEMA_VERSION = 10
+# Bumped to 11 by Plan 265: PlanStep node, PLAN_HAS_STEP, and DEPENDS_ON_STEPS.
+# Version 10 was Plan 252 (relative-import IMPORTS edges, no DDL change).
+SCHEMA_VERSION = 11
 
 # ---------------------------------------------------------------------------
-# Node table DDL (20 tables)
+# Node table DDL (22 tables)
 # ---------------------------------------------------------------------------
 
 _AUTHORED_NODE_TABLES: list[str] = [
@@ -213,6 +215,16 @@ _AUTHORED_NODE_TABLES: list[str] = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS PlanStep (
+        id          VARCHAR PRIMARY KEY,
+        planNumber  BIGINT,
+        stepNumber  BIGINT,
+        text        VARCHAR,
+        checked     BOOLEAN,
+        ordinal     BIGINT
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS Contract (
         id              VARCHAR PRIMARY KEY,
         name            VARCHAR,
@@ -225,24 +237,28 @@ _AUTHORED_NODE_TABLES: list[str] = [
     """,
     """
     CREATE TABLE IF NOT EXISTS Learning (
-        id          VARCHAR PRIMARY KEY,
-        learningId  VARCHAR,
-        planNumber  BIGINT,
-        description VARCHAR,
-        target      VARCHAR,
-        status      VARCHAR
+        id           VARCHAR PRIMARY KEY,
+        learningId   VARCHAR,
+        planNumber   BIGINT,
+        description  VARCHAR,
+        target       VARCHAR,
+        status       VARCHAR,
+        evidenceKind VARCHAR DEFAULT 'unspecified',
+        evidence     VARCHAR DEFAULT ''
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS ReviewFinding (
-        id         VARCHAR PRIMARY KEY,
-        reviewType VARCHAR,
-        planNumber BIGINT,
-        severity   VARCHAR,
-        category   VARCHAR,
-        finding    VARCHAR,
-        resolution VARCHAR,
-        status     VARCHAR
+        id           VARCHAR PRIMARY KEY,
+        reviewType   VARCHAR,
+        planNumber   BIGINT,
+        severity     VARCHAR,
+        category     VARCHAR,
+        finding      VARCHAR,
+        resolution   VARCHAR,
+        status       VARCHAR,
+        evidenceKind VARCHAR DEFAULT 'unspecified',
+        evidence     VARCHAR DEFAULT ''
     )
     """,
     """
@@ -251,7 +267,9 @@ _AUTHORED_NODE_TABLES: list[str] = [
         date          VARCHAR,
         planNumbers   VARCHAR,
         filesModified VARCHAR,
-        summary       VARCHAR
+        summary       VARCHAR,
+        decisions     VARCHAR,
+        endedAt       VARCHAR
     )
     """,
     """
@@ -408,7 +426,12 @@ EDGE_DEFS: list[EdgeDef] = [
         "Function",
         (("confidence", "DOUBLE"), ("reason", "VARCHAR")),
     ),
-    EdgeDef("EXTENDS", "Class", "Class"),
+    EdgeDef(
+        "EXTENDS",
+        "Class",
+        "Class",
+        (("resolved", "BOOLEAN"), ("baseName", "VARCHAR")),
+    ),
     EdgeDef("IMPLEMENTS", "Class", "Interface"),
     EdgeDef("MEMBER_OF_COMMUNITY", "File", "Community"),
     EdgeDef("STEP_IN_PROCESS", "Function", "Process", (("step", "BIGINT"),)),
@@ -428,6 +451,18 @@ EDGE_DEFS: list[EdgeDef] = [
     EdgeDef("FINDING_ADDRESSED_BY", "ReviewFinding", "Plan"),
     EdgeDef("SESSION_MODIFIED", "Session", "File"),
     EdgeDef("DEPENDS_ON_PLAN", "Plan", "Plan"),
+    EdgeDef("PLAN_HAS_STEP", "Plan", "PlanStep"),
+    EdgeDef(
+        "DEPENDS_ON_STEPS",
+        "Plan",
+        "Plan",
+        (
+            ("fromStep", "BIGINT"),
+            ("fromStepEnd", "BIGINT"),
+            ("toStep", "BIGINT"),
+            ("toStepEnd", "BIGINT"),
+        ),
+    ),
     EdgeDef("STUDY_REFERENCES_PLAN", "Study", "Plan"),
     EdgeDef("STUDY_REFERENCES_FILE", "Study", "File"),
     EdgeDef("ADR_GOVERNS", "ADR", "Plan"),
@@ -536,6 +571,12 @@ def ensure_additive_columns(conn: duckdb.DuckDBPyConnection) -> None:
     ``init_schema``). Idempotent when the column is already present.
     """
     for spec in ADDITIVE_COLUMNS:
+        tables = conn.execute(
+            "SELECT 1 FROM information_schema.tables WHERE lower(table_name) = lower(?)",
+            [spec.table],
+        ).fetchall()
+        if not tables:
+            continue
         try:
             conn.execute(
                 f"ALTER TABLE {spec.table} ADD COLUMN IF NOT EXISTS {spec.column} {spec.sql_type}"
