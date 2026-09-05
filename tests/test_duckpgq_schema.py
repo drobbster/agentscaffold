@@ -100,11 +100,57 @@ def test_schema_version_unchanged_by_extends_columns():
     assert SCHEMA_VERSION == 10
 
 
+def test_session_additive_columns_on_existing_table(conn):
+    """Plan 263: decisions/endedAt ALTER without a SCHEMA_VERSION rebuild."""
+    from agentscaffold.graph.duckpgq_schema import ensure_additive_columns
+
+    conn.execute("DROP TABLE IF EXISTS Session")
+    conn.execute(
+        """
+        CREATE TABLE Session (
+            id VARCHAR PRIMARY KEY,
+            date VARCHAR,
+            planNumbers VARCHAR,
+            filesModified VARCHAR,
+            summary VARCHAR
+        )
+        """
+    )
+    ensure_additive_columns(conn)
+    cols = {
+        str(r[0]).lower()
+        for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'Session'"
+        ).fetchall()
+    }
+    assert "decisions" in cols
+    assert "endedat" in cols
+
+
+def test_schema_version_unchanged_by_session_columns():
+    assert SCHEMA_VERSION == 10
+
+
 def test_ensure_additive_columns_is_noop_when_table_missing(conn):
     from agentscaffold.graph.duckpgq_schema import ensure_additive_columns
 
     conn.execute("DROP TABLE IF EXISTS BacklogItem")
     ensure_additive_columns(conn)
+
+
+def test_fresh_backend_can_init_schema_after_constructor_additive_check(tmp_path):
+    """Constructor calls ensure_additive_columns before tables exist.
+
+    An ALTER on a missing table aborts the DuckDB transaction even when the
+    error is caught; init_schema must still be able to CREATE TABLE.
+    """
+    from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
+
+    store = DuckPGQBackend(tmp_path / "fresh.db")
+    store.init_schema()
+    rows = store.query("SELECT count(*) AS n FROM Session")
+    assert rows[0]["n"] == 0
+    store.close()
 
 
 def test_missing_additive_columns_detects_pre_255_shape(conn):

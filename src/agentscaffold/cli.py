@@ -1755,15 +1755,35 @@ def session_start(
 
 @session_app.command("end")
 def session_end(
-    session_id: str = typer.Argument("", help="Session ID to finalize (omit to end most recent)."),
+    session_id: str = typer.Argument(
+        "", help="Session ID to finalize (omit to end the open session)."
+    ),
     summary: str = typer.Option("", "--summary", "-s", help="Final session summary."),
+    file: list[str] = typer.Option([], "--file", "-f", help="File touched in this session."),
+    decisions: str = typer.Option(
+        "",
+        "--decisions",
+        help="JSON list of {decision, evidence, status} entries.",
+    ),
 ) -> None:
     """Finalize a coding session."""
     import json
 
     from agentscaffold.config import load_config
     from agentscaffold.graph import graph_available, open_graph
-    from agentscaffold.graph.sessions import end_session, list_sessions
+    from agentscaffold.graph.sessions import end_session, find_open_session
+
+    decisions_payload = None
+    if decisions:
+        try:
+            parsed = json.loads(decisions)
+        except json.JSONDecodeError:
+            console.print("[red]--decisions must be a JSON list.[/red]")
+            raise SystemExit(1)
+        if not isinstance(parsed, list):
+            console.print("[red]--decisions must be a JSON list.[/red]")
+            raise SystemExit(1)
+        decisions_payload = parsed
 
     config = load_config()
     if not graph_available(config):
@@ -1772,17 +1792,19 @@ def session_end(
 
     store = open_graph(config)
     if not session_id:
-        sessions = list_sessions(store, limit=1)
-        if not sessions:
-            console.print("[red]No sessions found.[/red]")
+        open_session = find_open_session(store)
+        if not open_session or not open_session.get("id"):
+            console.print("[red]No open session.[/red]")
             store.close()
             raise SystemExit(1)
-        session_id = sessions[0].get("id", "")
-        if not session_id:
-            console.print("[red]Could not determine most recent session.[/red]")
-            store.close()
-            raise SystemExit(1)
-    result = end_session(store, session_id, summary=summary)
+        session_id = open_session["id"]
+    result = end_session(
+        store,
+        session_id,
+        summary=summary,
+        decisions=decisions_payload,
+        files=list(file) if file else None,
+    )
     store.close()
     console.print(json.dumps(result, indent=2, default=str))
 

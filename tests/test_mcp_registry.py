@@ -60,6 +60,11 @@ EXPECTED_TOOLS = (
     "scaffold_next_action",
     "scaffold_begin_plan",
     "scaffold_complete_plan",
+    "scaffold_session_start",
+    "scaffold_session_end",
+    "scaffold_session_context",
+    "scaffold_session_record_decision",
+    "scaffold_session_list",
 )
 
 

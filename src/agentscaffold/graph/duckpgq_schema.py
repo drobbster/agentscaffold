@@ -78,6 +78,8 @@ ADDITIVE_COLUMNS: tuple[AdditiveColumn, ...] = (
     AdditiveColumn("BacklogItem", "resolution", "VARCHAR DEFAULT ''"),
     AdditiveColumn("EXTENDS", "resolved", "BOOLEAN DEFAULT false"),
     AdditiveColumn("EXTENDS", "baseName", "VARCHAR DEFAULT ''"),
+    AdditiveColumn("Session", "decisions", "VARCHAR DEFAULT '[]'"),
+    AdditiveColumn("Session", "endedAt", "VARCHAR DEFAULT ''"),
 )
 
 # Bumped to 10 by Plan 252 without a DDL change. The tables are identical; what
@@ -253,7 +255,9 @@ _AUTHORED_NODE_TABLES: list[str] = [
         date          VARCHAR,
         planNumbers   VARCHAR,
         filesModified VARCHAR,
-        summary       VARCHAR
+        summary       VARCHAR,
+        decisions     VARCHAR,
+        endedAt       VARCHAR
     )
     """,
     """
@@ -543,6 +547,12 @@ def ensure_additive_columns(conn: duckdb.DuckDBPyConnection) -> None:
     ``init_schema``). Idempotent when the column is already present.
     """
     for spec in ADDITIVE_COLUMNS:
+        tables = conn.execute(
+            "SELECT 1 FROM information_schema.tables WHERE lower(table_name) = lower(?)",
+            [spec.table],
+        ).fetchall()
+        if not tables:
+            continue
         try:
             conn.execute(
                 f"ALTER TABLE {spec.table} ADD COLUMN IF NOT EXISTS {spec.column} {spec.sql_type}"

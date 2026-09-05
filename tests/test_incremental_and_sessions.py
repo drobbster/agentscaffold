@@ -280,9 +280,10 @@ class TestSessionLifecycle:
     def test_list_sessions(self, graph_with_repo):
         store, _config, _repo = graph_with_repo
 
-        from agentscaffold.graph.sessions import list_sessions, start_session
+        from agentscaffold.graph.sessions import end_session, list_sessions, start_session
 
         start_session(store, summary="session A")
+        end_session(store, summary="done A")
         start_session(store, summary="session B")
 
         sessions = list_sessions(store, limit=5)
@@ -383,6 +384,163 @@ class TestSessionContext:
         from agentscaffold.graph.sessions import format_session_context_markdown
 
         assert format_session_context_markdown({}) == ""
+
+
+class TestSessionOpenAndDecisions:
+    """Plan 263: open-session, decisions, project filter, files-without-vertex."""
+
+    def test_second_start_reuses_open_session(self, graph_with_repo):
+        store, _config, _repo = graph_with_repo
+        from agentscaffold.graph.sessions import start_session
+
+        first = start_session(store, summary="one")
+        second = start_session(store, summary="two")
+        assert first == second
+
+    def test_end_without_id_closes_open_session(self, graph_with_repo):
+        store, _config, _repo = graph_with_repo
+        from agentscaffold.graph.sessions import (
+            end_session,
+            find_open_session,
+            start_session,
+        )
+
+        sid = start_session(store, plan_numbers=[263])
+        result = end_session(
+            store,
+            summary="closed",
+            decisions=[
+                {
+                    "decision": "SESSION_MODIFIED is best-effort",
+                    "evidence": "record_modification unused in production",
+                    "status": "observed",
+                }
+            ],
+        )
+        assert result["id"] == sid
+        assert result["ended_at"]
+        assert result["decisions"][0]["status"] == "observed"
+        assert find_open_session(store) is None
+
+    def test_abandoned_session_is_identifiable(self, graph_with_repo):
+        store, _config, _repo = graph_with_repo
+        from agentscaffold.graph.sessions import find_open_session, start_session
+
+        sid = start_session(store)
+        open_session = find_open_session(store)
+        assert open_session is not None
+        assert open_session["id"] == sid
+        assert not open_session["ended_at"]
+
+    def test_end_records_files_without_file_vertex(self, tmp_path):
+        db_path = tmp_path / "sess.db"
+        store = DuckPGQBackend(db_path)
+        store.init_schema()
+        from agentscaffold.graph.sessions import end_session, start_session
+
+        sid = start_session(store)
+        result = end_session(store, sid, files=["src/new_file.py"])
+        assert "src/new_file.py" in result["files_modified"]
+        edges = store.query("SELECT count(*) AS n FROM SESSION_MODIFIED")
+        assert edges[0]["n"] == 0
+        store.close()
+
+    def test_list_sessions_filters_project(self, tmp_path):
+        db_path = tmp_path / "sess.db"
+        store = DuckPGQBackend(db_path)
+        store.init_schema()
+        from agentscaffold.graph.sessions import (
+            end_session,
+            list_sessions,
+            start_session,
+        )
+
+        a = start_session(store, summary="alpha", project="alpha")
+        end_session(store, a, summary="done a")
+        start_session(store, summary="beta", project="beta")
+        alpha_only = list_sessions(store, project="alpha")
+        beta_only = list_sessions(store, project="beta")
+        assert [s["id"] for s in alpha_only] == [a]
+        assert [s["summary"] for s in beta_only] == ["beta"]
+        store.close()
+
+    def test_record_finding_does_not_open_session_or_append_decision(self, tmp_path):
+        db_path = tmp_path / "sess.db"
+        store = DuckPGQBackend(db_path)
+        store.init_schema()
+        from agentscaffold.graph.findings import record_finding
+        from agentscaffold.graph.sessions import find_open_session, list_sessions
+
+        assert find_open_session(store) is None
+        record_finding(
+            store,
+            plan_number=263,
+            review_type="pre_implementation",
+            category="correctness",
+            finding="decisions were optional and would stay empty",
+        )
+        assert find_open_session(store) is None
+        assert list_sessions(store) == []
+        store.close()
+
+    def test_record_decision_stores_kind_and_plan_number(self, tmp_path):
+        db_path = tmp_path / "sess.db"
+        store = DuckPGQBackend(db_path)
+        store.init_schema()
+        from agentscaffold.graph.sessions import (
+            record_decision,
+            session_decisions_for_plan,
+            start_session,
+        )
+
+        start_session(store, summary="working")
+        recorded = record_decision(
+            store,
+            decision="keep SESSION_MODIFIED best-effort",
+            evidence="File vertices may be missing until the next index",
+            status="observed",
+            kind="architectural",
+            plan_numbers=[263],
+        )
+        assert recorded["decision"]["kind"] == "architectural"
+        slice_for_plan = session_decisions_for_plan(store, 263)
+        assert slice_for_plan[0]["kind"] == "architectural"
+        assert slice_for_plan[0]["decision"] == "keep SESSION_MODIFIED best-effort"
+        store.close()
+
+    def test_end_appends_decisions_instead_of_replacing(self, tmp_path):
+        db_path = tmp_path / "sess.db"
+        store = DuckPGQBackend(db_path)
+        store.init_schema()
+        from agentscaffold.graph.sessions import (
+            end_session,
+            record_decision,
+            start_session,
+        )
+
+        sid = start_session(store)
+        record_decision(
+            store,
+            decision="auto captured",
+            evidence="write path",
+            status="observed",
+        )
+        ended = end_session(
+            store,
+            sid,
+            summary="done",
+            decisions=[
+                {
+                    "decision": "wrap-up call",
+                    "evidence": "human asked",
+                    "status": "observed",
+                }
+            ],
+        )
+        texts = [d["decision"] for d in ended["decisions"]]
+        assert "auto captured" in texts
+        assert "wrap-up call" in texts
+        store.close()
 
 
 # ---------------------------------------------------------------------------
