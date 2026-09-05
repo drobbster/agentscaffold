@@ -810,7 +810,8 @@ or understand what context each workflow produces.
 |-------------------|-----------|----------------|
 | "review plan X" / "critique plan X" / "devil's advocate on plan X" / "pressure-test plan X" | `scaffold_prepare_review` | Brief + adversarial challenges + gap analysis + governing ADRs + spikes |
 | "implement plan X" / "start plan X" / "begin building plan X" / "approved to go on plan X" | `scaffold_prepare_implementation` | Dependency brief + blast radius per file + contract obligations + consumer audit |
-| "compare plan X and plan Y" / "do plans X and Y overlap" / "check for conflicts between X and Y" | `scaffold_compare_plans` | Shared files, supersession candidates, conflict summary |
+| "compare plan X and plan Y" / "do plans X and Y overlap" / "check for conflicts between X and Y" | `scaffold_compare_plans` | Shared files, supersession candidates, conflict summary, pairwise `dependency_cycle` (`none` / `apparent` / `genuine`) |
+| "start a session" / "record this decision" / "close the session" | `scaffold_session_start` / `scaffold_session_record_decision` / `scaffold_session_end` | Working-session ledger; typed decisions (`kind`: strategic / architectural / operational) |
 | "is plan X stale" / "is plan X still valid" / "has anything changed since plan X" | `scaffold_staleness_check` | Overlapping completions, missing files, changed dependencies, contradicting studies |
 | "rewrite plan X" / "update plan X" / "refresh plan X with current state" | `scaffold_prepare_rewrite` | Staleness analysis + new dependency landscape + new contracts since writing |
 | "retro on plan X" / "post-implementation review" / "retrospective for plan X" | `scaffold_prepare_retro` | Verification results + retro enrichment + modification frequency + related studies |
@@ -853,7 +854,7 @@ scaffold agents cursor
 
 ## Knowledge Graph: Codebase Intelligence
 
-AgentScaffold can build a knowledge graph of your codebase using `scaffold index`. This graph powers several features: auto-enriched templates, graph-backed reviews, MCP tool integration, and a living Codebase Intelligence section in AGENTS.md.
+AgentScaffold can build a knowledge graph of your codebase using `scaffold index`. This graph powers auto-enriched plan templates, graph-backed reviews, MCP tool integration, class-hierarchy (`EXTENDS`) queries, ingested learnings and plan steps, and session memory. It does **not** rewrite `AGENTS.md` with a live stats section -- `scaffold agents generate` refreshes routing only.
 
 ### Building the Graph
 
@@ -1055,14 +1056,14 @@ When the graph is available, two commands auto-inject graph context:
 - Hot spots (most-modified files) that might be affected
 - Volatile modules (3+ plans) that warrant stability review
 
-**`scaffold agents generate`** -- AGENTS.md includes a Codebase Intelligence section with:
-- File/function/class/edge counts
-- Architecture layer map
-- Hot spots and volatile modules
-- Active contracts and versions
-- Graph command reference
+**`scaffold agents generate`** -- refreshes the managed **routing** block in
+`AGENTS.md` (tool-selection policy, Session Working Rhythm, intent map). It
+does not inject graph stats into the file. The governance manual above the
+markers is project-owned; pull template updates with `scaffold agents
+diff-manual`.
 
-Both degrade gracefully -- without a graph, output is identical to before.
+`scaffold plan create` degrades gracefully -- without a graph, output is
+identical to a template-only plan.
 
 ### Dialectic Engine: Graph-Powered Reviews
 
@@ -1167,7 +1168,7 @@ This helps identify natural module boundaries, tightly coupled clusters that sho
 
 ### MCP Integration
 
-When running the MCP server (`scaffold mcp`), 26 tools are available to AI agents across three groups.
+When running the MCP server (`scaffold mcp`), the tools below are available to AI agents. The numbered "26 tools" count in older docs is stale -- session continuity and several call-compression helpers shipped after that figure.
 
 **Graph Intelligence Tools** — direct codebase queries:
 
@@ -1188,7 +1189,7 @@ When running the MCP server (`scaffold mcp`), 26 tools are available to AI agent
 |------|-----------|-------------|
 | `scaffold_prepare_review` | "review plan X" / "critique plan X" / "devil's advocate on plan X" | Full pre-review package: brief, gap analysis, adversarial challenges, governing ADRs, spikes |
 | `scaffold_prepare_implementation` | "implement plan X" / "start plan X" / "begin building plan X" | Implementation readiness: dependency brief, per-file blast radius, contract obligations, consumer audit |
-| `scaffold_compare_plans` | "compare plan X and Y" / "do plans X and Y overlap" | Overlap and conflict detection between two plans |
+| `scaffold_compare_plans` | "compare plan X and Y" / "do plans X and Y overlap" | Overlap, conflicts, and pairwise `dependency_cycle` (`none` / `apparent` / `genuine`) |
 | `scaffold_staleness_check` | "is plan X stale" / "is plan X still valid" | Checks overlapping completions, missing files, changed dependencies, contradicting studies |
 | `scaffold_prepare_rewrite` | "rewrite plan X" / "update plan X" / "refresh plan X" | Staleness check + new dependency landscape + contracts added since plan was written |
 | `scaffold_prepare_retro` | "retro on plan X" / "post-implementation review" | Retrospective context: verification results, retro enrichment, modification frequency, related studies |
@@ -1197,7 +1198,7 @@ When running the MCP server (`scaffold mcp`), 26 tools are available to AI agent
 | `scaffold_prior_experiments` | "prior experiments for plan X" / "has this been tested" | Find experiments linked to a plan via direct reference, tag overlap, or file overlap |
 | `scaffold_find_adrs` | "any ADRs about X" / "what ADR governs X" | Search architectural decision records by topic or status |
 | `scaffold_decision_context` | "decision history for plan X" / "trace the decisions for plan X" | Full decision chain: governing ADRs, validation spikes, supporting studies, dependency status |
-| `scaffold_record_finding` | "record finding" / "log this review finding" | Create a ReviewFinding node linked to a plan, files, and functions — persists across sessions |
+| `scaffold_record_finding` | "record finding" / "log this review finding" | Create a ReviewFinding node linked to a plan, files, and functions. Optional `evidence` / `evidenceKind` (omit means `unspecified`). Persists across sessions |
 | `scaffold_resolve_finding` | "mark finding resolved" / "resolve this finding" | Mark a finding as resolved; retained in graph for audit trail. `finding_id` is the `rf::` id from record/orient; a miss returns `not_found`. |
 | `scaffold_record_findings_batch` | "record all findings" / "log these findings" | Create multiple ReviewFinding nodes in a single transaction (efficient for post-review batches) |
 | `scaffold_record_backlog_item` | "add backlog item" / "track backlog item" | Create one or more BacklogItem nodes (additive to `backlog.md`; enables backlog queries in orient/prepare_review) |
@@ -1209,6 +1210,18 @@ When running the MCP server (`scaffold mcp`), 26 tools are available to AI agent
 |------|-----------|-------------|
 | `scaffold_begin_plan` | "begin plan X" / "kick off plan X" | Phase 1: orient + full pre-review, auto-writes findings, stamps `Plan.reviewedAt`, returns a proceed prompt |
 | `scaffold_complete_plan` | "wrap up plan X" / "close out plan X" | Phase 2: retro, auto-writes retro findings, optional backlog items, returns a completion checklist |
+
+**Session Continuity Tools** -- working-session ledger (Plan 263):
+
+| Tool | NL Trigger | What It Does |
+|------|-----------|-------------|
+| `scaffold_session_start` | "start a session" / session open | Open (or reuse) the project's working session |
+| `scaffold_session_record_decision` | "record this decision" | Typed decision (`kind`: strategic / architectural / operational). Not for findings or backlog |
+| `scaffold_session_end` | "close the session" / session close | Close the open session; extra decisions on end append |
+| `scaffold_session_list` | "list sessions" | Recent sessions, most recent first |
+| `scaffold_session_context` | (prefer `scaffold_orient`'s embedded `session_context`) | Session snapshot when the fused field is absent |
+
+`scaffold_decision_context` still returns ADRs, spikes, and studies, plus session decisions for that plan when present.
 
 The MCP tools return both structured JSON and formatted markdown, so agents can parse the data programmatically or display it directly.
 

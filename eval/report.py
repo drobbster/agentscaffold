@@ -66,6 +66,7 @@ def generate_report(output_path: Path | None = None) -> str:
         "edge_case",
         "mcp",
         "cli",
+        "artifact",
         "benchmark",
         "efficiency",
         "multi_project",

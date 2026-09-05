@@ -197,7 +197,7 @@ def run_cursor_setup(force: bool = False) -> None:
     cursor_dir.mkdir(parents=True, exist_ok=True)
 
     dest = cursor_dir / "rules.md"
-    status = write_managed_block(dest, content, force=force)
+    status = write_managed_block(dest, content, force=force, allow_append=False)
     label = str(dest.relative_to(Path.cwd()))
     if status == "created":
         console.print(f"[green]Wrote[/green] {label}")

@@ -31,8 +31,19 @@ def _load_sim_config(sim_root: Path):
 class TestCursorMcpJsonGeneration:
     """scaffold agents cursor writes .cursor/mcp.json correctly."""
 
-    def test_mcp_json_written_on_first_run(self, fresh_sim):
+    def test_mcp_json_written_on_first_run(self, fresh_sim, monkeypatch):
         from agentscaffold.agents.cursor import write_cursor_mcp_json
+
+        # Plan 253 skips the write when a shared client entry already exists.
+        # Isolate so this scenario measures the lone-repo first-run path.
+        monkeypatch.setattr(
+            "agentscaffold.agents.cursor._canonical_entry_installed",
+            lambda: False,
+        )
+        monkeypatch.setattr(
+            "agentscaffold.mcp.install.is_registered_root",
+            lambda _root: False,
+        )
 
         cursor_dir = fresh_sim / ".cursor"
         write_cursor_mcp_json(cursor_dir)

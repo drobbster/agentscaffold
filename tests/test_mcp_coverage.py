@@ -135,6 +135,16 @@ def test_rule_policy_includes_graph_trust_discipline() -> None:
     assert "grep_fallback" in doc
 
 
+def test_rule_policy_includes_session_working_rhythm() -> None:
+    doc = generate_rule_policy_document(config=ScaffoldConfig(), title="Test Rules")
+    assert "Session Working Rhythm" in doc
+    assert "scaffold_session_record_decision" in doc
+    assert "strategic" in doc
+    assert "architectural" in doc
+    assert "operational" in doc
+    assert "findings, backlog items" in doc
+
+
 def test_rule_policy_includes_call_compression_discipline() -> None:
     doc = generate_rule_policy_document(config=ScaffoldConfig(), title="Test Rules")
     assert "Call Compression Discipline" in doc

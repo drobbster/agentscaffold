@@ -90,6 +90,12 @@ class TestParsingPhase:
         edge_count = store.edge_count("DEFINES_FUNCTION")
         assert edge_count > 0
 
+    def test_extends_populated_for_inheritance(self, indexed_repo):
+        """Sample repo has MomentumStrategy(BaseStrategy); EXTENDS must be non-zero."""
+        _repo, store = indexed_repo
+        assert store.edge_count("EXTENDS") > 0
+        assert store.edge_count("IMPLEMENTS") == 0
+
 
 class TestResolutionPhase:
     """Tests for Phase 3: import and call resolution."""

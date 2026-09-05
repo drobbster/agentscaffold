@@ -25,6 +25,11 @@ from dataclasses import dataclass, field
 _LAYER_HEADING_RE = re.compile(r"^##\s+Layer\s+(\d+):\s*(.+?)\s*$", re.MULTILINE)
 _PLACEHOLDER_NAME_RE = re.compile(r"^\[.*\]$")
 _BACKTICK_RE = re.compile(r"`([^`]+)`")
+_LABELED_PATHS_RE = re.compile(
+    r"^\*\*(?:Paths|Location)\*\*:\s*(.+)$",
+    re.MULTILINE | re.IGNORECASE,
+)
+_URL_RE = re.compile(r"^[a-z]+://", re.IGNORECASE)
 
 
 @dataclass
@@ -35,6 +40,7 @@ class ArchitectureLayerDef:
     name: str
     description: str = ""
     path_patterns: list[str] = field(default_factory=list)
+    provenance: str = "empty"
 
 
 def _clean_cell(cell: str) -> str:
@@ -83,6 +89,74 @@ def _extract_paths_from_components(section: str) -> list[str]:
     return patterns
 
 
+def _tokens_from_backticks(text: str) -> list[str]:
+    patterns: list[str] = []
+    seen: set[str] = set()
+    for token in _BACKTICK_RE.findall(text):
+        for glob in token.split(","):
+            g = glob.strip()
+            if g and g not in seen:
+                seen.add(g)
+                patterns.append(g)
+    return patterns
+
+
+def _extract_paths_from_labels(section: str) -> list[str]:
+    """Pull backtick-wrapped globs from ``**Paths**:`` / ``**Location**:`` lines."""
+    patterns: list[str] = []
+    seen: set[str] = set()
+    for m in _LABELED_PATHS_RE.finditer(section):
+        for g in _tokens_from_backticks(m.group(1)):
+            if g not in seen:
+                seen.add(g)
+                patterns.append(g)
+    return patterns
+
+
+def _looks_like_repo_path(token: str, known_top_level_dirs: list[str] | None) -> bool:
+    t = token.strip().replace("\\", "/")
+    if not t or " " in t or _URL_RE.match(t) or "/" not in t:
+        return False
+    if known_top_level_dirs:
+        first = t.split("/", 1)[0]
+        return first in known_top_level_dirs
+    return True
+
+
+def _extract_inline_paths(section: str, known_top_level_dirs: list[str] | None) -> list[str]:
+    """Heuristic: backticked tokens that look like repo paths."""
+    patterns: list[str] = []
+    seen: set[str] = set()
+    for token in _tokens_from_backticks(section):
+        if not _looks_like_repo_path(token, known_top_level_dirs):
+            continue
+        if token not in seen:
+            seen.add(token)
+            patterns.append(token)
+    return patterns
+
+
+def extract_layer_path_patterns(
+    section: str,
+    known_top_level_dirs: list[str] | None = None,
+) -> tuple[list[str], str]:
+    """Return ``(patterns, provenance)`` using the Plan 261 priority order.
+
+    Provenance is ``curated`` (Components table or labeled line), ``inferred``
+    (inline path-like backticks), or ``empty``.
+    """
+    curated = _extract_paths_from_components(section)
+    if curated:
+        return curated, "curated"
+    labeled = _extract_paths_from_labels(section)
+    if labeled:
+        return labeled, "curated"
+    inferred = _extract_inline_paths(section, known_top_level_dirs)
+    if inferred:
+        return inferred, "inferred"
+    return [], "empty"
+
+
 def _extract_description(section: str) -> str:
     """Return the first paragraph under ``### Current State`` for a layer section."""
     cs_idx = section.find("### Current State")
@@ -104,7 +178,18 @@ def _extract_description(section: str) -> str:
     return " ".join(paragraph).strip()
 
 
-def parse_architecture_layers(text: str) -> list[ArchitectureLayerDef]:
+def has_real_layer_headings(text: str) -> bool:
+    """True when the doc names at least one non-placeholder layer."""
+    for match in _LAYER_HEADING_RE.finditer(text):
+        if not _PLACEHOLDER_NAME_RE.match(match.group(2).strip()):
+            return True
+    return False
+
+
+def parse_architecture_layers(
+    text: str,
+    known_top_level_dirs: list[str] | None = None,
+) -> list[ArchitectureLayerDef]:
     """Parse an architecture-doc markdown string into layer definitions.
 
     Placeholder layers (name still ``[Name]``) are skipped. Layers with neither a
@@ -121,12 +206,14 @@ def parse_architecture_layers(text: str) -> list[ArchitectureLayerDef]:
         start = m.end()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
         section = text[start:end]
+        patterns, provenance = extract_layer_path_patterns(section, known_top_level_dirs)
         layers.append(
             ArchitectureLayerDef(
                 number=number,
                 name=name,
                 description=_extract_description(section),
-                path_patterns=_extract_paths_from_components(section),
+                path_patterns=patterns,
+                provenance=provenance,
             )
         )
     return layers

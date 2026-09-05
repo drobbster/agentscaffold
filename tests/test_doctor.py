@@ -678,6 +678,36 @@ def test_graph_schema_check_flags_a_missing_additive_column(state_home: Path, tm
     assert result.remediation
 
 
+def test_agent_docs_quiet_when_clean(tmp_path: Path) -> None:
+    from agentscaffold.doctor import DoctorContext, check_agent_docs
+    from agentscaffold.rendering import render_managed_block
+
+    project = _project(tmp_path)
+    (project / "AGENTS.md").write_text(
+        "## Planning Rules\n\nmanual\n\n"
+        + render_managed_block("## Session Working Rhythm\n\nroute\n")
+    )
+    result = check_agent_docs(
+        DoctorContext(project_root=project, mcp_config_path=tmp_path / "mcp.json")
+    )
+    assert result.status == "ok"
+
+
+def test_agent_docs_reports_overlap(tmp_path: Path) -> None:
+    from agentscaffold.doctor import DoctorContext, check_agent_docs
+    from agentscaffold.rendering import render_managed_block
+
+    project = _project(tmp_path)
+    (project / "AGENTS.md").write_text(
+        "## Planning Rules\n\none\n\n" + render_managed_block("## Planning Rules\n\ntwo\n")
+    )
+    result = check_agent_docs(
+        DoctorContext(project_root=project, mcp_config_path=tmp_path / "mcp.json")
+    )
+    assert result.status == "warn"
+    assert "Planning Rules" in " ".join(result.details)
+
+
 def test_graph_schema_check_skips_when_there_is_no_graph(state_home: Path, tmp_path: Path):
     from agentscaffold.doctor import DoctorContext, check_graph_schema
 

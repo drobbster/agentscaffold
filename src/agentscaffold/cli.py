@@ -577,15 +577,26 @@ def agents_generate(
         "--force",
         help="Rewrite the entire AGENTS.md instead of updating its managed block (.bak kept).",
     ),
+    allow_append: bool = typer.Option(
+        False,
+        "--allow-append",
+        help="Append the routing block to a marker-less file that already looks generated.",
+    ),
 ) -> None:
     """Generate AGENTS.md from scaffold.yaml config.
 
-    AGENTS.md is project-owned: generated guidance is written into a managed block,
+    AGENTS.md is project-owned: routing is written into a managed block,
     so existing/hand-authored content is preserved. --force rewrites the whole file.
+    --allow-append appends once when the heading-overlap guard would otherwise refuse.
     """
     from agentscaffold.agents.generate import run_agents_generate
+    from agentscaffold.rendering import ManagedBlockAppendRefusedError
 
-    run_agents_generate(force=force)
+    try:
+        run_agents_generate(force=force, allow_append=allow_append)
+    except ManagedBlockAppendRefusedError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
 
 
 @agents_app.command("cursor")
@@ -777,20 +788,109 @@ def agents_generate_all(
             "instead of updating their managed block; a .bak snapshot is kept for each."
         ),
     ),
+    allow_append: bool = typer.Option(
+        False,
+        "--allow-append",
+        help="Append a managed block to a marker-less file that already looks generated.",
+    ),
 ) -> None:
     """Generate all platform artifacts (AGENTS.md, CLAUDE.md, Cursor rules, Windsurf, hooks).
 
     Project-owned docs (AGENTS.md, CLAUDE.md, .windsurfrules) are never clobbered:
     generated guidance is written into a managed block (created/refreshed/appended)
-    so existing content is preserved. --force rewrites them whole. Machine-owned
+    so existing content is preserved. --force rewrites them whole. --allow-append
+    appends once when the heading-overlap guard would otherwise refuse. Machine-owned
     files (.cursor/rules/agentscaffold.mdc, reviewer rules, enforcement hooks) are
     always regenerated.
     """
     from agentscaffold.agents.generate import run_agents_generate_all_platforms
     from agentscaffold.config import load_config
+    from agentscaffold.rendering import ManagedBlockAppendRefusedError
 
     config = load_config()
-    run_agents_generate_all_platforms(config, Path.cwd(), dry_run=dry_run, force=force)
+    try:
+        run_agents_generate_all_platforms(
+            config, Path.cwd(), dry_run=dry_run, force=force, allow_append=allow_append
+        )
+    except ManagedBlockAppendRefusedError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+
+@agents_app.command("repair")
+def agents_repair(
+    apply: bool = typer.Option(False, "--apply", help="Write the de-duplicated file."),
+    path: Path = typer.Option(
+        Path("AGENTS.md"),
+        "--path",
+        help="File to de-duplicate (default: AGENTS.md).",
+    ),
+) -> None:
+    """Remove exact-duplicate headings from AGENTS.md. Dry run by default."""
+    from agentscaffold.agents.repair import ManualRepairConflictError, run_repair
+
+    target = path if path.is_absolute() else Path.cwd() / path
+    if not target.is_file():
+        console.print(f"[red]No file at {target}[/red]")
+        raise typer.Exit(1)
+    try:
+        report = run_repair(target, apply=apply)
+    except ManualRepairConflictError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    if report.dropped:
+        verb = "Dropped" if apply else "Would drop"
+        console.print(f"[green]{verb}[/green] {len(report.dropped)} duplicate heading(s):")
+        for heading in report.dropped:
+            console.print(f"  {heading}")
+    else:
+        console.print("[dim]No duplicate headings.[/dim]")
+    if not apply and report.dropped:
+        console.print("[dim]Re-run with --apply to write.[/dim]")
+
+
+@agents_app.command("diff-manual")
+def agents_diff_manual(
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Apply unambiguous upstream section updates.",
+    ),
+    path: Path = typer.Option(
+        Path("AGENTS.md"),
+        "--path",
+        help="Manual to compare (default: AGENTS.md).",
+    ),
+) -> None:
+    """Compare the project-owned governance manual to the current template."""
+    from agentscaffold.agents.manual_diff import ManualDiffConflictError, run_diff_manual
+    from agentscaffold.config import load_config
+
+    target = path if path.is_absolute() else Path.cwd() / path
+    if not target.is_file():
+        console.print(f"[red]No file at {target}[/red]")
+        raise typer.Exit(1)
+    try:
+        report = run_diff_manual(target, load_config(), apply=apply)
+    except ManualDiffConflictError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    if report.mode == "two_way":
+        for note in report.notes:
+            console.print(f"[yellow]{note}[/yellow]")
+    if report.offered:
+        verb = "Applied" if apply else "Would update"
+        console.print(f"[green]{verb}[/green] {len(report.offered)} section(s):")
+        for item in report.offered:
+            console.print(f"  {item.kind}: {item.heading}")
+    if report.conflicts:
+        console.print(f"[red]{len(report.conflicts)} conflict(s) (not applied):[/red]")
+        for item in report.conflicts:
+            console.print(f"  {item.heading}")
+    if not report.offered and not report.conflicts:
+        console.print("[dim]Manual matches the template (or only local edits).[/dim]")
+    if not apply and report.offered:
+        console.print("[dim]Re-run with --apply to write unambiguous updates.[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -1755,15 +1855,35 @@ def session_start(
 
 @session_app.command("end")
 def session_end(
-    session_id: str = typer.Argument("", help="Session ID to finalize (omit to end most recent)."),
+    session_id: str = typer.Argument(
+        "", help="Session ID to finalize (omit to end the open session)."
+    ),
     summary: str = typer.Option("", "--summary", "-s", help="Final session summary."),
+    file: list[str] = typer.Option([], "--file", "-f", help="File touched in this session."),
+    decisions: str = typer.Option(
+        "",
+        "--decisions",
+        help="JSON list of {decision, evidence, status} entries.",
+    ),
 ) -> None:
     """Finalize a coding session."""
     import json
 
     from agentscaffold.config import load_config
     from agentscaffold.graph import graph_available, open_graph
-    from agentscaffold.graph.sessions import end_session, list_sessions
+    from agentscaffold.graph.sessions import end_session, find_open_session
+
+    decisions_payload = None
+    if decisions:
+        try:
+            parsed = json.loads(decisions)
+        except json.JSONDecodeError:
+            console.print("[red]--decisions must be a JSON list.[/red]")
+            raise SystemExit(1)
+        if not isinstance(parsed, list):
+            console.print("[red]--decisions must be a JSON list.[/red]")
+            raise SystemExit(1)
+        decisions_payload = parsed
 
     config = load_config()
     if not graph_available(config):
@@ -1772,17 +1892,19 @@ def session_end(
 
     store = open_graph(config)
     if not session_id:
-        sessions = list_sessions(store, limit=1)
-        if not sessions:
-            console.print("[red]No sessions found.[/red]")
+        open_session = find_open_session(store)
+        if not open_session or not open_session.get("id"):
+            console.print("[red]No open session.[/red]")
             store.close()
             raise SystemExit(1)
-        session_id = sessions[0].get("id", "")
-        if not session_id:
-            console.print("[red]Could not determine most recent session.[/red]")
-            store.close()
-            raise SystemExit(1)
-    result = end_session(store, session_id, summary=summary)
+        session_id = open_session["id"]
+    result = end_session(
+        store,
+        session_id,
+        summary=summary,
+        decisions=decisions_payload,
+        files=list(file) if file else None,
+    )
     store.close()
     console.print(json.dumps(result, indent=2, default=str))
 

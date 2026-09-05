@@ -18,6 +18,16 @@ from agentscaffold.graph.query_compat import ql, ql_execute, ql_scalar, sql_esca
 
 logger = logging.getLogger(__name__)
 
+_SESSION_SELECT = (
+    'id AS "s.id", date AS "s.date", planNumbers AS "s.planNumbers", '
+    'filesModified AS "s.filesModified", summary AS "s.summary", '
+    'decisions AS "s.decisions", endedAt AS "s.endedAt", project AS "s.project"'
+)
+
+_DECISION_STATUSES = frozenset({"observed", "inferred"})
+_DECISION_KINDS = frozenset({"strategic", "architectural", "operational"})
+_MAX_DECISIONS = 50
+
 
 def _sync_governance(store: GraphBackend) -> None:
     """Re-serialize governance to the git-backed artifact if write-through is on."""
@@ -26,35 +36,243 @@ def _sync_governance(store: GraphBackend) -> None:
     sync_if_enabled(store)
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _project_clause(project: str | None) -> str:
+    if not project:
+        return ""
+    return f" AND project = '{sql_escape(project)}'"
+
+
+def _parse_json_list(raw: Any) -> list[Any]:
+    if isinstance(raw, list):
+        return raw
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return value if isinstance(value, list) else []
+
+
+def _normalize_decisions(decisions: list[Any] | None) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for item in decisions or []:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "inferred")
+        if status not in _DECISION_STATUSES:
+            status = "inferred"
+        kind = str(item.get("kind") or "operational")
+        if kind not in _DECISION_KINDS:
+            kind = "operational"
+        out.append(
+            {
+                "decision": str(item.get("decision") or ""),
+                "evidence": str(item.get("evidence") or ""),
+                "status": status,
+                "kind": kind,
+            }
+        )
+    return out
+
+
+def _row_to_session(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("s.id", ""),
+        "date": row.get("s.date", ""),
+        "plan_numbers": _parse_json_list(row.get("s.planNumbers", "[]")),
+        "files_modified": _parse_json_list(row.get("s.filesModified", "[]")),
+        "summary": row.get("s.summary", "") or "",
+        "decisions": _parse_json_list(row.get("s.decisions", "[]")),
+        "ended_at": row.get("s.endedAt", "") or "",
+        "project": row.get("s.project", "") or "",
+    }
+
+
+def find_open_session(
+    store: GraphBackend,
+    *,
+    project: str | None = None,
+) -> dict[str, Any] | None:
+    """Return the most recent session with an empty ``endedAt``, or None."""
+    rows = ql(
+        store,
+        sql=(
+            f"SELECT {_SESSION_SELECT} FROM Session "
+            f"WHERE (endedAt IS NULL OR endedAt = ''){_project_clause(project)} "
+            f"ORDER BY date DESC LIMIT 1"
+        ),
+    )
+    if not rows:
+        return None
+    return _row_to_session(rows[0])
+
+
+def _merge_decisions(
+    existing: list[Any],
+    incoming: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    merged = [d for d in existing if isinstance(d, dict)]
+    for item in incoming:
+        if item not in merged:
+            merged.append(item)
+    if len(merged) <= _MAX_DECISIONS:
+        return merged
+    kept = merged[: _MAX_DECISIONS - 1]
+    kept.append(
+        {
+            "decision": (
+                f"truncated: {len(merged) - (_MAX_DECISIONS - 1)} further decisions dropped"
+            ),
+            "evidence": f"cap={_MAX_DECISIONS}",
+            "status": "observed",
+            "kind": "operational",
+        }
+    )
+    return kept
+
+
+def _write_decisions(store: GraphBackend, session_id: str, decisions: list[dict[str, str]]) -> None:
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
+
+    with governance_write_lock(store):
+        ql_execute(
+            store,
+            sql=(
+                f"UPDATE Session SET decisions = '{sql_escape(json.dumps(decisions))}' "
+                f"WHERE id = '{sql_escape(session_id)}'"
+            ),
+        )
+        _sync_governance(store)
+
+
+def _merge_plan_numbers(
+    store: GraphBackend,
+    session_id: str,
+    incoming: list[int] | None,
+) -> None:
+    if not incoming:
+        return
+    current = get_session(store, session_id).get("plan_numbers") or []
+    merged = [n for n in current if isinstance(n, int)]
+    for raw in incoming:
+        try:
+            number = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if number not in merged:
+            merged.append(number)
+    if merged == current:
+        return
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
+
+    with governance_write_lock(store):
+        ql_execute(
+            store,
+            sql=(
+                f"UPDATE Session SET planNumbers = '{sql_escape(json.dumps(merged))}' "
+                f"WHERE id = '{sql_escape(session_id)}'"
+            ),
+        )
+        _sync_governance(store)
+
+
+def record_decision(
+    store: GraphBackend,
+    *,
+    decision: str,
+    evidence: str = "",
+    status: str = "observed",
+    kind: str = "operational",
+    project: str | None = None,
+    plan_numbers: list[int] | None = None,
+    ensure_session: bool = True,
+    source: str = "",
+) -> dict[str, Any]:
+    """Append one typed decision to the open session.
+
+    When ``ensure_session`` is true and none is open, start one. Only the
+    explicit record-decision path should call this -- findings, backlog, and
+    begin/complete plan stay on their own vertices.
+    """
+    normalized = _normalize_decisions(
+        [
+            {
+                "decision": decision,
+                "evidence": evidence,
+                "status": status,
+                "kind": kind,
+            }
+        ]
+    )
+    if not normalized or not normalized[0]["decision"]:
+        return {"status": "rejected", "error": "decision is required"}
+
+    open_session = find_open_session(store, project=project)
+    if open_session and open_session.get("id"):
+        session_id = str(open_session["id"])
+    elif ensure_session:
+        summary = f"opened by {source}" if source else "opened by record_decision"
+        session_id = start_session(
+            store,
+            plan_numbers=plan_numbers,
+            summary=summary,
+            project=project,
+        )
+    else:
+        return {"status": "no_session"}
+
+    _merge_plan_numbers(store, session_id, plan_numbers)
+    current = _parse_json_list(get_session(store, session_id).get("decisions", []))
+    merged = _merge_decisions(current, normalized)
+    _write_decisions(store, session_id, merged)
+    return {
+        "status": "recorded",
+        "id": session_id,
+        "decision": normalized[0],
+        "decision_count": len(merged),
+    }
+
+
 def start_session(
     store: GraphBackend,
     *,
     plan_numbers: list[int] | None = None,
     summary: str = "",
+    project: str | None = None,
 ) -> str:
     """Create a new Session node and return its ID.
 
-    Call at the start of a coding session to begin tracking modifications.
+    If a session is already open for the same project, return that id instead
+    of minting a second one.
     """
-    session_id = f"session::{uuid.uuid4().hex[:12]}"
-    now = datetime.now(timezone.utc).isoformat()
+    existing = find_open_session(store, project=project)
+    if existing and existing.get("id"):
+        logger.info("Reusing open session %s", existing["id"])
+        return str(existing["id"])
 
-    plans_str = json.dumps(plan_numbers or [])
+    session_id = f"session::{uuid.uuid4().hex[:12]}"
+    now = _now()
+    props: dict[str, Any] = {
+        "id": session_id,
+        "date": now,
+        "planNumbers": json.dumps(plan_numbers or []),
+        "filesModified": "[]",
+        "summary": summary,
+        "decisions": "[]",
+        "endedAt": "",
+    }
+    if project:
+        props["project"] = project
 
     from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
 
     with governance_write_lock(store):
-        store.create_node(
-            "Session",
-            {
-                "id": session_id,
-                "date": now,
-                "planNumbers": plans_str,
-                "filesModified": "[]",
-                "summary": summary,
-            },
-        )
-
+        store.create_node("Session", props)
         _sync_governance(store)
     logger.info("Started session %s", session_id)
     return session_id
@@ -68,24 +286,25 @@ def record_modification(
     """Record that a file was modified in the current session.
 
     Creates a SESSION_MODIFIED edge and updates the session's file list.
+    Paths with no File vertex still join ``filesModified``; they do not get
+    an edge (the vertex is missing until the next index).
     """
-    file_id = f"file::{file_path}"
+    _append_files_modified(store, session_id, [file_path])
 
-    # Check file exists in graph
+    file_id = f"file::{file_path}"
     exists = ql_scalar(
         store,
-        sql=f"SELECT COUNT(*) FROM File WHERE id = '{file_id}'",
+        sql=f"SELECT COUNT(*) FROM File WHERE id = '{sql_escape(file_id)}'",
     )
     if not exists or int(exists) == 0:
-        logger.debug("File %s not in graph, skipping session tracking", file_path)
+        logger.debug("File %s not in graph, skipping SESSION_MODIFIED edge", file_path)
         return
 
-    # Check if edge already exists
     edge_exists = ql_scalar(
         store,
         sql=(
             f"SELECT COUNT(*) FROM SESSION_MODIFIED "
-            f"WHERE src = '{session_id}' AND dst = '{file_id}'"
+            f"WHERE src = '{sql_escape(session_id)}' AND dst = '{sql_escape(file_id)}'"
         ),
     )
     if edge_exists and int(edge_exists) > 0:
@@ -95,54 +314,93 @@ def record_modification(
 
     with governance_write_lock(store):
         store.create_edge("SESSION_MODIFIED", "Session", session_id, "File", file_id)
+        _sync_governance(store)
 
-        # Update the filesModified list on the session node
-        rows = ql(
+
+def _append_files_modified(
+    store: GraphBackend,
+    session_id: str,
+    file_paths: list[str],
+) -> None:
+    if not file_paths:
+        return
+    rows = ql(
+        store,
+        sql=(
+            f'SELECT filesModified AS "s.filesModified" '
+            f"FROM Session WHERE id = '{sql_escape(session_id)}'"
+        ),
+    )
+    if not rows:
+        return
+    current = _parse_json_list(rows[0].get("s.filesModified", "[]"))
+    changed = False
+    for path in file_paths:
+        if path and path not in current:
+            current.append(path)
+            changed = True
+    if not changed:
+        return
+    updated = json.dumps(current)
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
+
+    with governance_write_lock(store):
+        ql_execute(
             store,
             sql=(
-                f'SELECT filesModified AS "s.filesModified" '
-                f"FROM Session WHERE id = '{session_id}'"
+                f"UPDATE Session SET filesModified = '{sql_escape(updated)}' "
+                f"WHERE id = '{sql_escape(session_id)}'"
             ),
         )
-        if rows:
-            try:
-                current = json.loads(rows[0].get("s.filesModified", "[]"))
-            except (json.JSONDecodeError, TypeError):
-                current = []
-
-            if file_path not in current:
-                current.append(file_path)
-                updated = json.dumps(current)
-                escaped = sql_escape(updated)
-                ql_execute(
-                    store,
-                    sql=(
-                        f"UPDATE Session SET filesModified = '{escaped}' WHERE id = '{session_id}'"
-                    ),
-                )
-                _sync_governance(store)
+        _sync_governance(store)
 
 
 def end_session(
     store: GraphBackend,
-    session_id: str,
+    session_id: str = "",
     *,
     summary: str = "",
+    decisions: list[Any] | None = None,
+    plan_numbers: list[int] | None = None,
+    files: list[str] | None = None,
+    project: str | None = None,
 ) -> dict[str, Any]:
     """Finalize a session and return its summary.
 
-    Optionally updates the session summary text.
+    An empty ``session_id`` closes the open session for ``project``.
     """
-    if summary:
-        escaped = sql_escape(summary)
-        from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
+    if not session_id:
+        open_session = find_open_session(store, project=project)
+        if not open_session or not open_session.get("id"):
+            return {}
+        session_id = str(open_session["id"])
 
-        with governance_write_lock(store):
-            ql_execute(
-                store,
-                sql=f"UPDATE Session SET summary = '{escaped}' WHERE id = '{session_id}'",
-            )
-            _sync_governance(store)
+    existing = get_session(store, session_id)
+    assignments: list[str] = [f"endedAt = '{sql_escape(_now())}'"]
+    if summary:
+        assignments.append(f"summary = '{sql_escape(summary)}'")
+    if decisions is not None:
+        merged = _merge_decisions(
+            existing.get("decisions") or [],
+            _normalize_decisions(decisions),
+        )
+        assignments.append(f"decisions = '{sql_escape(json.dumps(merged))}'")
+    if plan_numbers is not None:
+        assignments.append(f"planNumbers = '{sql_escape(json.dumps(plan_numbers))}'")
+
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
+
+    with governance_write_lock(store):
+        ql_execute(
+            store,
+            sql=(
+                f"UPDATE Session SET {', '.join(assignments)} WHERE id = '{sql_escape(session_id)}'"
+            ),
+        )
+        _sync_governance(store)
+
+    for path in files or []:
+        record_modification(store, session_id, path)
 
     return get_session(store, session_id)
 
@@ -151,88 +409,92 @@ def get_session(store: GraphBackend, session_id: str) -> dict[str, Any]:
     """Retrieve a session's full data including modified files."""
     rows = ql(
         store,
-        sql=(
-            f'SELECT id AS "s.id", date AS "s.date", planNumbers AS "s.planNumbers", '
-            f'filesModified AS "s.filesModified", summary AS "s.summary" '
-            f"FROM Session WHERE id = '{session_id}'"
-        ),
+        sql=(f"SELECT {_SESSION_SELECT} FROM Session WHERE id = '{sql_escape(session_id)}'"),
     )
     if not rows:
         return {}
-
-    row = rows[0]
-    try:
-        plans = json.loads(row.get("s.planNumbers", "[]"))
-    except (json.JSONDecodeError, TypeError):
-        plans = []
-    try:
-        files = json.loads(row.get("s.filesModified", "[]"))
-    except (json.JSONDecodeError, TypeError):
-        files = []
-
-    return {
-        "id": row.get("s.id", ""),
-        "date": row.get("s.date", ""),
-        "plan_numbers": plans,
-        "files_modified": files,
-        "summary": row.get("s.summary", ""),
-    }
+    return _row_to_session(rows[0])
 
 
 def list_sessions(
     store: GraphBackend,
     *,
     limit: int = 10,
+    project: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return recent sessions ordered by date (most recent first)."""
+    safe_limit = max(1, int(limit))
     rows = ql(
         store,
         sql=(
-            'SELECT id AS "s.id", date AS "s.date", planNumbers AS "s.planNumbers", '
-            'filesModified AS "s.filesModified", summary AS "s.summary" '
-            f"FROM Session ORDER BY date DESC LIMIT {limit}"
+            f"SELECT {_SESSION_SELECT} FROM Session "
+            f"WHERE 1=1{_project_clause(project)} "
+            f"ORDER BY date DESC LIMIT {safe_limit}"
         ),
     )
+    return [_row_to_session(row) for row in rows]
 
-    sessions = []
-    for row in rows:
-        try:
-            plans = json.loads(row.get("s.planNumbers", "[]"))
-        except (json.JSONDecodeError, TypeError):
-            plans = []
-        try:
-            files = json.loads(row.get("s.filesModified", "[]"))
-        except (json.JSONDecodeError, TypeError):
-            files = []
 
-        sessions.append(
-            {
-                "id": row.get("s.id", ""),
-                "date": row.get("s.date", ""),
-                "plan_numbers": plans,
-                "files_modified": files,
-                "summary": row.get("s.summary", ""),
-            }
-        )
+def session_decisions_for_plan(
+    store: GraphBackend,
+    plan_number: int,
+    *,
+    project: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Decisions from sessions that name ``plan_number``.
 
-    return sessions
+    This is the session-ledger slice of ``scaffold_decision_context``. Empty
+    means unconfirmed on this store, not "no decisions exist in docs".
+    """
+    sessions = list_sessions(store, limit=200, project=project)
+    wanted = int(plan_number)
+    out: list[dict[str, Any]] = []
+    for session in sessions:
+        named: set[int] = set()
+        for raw in session.get("plan_numbers") or []:
+            try:
+                named.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+        if wanted not in named:
+            continue
+        for item in session.get("decisions") or []:
+            if not isinstance(item, dict) or not item.get("decision"):
+                continue
+            kind = str(item.get("kind") or "operational")
+            if kind not in _DECISION_KINDS:
+                kind = "operational"
+            out.append(
+                {
+                    "session_id": session.get("id", ""),
+                    "date": session.get("date", ""),
+                    "kind": kind,
+                    "decision": item.get("decision", ""),
+                    "evidence": item.get("evidence", ""),
+                    "status": item.get("status", "inferred"),
+                }
+            )
+            if len(out) >= limit:
+                return out
+    return out
 
 
 def get_session_context(
     store: GraphBackend,
     *,
     limit: int = 3,
+    project: str | None = None,
 ) -> dict[str, Any]:
     """Build context from recent sessions for injection into templates/prompts.
 
     Returns a dict with recent session summaries and frequently modified files.
     """
-    sessions = list_sessions(store, limit=limit)
+    sessions = list_sessions(store, limit=limit, project=project)
 
     if not sessions:
         return {}
 
-    # Aggregate frequently modified files across recent sessions
     file_counts: dict[str, int] = {}
     for s in sessions:
         for f in s.get("files_modified", []):
@@ -240,7 +502,6 @@ def get_session_context(
 
     hot_session_files = sorted(file_counts.items(), key=lambda x: x[1], reverse=True)[:10]
 
-    # Recent plan numbers
     plan_numbers: set[int] = set()
     for s in sessions:
         for p in s.get("plan_numbers", []):
@@ -295,7 +556,7 @@ def delete_session(store: GraphBackend, session_id: str) -> None:
     Used by selective pruning. Removes the session's edges first (src = id),
     then the node itself.
     """
-    sid = session_id.replace("'", "''")
+    sid = sql_escape(session_id)
     try:
         store.execute(f"DELETE FROM SESSION_MODIFIED WHERE src = '{sid}'")
     except Exception:  # noqa: BLE001 - edge table may be absent

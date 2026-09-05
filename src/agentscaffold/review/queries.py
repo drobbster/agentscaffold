@@ -258,7 +258,9 @@ def get_findings_for_file(
             ' t.rf_category AS "rf.category",'
             ' t.rf_finding AS "rf.finding",'
             ' t.rf_severity AS "rf.severity",'
-            ' t.rf_status AS "rf.status"'
+            ' t.rf_status AS "rf.status",'
+            ' t.rf_evidenceKind AS "rf.evidenceKind",'
+            ' t.rf_evidence AS "rf.evidence"'
             " FROM GRAPH_TABLE(agentscaffold_graph"
             " MATCH (rf:ReviewFinding)-[e:FINDING_ABOUT_FILE]->(f:File)"
             f" WHERE f.path = '{escaped}'{scope}"
@@ -267,7 +269,9 @@ def get_findings_for_file(
             " rf.category AS rf_category,"
             " rf.finding AS rf_finding,"
             " rf.severity AS rf_severity,"
-            " rf.status AS rf_status)) t"
+            " rf.status AS rf_status,"
+            " rf.evidenceKind AS rf_evidenceKind,"
+            " rf.evidence AS rf_evidence)) t"
         ),
     )
 
@@ -449,6 +453,141 @@ def get_plan_by_number(
         ),
     )
     return rows[0] if rows else None
+
+
+def _as_optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
+def _closed_range(start: Any, end: Any) -> tuple[int, int] | None:
+    lo = _as_optional_int(start)
+    hi = _as_optional_int(end)
+    if lo is None and hi is None:
+        return None
+    if lo is None:
+        lo = hi
+    if hi is None:
+        hi = lo
+    if lo is None or hi is None:
+        return None
+    if lo > hi:
+        lo, hi = hi, lo
+    return (lo, hi)
+
+
+def _ranges_overlap(left: tuple[int, int], right: tuple[int, int]) -> bool:
+    return not (left[1] < right[0] or right[1] < left[0])
+
+
+def _direction_summary(
+    src_id: str,
+    dst_id: str,
+    plan_edges: list[tuple[str, str]],
+    step_edges: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Describe one A→B direction: unqualified, dest range, and/or src range."""
+    has_plan = any(src == src_id and dst == dst_id for src, dst in plan_edges)
+    dest_range: tuple[int, int] | None = None
+    src_range: tuple[int, int] | None = None
+    for edge in step_edges:
+        if edge["src"] != src_id or edge["dst"] != dst_id:
+            continue
+        dest = _closed_range(edge.get("toStep"), edge.get("toStepEnd"))
+        src = _closed_range(edge.get("fromStep"), edge.get("fromStepEnd"))
+        if dest is not None:
+            dest_range = dest
+        if src is not None:
+            src_range = src
+    unqualified = has_plan or (dest_range is None and src_range is None and has_plan)
+    if has_plan:
+        dest_range = None
+        src_range = None
+        unqualified = True
+    elif dest_range is None and src_range is None:
+        unqualified = False
+    present = has_plan or dest_range is not None or src_range is not None
+    return {
+        "present": present,
+        "unqualified": unqualified and present,
+        "dest_range": dest_range,
+        "src_range": src_range,
+    }
+
+
+def plan_dependency_cycle(
+    store: GraphBackend,
+    plan_a: int,
+    plan_b: int,
+) -> dict[str, Any]:
+    """Pairwise apparent vs genuine cycle for two plans (Plan 265).
+
+    ``none`` if the pair is not mutually dependent. ``genuine`` if both
+    directions wait on the other without disjoint step ranges. ``apparent``
+    if a prefix/suffix handshake dissolves the plan-level loop.
+    """
+    empty = {"status": "none", "ranges": []}
+    row_a = get_plan_by_number(store, plan_a)
+    row_b = get_plan_by_number(store, plan_b)
+    if not row_a or not row_b:
+        return empty
+    id_a = str(row_a.get("p.id") or "")
+    id_b = str(row_b.get("p.id") or "")
+    if not id_a or not id_b:
+        return empty
+
+    ea = sql_escape(id_a)
+    eb = sql_escape(id_b)
+    pair = f"WHERE (src = '{ea}' AND dst = '{eb}') OR (src = '{eb}' AND dst = '{ea}')"
+    plan_rows = store.query(f"SELECT src, dst FROM DEPENDS_ON_PLAN {pair}")
+    step_rows = store.query(
+        f"SELECT src, dst, fromStep, fromStepEnd, toStep, toStepEnd FROM DEPENDS_ON_STEPS {pair}"
+    )
+    plan_edges = [(str(r["src"]), str(r["dst"])) for r in (plan_rows or [])]
+    step_edges = [
+        {
+            "src": str(r["src"]),
+            "dst": str(r["dst"]),
+            "fromStep": r.get("fromStep"),
+            "fromStepEnd": r.get("fromStepEnd"),
+            "toStep": r.get("toStep"),
+            "toStepEnd": r.get("toStepEnd"),
+        }
+        for r in (step_rows or [])
+    ]
+
+    a_to_b = _direction_summary(id_a, id_b, plan_edges, step_edges)
+    b_to_a = _direction_summary(id_b, id_a, plan_edges, step_edges)
+    if not a_to_b["present"] or not b_to_a["present"]:
+        return empty
+
+    ranges: list[dict[str, Any]] = []
+    if a_to_b["dest_range"]:
+        ranges.append({"from": plan_a, "to": plan_b, "to_steps": list(a_to_b["dest_range"])})
+    if a_to_b["src_range"]:
+        ranges.append({"from": plan_a, "to": plan_b, "from_steps": list(a_to_b["src_range"])})
+    if b_to_a["dest_range"]:
+        ranges.append({"from": plan_b, "to": plan_a, "to_steps": list(b_to_a["dest_range"])})
+    if b_to_a["src_range"]:
+        ranges.append({"from": plan_b, "to": plan_a, "from_steps": list(b_to_a["src_range"])})
+
+    if a_to_b["unqualified"] or b_to_a["unqualified"]:
+        return {"status": "genuine", "ranges": ranges}
+
+    handshake_on_b = (
+        a_to_b["dest_range"] is not None
+        and b_to_a["src_range"] is not None
+        and not _ranges_overlap(a_to_b["dest_range"], b_to_a["src_range"])
+    )
+    handshake_on_a = (
+        b_to_a["dest_range"] is not None
+        and a_to_b["src_range"] is not None
+        and not _ranges_overlap(b_to_a["dest_range"], a_to_b["src_range"])
+    )
+    if handshake_on_b or handshake_on_a:
+        return {"status": "apparent", "ranges": ranges}
+    return {"status": "genuine", "ranges": ranges}
 
 
 def get_plan_impacted_files(

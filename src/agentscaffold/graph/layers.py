@@ -93,6 +93,19 @@ def check_layers(
         return _not_evaluable(f"The graph is unavailable: {exc}", layer_count=len(layers))
 
     if not memberships:
+        empty_patterns = _layers_have_empty_patterns(store, scope_sql, params)
+        if empty_patterns:
+            return _not_evaluable(
+                f"{len(layers)} layers are defined but none declare path patterns, so "
+                "no file can be mapped. This is no layer data ingested, not a clean "
+                "architecture.",
+                remediation=(
+                    "Give each layer a Components table with a Paths column, a "
+                    "**Paths**/**Location** line, or inline backticked repo paths, "
+                    "then run scaffold index."
+                ),
+                layer_count=len(layers),
+            )
         return _not_evaluable(
             f"{len(layers)} layers are defined but no files are mapped to them, so no "
             "import can be attributed to a layer.",
@@ -185,6 +198,20 @@ def _classify(source: str, target: str, from_layer: int, to_layer: int) -> dict[
         }
 
     return None
+
+
+def _layers_have_empty_patterns(store: Any, scope_sql: str, params: dict[str, Any] | None) -> bool:
+    """True when every ArchitectureLayer row has an empty pathPatterns value."""
+    sql = "SELECT pathPatterns FROM ArchitectureLayer"
+    if scope_sql:
+        sql += f" WHERE {scope_sql}"
+    try:
+        rows = store.query(sql, params) if params else store.query(sql)
+    except Exception:  # noqa: BLE001 - missing column is not empty-pattern evidence
+        return False
+    if not rows or not any("pathPatterns" in row for row in rows):
+        return False
+    return all(not str(row.get("pathPatterns") or "").strip() for row in rows)
 
 
 def _fetch_layers(store: Any, scope_sql: str, params: dict[str, Any] | None) -> list[int]:

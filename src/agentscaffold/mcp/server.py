@@ -123,12 +123,39 @@ TOOL_INTENTS: dict[str, list[str]] = {
         "what's the current state",
         "what's blocked",
         "what are the next steps",
-        "session start",
         "where are we",
         "what should I work on now",
         "what are the next priorities",
         "latest blockers and what's next",
         "current blockers and next steps",
+    ],
+    "scaffold_session_start": [
+        "start a working session",
+        "open a scaffold session",
+        "begin recording this session",
+        "start session tracking",
+    ],
+    "scaffold_session_end": [
+        "end this session",
+        "close the working session",
+        "end session with summary",
+        "close this working session",
+    ],
+    "scaffold_session_record_decision": [
+        "record this decision",
+        "log a session decision",
+        "note a strategic decision",
+        "record this architectural call",
+        "capture this operational decision",
+    ],
+    "scaffold_session_context": [
+        "recent session context",
+        "show session context",
+    ],
+    "scaffold_session_list": [
+        "list sessions",
+        "show recent sessions",
+        "list working sessions",
     ],
     "scaffold_find_studies": [
         "any studies on X",
@@ -335,6 +362,18 @@ _TOOL_SIGNAL_TOKENS: dict[str, set[str]] = {
     "scaffold_prepare_rewrite": {"rewrite", "revise", "update", "expand", "refresh"},
     "scaffold_prepare_retro": {"retro", "retrospective", "post", "implementation", "review"},
     "scaffold_orient": {"state", "blocked", "next", "priorities", "where"},
+    "scaffold_session_start": {"working", "session", "tracking", "recording"},
+    "scaffold_session_end": {"end", "close", "session", "summary"},
+    "scaffold_session_record_decision": {
+        "record",
+        "decision",
+        "session",
+        "strategic",
+        "architectural",
+        "operational",
+    },
+    "scaffold_session_context": {"session", "context", "recent"},
+    "scaffold_session_list": {"list", "sessions", "recent", "working"},
     "scaffold_find_studies": {"study", "studies", "experiment", "experiments", "tested"},
     "scaffold_prior_experiments": {"prior", "experiments", "evidence", "tested"},
     "scaffold_find_adrs": {"adr", "architecture", "decision", "governs"},
@@ -357,6 +396,7 @@ _TOOL_SIGNAL_TOKENS: dict[str, set[str]] = {
 _REQUIRED_STRING_ARGS: dict[str, tuple[str, ...]] = {
     "scaffold_impact": ("file_or_symbol",),
     "scaffold_context": ("symbol",),
+    "scaffold_session_record_decision": ("decision",),
     "scaffold_search": ("query",),
     "scaffold_recall_governance": ("query",),
     "scaffold_grep_graph": ("pattern",),
@@ -1030,6 +1070,21 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
         elif name == "scaffold_complete_plan":
             return _tool_complete_plan(store, arguments, meta)
 
+        elif name == "scaffold_session_start":
+            return _tool_session_start(store, arguments, meta)
+
+        elif name == "scaffold_session_end":
+            return _tool_session_end(store, arguments, meta)
+
+        elif name == "scaffold_session_record_decision":
+            return _tool_session_record_decision(store, arguments, meta)
+
+        elif name == "scaffold_session_context":
+            return _tool_session_context(store, arguments, meta)
+
+        elif name == "scaffold_session_list":
+            return _tool_session_list(store, arguments, meta)
+
         else:
             return {"error": f"Unknown tool: {name}"}
 
@@ -1264,6 +1319,13 @@ def _tool_context(
         relation="callers",
     )
 
+    bases: list[dict[str, Any]] = []
+    subclasses: list[dict[str, Any]] = []
+    raw_id = node.get("id") or ""
+    if "class::" in raw_id and hasattr(store, "query_class_bases"):
+        bases = store.query_class_bases(raw_id)
+        subclasses = store.query_class_subclasses(raw_id)
+
     return {
         "symbol": node,
         "callers": callers,
@@ -1274,6 +1336,8 @@ def _tool_context(
         "heuristic_caller_count": count_heuristic(callers) + count_heuristic(method_callers),
         "config_consumers": config_consumers,
         "config_consumer_count": len(config_consumers),
+        "bases": bases,
+        "subclasses": subclasses,
         "coverage": {"target_language": language, "caveat": caveat},
         "markdown": format_context_markdown(
             node,
@@ -1282,6 +1346,8 @@ def _tool_context(
             method_callers,
             caveat=caveat,
             config_consumers=config_consumers,
+            bases=bases,
+            subclasses=subclasses,
         ),
         "meta": meta,
     }
@@ -1971,7 +2037,11 @@ def _tool_compare_plans(
         rank_lead_overlap,
         resolve_overlap_noise_paths,
     )
-    from agentscaffold.review.queries import get_plan_by_number, get_plan_impacted_files
+    from agentscaffold.review.queries import (
+        get_plan_by_number,
+        get_plan_impacted_files,
+        plan_dependency_cycle,
+    )
 
     pa = arguments.get("plan_a")
     pb = arguments.get("plan_b")
@@ -2023,6 +2093,7 @@ def _tool_compare_plans(
             "meaningful shared impacted-file count (>3 high, >=1 medium, 0 low); "
             "ubiquitous governance docs excluded; lead_shared_files ranks code/config first"
         ),
+        "dependency_cycle": plan_dependency_cycle(store, int(pa), int(pb)),
         "graph_warning": _empty_graph_warning(store.get_stats()),
         "meta": meta,
     }
@@ -2356,6 +2427,11 @@ def _tool_orient(
         "next_action_focus": actions_payload.get("focus_plan"),
         "meta": meta,
     }
+    from agentscaffold.graph.sessions import get_session_context
+
+    session_ctx = get_session_context(store, project=_current_project_or_none())
+    if session_ctx:
+        result["session_context"] = session_ctx
     return apply_detail(result, arguments.get("detail"))
 
 
@@ -2522,6 +2598,14 @@ def _tool_decision_context(
     studies = get_studies_for_plan(store, pn, **scope)
     deps = get_plan_dependencies(store, pn, **scope)
 
+    session_decisions: list[dict[str, Any]] = []
+    try:
+        from agentscaffold.graph.sessions import session_decisions_for_plan
+
+        session_decisions = session_decisions_for_plan(store, int(pn), project=scope.get("project"))
+    except Exception:  # noqa: BLE001 - mocked stores in unit tests have no Session table
+        session_decisions = []
+
     from agentscaffold.review.filters import normalize_plan_status
 
     return {
@@ -2533,7 +2617,8 @@ def _tool_decision_context(
         "validation_spikes": _clean_out_rows(spikes),
         "supporting_studies": _clean_out_rows(studies),
         "plan_dependencies": _clean_out_rows(deps),
-        "has_full_decision_chain": bool(adrs or spikes or studies),
+        "session_decisions": session_decisions,
+        "has_full_decision_chain": bool(adrs or spikes or studies or session_decisions),
         **({"project": scope["project"]} if scope["project"] else {}),
         # If the graph is empty the chain looks absent even when it exists in
         # docs; flag so a False is not read as a confirmed "no decisions".
@@ -2568,6 +2653,8 @@ def _tool_record_finding(
         severity=arguments.get("severity", "medium"),
         file_paths=arguments.get("file_paths") or [],
         function_ids=arguments.get("function_ids") or [],
+        evidence_kind=arguments.get("evidence_kind"),
+        evidence=arguments.get("evidence"),
         project=_current_project_or_none(),
     )
     result["meta"] = meta
@@ -2587,7 +2674,11 @@ def _tool_resolve_finding(
         return {"error": "finding_id and resolution are required.", "meta": meta}
 
     result = resolve_finding(
-        store, finding_id, resolution=resolution, project=_current_project_or_none()
+        store,
+        finding_id,
+        resolution=resolution,
+        resolved_by_plan=arguments.get("resolved_by_plan"),
+        project=_current_project_or_none(),
     )
     return _wrap_resolve_result(
         result,
@@ -2931,6 +3022,8 @@ def _tool_begin_plan(
                 "finding": c.get("text", ""),
                 "severity": c.get("severity", "medium"),
                 "file_paths": _finding_file_paths(c.get("evidence")),
+                "evidence_kind": "inferred",
+                "evidence": "prepare_review",
             }
         )
     for g in review_result.get("gaps", []):
@@ -2940,6 +3033,8 @@ def _tool_begin_plan(
                 "finding": g.get("text", ""),
                 "severity": g.get("severity", "medium"),
                 "file_paths": _finding_file_paths(g.get("evidence")),
+                "evidence_kind": "inferred",
+                "evidence": "prepare_review",
             }
         )
 
@@ -2978,7 +3073,7 @@ def _tool_begin_plan(
 
     from agentscaffold.mcp.plan_card import build_plan_card
 
-    return {
+    payload = {
         "plan_number": pn,
         "dry_run": dry_run,
         "plan_card": build_plan_card(store, int(pn), root=root),
@@ -3006,6 +3101,7 @@ def _tool_begin_plan(
         "proceed_prompt": proceed_prompt,
         "meta": meta,
     }
+    return payload
 
 
 def _select_findings_to_persist(
@@ -3087,6 +3183,8 @@ def _tool_complete_plan(
                 "category": insight.get("category", "retro"),
                 "finding": insight.get("text", ""),
                 "severity": "medium",
+                "evidence_kind": "inferred",
+                "evidence": "complete_plan retro",
             }
         )
 
@@ -3134,7 +3232,7 @@ def _tool_complete_plan(
         "Write retro summary to plan appendix",
     ]
 
-    return {
+    payload = {
         "plan_number": pn,
         "dry_run": dry_run,
         "graph_warning": graph_warning,
@@ -3158,6 +3256,97 @@ def _tool_complete_plan(
         "completion_checklist": completion_checklist,
         "meta": meta,
     }
+    return payload
+
+
+def _tool_session_start(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
+    """Start or reuse the open working session."""
+    from agentscaffold.graph.sessions import get_session, start_session
+
+    session_id = start_session(
+        store,
+        plan_numbers=arguments.get("plan_numbers") or None,
+        summary=arguments.get("summary") or "",
+        project=_current_project_or_none(),
+    )
+    return {"id": session_id, "session": get_session(store, session_id), "meta": meta}
+
+
+def _tool_session_record_decision(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
+    """Record a typed session decision (opens a session if none is open)."""
+    from agentscaffold.graph.sessions import record_decision
+
+    decision = (arguments.get("decision") or "").strip()
+    if not decision:
+        return {"error": "decision is required.", "meta": meta}
+    result = record_decision(
+        store,
+        decision=decision,
+        evidence=arguments.get("evidence") or "",
+        status=arguments.get("status") or "inferred",
+        kind=arguments.get("kind") or "operational",
+        project=_current_project_or_none(),
+        plan_numbers=arguments.get("plan_numbers") or None,
+        ensure_session=True,
+        source="session_record_decision",
+    )
+    result["meta"] = meta
+    return result
+
+
+def _tool_session_end(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
+    """Close a working session."""
+    from agentscaffold.graph.sessions import end_session
+
+    result = end_session(
+        store,
+        arguments.get("session_id") or "",
+        summary=arguments.get("summary") or "",
+        decisions=arguments.get("decisions"),
+        plan_numbers=arguments.get("plan_numbers"),
+        files=arguments.get("files"),
+        project=_current_project_or_none(),
+    )
+    if not result:
+        return {"error": "No open session.", "meta": meta}
+    result["meta"] = meta
+    return result
+
+
+def _tool_session_context(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
+    """Fallback session context; prefer the copy embedded in scaffold_orient."""
+    from agentscaffold.graph.sessions import get_session_context
+
+    limit = arguments.get("limit", 3)
+    ctx = get_session_context(
+        store,
+        limit=int(limit) if limit else 3,
+        project=_current_project_or_none(),
+    )
+    return {"session_context": ctx, "meta": meta}
+
+
+def _tool_session_list(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
+    """List recent working sessions for the current project."""
+    from agentscaffold.graph.sessions import list_sessions
+
+    limit = arguments.get("limit", 10)
+    sessions = list_sessions(
+        store,
+        limit=int(limit) if limit else 10,
+        project=_current_project_or_none(),
+    )
+    return {"sessions": sessions, "count": len(sessions), "meta": meta}
 
 
 # ---------------------------------------------------------------------------
