@@ -1160,8 +1160,7 @@ class TestScaffoldRecallGovernance:
                 score=1.0 if passed else 0.0,
                 expected="Learning rows ingested; recall or grep_fallback hits cache invalidation",
                 actual=(
-                    f"ingested={len(ingested)}, recall_count={count}, "
-                    f"grep_fallback={grep_hits}"
+                    f"ingested={len(ingested)}, recall_count={count}, grep_fallback={grep_hits}"
                 ),
                 category="mcp",
             )

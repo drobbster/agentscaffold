@@ -156,9 +156,9 @@ class TestFindingLifecycle:
                 category="lifecycle",
             )
         )
-        assert (
-            has_edge
-        ), f"Expected FINDING_ABOUT_FILE edge to libs/data/router.py, got: {edge_paths}"
+        assert has_edge, (
+            f"Expected FINDING_ABOUT_FILE edge to libs/data/router.py, got: {edge_paths}"
+        )
 
 
 class TestConcurrentFindingWrites:
@@ -222,9 +222,9 @@ class TestConcurrentFindingWrites:
                 category="lifecycle",
             )
         )
-        assert (
-            no_id_collision
-        ), f"Expected {self._CONCURRENCY} distinct IDs, got {len(ids_returned)}: {ids_returned}"
+        assert no_id_collision, (
+            f"Expected {self._CONCURRENCY} distinct IDs, got {len(ids_returned)}: {ids_returned}"
+        )
         assert all_open, f"Not all findings have status='open': {statuses}"
 
     def test_concurrent_writes_latency(self, indexed_sim_duckdb):
@@ -342,8 +342,7 @@ class TestFindingEvidence:
         rows = ql(
             store,
             sql=(
-                f'SELECT evidenceKind AS "rf.evidenceKind" '
-                f"FROM ReviewFinding WHERE id = '{fid}'"
+                f"SELECT evidenceKind AS \"rf.evidenceKind\" FROM ReviewFinding WHERE id = '{fid}'"
             ),
         )
         kind = rows[0].get("rf.evidenceKind") if rows else None

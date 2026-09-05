@@ -174,9 +174,9 @@ def test_each_path_flavour_variant_resolves_its_own_projects(flavour):
 
     (alpha_name, alpha_root), (beta_name, beta_root) = variants
     beta_child = f"{beta_root}{separator}src{separator}{beta_name}_module.py"
-    assert not path_contains(
-        alpha_root, beta_child
-    ), f"{flavour}: sibling projects must not capture each other's paths"
+    assert not path_contains(alpha_root, beta_child), (
+        f"{flavour}: sibling projects must not capture each other's paths"
+    )
 
 
 def test_windows_and_wsl_roots_do_not_cross_match():
