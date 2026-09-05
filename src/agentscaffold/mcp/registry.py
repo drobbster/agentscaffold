@@ -399,7 +399,9 @@ def _tool_specs() -> list[ToolSpec]:
             name="scaffold_compare_plans",
             description=(
                 "Compare two plans for conflicts, shared files, and supersession. "
-                "Use when the user asks to compare plans or check for overlap."
+                "Also reports a pairwise dependency_cycle (none / apparent / genuine) "
+                "when the plans depend on each other. Use when the user asks to "
+                "compare plans or check for overlap."
             ),
             input_schema={
                 "type": "object",

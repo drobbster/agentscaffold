@@ -86,18 +86,12 @@ ADDITIVE_COLUMNS: tuple[AdditiveColumn, ...] = (
     AdditiveColumn("Learning", "evidence", "VARCHAR DEFAULT ''"),
 )
 
-# Bumped to 10 by Plan 252 without a DDL change. The tables are identical; what
-# changed is what gets *derived* into them -- relative Python imports now produce
-# IMPORTS edges instead of being dropped. A graph built before that fix is
-# structurally valid and quietly incomplete, which is the worst state for impact
-# analysis to be in, because an under-reported blast radius is indistinguishable
-# from a small one. Bumping the version routes those graphs through the existing
-# governance-preserving rebuild so they heal on the next index rather than
-# waiting for someone to read a warning and act on it.
-SCHEMA_VERSION = 10
+# Bumped to 11 by Plan 265: PlanStep node, PLAN_HAS_STEP, and DEPENDS_ON_STEPS.
+# Version 10 was Plan 252 (relative-import IMPORTS edges, no DDL change).
+SCHEMA_VERSION = 11
 
 # ---------------------------------------------------------------------------
-# Node table DDL (20 tables)
+# Node table DDL (22 tables)
 # ---------------------------------------------------------------------------
 
 _AUTHORED_NODE_TABLES: list[str] = [
@@ -218,6 +212,16 @@ _AUTHORED_NODE_TABLES: list[str] = [
         createdDate VARCHAR,
         lastUpdated VARCHAR,
         reviewedAt  VARCHAR DEFAULT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS PlanStep (
+        id          VARCHAR PRIMARY KEY,
+        planNumber  BIGINT,
+        stepNumber  BIGINT,
+        text        VARCHAR,
+        checked     BOOLEAN,
+        ordinal     BIGINT
     )
     """,
     """
@@ -447,6 +451,18 @@ EDGE_DEFS: list[EdgeDef] = [
     EdgeDef("FINDING_ADDRESSED_BY", "ReviewFinding", "Plan"),
     EdgeDef("SESSION_MODIFIED", "Session", "File"),
     EdgeDef("DEPENDS_ON_PLAN", "Plan", "Plan"),
+    EdgeDef("PLAN_HAS_STEP", "Plan", "PlanStep"),
+    EdgeDef(
+        "DEPENDS_ON_STEPS",
+        "Plan",
+        "Plan",
+        (
+            ("fromStep", "BIGINT"),
+            ("fromStepEnd", "BIGINT"),
+            ("toStep", "BIGINT"),
+            ("toStepEnd", "BIGINT"),
+        ),
+    ),
     EdgeDef("STUDY_REFERENCES_PLAN", "Study", "Plan"),
     EdgeDef("STUDY_REFERENCES_FILE", "Study", "File"),
     EdgeDef("ADR_GOVERNS", "ADR", "Plan"),

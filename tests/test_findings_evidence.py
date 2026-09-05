@@ -272,5 +272,5 @@ def test_upgrade_adds_columns_and_keeps_existing_rows():
     assert finding[1] == "legacy"
     assert learning[0] == "unspecified"
     assert learning[1] == "legacy learning"
-    assert SCHEMA_VERSION == 10
+    assert SCHEMA_VERSION == 11
     store.close()

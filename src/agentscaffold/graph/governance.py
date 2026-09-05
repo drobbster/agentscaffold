@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from agentscaffold.graph.query_compat import ql, sql_escape
+from agentscaffold.plan.steps import parse_execution_steps, parse_step_dependencies
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
@@ -323,6 +324,7 @@ def _parse_plan(filepath: Path) -> dict[str, Any] | None:
     impacts = _extract_file_impact(text)
 
     dependencies = _extract_dependencies(meta)
+    step_dependencies = meta.get("step_dependencies", "")
 
     return {
         "number": number,
@@ -334,6 +336,7 @@ def _parse_plan(filepath: Path) -> dict[str, Any] | None:
         "last_updated": last_updated,
         "file_impacts": impacts,
         "dependencies": dependencies,
+        "step_dependencies": step_dependencies,
         "text": text,
     }
 
@@ -1107,6 +1110,7 @@ def process_governance(
 
     # --- Plans ---
     plan_dependencies: list[tuple[str, list[int]]] = []
+    step_dependencies: list[tuple[str, list[dict[str, Any]]]] = []
     if plans_dir.is_dir():
         seen_plan_ids: set[str] = set()
         for plan_file in sorted(plans_dir.glob("*.md")):
@@ -1139,6 +1143,31 @@ def process_governance(
             if data.get("dependencies"):
                 plan_dependencies.append((plan_id, data["dependencies"]))
 
+            clauses = parse_step_dependencies(data.get("step_dependencies", ""))
+            if clauses:
+                step_dependencies.append((plan_id, clauses))
+
+            for step in parse_execution_steps(data["text"]):
+                step_id = f"planstep::{data['number']}::{step['ordinal']}"
+                store.create_node(
+                    "PlanStep",
+                    {
+                        "id": step_id,
+                        "planNumber": data["number"],
+                        "stepNumber": step["step_number"],
+                        "text": step["text"],
+                        "checked": step["checked"],
+                        "ordinal": step["ordinal"],
+                    },
+                )
+                store.create_edge(
+                    "PLAN_HAS_STEP",
+                    "Plan",
+                    plan_id,
+                    "PlanStep",
+                    step_id,
+                )
+
             for impact in data["file_impacts"]:
                 fpath = impact["path"]
                 if fpath in file_id_map:
@@ -1167,6 +1196,27 @@ def process_governance(
             if dep_id:
                 store.create_edge("DEPENDS_ON_PLAN", "Plan", plan_id, "Plan", dep_id)
                 dep_edge_count += 1
+
+    for plan_id, clauses in step_dependencies:
+        for clause in clauses:
+            dest_id = plan_number_to_id.get(clause["dest_number"])
+            if not dest_id:
+                continue
+            props: dict[str, Any] = {}
+            if clause["from_step"] is not None:
+                props["fromStep"] = clause["from_step"]
+                props["fromStepEnd"] = clause["from_step_end"]
+            if clause["to_step"] is not None:
+                props["toStep"] = clause["to_step"]
+                props["toStepEnd"] = clause["to_step_end"]
+            store.create_edge(
+                "DEPENDS_ON_STEPS",
+                "Plan",
+                plan_id,
+                "Plan",
+                dest_id,
+                props or None,
+            )
 
     # --- Contracts ---
     declares_edge_count = 0

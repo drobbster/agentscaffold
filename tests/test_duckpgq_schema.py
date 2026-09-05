@@ -43,7 +43,7 @@ def conn():
 
 
 def test_schema_version():
-    assert SCHEMA_VERSION == 10  # bumped in Plan 252 (relative-import IMPORTS edges)
+    assert SCHEMA_VERSION == 11  # bumped in Plan 265 (PlanStep / DEPENDS_ON_STEPS)
 
 
 def test_backlogitem_ddl_includes_resolution():
@@ -97,7 +97,7 @@ def test_extends_additive_columns_on_existing_table(conn):
 
 
 def test_schema_version_unchanged_by_extends_columns():
-    assert SCHEMA_VERSION == 10
+    assert SCHEMA_VERSION == 11
 
 
 def test_session_additive_columns_on_existing_table(conn):
@@ -128,7 +128,7 @@ def test_session_additive_columns_on_existing_table(conn):
 
 
 def test_schema_version_unchanged_by_session_columns():
-    assert SCHEMA_VERSION == 10
+    assert SCHEMA_VERSION == 11
 
 
 def test_finding_evidence_additive_columns_on_existing_table(conn):
@@ -176,7 +176,19 @@ def test_finding_evidence_additive_columns_on_existing_table(conn):
 
 
 def test_schema_version_unchanged_by_evidence_columns():
-    assert SCHEMA_VERSION == 10
+    assert SCHEMA_VERSION == 11
+
+
+def test_planstep_and_depends_on_steps_are_in_schema():
+    assert "PlanStep" in NODE_TABLE_NAMES
+    assert "PLAN_HAS_STEP" in EDGE_TABLE_NAMES
+    assert "DEPENDS_ON_STEPS" in EDGE_TABLE_NAMES
+    depends = next(e for e in EDGE_DEFS if e.name == "DEPENDS_ON_STEPS")
+    assert depends.src == "Plan" and depends.dst == "Plan"
+    cols = {name for name, _sql in depends.properties}
+    assert cols == {"fromStep", "fromStepEnd", "toStep", "toStepEnd"}
+    process = next(e for e in EDGE_DEFS if e.name == "STEP_IN_PROCESS")
+    assert process.src == "Function"
 
 
 def test_ensure_additive_columns_is_noop_when_table_missing(conn):
@@ -230,16 +242,16 @@ def test_the_plan_252_bump_changed_no_tables():
     additive ALTER rather than a bump. So version 10 is not a promise that the
     columns never moved -- only that the set of tables did not.
     """
-    assert len(NODE_TABLES) == 21
-    assert len(EDGE_TABLES) == 37
+    assert len(NODE_TABLES) == 22
+    assert len(EDGE_TABLES) == 39
 
 
 def test_node_table_count():
-    assert len(NODE_TABLES) == 21  # +Project (Plan 225)
+    assert len(NODE_TABLES) == 22  # +PlanStep (Plan 265)
 
 
 def test_edge_table_count():
-    assert len(EDGE_TABLES) == 37  # +CONTRACT_ABOUT_FILE (Plan 237)
+    assert len(EDGE_TABLES) == 39  # +PLAN_HAS_STEP, DEPENDS_ON_STEPS (Plan 265)
 
 
 def test_all_node_ddl_returns_copy():
@@ -254,14 +266,14 @@ def test_all_edge_ddl_returns_copy():
 
 def test_create_property_graph_sql_lists_all_node_tables():
     """Every node table name must appear in the CREATE PROPERTY GRAPH statement."""
-    assert len(NODE_TABLE_NAMES) == 21
+    assert len(NODE_TABLE_NAMES) == 22
     for name in NODE_TABLE_NAMES:
         assert name in CREATE_PROPERTY_GRAPH_SQL, f"Missing vertex: {name}"
 
 
 def test_create_property_graph_sql_lists_all_edge_tables():
     """Every edge type must appear in the CREATE PROPERTY GRAPH statement."""
-    assert len(EDGE_TABLE_NAMES) == 37
+    assert len(EDGE_TABLE_NAMES) == 39
     for name in EDGE_TABLE_NAMES:
         assert name in CREATE_PROPERTY_GRAPH_SQL, f"Missing edge: {name}"
 

@@ -9,64 +9,12 @@ Tests / Completion / Review checklists do not inflate progress.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
-_CHECKBOX_LINE = re.compile(r"^-\s+\[([ xX])\]\s+(.*)$", re.MULTILINE)
-_HEADING = re.compile(r"^#{1,6}\s+(.*)$", re.MULTILINE)
+from agentscaffold.plan.steps import count_execution_checkboxes, next_unchecked_step
+
 _SUMMARY_IMPACT_CAP = 12
-_EXECUTION_HEADING_HINTS = ("execution step", "execution steps", "implementation step")
-
-
-def _execution_steps_section(text: str) -> str:
-    """Return the markdown body under the Execution Steps heading, if present."""
-    if not text:
-        return ""
-    headings = list(_HEADING.finditer(text))
-    start = None
-    end = len(text)
-    for i, m in enumerate(headings):
-        title = m.group(1).strip().lower()
-        # Strip leading numbering like "6. Execution Steps"
-        title = re.sub(r"^\d+(\.\d+)*\.\s*", "", title)
-        if any(h in title for h in _EXECUTION_HEADING_HINTS):
-            start = m.end()
-            if i + 1 < len(headings):
-                end = headings[i + 1].start()
-            break
-    if start is None:
-        return ""
-    return text[start:end]
-
-
-def count_execution_checkboxes(text: str) -> tuple[int, int]:
-    """Return (unchecked, checked) counts from the Execution Steps section only.
-
-    If no Execution Steps heading exists, returns (0, 0) rather than counting
-    every checklist in the plan (Plan 247).
-    """
-    section = _execution_steps_section(text)
-    if not section:
-        return 0, 0
-    unchecked = 0
-    checked = 0
-    for m in _CHECKBOX_LINE.finditer(section):
-        if m.group(1).lower() == "x":
-            checked += 1
-        else:
-            unchecked += 1
-    return unchecked, checked
-
-
-def next_unchecked_step(text: str) -> str | None:
-    """Return the text of the first unchecked Execution Steps item, if any."""
-    section = _execution_steps_section(text)
-    for m in _CHECKBOX_LINE.finditer(section):
-        if m.group(1).lower() != "x":
-            step = m.group(2).strip()
-            return step or None
-    return None
 
 
 def build_plan_card(

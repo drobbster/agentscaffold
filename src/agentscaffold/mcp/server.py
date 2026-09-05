@@ -2037,7 +2037,11 @@ def _tool_compare_plans(
         rank_lead_overlap,
         resolve_overlap_noise_paths,
     )
-    from agentscaffold.review.queries import get_plan_by_number, get_plan_impacted_files
+    from agentscaffold.review.queries import (
+        get_plan_by_number,
+        get_plan_impacted_files,
+        plan_dependency_cycle,
+    )
 
     pa = arguments.get("plan_a")
     pb = arguments.get("plan_b")
@@ -2089,6 +2093,7 @@ def _tool_compare_plans(
             "meaningful shared impacted-file count (>3 high, >=1 medium, 0 low); "
             "ubiquitous governance docs excluded; lead_shared_files ranks code/config first"
         ),
+        "dependency_cycle": plan_dependency_cycle(store, int(pa), int(pb)),
         "graph_warning": _empty_graph_warning(store.get_stats()),
         "meta": meta,
     }

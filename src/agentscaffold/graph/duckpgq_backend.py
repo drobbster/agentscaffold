@@ -125,6 +125,7 @@ def _connect(
 # derived governance, and are preserved across re-indexing.
 _GOVERNANCE_NODE_TABLES: tuple[str, ...] = (
     "Plan",
+    "PlanStep",
     "Contract",
     "Learning",
     "Study",
@@ -140,6 +141,8 @@ _GOVERNANCE_EDGE_TABLES: tuple[str, ...] = (
     "LEARNING_RELATES_TO_FILE",
     "LEARNING_RELATES_TO_FUNC",
     "DEPENDS_ON_PLAN",
+    "PLAN_HAS_STEP",
+    "DEPENDS_ON_STEPS",
     "STUDY_REFERENCES_PLAN",
     "STUDY_REFERENCES_FILE",
     "ADR_GOVERNS",
