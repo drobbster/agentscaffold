@@ -131,6 +131,54 @@ def test_schema_version_unchanged_by_session_columns():
     assert SCHEMA_VERSION == 10
 
 
+def test_finding_evidence_additive_columns_on_existing_table(conn):
+    """Plan 264: evidenceKind/evidence ALTER without a SCHEMA_VERSION rebuild."""
+    from agentscaffold.graph.duckpgq_schema import ensure_additive_columns
+
+    conn.execute("DROP TABLE IF EXISTS ReviewFinding")
+    conn.execute("DROP TABLE IF EXISTS Learning")
+    conn.execute(
+        """
+        CREATE TABLE ReviewFinding (
+            id VARCHAR PRIMARY KEY,
+            finding VARCHAR,
+            status VARCHAR
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE Learning (
+            id VARCHAR PRIMARY KEY,
+            description VARCHAR
+        )
+        """
+    )
+    ensure_additive_columns(conn)
+    finding_cols = {
+        str(r[0]).lower()
+        for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'ReviewFinding'"
+        ).fetchall()
+    }
+    learning_cols = {
+        str(r[0]).lower()
+        for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'Learning'"
+        ).fetchall()
+    }
+    assert "evidencekind" in finding_cols
+    assert "evidence" in finding_cols
+    assert "evidencekind" in learning_cols
+    assert "evidence" in learning_cols
+
+
+def test_schema_version_unchanged_by_evidence_columns():
+    assert SCHEMA_VERSION == 10
+
+
 def test_ensure_additive_columns_is_noop_when_table_missing(conn):
     from agentscaffold.graph.duckpgq_schema import ensure_additive_columns
 

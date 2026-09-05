@@ -2650,6 +2650,8 @@ def _tool_record_finding(
         severity=arguments.get("severity", "medium"),
         file_paths=arguments.get("file_paths") or [],
         function_ids=arguments.get("function_ids") or [],
+        evidence_kind=arguments.get("evidence_kind"),
+        evidence=arguments.get("evidence"),
         project=_current_project_or_none(),
     )
     result["meta"] = meta
@@ -2669,7 +2671,11 @@ def _tool_resolve_finding(
         return {"error": "finding_id and resolution are required.", "meta": meta}
 
     result = resolve_finding(
-        store, finding_id, resolution=resolution, project=_current_project_or_none()
+        store,
+        finding_id,
+        resolution=resolution,
+        resolved_by_plan=arguments.get("resolved_by_plan"),
+        project=_current_project_or_none(),
     )
     return _wrap_resolve_result(
         result,
@@ -3013,6 +3019,8 @@ def _tool_begin_plan(
                 "finding": c.get("text", ""),
                 "severity": c.get("severity", "medium"),
                 "file_paths": _finding_file_paths(c.get("evidence")),
+                "evidence_kind": "inferred",
+                "evidence": "prepare_review",
             }
         )
     for g in review_result.get("gaps", []):
@@ -3022,6 +3030,8 @@ def _tool_begin_plan(
                 "finding": g.get("text", ""),
                 "severity": g.get("severity", "medium"),
                 "file_paths": _finding_file_paths(g.get("evidence")),
+                "evidence_kind": "inferred",
+                "evidence": "prepare_review",
             }
         )
 
@@ -3170,6 +3180,8 @@ def _tool_complete_plan(
                 "category": insight.get("category", "retro"),
                 "finding": insight.get("text", ""),
                 "severity": "medium",
+                "evidence_kind": "inferred",
+                "evidence": "complete_plan retro",
             }
         )
 

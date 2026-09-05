@@ -1267,6 +1267,8 @@ def process_governance(
                     "description": lr["description"],
                     "target": lr["target"],
                     "status": lr["status"],
+                    "evidenceKind": "unspecified",
+                    "evidence": "",
                 },
             )
             learning_count += 1

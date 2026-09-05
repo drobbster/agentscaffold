@@ -258,7 +258,9 @@ def get_findings_for_file(
             ' t.rf_category AS "rf.category",'
             ' t.rf_finding AS "rf.finding",'
             ' t.rf_severity AS "rf.severity",'
-            ' t.rf_status AS "rf.status"'
+            ' t.rf_status AS "rf.status",'
+            ' t.rf_evidenceKind AS "rf.evidenceKind",'
+            ' t.rf_evidence AS "rf.evidence"'
             " FROM GRAPH_TABLE(agentscaffold_graph"
             " MATCH (rf:ReviewFinding)-[e:FINDING_ABOUT_FILE]->(f:File)"
             f" WHERE f.path = '{escaped}'{scope}"
@@ -267,7 +269,9 @@ def get_findings_for_file(
             " rf.category AS rf_category,"
             " rf.finding AS rf_finding,"
             " rf.severity AS rf_severity,"
-            " rf.status AS rf_status)) t"
+            " rf.status AS rf_status,"
+            " rf.evidenceKind AS rf_evidenceKind,"
+            " rf.evidence AS rf_evidence)) t"
         ),
     )
 

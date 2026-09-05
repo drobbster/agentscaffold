@@ -80,6 +80,10 @@ ADDITIVE_COLUMNS: tuple[AdditiveColumn, ...] = (
     AdditiveColumn("EXTENDS", "baseName", "VARCHAR DEFAULT ''"),
     AdditiveColumn("Session", "decisions", "VARCHAR DEFAULT '[]'"),
     AdditiveColumn("Session", "endedAt", "VARCHAR DEFAULT ''"),
+    AdditiveColumn("ReviewFinding", "evidenceKind", "VARCHAR DEFAULT 'unspecified'"),
+    AdditiveColumn("ReviewFinding", "evidence", "VARCHAR DEFAULT ''"),
+    AdditiveColumn("Learning", "evidenceKind", "VARCHAR DEFAULT 'unspecified'"),
+    AdditiveColumn("Learning", "evidence", "VARCHAR DEFAULT ''"),
 )
 
 # Bumped to 10 by Plan 252 without a DDL change. The tables are identical; what
@@ -229,24 +233,28 @@ _AUTHORED_NODE_TABLES: list[str] = [
     """,
     """
     CREATE TABLE IF NOT EXISTS Learning (
-        id          VARCHAR PRIMARY KEY,
-        learningId  VARCHAR,
-        planNumber  BIGINT,
-        description VARCHAR,
-        target      VARCHAR,
-        status      VARCHAR
+        id           VARCHAR PRIMARY KEY,
+        learningId   VARCHAR,
+        planNumber   BIGINT,
+        description  VARCHAR,
+        target       VARCHAR,
+        status       VARCHAR,
+        evidenceKind VARCHAR DEFAULT 'unspecified',
+        evidence     VARCHAR DEFAULT ''
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS ReviewFinding (
-        id         VARCHAR PRIMARY KEY,
-        reviewType VARCHAR,
-        planNumber BIGINT,
-        severity   VARCHAR,
-        category   VARCHAR,
-        finding    VARCHAR,
-        resolution VARCHAR,
-        status     VARCHAR
+        id           VARCHAR PRIMARY KEY,
+        reviewType   VARCHAR,
+        planNumber   BIGINT,
+        severity     VARCHAR,
+        category     VARCHAR,
+        finding      VARCHAR,
+        resolution   VARCHAR,
+        status       VARCHAR,
+        evidenceKind VARCHAR DEFAULT 'unspecified',
+        evidence     VARCHAR DEFAULT ''
     )
     """,
     """

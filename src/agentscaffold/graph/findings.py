@@ -18,6 +18,56 @@ if TYPE_CHECKING:
 
 
 _SEVERITY_ORDER: tuple[str, ...] = ("critical", "high", "medium", "low")
+_EVIDENCE_KINDS = frozenset(
+    {
+        "command",
+        "test",
+        "file_ref",
+        "graph_query",
+        "external_doc",
+        "inferred",
+        "unspecified",
+    }
+)
+_MAX_EVIDENCE = 2000
+
+
+def _normalize_evidence(kind: str | None, evidence: str | None) -> tuple[str, str]:
+    normalized_kind = str(kind or "unspecified").strip() or "unspecified"
+    if normalized_kind not in _EVIDENCE_KINDS:
+        normalized_kind = "unspecified"
+    text = str(evidence or "")
+    if len(text) > _MAX_EVIDENCE:
+        text = text[: _MAX_EVIDENCE - 16] + " ...[truncated]"
+    return normalized_kind, text
+
+
+def _plan_id_for_number(
+    store: GraphBackend,
+    plan_number: int,
+    project: str | None = None,
+) -> str | None:
+    """Return the Plan vertex id for ``plan_number``, or None if it is missing."""
+    proj = f" AND project = '{_esc(project)}'" if project else ""
+    rows = store.query(
+        f"SELECT id FROM Plan WHERE number = {int(plan_number)}{proj} LIMIT 2"
+    )
+    ids = [str(r["id"]) for r in rows if r.get("id")]
+    if len(ids) != 1:
+        return None
+    return ids[0]
+
+
+def _link_addressed_by(store: GraphBackend, finding_id: str, plan_id: str) -> None:
+    exists = store.query(
+        "SELECT 1 AS n FROM FINDING_ADDRESSED_BY "
+        f"WHERE src = '{_esc(finding_id)}' AND dst = '{_esc(plan_id)}' LIMIT 1"
+    )
+    if exists:
+        return
+    store.create_edge(
+        "FINDING_ADDRESSED_BY", "ReviewFinding", finding_id, "Plan", plan_id
+    )
 
 
 def _sync_governance(store: GraphBackend) -> None:
@@ -91,6 +141,8 @@ def record_finding(
     severity: str = "medium",
     file_paths: list[str] | None = None,
     function_ids: list[str] | None = None,
+    evidence_kind: str | None = None,
+    evidence: str | None = None,
     project: str | None = None,
 ) -> dict[str, Any]:
     """Record a review finding in the knowledge graph.
@@ -107,6 +159,8 @@ def record_finding(
         severity: "low", "medium", "high", or "critical".
         file_paths: Paths of files related to this finding.
         function_ids: IDs of functions related to this finding.
+        evidence_kind: Provenance kind. Omit for ``unspecified``.
+        evidence: Citation (command, test id, path:line, SQL). Truncated if long.
         project: Owning project in a multi-project workspace; stamps the
             ``project`` column and scopes the deterministic ID and File lookups.
             None (single-project) keeps the original unscoped behavior.
@@ -118,6 +172,7 @@ def record_finding(
     finding_id = _finding_id(plan_number, review_type, category, finding, project)
     now = datetime.now(timezone.utc).isoformat()
     proj_filter = f" AND project = '{_esc(project)}'" if project else ""
+    kind, citation = _normalize_evidence(evidence_kind, evidence)
 
     props: dict[str, Any] = {
         "id": finding_id,
@@ -129,6 +184,8 @@ def record_finding(
         "resolution": "",
         "status": "open",
         "project": project or "",
+        "evidenceKind": kind,
+        "evidence": citation,
     }
 
     from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
@@ -161,6 +218,8 @@ def record_finding(
         "review_type": review_type,
         "category": category,
         "severity": severity,
+        "evidence_kind": kind,
+        "evidence": citation,
         "elapsed_ms": elapsed_ms,
         "created_at": now,
     }
@@ -205,6 +264,7 @@ def resolve_finding(
     finding_id: str,
     *,
     resolution: str,
+    resolved_by_plan: int | None = None,
     project: str | None = None,
 ) -> dict[str, Any]:
     """Mark a ReviewFinding as resolved.
@@ -217,6 +277,8 @@ def resolve_finding(
         store: Open GraphBackend instance.
         finding_id: The ID of the finding to resolve.
         resolution: Human-readable resolution description.
+        resolved_by_plan: Plan number that addressed the finding. Creates
+            ``FINDING_ADDRESSED_BY`` only when that Plan vertex exists.
         project: When set, only resolves the finding if it belongs to this
             project (defense-in-depth against cross-project resolves).
 
@@ -267,6 +329,12 @@ def resolve_finding(
             elapsed_ms = (time.monotonic() - t0) * 1000
             return {"id": caller_id, "status": "not_found", "elapsed_ms": elapsed_ms}
 
+        addressed_plan_id = None
+        if resolved_by_plan is not None:
+            addressed_plan_id = _plan_id_for_number(store, int(resolved_by_plan), project)
+            if addressed_plan_id:
+                _link_addressed_by(store, matched, addressed_plan_id)
+
         _sync_governance(store)
 
     elapsed_ms = (time.monotonic() - t0) * 1000
@@ -274,6 +342,7 @@ def resolve_finding(
         "id": matched,
         "status": "resolved",
         "resolution": resolution,
+        "addressed_by_plan": resolved_by_plan if addressed_plan_id else None,
         "elapsed_ms": elapsed_ms,
     }
 
@@ -303,17 +372,20 @@ def get_open_findings(
 
     if file_path:
         rf_proj_filter = f" AND rf.project = '{_esc(project)}'" if project else ""
-        rows = store.query(
-            f'SELECT t.rf_id AS "rf.id", t.rf_reviewType AS "rf.reviewType",'
-            f' t.rf_planNumber AS "rf.planNumber", t.rf_severity AS "rf.severity",'
-            f' t.rf_category AS "rf.category", t.rf_finding AS "rf.finding"'
-            f" FROM GRAPH_TABLE(agentscaffold_graph"
-            f"   MATCH (rf:ReviewFinding)-[e:FINDING_ABOUT_FILE]->(f:File)"
-            f"   WHERE rf.status = 'open' AND f.path = '{_esc(file_path)}'{rf_proj_filter}"
-            f"   COLUMNS (rf.id AS rf_id, rf.reviewType AS rf_reviewType,"
-            f"            rf.planNumber AS rf_planNumber, rf.severity AS rf_severity,"
-            f"            rf.category AS rf_category, rf.finding AS rf_finding)"
-            f" ) t LIMIT {limit}"
+        rows = ql(
+            store,
+            sql=(
+                f'SELECT rf.id AS "rf.id", rf.reviewType AS "rf.reviewType",'
+                f' rf.planNumber AS "rf.planNumber", rf.severity AS "rf.severity",'
+                f' rf.category AS "rf.category", rf.finding AS "rf.finding",'
+                f' rf.evidenceKind AS "rf.evidenceKind", rf.evidence AS "rf.evidence"'
+                f" FROM ReviewFinding rf"
+                f" JOIN FINDING_ABOUT_FILE e ON e.src = rf.id"
+                f" JOIN File f ON f.id = e.dst"
+                f" WHERE rf.status = 'open' AND f.path = '{_esc(file_path)}'"
+                f"{rf_proj_filter}"
+                f" LIMIT {limit}"
+            ),
         )
     else:
         plan_filter = f" AND planNumber = {plan_number}" if plan_number is not None else ""
@@ -323,7 +395,8 @@ def get_open_findings(
             sql=(
                 f'SELECT id AS "rf.id", reviewType AS "rf.reviewType",'
                 f' planNumber AS "rf.planNumber", severity AS "rf.severity",'
-                f' category AS "rf.category", finding AS "rf.finding"'
+                f' category AS "rf.category", finding AS "rf.finding",'
+                f' evidenceKind AS "rf.evidenceKind", evidence AS "rf.evidence"'
                 f" FROM ReviewFinding WHERE status = 'open'{plan_filter}{proj_filter} LIMIT {limit}"
             ),
         )
@@ -350,7 +423,8 @@ def record_findings_batch(
     """Record multiple ReviewFinding nodes in a single transaction.
 
     Each item in ``findings`` must have ``category`` and ``finding`` keys.
-    Optional keys per item: ``severity``, ``file_paths``, ``function_ids``.
+    Optional keys per item: ``severity``, ``file_paths``, ``function_ids``,
+    ``evidence_kind``, ``evidence``.
 
     Args:
         store: Open GraphBackend instance.
@@ -381,6 +455,9 @@ def record_findings_batch(
                 finding_text = item.get("finding", "")
                 severity = item.get("severity", "medium")
                 finding_id = _finding_id(plan_number, review_type, category, finding_text, project)
+                kind, citation = _normalize_evidence(
+                    item.get("evidence_kind"), item.get("evidence")
+                )
 
                 props: dict[str, Any] = {
                     "id": finding_id,
@@ -392,6 +469,8 @@ def record_findings_batch(
                     "resolution": "",
                     "status": "open",
                     "project": project or "",
+                    "evidenceKind": kind,
+                    "evidence": citation,
                 }
                 store.create_node("ReviewFinding", props)
 

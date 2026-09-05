@@ -564,7 +564,9 @@ def _tool_specs() -> list[ToolSpec]:
                 "Record a review finding in the knowledge graph. Creates a ReviewFinding "
                 "node linked to the relevant plan, files, and functions. Use this when "
                 "you identify an issue, concern, or improvement during a code review. "
-                "Findings persist across sessions and surface in future reviews."
+                "Pass function_ids when the finding is about a symbol, not only a file. "
+                "Omit evidence_kind to record unspecified; set inferred when the claim "
+                "was not measured. Findings persist across sessions."
             ),
             input_schema={
                 "type": "object",
@@ -603,7 +605,31 @@ def _tool_specs() -> list[ToolSpec]:
                     "function_ids": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Function node IDs related to this finding",
+                        "description": (
+                            "Function node IDs related to this finding. Prefer "
+                            "this over file_paths alone when the finding is "
+                            "about a symbol."
+                        ),
+                    },
+                    "evidence_kind": {
+                        "type": "string",
+                        "enum": [
+                            "command",
+                            "test",
+                            "file_ref",
+                            "graph_query",
+                            "external_doc",
+                            "inferred",
+                            "unspecified",
+                        ],
+                        "description": (
+                            "How the finding was established. Omit for "
+                            "unspecified. Use inferred when it was not measured."
+                        ),
+                    },
+                    "evidence": {
+                        "type": "string",
+                        "description": "Citation: command, test id, path:line, or SQL",
                     },
                 },
                 "required": ["plan_number", "review_type", "category", "finding"],
@@ -633,6 +659,13 @@ def _tool_specs() -> list[ToolSpec]:
                     "resolution": {
                         "type": "string",
                         "description": "Description of how the finding was resolved",
+                    },
+                    "resolved_by_plan": {
+                        "type": "integer",
+                        "description": (
+                            "Plan number that addressed the finding. Creates "
+                            "FINDING_ADDRESSED_BY only when that Plan vertex exists."
+                        ),
                     },
                 },
                 "required": ["finding_id", "resolution"],
@@ -677,6 +710,19 @@ def _tool_specs() -> list[ToolSpec]:
                                     "type": "array",
                                     "items": {"type": "string"},
                                 },
+                                "evidence_kind": {
+                                    "type": "string",
+                                    "enum": [
+                                        "command",
+                                        "test",
+                                        "file_ref",
+                                        "graph_query",
+                                        "external_doc",
+                                        "inferred",
+                                        "unspecified",
+                                    ],
+                                },
+                                "evidence": {"type": "string"},
                             },
                             "required": ["category", "finding"],
                         },
