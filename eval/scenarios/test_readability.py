@@ -156,7 +156,9 @@ class TestAgentsMdReadability:
                 f"combined={combined_report.score}"
             ),
             observations=(
-                manual_report.observations + routing_report.observations + combined_report.observations
+                manual_report.observations
+                + routing_report.observations
+                + combined_report.observations
             ),
             category="readability",
         )
