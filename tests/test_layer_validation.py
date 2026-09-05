@@ -188,9 +188,9 @@ def test_imports_involving_an_unmapped_file_are_ignored_not_guessed():
 
     assert report.status == "pass"
     assert report.violations == []
-    assert (
-        report.unmapped_import_count == 1
-    ), "an ignored import must still be counted, or the report overstates its own coverage"
+    assert report.unmapped_import_count == 1, (
+        "an ignored import must still be counted, or the report overstates its own coverage"
+    )
 
 
 # ---------------------------------------------------------------------------

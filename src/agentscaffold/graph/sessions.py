@@ -126,7 +126,7 @@ def _merge_decisions(
     kept.append(
         {
             "decision": (
-                f"truncated: {len(merged) - (_MAX_DECISIONS - 1)} " "further decisions dropped"
+                f"truncated: {len(merged) - (_MAX_DECISIONS - 1)} further decisions dropped"
             ),
             "evidence": f"cap={_MAX_DECISIONS}",
             "status": "observed",

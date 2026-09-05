@@ -189,9 +189,9 @@ class TestCursorRuleTaxonomy:
                 category="artifact",
             )
         )
-        assert (
-            has_globs
-        ), f"quant_architect.mdc missing globs despite file_patterns: {content[:300]}"
+        assert has_globs, (
+            f"quant_architect.mdc missing globs despite file_patterns: {content[:300]}"
+        )
 
     def test_no_file_patterns_reviewer_no_globs(self, cursor_rules_dir):
         """Reviewer without file_patterns falls back to alwaysApply: false (no globs)."""
