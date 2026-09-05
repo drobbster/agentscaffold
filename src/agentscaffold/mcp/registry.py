@@ -1106,6 +1106,7 @@ def _tool_specs() -> list[ToolSpec]:
                     "plan_numbers": {
                         "type": "array",
                         "items": {"type": "integer"},
+                        "description": "Plan numbers this decision applies to",
                     },
                 },
                 "required": ["decision"],

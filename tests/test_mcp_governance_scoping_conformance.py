@@ -155,9 +155,9 @@ def test_a_plan_keyed_tool_refuses_the_other_projects_plan(
 
     result = _call(tool, two_project_workspace, asked_from, plan_number=foreign)
 
-    assert other_token not in _body(result), (
-        f"{tool} asked from {asked_from} for plan {foreign} returned the other project's content"
-    )
+    assert other_token not in _body(
+        result
+    ), f"{tool} asked from {asked_from} for plan {foreign} returned the other project's content"
     assert _failed_closed(result, foreign), (
         f"{tool} asked from {asked_from} for plan {foreign} neither refused nor "
         f"returned an empty result; it must fail closed"
@@ -208,9 +208,9 @@ def test_a_topic_keyed_tool_does_not_return_the_other_projects_content(
 
     result = _call(tool, two_project_workspace, asked_from, **{argument: other_token})
 
-    assert other_token not in _rows(result, rows_field), (
-        f"{tool} asked from {asked_from} for {other}'s topic returned {other}'s rows"
-    )
+    assert other_token not in _rows(
+        result, rows_field
+    ), f"{tool} asked from {asked_from} for {other}'s topic returned {other}'s rows"
 
 
 @pytest.mark.parametrize("tool,argument,rows_field", TOPIC_KEYED_TOOLS)
@@ -242,16 +242,16 @@ def test_orient_reports_only_the_asking_projects_state(asked_from: str, two_proj
     result = _call("scaffold_orient", two_project_workspace, asked_from)
     text = _body(result)
 
-    assert OWNED[other]["token"] not in text, (
-        f"orient asked from {asked_from} surfaced {other}'s content"
-    )
-    assert f"{OWNED[other]['plan']}-{other}" not in text, (
-        f"orient asked from {asked_from} named {other}'s plan file"
-    )
+    assert (
+        OWNED[other]["token"] not in text
+    ), f"orient asked from {asked_from} surfaced {other}'s content"
+    assert (
+        f"{OWNED[other]['plan']}-{other}" not in text
+    ), f"orient asked from {asked_from} named {other}'s plan file"
     # Non-vacuity: orient must actually be reporting this project's state.
-    assert OWNED[asked_from]["token"] in text or str(OWNED[asked_from]["plan"]) in text, (
-        f"orient asked from {asked_from} reported nothing about it"
-    )
+    assert (
+        OWNED[asked_from]["token"] in text or str(OWNED[asked_from]["plan"]) in text
+    ), f"orient asked from {asked_from} reported nothing about it"
 
 
 @pytest.mark.parametrize("asked_from", [ALPHA, BETA])

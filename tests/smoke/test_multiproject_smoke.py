@@ -91,9 +91,9 @@ def test_indexing_each_project_populates_one_shared_graph(workspace):
     finally:
         store.close()
 
-    assert {r["project"] for r in rows} == set(ws.names), (
-        f"expected both projects namespaced in one graph, got {rows}"
-    )
+    assert {r["project"] for r in rows} == set(
+        ws.names
+    ), f"expected both projects namespaced in one graph, got {rows}"
 
 
 @pytest.mark.smoke
@@ -146,9 +146,9 @@ def test_doctor_reports_a_healthy_two_project_workspace(workspace):
     register_workspace(ws.beta, name=ws.beta_name)
 
     result = _run("doctor", cwd=ws.alpha, env=env)
-    assert result.returncode == 0, (
-        f"doctor failed on a healthy workspace:\n{result.stdout[-1500:]}\n{result.stderr[-800:]}"
-    )
+    assert (
+        result.returncode == 0
+    ), f"doctor failed on a healthy workspace:\n{result.stdout[-1500:]}\n{result.stderr[-800:]}"
 
 
 @pytest.mark.smoke
@@ -164,9 +164,9 @@ def test_the_workspace_lists_both_projects_from_either_directory(workspace):
         result = _run("workspace", "list", cwd=project, env=env)
         assert result.returncode == 0, f"workspace list failed: {result.stderr[-500:]}"
         for name in ws.names:
-            assert name in result.stdout, (
-                f"{name} missing from workspace list run in {project.name}:\n{result.stdout}"
-            )
+            assert (
+                name in result.stdout
+            ), f"{name} missing from workspace list run in {project.name}:\n{result.stdout}"
 
 
 @pytest.mark.smoke

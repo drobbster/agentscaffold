@@ -74,6 +74,20 @@ def test_init_shared_workspace_splits_assets(tmp_path: Path, cli_runner: CliRunn
     assert not (project / "docs/ai/standards/errors.md").exists()
 
 
+@pytest.mark.smoke
+def test_init_agents_md_has_no_duplicate_headings(tmp_path: Path, cli_runner: CliRunner) -> None:
+    """The Critical defect: init must not write every heading twice."""
+    result = cli_runner.invoke(app, ["init", str(tmp_path), "-y"])
+    assert result.exit_code == 0
+    content = (tmp_path / "AGENTS.md").read_text()
+    headings = [line for line in content.splitlines() if line.startswith("## ")]
+    assert headings
+    assert len(headings) == len(set(headings))
+    assert "Session Working Rhythm" in content
+    assert "Planning Rules" in content
+    assert "agentscaffold-manual" in content
+
+
 def test_init_creates_agents_md(tmp_path: Path, cli_runner: CliRunner) -> None:
     """init creates AGENTS.md with content."""
     cli_runner.invoke(app, ["init", str(tmp_path), "-y"])
@@ -82,6 +96,26 @@ def test_init_creates_agents_md(tmp_path: Path, cli_runner: CliRunner) -> None:
     content = agents_md.read_text()
     assert len(content) > 100
     assert "Agent" in content or "agent" in content
+
+
+def test_init_manual_uses_configured_paths(tmp_path: Path, cli_runner: CliRunner) -> None:
+    result = cli_runner.invoke(app, ["init", str(tmp_path), "-y"])
+    assert result.exit_code == 0
+    yaml_path = tmp_path / "scaffold.yaml"
+    data = yaml.safe_load(yaml_path.read_text())
+    data.setdefault("graph", {})["plans_dir"] = "docs/custom/plans/"
+    data["graph"]["adrs_dir"] = "docs/custom/adrs/"
+    yaml_path.write_text(yaml.dump(data))
+    # Re-render by deleting AGENTS.md and writing the manual from current config.
+    from agentscaffold.agents.manual_diff import render_governance_manual, stamp_manual
+    from agentscaffold.config import load_config
+
+    (tmp_path / "AGENTS.md").unlink()
+    config = load_config(yaml_path)
+    (tmp_path / "AGENTS.md").write_text(stamp_manual(render_governance_manual(config)))
+    text = (tmp_path / "AGENTS.md").read_text()
+    assert "docs/custom/plans/" in text
+    assert "docs/custom/adrs/" in text
 
 
 def test_init_creates_scaffold_yaml(tmp_path: Path, cli_runner: CliRunner) -> None:

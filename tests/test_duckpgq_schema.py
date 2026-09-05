@@ -165,8 +165,7 @@ def test_finding_evidence_additive_columns_on_existing_table(conn):
     learning_cols = {
         str(r[0]).lower()
         for r in conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'Learning'"
+            "SELECT column_name FROM information_schema.columns " "WHERE table_name = 'Learning'"
         ).fetchall()
     }
     assert "evidencekind" in finding_cols

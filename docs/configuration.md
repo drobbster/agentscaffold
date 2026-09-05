@@ -1,6 +1,6 @@
 # Configuration Reference
 
-This document describes every section and field in `scaffold.yaml`. After editing, run `scaffold agents generate` to regenerate AGENTS.md.
+This document describes every section and field in `scaffold.yaml`. After editing, run `scaffold agents generate-all` to refresh routing (`AGENTS.md`'s managed block, `CLAUDE.md`, `.windsurfrules`, `.cursor/rules/agentscaffold.mdc`). That does not rewrite the governance manual above the markers. To offer template updates to the manual, run `scaffold agents diff-manual`.
 
 ## Top-Level Sections
 

@@ -74,41 +74,41 @@ After implementation, a post-implementation review verifies what was built again
 
 These numbers are downstream of governance and memory — not the lead story, but real.
 
-**From the eval harness (120 scenarios, revalidated 2026-07-12):**
+**From the eval harness (125 scenarios, revalidated 2026-09-05):**
 
 | Task | Without AgentScaffold | With AgentScaffold | Savings |
 |------|----------------------|-------------------|---------|
-| Understand a module and its dependents | 12 reads + 2 greps | 1 tool call | ~85% fewer tokens, ~93% fewer calls |
-| Codebase orientation | 38 file reads | 2 tool calls | ~65% fewer tokens, ~95% fewer calls |
-| Impact analysis (blast radius) | 12 file reads | 1 tool call | ~45% fewer tokens, ~92% fewer calls |
-| Find all code matching a concept | 8 file reads | 1 tool call | ~32% fewer tokens, ~88% fewer calls |
-| Full plan review with evidence | 10 file reads | 1 tool call | ~90% fewer calls (denser output; see note) |
-| Empty search diagnosis (call compression) | search + why_empty + grep | 1 fused search | ~27% fewer tokens, ~67% fewer calls |
+| Understand a module and its dependents | 12 reads + 2 greps | 1 tool call | 84% fewer tokens, 93% fewer calls |
+| Codebase orientation | 38 file reads | 2 tool calls | 64% fewer tokens, 95% fewer calls |
+| Impact analysis (blast radius) | 12 file reads | 1 tool call | 43% fewer tokens, 92% fewer calls |
+| Find all code matching a concept | 8 file reads | 1 tool call | 29% fewer tokens, 88% fewer calls |
+| Full plan review with evidence | 10 file reads | 1 tool call | 5% fewer tokens, 90% fewer calls |
+| Review with prior finding history | 3 re-reviews | 1 tool call | 58% fewer tokens, 67% fewer calls |
+| Empty search diagnosis (call compression) | search + why_empty + grep | 1 fused search | 19% fewer tokens, 67% fewer calls |
 
-**Capability aggregate (raw): ~84% average call reduction, ~46% average token reduction.**
+**Capability aggregate (raw): ~84% average call reduction, ~43% average token reduction.**
 
-Full plan review remains the densest composite: one call replaces ten file reads and now lands near token-neutral in the harness (small reduction rather than inflation) because summary trimming prioritizes high-severity signals. The win there is still calls and completeness. Empty-search call compression (Plan 247) collapses the old three-hop diagnosis chain into one response with inline `why_empty` + `grep_fallback`.
+Full plan review remains the densest composite: one call replaces ten file reads and stays near token-neutral (5%) because summary trimming prioritizes high-severity signals. The win there is still calls and completeness. Empty-search call compression collapses a three-hop diagnosis into one response with inline `why_empty` + `grep_fallback`. Review with prior finding history returns a known issue instead of paying ~2,000 tokens to re-derive it each session.
 
 We report three views so the headline is not the optimistic one:
 
 | View | Token Reduction | Call Reduction |
 |------|-----------------|----------------|
-| Raw capability (tool routes correctly) | ~46% | ~84% |
-| Behavioral (replay-adjusted) | ~37% | ~68% |
-| Quality-adjusted behavioral | ~33% | ~61% |
+| Raw capability (tool routes correctly) | ~43% | ~84% |
+| Behavioral (replay-adjusted) | ~35% | ~68% |
+| Quality-adjusted behavioral | ~31% | ~61% |
 
 Behavioral and quality-adjusted values come from replay traces (observed tool-call sequences + quality parity checks), not phrase-level intent matching. They are lower because agents do not always route to the tool — the graph does not help if the agent reads files directly instead. Intent-map adoption for exact/paraphrase/negative suites is 100% in the latest harness run; replay-observed tool-first adherence remains the stricter behavioral proxy.
 
-> **Note**: Numbers above are from the most recent evaluation run (`eval/reports/latest.md`). Run `cd eval && pytest -q` from the package root to reproduce against the current codebase.
+> **Note**: Numbers above are from the most recent evaluation run (`eval/reports/latest.md`). From the package root, reproduce with `cd eval && uv run --project .. pytest -q` (`uv run` is the runner the suite is written for; a PATH `pytest` can pick up the wrong environment).
 
 ## Quick Start
 
 ```bash
 pip install agentscaffold
 cd my-project
-scaffold init                 # Scaffolds docs + generates the full rule set
+scaffold init                 # Scaffolds docs + platform rules (manual once, routing in the managed block)
 scaffold index                # Build the knowledge graph
-scaffold agents generate-all  # Re-generate rules with graph context (after indexing)
 scaffold mcp install          # Register the MCP server with your agent client
 scaffold doctor               # Confirm the setup resolves the way you expect
 ```
@@ -127,7 +127,7 @@ complete rule set for every supported platform:
 
 - `docs/ai/` — templates, prompts, standards, state files
 - `scaffold.yaml` — your project's framework configuration
-- `AGENTS.md` — rules your AI agent follows automatically
+- `AGENTS.md` — project-owned governance manual (scaffolded once) plus a managed routing block
 - `.cursor/rules.md` + `.cursor/rules/agentscaffold.mdc` — Cursor process rules and the MCP routing / graph trust-discipline policy
 - `.cursor/mcp.json` — a per-project Cursor MCP registration. Still written for
   single-repo use, but superseded by `scaffold mcp install` for workspaces: one
@@ -139,10 +139,12 @@ complete rule set for every supported platform:
 - `.gitignore` — a managed block ignoring AgentScaffold runtime artifacts (`.scaffold/`, `.venv-scaffold/`, `*.duckdb`) so the graph DB, model cache, logs, and locks never get committed
 
 Re-running `scaffold init` is idempotent and never overwrites hand-edited rules.
-Run `scaffold agents generate-all` to regenerate the rule set on an existing
-project — for example after `scaffold index` so `AGENTS.md` picks up graph
-context (hot spots, volatile modules, active contracts), or after editing
-`scaffold.yaml`.
+Run `scaffold agents generate-all` to refresh **routing** (the managed block in
+`AGENTS.md`, plus `CLAUDE.md`, `.windsurfrules`, and `.cursor/rules/agentscaffold.mdc`)
+after you edit `scaffold.yaml`. It does not rewrite the governance manual and it
+does not inject graph stats into `AGENTS.md`. To pull later template updates into
+the manual, use `scaffold agents diff-manual`. If `AGENTS.md` already has the
+same headings twice, run `scaffold agents repair` (dry run; `--apply` writes).
 
 `.cursor/mcp.json` is written only for a repo that no shared server covers, which
 is what makes a lone repo work with no further setup. Once the root is registered
@@ -156,13 +158,17 @@ frequently committed.
 already own. Project-owned docs (`AGENTS.md`, `CLAUDE.md`, `.windsurfrules`,
 `.cursor/rules.md`) receive generated guidance inside a delimited managed block —
 existing files are appended to (or the block is refreshed in place), never
-overwritten, and anything outside the block is always preserved. User-authored
-skills (`SKILL.md` without a `managed_by: agentscaffold` marker) are left untouched.
-Only machine-owned policy files (`.cursor/rules/agentscaffold.mdc`, reviewer rules,
-enforcement hooks) are regenerated each run. Pass `--force` to rewrite a file whole;
-a `.bak` snapshot is always kept. The project `.gitignore` is treated as co-owned:
-AgentScaffold only ever creates it, refreshes its own managed block, or appends the
-block — it never rewrites your `.gitignore` whole, even under `--force`. See
+overwritten, and anything outside the block is always preserved. A marker-less
+file that already looks generated refuses unless you pass `--allow-append`.
+`--force` replaces the entire file (a `.bak` is kept) and is not that escape.
+To take ownership of a file, add `<!-- agentscaffold: managed=false -->` near
+the top; deleting the markers is not ownership. User-authored skills (`SKILL.md`
+without a `managed_by: agentscaffold` marker) are left untouched. Only
+machine-owned policy files (`.cursor/rules/agentscaffold.mdc`, reviewer rules,
+enforcement hooks) are regenerated each run. The project `.gitignore` is treated
+as co-owned: AgentScaffold only ever creates it, refreshes its own managed
+block, or appends the block — it never rewrites your `.gitignore` whole, even
+under `--force`. See
 [File Safety](docs/platform-integration.md#file-safety-what-agentscaffold-will-and-will-not-overwrite).
 
 The `index` command builds the knowledge graph — a DuckDB + DuckPGQ database — enabling search, reviews, impact analysis, and session memory.
@@ -421,7 +427,7 @@ Findings recorded via `scaffold_record_finding` appear in all future `scaffold_p
 
 *Without AgentScaffold* — A reviewer flags that `libs/data/router.py` has 8 transitive importers and changing its signature is risky. The session ends. Three sessions later, a different agent reviews the same plan, re-reads the same files, re-traces the same imports, and re-derives the same risk from scratch — roughly 2,000 tokens of reasoning per session, repeated every time, because the conclusion lived only in a chat transcript no one reloads.
 
-*With AgentScaffold* — The first reviewer calls `scaffold_record_finding` (severity `high`, category `dependency`, file `libs/data/router.py`). It is persisted as a `ReviewFinding` node linked to the file. Every later `scaffold_prepare_review` for that plan surfaces it in one call, so the reviewer starts from "this risk is known and open" instead of rediscovering it. When the risk is mitigated, `scaffold_resolve_finding` records the resolution and the finding drops out of active review but stays in the graph for the retrospective. In the eval harness this cut the review's token cost by about a third versus re-deriving — but the real point is that a known issue is never silently forgotten between sessions.
+*With AgentScaffold* — The first reviewer calls `scaffold_record_finding` (severity `high`, category `dependency`, file `libs/data/router.py`). It is persisted as a `ReviewFinding` node linked to the file. Every later `scaffold_prepare_review` for that plan surfaces it in one call, so the reviewer starts from "this risk is known and open" instead of rediscovering it. When the risk is mitigated, `scaffold_resolve_finding` records the resolution and the finding drops out of active review but stays in the graph for the retrospective. In the eval harness this cut the review's token cost by 58% versus re-deriving — but the real point is that a known issue is never silently forgotten between sessions.
 
 **Granular tools** — building blocks for custom queries:
 
@@ -465,7 +471,9 @@ scaffold plan lint --plan 001              # Validate plan structure
 scaffold plan status                       # Dashboard of all plans
 scaffold validate                          # Run all enforcement checks
 scaffold retro                             # Find plans missing retrospectives
-scaffold agents generate-all   # Regenerate all platform agent files
+scaffold agents generate-all   # Refresh routing / platform rule files
+scaffold agents repair         # Dry-run de-duplicate AGENTS.md headings
+scaffold agents diff-manual    # Offer template updates to the project-owned manual
 scaffold agents cursor # Cursor rules only
 scaffold agents claude # Claude Code agent files only
 scaffold agents skills                     # Generate SKILL.md files from your standards

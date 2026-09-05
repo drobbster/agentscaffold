@@ -9,6 +9,8 @@
 - Approval Required: No | Yes (see Approval Gates)
 {% if config.gates.review_to_ready.security_review %}- Security Review: None | Partial | Full (see Security Review criteria below)
 {% endif %}- Architecture Layer(s): TBD ({{ architecture_layers | default('Define layers in scaffold.yaml') }})
+- Dependencies: TBD | Plan XXX
+- Step dependencies: (optional) needs N steps A-B; steps C-D need M
 - Superseded By: None | Plan XXX (if this plan's work was done elsewhere)
 
 <!-- SUPERSESSION NOTE:

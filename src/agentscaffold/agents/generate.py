@@ -8,8 +8,11 @@ from pathlib import Path
 
 from rich.console import Console
 
+from agentscaffold.agents.manual_diff import parse_h2_sections
 from agentscaffold.config import ScaffoldConfig, WorkspaceConfig, find_config, load_config
 from agentscaffold.rendering import (
+    MANAGED_BLOCK_BEGIN,
+    MANAGED_BLOCK_END,
     canonical_guidance_document,
     canonical_guidance_path,
     get_default_context,
@@ -55,8 +58,27 @@ def _shared_workspace_context(
     return False, None, None
 
 
+def render_agents_routing(config: ScaffoldConfig) -> str:
+    """Routing-only managed-block body for a lone-project AGENTS.md."""
+    from agentscaffold.agents.rule_policy import generate_rule_policy_document
+
+    return generate_rule_policy_document(
+        config=config,
+        title="AgentScaffold Tool Routing",
+        intro_lines=[
+            "Use this file for MCP routing behavior and fallback discipline.",
+            "The governance manual above the managed markers is project-owned.",
+        ],
+        quote_intents=True,
+    )
+
+
 def _render_project_agents_md(config: ScaffoldConfig, project_root: Path, context: dict) -> str:  # type: ignore[type-arg]
-    """Render project AGENTS.md, stub-first under shared_workspace (Plan 234)."""
+    """Render the AGENTS.md managed body.
+
+    Shared-workspace projects stay stub-first (Plan 234). A lone project gets
+    routing only; the governance manual is scaffolded once by init.
+    """
     is_shared, workspace, _ = _shared_workspace_context(project_root)
     if is_shared and workspace is not None:
         from agentscaffold.config import effective_asset_layout
@@ -70,7 +92,82 @@ def _render_project_agents_md(config: ScaffoldConfig, project_root: Path, contex
                 "project": layout.project,
             },
         )
-    return render_template("agents/agents_md.md.j2", context)
+    return render_agents_routing(config)
+
+
+_LEGACY_MANUAL_MARKERS = ("## Planning Rules", "## Plan Lifecycle")
+_ROUTING_HEADINGS_DROP_IF_EXACT = (
+    "## AgentScaffold MCP Tools",
+    "## Multi-Project Workspace Discipline",
+)
+
+
+def _is_legacy_governance_block(body: str) -> bool:
+    return any(marker in body for marker in _LEGACY_MANUAL_MARKERS)
+
+
+def _norm_section(text: str) -> str:
+    return "\n".join(line.rstrip() for line in text.strip().splitlines())
+
+
+def _drop_exact_routing_sections(lifted: str, routing_body: str) -> str:
+    """Keep lifted sections unless a known routing heading matches exactly."""
+    routing = {
+        section.heading: section.body
+        for section in parse_h2_sections(routing_body)
+        if section.heading
+    }
+    kept = []
+    preamble = ""
+    for section in parse_h2_sections(lifted):
+        if not section.heading:
+            preamble = section.body
+            continue
+        drop_candidate = (
+            section.heading in _ROUTING_HEADINGS_DROP_IF_EXACT or section.heading in routing
+        )
+        if drop_candidate and section.heading in routing:
+            if _norm_section(section.body) == _norm_section(routing[section.heading]):
+                continue
+        kept.append(section)
+    parts: list[str] = []
+    if preamble.strip():
+        parts.append(preamble.strip())
+    for section in kept:
+        parts.append(section.heading)
+        if section.body:
+            parts.append(section.body)
+        parts.append("")
+    rendered = "\n".join(parts).strip()
+    return rendered + "\n" if rendered else ""
+
+
+def _lift_legacy_agents_block(path: Path, routing_body: str) -> bool:
+    """Move a pre-260 governance block out of the markers. Keeps a ``.bak``."""
+    if not path.exists():
+        return False
+    text = path.read_text()
+    begin = text.find(MANAGED_BLOCK_BEGIN)
+    end = text.find(MANAGED_BLOCK_END)
+    if begin == -1 or end == -1 or end <= begin:
+        return False
+    inner = text[begin:end]
+    if not _is_legacy_governance_block(inner):
+        return False
+    path.with_suffix(path.suffix + ".bak").write_text(text)
+    body = inner[len(MANAGED_BLOCK_BEGIN) :]
+    if "-->" in body:
+        body = body[body.find("-->") + 3 :]
+    lifted = _drop_exact_routing_sections(body, routing_body)
+    prefix = text[:begin].rstrip()
+    suffix = text[end + len(MANAGED_BLOCK_END) :].lstrip("\n")
+    parts = [part for part in (prefix, lifted.rstrip(), suffix.rstrip()) if part]
+    path.write_text("\n\n".join(parts) + "\n")
+    console.print(
+        f"[yellow]Migrated[/yellow] legacy managed manual out of {path.name} "
+        "[dim](.bak saved)[/dim]"
+    )
+    return True
 
 
 def write_workspace_agents_router(
@@ -78,6 +175,7 @@ def write_workspace_agents_router(
     workspace: WorkspaceConfig,
     *,
     force: bool = False,
+    allow_append: bool = False,
 ) -> str:
     """Write the thin workspace-root AGENTS.md router (Plan 234).
 
@@ -95,7 +193,7 @@ def write_workspace_agents_router(
         },
     )
     dest = workspace_root / "AGENTS.md"
-    return write_managed_block(dest, content, force=force)
+    return write_managed_block(dest, content, force=force, allow_append=allow_append)
 
 
 def _guidance_stamper(config: ScaffoldConfig, project_root: Path) -> Callable[[str], str]:
@@ -126,11 +224,13 @@ def _report_managed_write(status: str, label: str) -> None:
         )
     elif status == "overwritten":
         console.print(f"[yellow]Overwrote[/yellow] {label} [dim](.bak saved)[/dim]")
+    elif status == "skipped":
+        console.print(f"[dim]Skipped[/dim] {label} [dim](managed=false)[/dim]")
     else:  # unchanged
         console.print(f"[dim]Unchanged[/dim] {label}")
 
 
-def run_agents_generate(force: bool = False) -> None:
+def run_agents_generate(force: bool = False, allow_append: bool = False) -> None:
     """Generate AGENTS.md from scaffold.yaml config.
 
     When a knowledge graph is available, the generated AGENTS.md includes
@@ -158,12 +258,17 @@ def run_agents_generate(force: bool = False) -> None:
     content = _render_project_agents_md(config, project_root, context)
 
     dest = project_root / "AGENTS.md"
-    status = write_managed_block(dest, content, force=force)
+    if not force:
+        _lift_legacy_agents_block(dest, content)
+    status = write_managed_block(dest, content, force=force, allow_append=allow_append)
     _report_managed_write(status, str(dest.relative_to(Path.cwd())))
 
 
 def run_agents_generate_to(
-    project_root: Path, config_path: Path | None = None, force: bool = False
+    project_root: Path,
+    config_path: Path | None = None,
+    force: bool = False,
+    allow_append: bool = False,
 ) -> None:
     """Generate AGENTS.md into a specific directory (used by init).
 
@@ -177,7 +282,9 @@ def run_agents_generate_to(
         context.update(graph_ctx)
     content = _render_project_agents_md(config, project_root, context)
     dest = project_root / "AGENTS.md"
-    write_managed_block(dest, content, force=force)
+    if not force:
+        _lift_legacy_agents_block(dest, content)
+    write_managed_block(dest, content, force=force, allow_append=allow_append)
 
 
 def run_agents_generate_all_platforms(
@@ -185,6 +292,7 @@ def run_agents_generate_all_platforms(
     project_root: Path,
     dry_run: bool = False,
     force: bool = False,
+    allow_append: bool = False,
 ) -> dict[str, list[Path]]:
     """Generate all platform artifacts from a single config.
 
@@ -274,10 +382,14 @@ def run_agents_generate_all_platforms(
     agents_md_path = project_root / "AGENTS.md"
     is_shared, ws, ws_root = _shared_workspace_context(project_root)
     if not dry_run:
+        agents_body = _render_project_agents_md(config, project_root, context)
+        if not force:
+            _lift_legacy_agents_block(agents_md_path, agents_body)
         status = write_managed_block(
             agents_md_path,
-            _render_project_agents_md(config, project_root, context),
+            agents_body,
             force=force,
+            allow_append=allow_append,
         )
         _report_managed_write(status, "AGENTS.md")
     else:
@@ -289,7 +401,9 @@ def run_agents_generate_all_platforms(
     if is_shared and ws is not None and ws_root is not None and ws_root != project_root:
         router_path = ws_root / "AGENTS.md"
         if not dry_run:
-            status = write_workspace_agents_router(ws_root, ws, force=force)
+            status = write_workspace_agents_router(
+                ws_root, ws, force=force, allow_append=allow_append
+            )
             _report_managed_write(status, str(router_path))
         else:
             console.print("[dim]dry-run[/dim] would update workspace-root AGENTS.md router")
@@ -298,7 +412,9 @@ def run_agents_generate_all_platforms(
     # Claude Code: CLAUDE.md (project-owned -- managed block) + subagents
     claude_md = project_root / "CLAUDE.md"
     if not dry_run:
-        status = write_managed_block(claude_md, stamp(generate_claude_rules(config)), force=force)
+        status = write_managed_block(
+            claude_md, stamp(generate_claude_rules(config)), force=force, allow_append=allow_append
+        )
         _report_managed_write(status, "CLAUDE.md")
     else:
         console.print(
@@ -383,7 +499,10 @@ def run_agents_generate_all_platforms(
     windsurf_rules = project_root / ".windsurfrules"
     if not dry_run:
         status = write_managed_block(
-            windsurf_rules, stamp(generate_windsurf_rules(config)), force=force
+            windsurf_rules,
+            stamp(generate_windsurf_rules(config)),
+            force=force,
+            allow_append=allow_append,
         )
         _report_managed_write(status, ".windsurfrules")
     else:

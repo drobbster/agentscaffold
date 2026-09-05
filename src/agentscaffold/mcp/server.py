@@ -2602,9 +2602,7 @@ def _tool_decision_context(
     try:
         from agentscaffold.graph.sessions import session_decisions_for_plan
 
-        session_decisions = session_decisions_for_plan(
-            store, int(pn), project=scope.get("project")
-        )
+        session_decisions = session_decisions_for_plan(store, int(pn), project=scope.get("project"))
     except Exception:  # noqa: BLE001 - mocked stores in unit tests have no Session table
         session_decisions = []
 

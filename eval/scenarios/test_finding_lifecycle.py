@@ -156,9 +156,9 @@ class TestFindingLifecycle:
                 category="lifecycle",
             )
         )
-        assert has_edge, (
-            f"Expected FINDING_ABOUT_FILE edge to libs/data/router.py, got: {edge_paths}"
-        )
+        assert (
+            has_edge
+        ), f"Expected FINDING_ABOUT_FILE edge to libs/data/router.py, got: {edge_paths}"
 
 
 class TestConcurrentFindingWrites:
@@ -222,9 +222,9 @@ class TestConcurrentFindingWrites:
                 category="lifecycle",
             )
         )
-        assert no_id_collision, (
-            f"Expected {self._CONCURRENCY} distinct IDs, got {len(ids_returned)}: {ids_returned}"
-        )
+        assert (
+            no_id_collision
+        ), f"Expected {self._CONCURRENCY} distinct IDs, got {len(ids_returned)}: {ids_returned}"
         assert all_open, f"Not all findings have status='open': {statuses}"
 
     def test_concurrent_writes_latency(self, indexed_sim_duckdb):
@@ -282,3 +282,80 @@ class TestConcurrentFindingWrites:
             f"Extreme write latency under concurrent load: {max_ms:.1f}ms "
             f"(ceiling={self._LATENCY_CEILING_MS}ms × 10)"
         )
+
+
+class TestFindingEvidence:
+    """Plan 264: evidence fields persist and default to unspecified."""
+
+    def test_record_finding_keeps_explicit_evidence(self, indexed_sim):
+        _, store, _ = indexed_sim
+        from agentscaffold.graph.findings import record_finding
+        from agentscaffold.graph.query_compat import ql
+
+        result = record_finding(
+            store,
+            plan_number=264,
+            review_type="evidence_eval",
+            category="test",
+            finding="Evidence fields must survive ingest",
+            severity="low",
+            evidence_kind="test",
+            evidence="eval/scenarios/test_finding_lifecycle.py:evidence",
+        )
+        fid = result["id"]
+        rows = ql(
+            store,
+            sql=(
+                f'SELECT evidenceKind AS "rf.evidenceKind", evidence AS "rf.evidence" '
+                f"FROM ReviewFinding WHERE id = '{fid}'"
+            ),
+        )
+        kind = rows[0].get("rf.evidenceKind") if rows else None
+        citation = rows[0].get("rf.evidence") if rows else None
+        passed = kind == "test" and "test_finding_lifecycle" in (citation or "")
+        collect_result(
+            EvalResult(
+                scenario="finding_evidence_persists",
+                passed=passed,
+                score=1.0 if passed else 0.0,
+                expected="evidenceKind=test and citation kept",
+                actual=f"kind={kind}, evidence={citation}",
+                category="lifecycle",
+            )
+        )
+        assert passed, f"evidence not persisted: {rows}"
+
+    def test_omitted_evidence_is_unspecified(self, indexed_sim):
+        _, store, _ = indexed_sim
+        from agentscaffold.graph.findings import record_finding
+        from agentscaffold.graph.query_compat import ql
+
+        result = record_finding(
+            store,
+            plan_number=264,
+            review_type="evidence_eval",
+            category="test",
+            finding="Omitted evidence should be unspecified, not inferred",
+            severity="low",
+        )
+        fid = result["id"]
+        rows = ql(
+            store,
+            sql=(
+                f'SELECT evidenceKind AS "rf.evidenceKind" '
+                f"FROM ReviewFinding WHERE id = '{fid}'"
+            ),
+        )
+        kind = rows[0].get("rf.evidenceKind") if rows else None
+        passed = kind == "unspecified"
+        collect_result(
+            EvalResult(
+                scenario="finding_evidence_unspecified_default",
+                passed=passed,
+                score=1.0 if passed else 0.0,
+                expected="evidenceKind=unspecified when omitted",
+                actual=f"kind={kind}",
+                category="lifecycle",
+            )
+        )
+        assert passed, f"omit should be unspecified, got {kind}"

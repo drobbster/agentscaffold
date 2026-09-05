@@ -84,6 +84,12 @@ class TestIntentAdoption:
             ("grep the workspace for X", "scaffold_grep_graph"),
             ("why is search empty", "scaffold_why_empty"),
             ("what should I do next", "scaffold_next_action"),
+            # Plan 263: session continuity
+            ("start a working session", "scaffold_session_start"),
+            ("record this decision", "scaffold_session_record_decision"),
+            ("end this session", "scaffold_session_end"),
+            ("list sessions", "scaffold_session_list"),
+            ("recent session context", "scaffold_session_context"),
         ]
         _measure_suite("exact", cases, min_adherence_pct=95.0)
 
@@ -126,6 +132,12 @@ class TestIntentAdoption:
             ("explain empty scaffold result", "scaffold_why_empty"),
             ("why empty impact", "scaffold_why_empty"),
             ("route me to the next step", "scaffold_next_action"),
+            # Plan 263 paraphrases
+            ("open a scaffold session", "scaffold_session_start"),
+            ("log a session decision", "scaffold_session_record_decision"),
+            ("close the working session", "scaffold_session_end"),
+            ("show recent sessions", "scaffold_session_list"),
+            ("show session context", "scaffold_session_context"),
         ]
         _measure_suite("paraphrase", cases, min_adherence_pct=80.0)
 

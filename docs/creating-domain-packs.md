@@ -227,13 +227,16 @@ For static content that works in any project, avoid template variables. If you n
 
 3. **Verify installation**: Check that files appear in `docs/ai/prompts/`, `docs/ai/standards/`, and `scaffold.yaml` was updated.
 
-4. **Regenerate AGENTS.md**:
+4. **Update the project-owned manual** (not `scaffold agents generate` -- that
+   refreshes routing only):
 
    ```bash
-   scaffold agents generate
+   scaffold agents diff-manual
+   scaffold agents diff-manual --apply
    ```
 
-   Confirm your reviews and standards are referenced.
+   Confirm your reviews and standards are referenced in the unmanaged half of
+   `AGENTS.md`. On a brand-new project, `scaffold init` writes them once.
 
 5. **Run a plan through the review**: Create a plan that touches your domain and ask the agent to run your review prompt.
 

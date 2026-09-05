@@ -90,9 +90,9 @@ class TestPlanTemplateReadability:
             category="readability",
         )
         collect_result(result)
-        assert passed, (
-            f"Enrichment degraded readability by {abs(delta):.2f}: {enriched_report.observations}"
-        )
+        assert (
+            passed
+        ), f"Enrichment degraded readability by {abs(delta):.2f}: {enriched_report.observations}"
 
 
 class TestCritiqueReadability:
@@ -130,29 +130,38 @@ class TestCritiqueReadability:
 
 
 class TestAgentsMdReadability:
-    """AGENTS.md with graph intelligence section should stay readable."""
+    """Plan 260: the init manual and the routing block stay readable."""
 
-    def test_agents_md_enriched_readable(self, indexed_sim):
+    def test_agents_md_manual_and_routing_readable(self, indexed_sim):
         root, store, config = indexed_sim
-        from agentscaffold.rendering import get_default_context, get_graph_context, render_template
+        from agentscaffold.agents.generate import render_agents_routing
+        from agentscaffold.rendering import get_default_context, render_template
 
-        graph_ctx = get_graph_context(config)
-        default_ctx = get_default_context(config)
-        enriched = render_template("agents/agents_md.md.j2", {**default_ctx, **graph_ctx})
+        manual = render_template("agents/agents_md.md.j2", get_default_context(config))
+        routing = render_agents_routing(config)
+        combined = manual + "\n\n" + routing
 
-        report = score_readability(enriched, "agents_md_enriched")
+        manual_report = score_readability(manual, "agents_md_manual")
+        routing_report = score_readability(routing, "agents_md_routing")
+        combined_report = score_readability(combined, "agents_md_combined")
+        worst = min(manual_report.score, routing_report.score, combined_report.score)
 
         result = EvalResult(
             scenario="readability_agents_md",
-            passed=report.score >= 0.7,
-            score=report.score,
-            expected="Readability >= 0.7",
-            actual=f"Score: {report.score}",
-            observations=report.observations,
+            passed=worst >= 0.7,
+            score=worst,
+            expected="Manual, routing, and combined readability >= 0.7",
+            actual=(
+                f"manual={manual_report.score}, routing={routing_report.score}, "
+                f"combined={combined_report.score}"
+            ),
+            observations=(
+                manual_report.observations + routing_report.observations + combined_report.observations
+            ),
             category="readability",
         )
         collect_result(result)
-        assert report.score >= 0.7, f"Readability too low: {report.observations}"
+        assert worst >= 0.7, f"Readability too low: {result.observations}"
 
 
 class TestReviewOutputReadability:

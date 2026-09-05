@@ -418,8 +418,10 @@ def _create_empty_dirs(directory: Path, writer: InitWriter) -> int:
 
 
 def _write_agents_md(directory: Path, context: dict, writer: InitWriter) -> bool:  # type: ignore[type-arg]
-    """Write AGENTS.md at the project root."""
-    content = render_template("agents/agents_md.md.j2", context)
+    """Write the scaffolded governance manual at the project root (once)."""
+    from agentscaffold.agents.manual_diff import stamp_manual
+
+    content = stamp_manual(render_template("agents/agents_md.md.j2", context))
     return writer.write_if_missing(directory / "AGENTS.md", content)
 
 

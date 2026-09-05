@@ -49,9 +49,7 @@ def _plan_id_for_number(
 ) -> str | None:
     """Return the Plan vertex id for ``plan_number``, or None if it is missing."""
     proj = f" AND project = '{_esc(project)}'" if project else ""
-    rows = store.query(
-        f"SELECT id FROM Plan WHERE number = {int(plan_number)}{proj} LIMIT 2"
-    )
+    rows = store.query(f"SELECT id FROM Plan WHERE number = {int(plan_number)}{proj} LIMIT 2")
     ids = [str(r["id"]) for r in rows if r.get("id")]
     if len(ids) != 1:
         return None
@@ -65,9 +63,7 @@ def _link_addressed_by(store: GraphBackend, finding_id: str, plan_id: str) -> No
     )
     if exists:
         return
-    store.create_edge(
-        "FINDING_ADDRESSED_BY", "ReviewFinding", finding_id, "Plan", plan_id
-    )
+    store.create_edge("FINDING_ADDRESSED_BY", "ReviewFinding", finding_id, "Plan", plan_id)
 
 
 def _sync_governance(store: GraphBackend) -> None:

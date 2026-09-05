@@ -577,15 +577,26 @@ def agents_generate(
         "--force",
         help="Rewrite the entire AGENTS.md instead of updating its managed block (.bak kept).",
     ),
+    allow_append: bool = typer.Option(
+        False,
+        "--allow-append",
+        help="Append the routing block to a marker-less file that already looks generated.",
+    ),
 ) -> None:
     """Generate AGENTS.md from scaffold.yaml config.
 
-    AGENTS.md is project-owned: generated guidance is written into a managed block,
+    AGENTS.md is project-owned: routing is written into a managed block,
     so existing/hand-authored content is preserved. --force rewrites the whole file.
+    --allow-append appends once when the heading-overlap guard would otherwise refuse.
     """
     from agentscaffold.agents.generate import run_agents_generate
+    from agentscaffold.rendering import ManagedBlockAppendRefusedError
 
-    run_agents_generate(force=force)
+    try:
+        run_agents_generate(force=force, allow_append=allow_append)
+    except ManagedBlockAppendRefusedError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
 
 
 @agents_app.command("cursor")
@@ -777,20 +788,109 @@ def agents_generate_all(
             "instead of updating their managed block; a .bak snapshot is kept for each."
         ),
     ),
+    allow_append: bool = typer.Option(
+        False,
+        "--allow-append",
+        help="Append a managed block to a marker-less file that already looks generated.",
+    ),
 ) -> None:
     """Generate all platform artifacts (AGENTS.md, CLAUDE.md, Cursor rules, Windsurf, hooks).
 
     Project-owned docs (AGENTS.md, CLAUDE.md, .windsurfrules) are never clobbered:
     generated guidance is written into a managed block (created/refreshed/appended)
-    so existing content is preserved. --force rewrites them whole. Machine-owned
+    so existing content is preserved. --force rewrites them whole. --allow-append
+    appends once when the heading-overlap guard would otherwise refuse. Machine-owned
     files (.cursor/rules/agentscaffold.mdc, reviewer rules, enforcement hooks) are
     always regenerated.
     """
     from agentscaffold.agents.generate import run_agents_generate_all_platforms
     from agentscaffold.config import load_config
+    from agentscaffold.rendering import ManagedBlockAppendRefusedError
 
     config = load_config()
-    run_agents_generate_all_platforms(config, Path.cwd(), dry_run=dry_run, force=force)
+    try:
+        run_agents_generate_all_platforms(
+            config, Path.cwd(), dry_run=dry_run, force=force, allow_append=allow_append
+        )
+    except ManagedBlockAppendRefusedError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+
+@agents_app.command("repair")
+def agents_repair(
+    apply: bool = typer.Option(False, "--apply", help="Write the de-duplicated file."),
+    path: Path = typer.Option(
+        Path("AGENTS.md"),
+        "--path",
+        help="File to de-duplicate (default: AGENTS.md).",
+    ),
+) -> None:
+    """Remove exact-duplicate headings from AGENTS.md. Dry run by default."""
+    from agentscaffold.agents.repair import ManualRepairConflictError, run_repair
+
+    target = path if path.is_absolute() else Path.cwd() / path
+    if not target.is_file():
+        console.print(f"[red]No file at {target}[/red]")
+        raise typer.Exit(1)
+    try:
+        report = run_repair(target, apply=apply)
+    except ManualRepairConflictError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    if report.dropped:
+        verb = "Dropped" if apply else "Would drop"
+        console.print(f"[green]{verb}[/green] {len(report.dropped)} duplicate heading(s):")
+        for heading in report.dropped:
+            console.print(f"  {heading}")
+    else:
+        console.print("[dim]No duplicate headings.[/dim]")
+    if not apply and report.dropped:
+        console.print("[dim]Re-run with --apply to write.[/dim]")
+
+
+@agents_app.command("diff-manual")
+def agents_diff_manual(
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Apply unambiguous upstream section updates.",
+    ),
+    path: Path = typer.Option(
+        Path("AGENTS.md"),
+        "--path",
+        help="Manual to compare (default: AGENTS.md).",
+    ),
+) -> None:
+    """Compare the project-owned governance manual to the current template."""
+    from agentscaffold.agents.manual_diff import ManualDiffConflictError, run_diff_manual
+    from agentscaffold.config import load_config
+
+    target = path if path.is_absolute() else Path.cwd() / path
+    if not target.is_file():
+        console.print(f"[red]No file at {target}[/red]")
+        raise typer.Exit(1)
+    try:
+        report = run_diff_manual(target, load_config(), apply=apply)
+    except ManualDiffConflictError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    if report.mode == "two_way":
+        for note in report.notes:
+            console.print(f"[yellow]{note}[/yellow]")
+    if report.offered:
+        verb = "Applied" if apply else "Would update"
+        console.print(f"[green]{verb}[/green] {len(report.offered)} section(s):")
+        for item in report.offered:
+            console.print(f"  {item.kind}: {item.heading}")
+    if report.conflicts:
+        console.print(f"[red]{len(report.conflicts)} conflict(s) (not applied):[/red]")
+        for item in report.conflicts:
+            console.print(f"  {item.heading}")
+    if not report.offered and not report.conflicts:
+        console.print("[dim]Manual matches the template (or only local edits).[/dim]")
+    if not apply and report.offered:
+        console.print("[dim]Re-run with --apply to write unambiguous updates.[/dim]")
 
 
 # ---------------------------------------------------------------------------

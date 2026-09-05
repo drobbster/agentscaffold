@@ -617,10 +617,35 @@ def check_graph_schema(context: DoctorContext) -> CheckResult:
     )
 
 
+def check_agent_docs(context: DoctorContext) -> CheckResult:
+    """Heading overlap in AGENTS.md -- the Plan 260 duplication."""
+    from agentscaffold.agents.repair import heading_overlap, split_managed
+    from agentscaffold.rendering import markdown_h2_headings
+
+    path = context.project_root / "AGENTS.md"
+    if not path.is_file():
+        return CheckResult(status="ok", summary="No AGENTS.md in this project.")
+    text = path.read_text()
+    prefix, managed, _suffix = split_managed(text)
+    shared = sorted(set(markdown_h2_headings(prefix)) & set(markdown_h2_headings(managed)))
+    repeated = heading_overlap(text)
+    if not shared and not repeated:
+        return CheckResult(status="ok", summary="AGENTS.md headings are unique.")
+    details = [f"shared across managed boundary: {heading}" for heading in shared]
+    details.extend(f"repeated: {heading}" for heading in repeated if heading not in shared)
+    return CheckResult(
+        status="warn",
+        summary=f"AGENTS.md has {len(set(shared) | set(repeated))} duplicated heading(s).",
+        details=details,
+        remediation="Run `scaffold agents repair` (dry run), then `--apply` if the copies match.",
+    )
+
+
 CHECKS: list[Check] = [
     Check("registry", "Workspace registry", check_registry),
     Check("workspace_id", "Workspace identity", check_workspace_id),
     Check("guidance", "Routing guidance", check_guidance),
+    Check("agent_docs", "Agent document integrity", check_agent_docs),
     Check("mcp_registration", "MCP registration", check_mcp_registration),
     Check("version_skew", "Version skew", check_version_skew),
     Check("state_location", "Graph state location", check_state_location),
