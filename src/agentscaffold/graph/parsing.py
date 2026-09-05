@@ -489,9 +489,165 @@ def _extract_classes(
                 start_line=start_line,
             )
         )
+        if language == "python":
+            for base_name in _extract_base_names(match.get("bases"), source):
+                store.create_edge(
+                    "EXTENDS",
+                    "Class",
+                    class_id,
+                    "Class",
+                    f"external::{base_name}",
+                    {"resolved": False, "baseName": base_name},
+                )
         count += 1
 
     return count
+
+
+_SKIP_BASE_CHILD_TYPES = frozenset(
+    {
+        "(",
+        ")",
+        ",",
+        "comment",
+        "keyword_argument",
+    }
+)
+
+
+def _extract_base_names(bases_node: Any, source: bytes) -> list[str]:
+    """Return textual base names from a tree-sitter ``argument_list``.
+
+    Skips punctuation and ``keyword_argument`` children (``metaclass=...``).
+    Subscripts (``Generic[T]``) and starred bases are kept as text so they can
+    be recorded unresolved rather than dropped or mistaken for a Class name.
+    """
+    if bases_node is None:
+        return []
+    names: list[str] = []
+    for child in bases_node.children:
+        if child.type in _SKIP_BASE_CHILD_TYPES:
+            continue
+        text = _extract_text(child, source).strip()
+        if text:
+            names.append(text)
+    return names
+
+
+def _import_alias_pair(raw: str) -> tuple[str, str]:
+    """Return ``(local_name, exported_name)`` for an importedNames token."""
+    parts = raw.split()
+    if len(parts) >= 3 and parts[-2] == "as":
+        return parts[-1], parts[0]
+    return raw, raw
+
+
+def _extends_import_map(
+    store: GraphBackend,
+) -> dict[str, dict[str, tuple[str, str]]]:
+    """Map ``file -> local_name -> (source_file, exported_name)``."""
+    from agentscaffold.graph.calls import _build_import_map
+
+    raw = _build_import_map(store)
+    result: dict[str, dict[str, tuple[str, str]]] = {}
+    for file_path, names in raw.items():
+        local: dict[str, tuple[str, str]] = {}
+        for imported, target in names.items():
+            local_name, exported = _import_alias_pair(imported)
+            local[local_name] = (target, exported)
+        result[file_path] = local
+    return result
+
+
+def _resolve_base(
+    base_name: str,
+    subclass_file: str,
+    imported_symbols: dict[str, tuple[str, str]],
+    symbol_table: SymbolTable,
+) -> str | None:
+    """Resolve a base name to an in-repo Class node id, or None.
+
+    Order matches ``calls._resolve_call``: imported name, same-file, then a
+    unique global class. Subscript heads (``Generic[T]``) skip the unique
+    fallback so ``Generic`` is not attached to a coincidental in-repo class.
+    """
+    if base_name.startswith("*"):
+        return None
+    has_subscript = "[" in base_name
+    head = base_name.split("[", 1)[0]
+
+    if "." in head:
+        prefix, name = head.rsplit(".", 1)
+        if prefix in imported_symbols:
+            source_file, _exported = imported_symbols[prefix]
+            for entry in symbol_table.lookup_in_file(source_file):
+                if entry.name == name and entry.node_type == "class":
+                    return entry.node_id
+        qualified = symbol_table.lookup_qualified(head)
+        if qualified is not None and qualified.node_type == "class":
+            return qualified.node_id
+        return None
+
+    if head in imported_symbols:
+        source_file, exported = imported_symbols[head]
+        for entry in symbol_table.lookup_in_file(source_file):
+            if entry.name == exported and entry.node_type == "class":
+                return entry.node_id
+
+    for entry in symbol_table.lookup_in_file(subclass_file):
+        if entry.name == head and entry.node_type == "class":
+            return entry.node_id
+
+    if has_subscript:
+        return None
+
+    candidates = [entry for entry in symbol_table.lookup_name(head) if entry.node_type == "class"]
+    if len(candidates) == 1:
+        return candidates[0].node_id
+    return None
+
+
+def process_extends(store: GraphBackend, symbol_table: SymbolTable) -> dict[str, int]:
+    """Upgrade unresolved EXTENDS edges whose bases resolve to in-repo classes.
+
+    Parsing emits every Python base as ``resolved=false`` with a synthetic
+    ``external::<name>`` destination. This pass runs after imports so the
+    import map exists. Unresolved edges are left in place.
+    """
+    rows = store.query(
+        "SELECT e.src AS src, e.dst AS dst, e.baseName AS baseName, "
+        "c.filePath AS filePath FROM EXTENDS e "
+        "INNER JOIN Class c ON c.id = e.src "
+        "WHERE e.resolved = false OR e.resolved IS NULL"
+    )
+    import_map = _extends_import_map(store)
+    upgraded = 0
+    leftover = 0
+    for row in rows:
+        base_name = row.get("baseName") or ""
+        subclass_file = row.get("filePath") or ""
+        imported = import_map.get(subclass_file, {})
+        target = _resolve_base(base_name, subclass_file, imported, symbol_table)
+        if target is None:
+            leftover += 1
+            continue
+        src = row["src"]
+        old_dst = row["dst"]
+        # UPDATE rather than create_edge: INSERT ... SELECT ? drops Python True
+        # on BOOLEAN columns (the bind keeps the DEFAULT false).
+        store.execute(
+            "UPDATE EXTENDS SET dst = ?, resolved = true WHERE src = ? AND dst = ?",
+            {"dst": target, "src": src, "old_dst": old_dst},
+        )
+        upgraded += 1
+    # Durable marker is dst pointing at a Class id. The BOOLEAN can reset on
+    # connection close (DuckPGQ reload); CHECKPOINT keeps src/dst, not always
+    # the flag. Callers should treat ``dst LIKE '%class::%'`` as resolved.
+    try:
+        store.execute("CHECKPOINT")
+    except Exception:
+        pass
+    return {"resolved": upgraded, "unresolved": leftover}
 
 
 def _extract_methods(

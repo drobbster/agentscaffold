@@ -213,6 +213,30 @@ class TestIncrementalPipeline:
         cs = summary["changeset"]
         assert "incremental_new.py" in cs["added"]
 
+    def test_incremental_rebase_replaces_extends_edge(self, graph_with_repo):
+        store, config, repo = graph_with_repo
+        before = store.query(
+            "SELECT e.baseName AS baseName FROM EXTENDS e "
+            "JOIN Class c ON c.id = e.src WHERE c.name = 'MomentumStrategy'"
+        )
+        store.close()
+        if not before:
+            pytest.skip("EXTENDS not populated for MomentumStrategy")
+
+        target = repo / "libs" / "strategy" / "momentum.py"
+        target.write_text("class MomentumStrategy:\n    pass\n")
+        run_pipeline(repo, config, incremental=True)
+
+        from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
+
+        store = DuckPGQBackend(config.graph.db_path)
+        after = store.query(
+            "SELECT e.baseName AS baseName FROM EXTENDS e "
+            "JOIN Class c ON c.id = e.src WHERE c.name = 'MomentumStrategy'"
+        )
+        store.close()
+        assert after == []
+
 
 # ---------------------------------------------------------------------------
 # Session memory tests

@@ -1101,6 +1101,66 @@ class DuckPGQBackend:
         cols = [d[0] for d in result.description]
         return [dict(zip(cols, row)) for row in result.fetchall()]
 
+    def query_class_bases(self, class_id: str) -> list[dict[str, Any]]:
+        """Return EXTENDS rows leaving *class_id*, including unresolved bases.
+
+        Uses the SQL table, not GRAPH_TABLE: a dangling ``dst`` has no Class
+        vertex, so MATCH would silently omit unresolved edges.
+        """
+        rows = self.query(
+            "SELECT e.dst AS dst, e.resolved AS resolved, e.baseName AS baseName, "
+            "c.name AS name, c.filePath AS filePath "
+            "FROM EXTENDS e LEFT JOIN Class c ON c.id = e.dst "
+            "WHERE e.src = ?",
+            {"src": class_id},
+        )
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            dst = str(row.get("dst") or "")
+            resolved = bool(row.get("resolved")) or "class::" in dst
+            name = row.get("name") or row.get("baseName") or ""
+            result.append(
+                {
+                    "name": name,
+                    "baseName": row.get("baseName") or name,
+                    "resolved": resolved,
+                    "filePath": row.get("filePath") or "",
+                    "id": row.get("dst") or "",
+                }
+            )
+        return result
+
+    def query_class_subclasses(self, class_id: str, *, max_depth: int = 32) -> list[dict[str, Any]]:
+        """Return transitive subclasses of *class_id*, depth-labelled.
+
+        Walks resolved EXTENDS only (unresolved destinations have no children).
+        Direction is dst -> src: EXTENDS points subclass -> base.
+        """
+        rows = self.query(
+            "WITH RECURSIVE d AS ("
+            "  SELECT src, 1 AS depth FROM EXTENDS "
+            "  WHERE dst = ? AND (resolved = true OR dst LIKE '%class::%') "
+            "  UNION ALL "
+            "  SELECT e.src, d.depth + 1 FROM EXTENDS e "
+            "  JOIN d ON e.dst = d.src "
+            "  WHERE (e.resolved = true OR e.dst LIKE '%class::%') AND d.depth < ?"
+            ") "
+            "SELECT d.src AS src, d.depth AS depth, c.name AS name, "
+            "c.filePath AS filePath FROM d "
+            "JOIN Class c ON c.id = d.src "
+            "ORDER BY d.depth, c.name",
+            {"dst": class_id, "max_depth": max_depth},
+        )
+        return [
+            {
+                "name": row.get("name") or "",
+                "filePath": row.get("filePath") or "",
+                "id": row.get("src") or "",
+                "depth": int(row.get("depth") or 0),
+            }
+            for row in rows
+        ]
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------

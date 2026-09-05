@@ -1264,6 +1264,13 @@ def _tool_context(
         relation="callers",
     )
 
+    bases: list[dict[str, Any]] = []
+    subclasses: list[dict[str, Any]] = []
+    raw_id = node.get("id") or ""
+    if "class::" in raw_id and hasattr(store, "query_class_bases"):
+        bases = store.query_class_bases(raw_id)
+        subclasses = store.query_class_subclasses(raw_id)
+
     return {
         "symbol": node,
         "callers": callers,
@@ -1274,6 +1281,8 @@ def _tool_context(
         "heuristic_caller_count": count_heuristic(callers) + count_heuristic(method_callers),
         "config_consumers": config_consumers,
         "config_consumer_count": len(config_consumers),
+        "bases": bases,
+        "subclasses": subclasses,
         "coverage": {"target_language": language, "caveat": caveat},
         "markdown": format_context_markdown(
             node,
@@ -1282,6 +1291,8 @@ def _tool_context(
             method_callers,
             caveat=caveat,
             config_consumers=config_consumers,
+            bases=bases,
+            subclasses=subclasses,
         ),
         "meta": meta,
     }

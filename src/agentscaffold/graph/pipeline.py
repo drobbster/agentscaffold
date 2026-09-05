@@ -345,6 +345,11 @@ def run_pipeline(
             total_imports = import_result["resolved"] + import_result["unresolved"]
             import_rate = import_result["resolved"] / total_imports * 100 if total_imports else 0
 
+            from agentscaffold.graph.parsing import process_extends
+
+            extends_result = process_extends(store, symbol_table)
+            summary["extends"] = extends_result
+
             call_result = process_calls(store, root, symbol_table)
             summary["calls"] = call_result
 
@@ -646,6 +651,11 @@ def _run_incremental(
 
         import_result = process_imports(store, root, symbol_table, file_paths=affected_files)
         summary["imports"] = import_result
+
+        from agentscaffold.graph.parsing import process_extends
+
+        extends_result = process_extends(store, symbol_table)
+        summary["extends"] = extends_result
 
         call_result = process_calls(store, root, symbol_table, file_paths=affected_files)
         summary["calls"] = call_result

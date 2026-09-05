@@ -76,6 +76,8 @@ class AdditiveColumn(NamedTuple):
 
 ADDITIVE_COLUMNS: tuple[AdditiveColumn, ...] = (
     AdditiveColumn("BacklogItem", "resolution", "VARCHAR DEFAULT ''"),
+    AdditiveColumn("EXTENDS", "resolved", "BOOLEAN DEFAULT false"),
+    AdditiveColumn("EXTENDS", "baseName", "VARCHAR DEFAULT ''"),
 )
 
 # Bumped to 10 by Plan 252 without a DDL change. The tables are identical; what
@@ -408,7 +410,12 @@ EDGE_DEFS: list[EdgeDef] = [
         "Function",
         (("confidence", "DOUBLE"), ("reason", "VARCHAR")),
     ),
-    EdgeDef("EXTENDS", "Class", "Class"),
+    EdgeDef(
+        "EXTENDS",
+        "Class",
+        "Class",
+        (("resolved", "BOOLEAN"), ("baseName", "VARCHAR")),
+    ),
     EdgeDef("IMPLEMENTS", "Class", "Interface"),
     EdgeDef("MEMBER_OF_COMMUNITY", "File", "Community"),
     EdgeDef("STEP_IN_PROCESS", "Function", "Process", (("step", "BIGINT"),)),

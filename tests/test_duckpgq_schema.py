@@ -79,6 +79,27 @@ def test_backlogitem_resolution_column_added_to_existing_table(conn):
     assert "resolution" in cols
 
 
+def test_extends_additive_columns_on_existing_table(conn):
+    """Plan 262: resolved/baseName ALTER without a SCHEMA_VERSION rebuild."""
+    from agentscaffold.graph.duckpgq_schema import ensure_additive_columns
+
+    conn.execute("DROP TABLE IF EXISTS EXTENDS")
+    conn.execute("CREATE TABLE EXTENDS (src VARCHAR NOT NULL, dst VARCHAR NOT NULL)")
+    ensure_additive_columns(conn)
+    cols = {
+        str(r[0]).lower()
+        for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'EXTENDS'"
+        ).fetchall()
+    }
+    assert "resolved" in cols
+    assert "basename" in cols
+
+
+def test_schema_version_unchanged_by_extends_columns():
+    assert SCHEMA_VERSION == 10
+
+
 def test_ensure_additive_columns_is_noop_when_table_missing(conn):
     from agentscaffold.graph.duckpgq_schema import ensure_additive_columns
 
