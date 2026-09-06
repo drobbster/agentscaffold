@@ -22,6 +22,7 @@ from agentscaffold.review.queries import (
     get_plan_impacted_files,
     get_plans_impacting_file,
 )
+from agentscaffold.review.test_presence import source_has_tests
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
@@ -219,18 +220,7 @@ def _test_coverage_gaps(
         if not is_source_code_file(fpath, frow.get("f.language", "")):
             continue
 
-        # Check if any test file references the source
-        escaped = sql_escape(fpath)
-        file_stem = escaped.split("/")[-1].split(".")[0]
-        test_refs = ql(
-            store,
-            sql=(
-                'SELECT path AS "f.path" FROM File'
-                f" WHERE CONTAINS(path, 'test') AND CONTAINS(path, '{file_stem}') LIMIT 3"
-            ),
-        )
-
-        if not test_refs:
+        if not source_has_tests(store, fpath):
             missing_tests.append(fpath)
 
     if missing_tests:

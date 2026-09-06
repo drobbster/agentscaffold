@@ -272,6 +272,20 @@ def check_contract_drift(store: GraphBackend) -> dict[str, Any]:
                     }
                 )
 
+    if total_declared == 0:
+        return {
+            "total_declared": 0,
+            "linked": 0,
+            "drift_items": [],
+            "drift_count": 0,
+            "health": "NOT_EVALUABLE",
+            "evaluable": False,
+            "reason": (
+                "No contract symbols are declared, so drift cannot be checked. "
+                "This is not a clean architecture."
+            ),
+        }
+
     return {
         "total_declared": total_declared,
         "linked": linked_ok,

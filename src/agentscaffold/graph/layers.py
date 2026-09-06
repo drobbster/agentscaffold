@@ -151,6 +151,26 @@ def check_layers(
 
     violations.sort(key=lambda v: (v["from_file"], v["to_file"]))
 
+    # A handful of mapped files against thousands of unmapped imports is the
+    # same honesty class as zero mapped files: the check looked at almost
+    # nothing. Threshold locked in Plan 269: unmapped >= 10 * max(checked, 1).
+    if not violations and unmapped >= 10 * max(checked, 1):
+        return _not_evaluable(
+            (
+                f"{len(memberships)} files are mapped and {checked} imports were "
+                f"checked, but {unmapped} imports are unmapped. That is too thin "
+                "to certify layer conformance."
+            ),
+            remediation=(
+                "Widen the path patterns in docs/ai/system_architecture.md so "
+                "they cover the code the imports actually touch, then re-index."
+            ),
+            layer_count=len(layers),
+            mapped_file_count=len(memberships),
+            checked_import_count=checked,
+            unmapped_import_count=unmapped,
+        )
+
     return LayerReport(
         status="fail" if violations else "pass",
         evaluable=True,

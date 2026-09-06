@@ -20,6 +20,7 @@ from agentscaffold.review.queries import (
     get_plan_by_number,
     get_plan_impacted_files,
 )
+from agentscaffold.review.test_presence import source_has_tests
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
@@ -30,7 +31,7 @@ class VerificationItem:
     """A single verification result."""
 
     check: str
-    status: str  # pass, warn, fail
+    status: str  # pass, warn, fail, skip
     detail: str
     evidence: dict[str, Any] = field(default_factory=dict)
 
@@ -75,6 +76,21 @@ def _check_plan_compliance(
     out: list[VerificationItem],
 ) -> None:
     """Check that planned files exist in the graph and flag any extra modifications."""
+    nonempty = {p for p in planned_paths if p}
+    if not nonempty:
+        out.append(
+            VerificationItem(
+                check="plan_compliance",
+                status="skip",
+                detail=(
+                    "No planned files resolved in this project, so compliance "
+                    "cannot be certified. This is not a pass."
+                ),
+                evidence={"planned_count": 0},
+            )
+        )
+        return
+
     missing: list[str] = []
     for fpath in planned_paths:
         if not fpath:
@@ -193,17 +209,7 @@ def _check_test_delta(
         if not fpath or "/test" in fpath or fpath.startswith("tests/"):
             continue
 
-        stem = fpath.split("/")[-1].split(".")[0]
-        escaped = sql_escape(stem)
-        test_files = ql(
-            store,
-            sql=(
-                'SELECT path AS "f.path" FROM File'
-                f" WHERE CONTAINS(path, 'test') AND CONTAINS(path, '{escaped}') LIMIT 1"
-            ),
-        )
-
-        if test_files:
+        if source_has_tests(store, fpath):
             tested_count += 1
         else:
             untested.append(fpath)
@@ -245,7 +251,12 @@ def format_verification_markdown(items: list[VerificationItem]) -> str:
     lines.append("## Post-Implementation Verification")
     lines.append("")
 
-    status_icon = {"pass": "[PASS]", "warn": "[WARN]", "fail": "[FAIL]"}
+    status_icon = {
+        "pass": "[PASS]",
+        "warn": "[WARN]",
+        "fail": "[FAIL]",
+        "skip": "[SKIP]",
+    }
     for item in items:
         icon = status_icon.get(item.status, "[????]")
         lines.append(f"{icon} **{item.check}**: {item.detail}")

@@ -165,7 +165,7 @@ def test_decision_context_includes_session_decisions(tmp_path, monkeypatch):
         plan_numbers=[263],
     )
     result = _tool_decision_context(store, {"plan_number": 263}, {})
-    assert result["has_full_decision_chain"] is True
+    assert result["has_full_decision_chain"] is False
     assert result["session_decisions"][0]["kind"] == "strategic"
     store.close()
 

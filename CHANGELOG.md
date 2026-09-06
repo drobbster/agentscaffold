@@ -9,6 +9,12 @@ introduce additive features and small behavior changes).
 ## [Unreleased]
 
 ### Fixed
+- **Review and validate checks no longer certify absence as a pass.**
+  TEST_COVERAGE / `test_delta` look on disk for `test_<stem>.py` when
+  `tests/` is not in the graph. Layers with a thin mapped subset
+  (`unmapped >= 10 * checked`) and contracts with `total_declared == 0`
+  return `not_evaluable`. `has_full_decision_chain` requires an ADR or
+  spike. Retro `plan_compliance` with zero resolved files is `skip`.
 - **`scaffold_validate` staleness checks the call's project root.** The
   check opened the scoped graph and then tested `File` paths under
   `_effective_mcp_root()` (launch-cwd heuristics). A `working_path` call

@@ -2602,7 +2602,7 @@ def _tool_decision_context(
         "supporting_studies": _clean_out_rows(studies),
         "plan_dependencies": _clean_out_rows(deps),
         "session_decisions": session_decisions,
-        "has_full_decision_chain": bool(adrs or spikes or studies or session_decisions),
+        "has_full_decision_chain": bool(adrs or spikes),
         **({"project": scope["project"]} if scope["project"] else {}),
         # If the graph is empty the chain looks absent even when it exists in
         # docs; flag so a False is not read as a confirmed "no decisions".
