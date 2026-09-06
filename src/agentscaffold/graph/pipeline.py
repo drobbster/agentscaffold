@@ -40,6 +40,91 @@ def _open_store_for_pipeline(db_path: Path, backend_name: str) -> GraphBackend:
     return store
 
 
+def write_index_last_result(db_path: Path, result: str) -> None:
+    """Record ``noop`` or ``changed`` beside the database for the edit hook."""
+    from agentscaffold.paths import INDEX_LAST_RESULT_FILE
+
+    if str(db_path) == ":memory:":
+        return
+    dest = Path(db_path).parent / INDEX_LAST_RESULT_FILE
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(f"{result}\n")
+    except OSError as exc:
+        logger.warning("Could not write incremental last_result: %s", exc)
+
+
+def _probe_incremental_noop(
+    root: Path,
+    db_path: Path,
+    graph_config: Any,
+    config: ScaffoldConfig | None,
+    embeddings: bool,
+    t0: float,
+) -> dict[str, Any] | None:
+    """Walk with no store; briefly open to diff. Return a no-op summary or None.
+
+    None means this is not a no-op: caller must take the write lock and index.
+    """
+    from agentscaffold.graph.governance import governance_source_files
+    from agentscaffold.graph.incremental import (
+        diff_changeset,
+        governance_fingerprint,
+    )
+    from agentscaffold.graph.structure import collect_ignore_patterns, scan_indexable_files
+    from agentscaffold.paths import GOVERNANCE_FINGERPRINT_FILE
+
+    if not db_path.is_file():
+        return None
+
+    ignore_patterns = collect_ignore_patterns(root, graph_config)
+    allowed_languages: set[str] | None = None
+    if graph_config and getattr(graph_config, "languages", None):
+        allowed_languages = set(graph_config.languages)
+    disk_files = set(
+        scan_indexable_files(root, ignore_patterns, allowed_languages=allowed_languages)
+    )
+
+    gov_files = governance_source_files(root, config)
+    current_gov_fp = governance_fingerprint(gov_files)
+    fp_path = db_path.parent / GOVERNANCE_FINGERPRINT_FILE
+    prior_gov_fp = None
+    if fp_path.exists():
+        try:
+            prior_gov_fp = fp_path.read_text().strip()
+        except OSError:
+            prior_gov_fp = None
+    gov_changed = prior_gov_fp != current_gov_fp
+
+    probe = DuckPGQBackend(db_path, read_only=True)
+    try:
+        if not probe.schema_current():
+            return None
+        changeset = diff_changeset(probe, root, disk_files)
+    except Exception:
+        logger.debug("Incremental no-op probe failed; falling through to locked index")
+        return None
+    finally:
+        probe.close()
+
+    added = changeset["added"]
+    modified = changeset["modified"]
+    deleted = changeset["deleted"]
+    structure_unchanged = not added and not modified and not deleted and not gov_changed
+    if not structure_unchanged or embeddings:
+        return None
+
+    console.print("[green]Graph is up to date. Nothing to do.[/green]")
+    write_index_last_result(db_path, "noop")
+    elapsed = time.monotonic() - t0
+    return {
+        "changeset": changeset,
+        "noop": True,
+        "elapsed_seconds": round(elapsed, 1),
+        "phases_completed": ["incremental", "noop"],
+    }
+
+
 def _migrate_on_version_change(
     store: GraphBackend,
     db_path: Path,
@@ -218,6 +303,11 @@ def run_pipeline(
 
     backend_name = (graph_config.backend if graph_config else None) or "duckpgq"
     t0 = time.monotonic()
+
+    if incremental:
+        noop_summary = _probe_incremental_noop(root, db_path, graph_config, config, embeddings, t0)
+        if noop_summary is not None:
+            return noop_summary
 
     store = _open_store_for_pipeline(db_path, backend_name)
 
@@ -595,6 +685,7 @@ def _run_incremental(
         summary["noop"] = True
         summary["elapsed_seconds"] = round(elapsed, 1)
         summary["phases_completed"] = ["incremental", "noop"]
+        write_index_last_result(Path(getattr(store, "_db_path", ":memory:")), "noop")
         store.close()
         return summary
     if structure_unchanged and embeddings:
@@ -734,6 +825,7 @@ def _run_incremental(
     elapsed = time.monotonic() - t0
     summary["elapsed_seconds"] = round(elapsed, 1)
     summary["phases_completed"] = ["incremental"]
+    write_index_last_result(Path(getattr(store, "_db_path", ":memory:")), "changed")
 
     _print_summary(summary, store)
     store.close()

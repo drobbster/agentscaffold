@@ -9,6 +9,14 @@ introduce additive features and small behavior changes).
 ## [Unreleased]
 
 ### Fixed
+- **A no-op incremental no longer holds DuckDB exclusive for a full-tree
+  walk.** Incremental indexing prunes ignored directories (`.venv`,
+  `node_modules`, `.scaffold`, ...) instead of `rglob`ing them, walks
+  with no graph connection, and takes `graph.write.lock` only when there
+  is work. The edit hook ignores state-dir `file_path`s and stops
+  coalescing after `index.last_result=noop`, so MCP hybrid search can
+  run while embeddings sit on disk. `graph.embeddings` still ORs into
+  CLI incrementals (including the hook) if that flag is on.
 - **`scaffold_orient` is a session router again on diary-style
   `workflow_state.md`.** Focus comes from Current Implementation (`Next on
   Plan N`), not the first historical "In Progress" sentence. Standing

@@ -158,6 +158,9 @@ FRESHNESS_WATERMARK_FILE = "freshness_watermark.json"
 #: Fingerprint of the governance sources last ingested, written beside the database.
 GOVERNANCE_FINGERPRINT_FILE = "governance.fingerprint"
 
+#: Last incremental outcome for the edit hook coalesce loop (Plan 267).
+INDEX_LAST_RESULT_FILE = "index.last_result"
+
 #: Every durable file the graph writes beside its database, and therefore
 #: everything a state migration has to carry with it.
 #:
