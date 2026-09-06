@@ -1639,9 +1639,12 @@ def _tool_validate(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) 
         return {"report": report.to_dict(), "meta": meta}
 
     if check == "staleness":
+        from agentscaffold.active_root import default_start
         from agentscaffold.graph.verify import verify_graph
 
-        report = verify_graph(store, _effective_mcp_root())
+        # Existence/hash checks are against disk. Use the call's project root
+        # (active_root from dispatch / working_path), not launch-cwd heuristics.
+        report = verify_graph(store, default_start())
         return {"report": report, "meta": meta}
 
     if check == "contracts":

@@ -9,6 +9,12 @@ introduce additive features and small behavior changes).
 ## [Unreleased]
 
 ### Fixed
+- **`scaffold_validate` staleness checks the call's project root.** The
+  check opened the scoped graph and then tested `File` paths under
+  `_effective_mcp_root()` (launch-cwd heuristics). A `working_path` call
+  could report every file missing while `meta.freshness_status` was
+  `fresh`. It now uses `default_start()` so existence follows
+  `active_root`.
 - **A no-op incremental no longer holds DuckDB exclusive for a full-tree
   walk.** Incremental indexing prunes ignored directories (`.venv`,
   `node_modules`, `.scaffold`, ...) instead of `rglob`ing them, walks
