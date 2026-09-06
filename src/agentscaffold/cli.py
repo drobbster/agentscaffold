@@ -981,6 +981,8 @@ def index_cmd(
     # Honor the config default (graph.embeddings) when the flag is not passed,
     # so embeddings can be enabled repo-wide via scaffold.yaml without requiring
     # --embeddings on every index invocation (including the PostToolUse hook).
+    # Footgun (Plan 267 / rf::c17e46127d50): that OR makes a no-structure hook
+    # run take the write lock for embedding reconcile. Leave the OR unchanged.
     embeddings = with_embeddings or bool(getattr(config.graph, "embeddings", False))
     if embeddings:
         # Pin the embedding model + weights cache before indexing so the model
@@ -996,6 +998,14 @@ def index_cmd(
         audit=audit,
         force_rebuild=force_rebuild,
     )
+    if incremental:
+        from agentscaffold.graph.pipeline import write_index_last_result
+        from agentscaffold.paths import resolve_db_path
+
+        write_index_last_result(
+            resolve_db_path(config, start=path),
+            "noop" if summary.get("noop") else "changed",
+        )
 
     # Plan 223: on a fresh/ephemeral cache, governance is rebuilt from the
     # committed artifact. Point the operator at where the durable record lives.

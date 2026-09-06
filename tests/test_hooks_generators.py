@@ -255,6 +255,16 @@ def test_render_index_hook_script_is_single_flight_and_nonblocking() -> None:
     assert "SCAFFOLD_HOOK_DISABLE" in script
 
 
+def test_render_index_hook_script_ignores_state_dir_and_breaks_on_noop() -> None:
+    script = render_index_hook_script("scaffold")
+    assert "file_path" in script
+    assert "cat >/dev/null" not in script
+    assert "/.scaffold/" in script
+    assert "index.last_result" in script
+    assert '[ "$last_result" = "noop" ] && break' in script
+    assert "graph.write.lock" in script
+
+
 def test_render_embedding_commit_hook_script_is_nonblocking_and_lock_aware() -> None:
     script = render_embedding_commit_hook_script("/tmp/scaffold", min_interval_seconds=45)
     assert 'scaffold_bin="/tmp/scaffold"' in script
