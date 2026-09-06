@@ -715,6 +715,10 @@ def _parse_study(filepath: Path) -> dict[str, Any] | None:
 
 _ADR_TITLE_RE = re.compile(r"^#\s+ADR-(\d+):\s*(.+)", re.MULTILINE)
 _ADR_NUMBER_RE = re.compile(r"^(?:adr[_\-]?)?0*(\d+)", re.IGNORECASE)
+_ADR_BOLD_META_RE = re.compile(
+    r"\*\*(?P<key>Status|Date)\*\*\s*:\s*(?P<value>.+)",
+    re.IGNORECASE,
+)
 _ADR_SKIP_FILES = {"README.md", "adr_template.md"}
 
 _SUPERSEDED_RE = re.compile(r"Superseded\s+by\s+ADR-(\d+)", re.IGNORECASE)
@@ -767,6 +771,17 @@ def _parse_adr(filepath: Path) -> dict[str, Any] | None:
 
     date_text = _extract_section_text(text, "Date")
     date_line = date_text.split("\n")[0].strip() if date_text else ""
+
+    # House format (ADR-025): **Status**: Accepted / **Date**: YYYY-MM-DD
+    for bold in _ADR_BOLD_META_RE.finditer(text[:4000]):
+        key = bold.group("key").lower()
+        value = bold.group("value").strip()
+        if not value:
+            continue
+        if key == "status" and (not status_line or status_line == "unknown"):
+            status_line = value
+        elif key == "date" and not date_line:
+            date_line = value
 
     related_section = _extract_section_text(text, "Related")
 

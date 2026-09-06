@@ -44,8 +44,29 @@ _STOP = frozenset(
         "path",
         "type",
         "change",
+        "added",
+        "listed",
+        "reversed",
+        "medium",
+        "owns",
+        "high",
+        "low",
     }
 )
+
+_PLAN_ID_RE = re.compile(r"^L\d+$")
+
+
+def _is_symbol_token(tok: str) -> bool:
+    """True for CamelCase (2+ capitals) or snake_case identifiers, not prose."""
+    if tok.lower() in _STOP or len(tok) < 4:
+        return False
+    if _PLAN_ID_RE.fullmatch(tok):
+        return False
+    if "_" in tok:
+        return True
+    uppers = sum(1 for c in tok if c.isupper())
+    return bool(tok[0].isupper() and uppers >= 2)
 
 
 def diff_plan_vs_code(
@@ -166,9 +187,7 @@ def _symbol_spot_check(
     for line in plan_text.splitlines():
         if file_path.name in line or str(file_path).replace("\\", "/") in line.replace("\\", "/"):
             for tok in _IDENT.findall(line):
-                if tok.lower() in _STOP or len(tok) < 4:
-                    continue
-                if tok[0].isupper() or "_" in tok:
+                if _is_symbol_token(tok):
                     candidates.append(tok)
     # Dedupe preserve order
     seen: set[str] = set()

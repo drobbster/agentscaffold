@@ -975,7 +975,10 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
             sql = arguments.get("sql", "")
             if not sql:
                 return {"error": "Missing 'sql' parameter.", "meta": meta}
-            rows = store.query(sql)
+            try:
+                rows = store.query(sql)
+            except Exception as exc:
+                return {"error": _query_error_message(sql, exc), "meta": meta}
             return {"results": rows, "count": len(rows), "meta": meta}
 
         elif name == "scaffold_context":
@@ -1310,6 +1313,10 @@ def _tool_context(
         else []
     )
 
+    callers = [row for row in callers if not _same_symbol_row(row, node)]
+    callees = [row for row in callees if not _same_symbol_row(row, node)]
+    method_callers = [row for row in method_callers if not _same_symbol_row(row, node)]
+
     caller_count = len(callers) + len(method_callers)
     language = language_for_path(file_path)
     caveat = empty_result_caveat(
@@ -1321,12 +1328,18 @@ def _tool_context(
 
     bases: list[dict[str, Any]] = []
     subclasses: list[dict[str, Any]] = []
+    methods: list[dict[str, Any]] | None = None
     raw_id = node.get("id") or ""
-    if "class::" in raw_id and hasattr(store, "query_class_bases"):
-        bases = store.query_class_bases(raw_id)
-        subclasses = store.query_class_subclasses(raw_id)
+    if "class::" in raw_id:
+        if hasattr(store, "query_class_bases"):
+            bases = store.query_class_bases(raw_id)
+            subclasses = store.query_class_subclasses(raw_id)
+        if hasattr(store, "query_class_methods"):
+            methods = store.query_class_methods(raw_id)
+        else:
+            methods = []
 
-    return {
+    payload: dict[str, Any] = {
         "symbol": node,
         "callers": callers,
         "method_callers": method_callers,
@@ -1348,9 +1361,61 @@ def _tool_context(
             config_consumers=config_consumers,
             bases=bases,
             subclasses=subclasses,
+            methods=methods,
         ),
         "meta": meta,
     }
+    if methods is not None:
+        payload["methods"] = methods
+        payload["method_count"] = len(methods)
+        payload["construction_sites"] = []
+    return payload
+
+
+def _same_symbol_row(row: dict[str, Any], node: dict[str, Any]) -> bool:
+    """True when a caller/callee row is the same function as *node*."""
+    rname = row.get("name") or ""
+    rpath = row.get("filePath") or row.get("path") or ""
+    nname = node.get("name") or ""
+    npath = node.get("filePath") or ""
+    return bool(rname) and rname == nname and bool(rpath) and rpath == npath
+
+
+def _same_file_row(row: dict[str, Any], target: str) -> bool:
+    """True when a caller row lives in the impact target file."""
+    rpath = str(row.get("filePath") or row.get("path") or "")
+    if not rpath or not target:
+        return False
+    norm_r = rpath.replace("\\", "/")
+    norm_t = target.replace("\\", "/")
+    return norm_r == norm_t or norm_r.endswith("/" + norm_t) or norm_t.endswith("/" + norm_r)
+
+
+def _label_same_file_callers(rows: list[dict[str, Any]], target: str) -> list[dict[str, Any]]:
+    labelled: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        if _same_file_row(item, target):
+            item["self"] = True
+        labelled.append(item)
+    return labelled
+
+
+_EDGE_TABLES_HINT = (
+    "There is no 'edges' table. Graph relationships live in "
+    "CALLS, EXTENDS, IMPORTS, HAS_METHOD, and METHOD_CALLS "
+    "(query those tables, or use GRAPH_TABLE MATCH)."
+)
+
+
+def _query_error_message(sql: str, exc: BaseException) -> str:
+    raw = str(exc)
+    lowered = raw.lower()
+    mentions_missing = any(token in lowered for token in ("pg_views", "does not exist", "catalog"))
+    asks_edges = bool(re.search(r"\bfrom\s+edges\b", sql, re.I))
+    if mentions_missing or asks_edges:
+        return f"{raw} {_EDGE_TABLES_HINT}"
+    return raw
 
 
 def _config_consumers(store: Any, file_id: str) -> list[dict[str, Any]]:
@@ -1496,6 +1561,8 @@ def _tool_impact(
     )
 
     config_consumers = _config_consumers(store, file_id)
+    callers = _label_same_file_callers(callers, target)
+    method_callers = _label_same_file_callers(method_callers, target)
 
     language = language_for_path(target)
     result_count = len(flat_importers) + len(callers) + len(method_callers) + len(config_consumers)
@@ -2423,7 +2490,11 @@ def _tool_find_studies(
     store: Any, arguments: dict[str, Any], meta: dict[str, Any]
 ) -> dict[str, Any]:
     """Composite: search studies by topic and/or outcome."""
-    from agentscaffold.review.queries import get_studies_by_outcome, get_studies_by_tags
+    from agentscaffold.review.queries import (
+        get_studies_by_outcome,
+        get_studies_by_tags,
+        get_studies_by_title_tokens,
+    )
 
     topic = arguments.get("topic", "")
     outcome = arguments.get("outcome")
@@ -2432,6 +2503,12 @@ def _tool_find_studies(
     results: list[dict[str, Any]] = []
     if topic:
         results = get_studies_by_tags(store, [topic], **scope)
+        title_hits = get_studies_by_title_tokens(store, topic, **scope)
+        existing_ids = {r.get("s.studyId") for r in results}
+        for hit in title_hits:
+            if hit.get("s.studyId") not in existing_ids:
+                results.append(hit)
+                existing_ids.add(hit.get("s.studyId"))
 
     if outcome:
         outcome_results = get_studies_by_outcome(store, outcome, **scope)

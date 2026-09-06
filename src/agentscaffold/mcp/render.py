@@ -111,6 +111,7 @@ def format_context_markdown(
     config_consumers: list[dict[str, Any]] | None = None,
     bases: list[dict[str, Any]] | None = None,
     subclasses: list[dict[str, Any]] | None = None,
+    methods: list[dict[str, Any]] | None = None,
 ) -> str:
     """Render a markdown summary of a symbol and its call relationships."""
     method_callers = method_callers or []
@@ -143,15 +144,24 @@ def format_context_markdown(
             loc_bit = f" — `{loc_s}`" if loc_s else ""
             lines.append(f"- `{label}`{depth_bit}{loc_bit}")
 
-    lines.append(_section_header("Callers", callers))
-    lines.extend(_bullet_list(callers, show_confidence=True))
+    if methods is not None:
+        lines.append(f"\n### Methods ({len(methods)})")
+        if methods:
+            lines.extend(_bullet_list(methods))
+        else:
+            lines.append("- none recorded")
 
-    if method_callers:
-        lines.append(_section_header("Method callers", method_callers))
-        lines.extend(_bullet_list(method_callers, show_confidence=True))
-
-    lines.append(_section_header("Callees", callees))
-    lines.extend(_bullet_list(callees, show_confidence=True))
+    show_call_graph = methods is None or callers or callees or method_callers
+    if show_call_graph:
+        if methods is None or callers:
+            lines.append(_section_header("Callers", callers))
+            lines.extend(_bullet_list(callers, show_confidence=True))
+        if method_callers:
+            lines.append(_section_header("Method callers", method_callers))
+            lines.extend(_bullet_list(method_callers, show_confidence=True))
+        if methods is None or callees:
+            lines.append(_section_header("Callees", callees))
+            lines.extend(_bullet_list(callees, show_confidence=True))
 
     if config_consumers:
         lines.append(f"\n### Config references ({len(config_consumers)})")

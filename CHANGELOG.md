@@ -9,6 +9,15 @@ introduce additive features and small behavior changes).
 ## [Unreleased]
 
 ### Fixed
+- **Code-intel and governance retrieval tell the truth on a parsed repo.**
+  Class context lists `HAS_METHOD` rows (`methods` / `method_count`).
+  Function context drops self-CALLS (same name and filePath). Impact
+  same-file callers are labelled `self: true`. `scaffold_query` errors
+  name `CALLS` / `EXTENDS` / `IMPORTS` instead of `pg_views`. Finding
+  search hits use finding text as `name` and `plan::<n>` as `path`.
+  `find_studies` matches title tokens as well as tags. ADR ingest
+  accepts `**Status**` / `**Date**`. Symbol spot-checks skip Title-case
+  prose (`Added`, `Listed`).
 - **Review and validate checks no longer certify absence as a pass.**
   TEST_COVERAGE / `test_delta` look on disk for `test_<stem>.py` when
   `tests/` is not in the graph. Layers with a thin mapped subset

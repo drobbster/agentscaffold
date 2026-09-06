@@ -11,6 +11,7 @@ dicts use the dot-qualified convention (e.g. ``"a.path"``).
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from agentscaffold.graph.query_compat import ql, ql_scalar, sql_escape
@@ -720,6 +721,39 @@ def get_studies_by_tags(
 ) -> list[dict[str, Any]]:
     """Return studies matching any of the given tags (substring match on tags field)."""
     sql_conditions = " OR ".join(f"CONTAINS(tags, '{t}')" for t in tags)
+    resolved = _resolve_scope(project, all_projects)
+    scope = _sql_scope(resolved, "AND")
+    return ql(
+        store,
+        sql=(
+            'SELECT studyId AS "s.studyId",'
+            ' title AS "s.title",'
+            ' status AS "s.status",'
+            ' outcome AS "s.outcome",'
+            ' confidence AS "s.confidence",'
+            ' tags AS "s.tags"'
+            f"{_provenance_select(resolved, 's')}"
+            f" FROM Study WHERE ({sql_conditions}){scope}"
+            " ORDER BY started DESC"
+        ),
+    )
+
+
+_TITLE_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}")
+
+
+def get_studies_by_title_tokens(
+    store: GraphBackend,
+    topic: str,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
+    """Return studies whose title contains any token from *topic* (OR)."""
+    tokens = [t.lower() for t in _TITLE_TOKEN_RE.findall(topic) if len(t) >= 3]
+    if not tokens:
+        return []
+    sql_conditions = " OR ".join(f"CONTAINS(lower(title), '{sql_escape(t)}')" for t in tokens)
     resolved = _resolve_scope(project, all_projects)
     scope = _sql_scope(resolved, "AND")
     return ql(
