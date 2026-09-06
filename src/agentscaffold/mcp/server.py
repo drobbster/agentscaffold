@@ -2287,38 +2287,9 @@ def _tool_prepare_retro(
 
 def _parse_workflow_state(root: Path, config: Any) -> dict[str, Any]:
     """Live-parse workflow_state.md for current project status."""
-    if config and hasattr(config, "graph"):
-        ws_path = root / config.graph.workflow_state_file
-    else:
-        ws_path = root / "docs" / "ai" / "state" / "workflow_state.md"
+    from agentscaffold.mcp.workflow_state import parse_workflow_file
 
-    if not ws_path.is_file():
-        return {"error": "workflow_state.md not found", "path": str(ws_path)}
-
-    text = ws_path.read_text(errors="replace")
-    result: dict[str, Any] = {"path": str(ws_path)}
-
-    blockers_m = re.search(
-        r"^##\s+Blockers?\s*\n(.*?)(?=\n##\s|\Z)", text, re.MULTILINE | re.DOTALL
-    )
-    result["blockers"] = blockers_m.group(1).strip() if blockers_m else "None"
-
-    next_m = re.search(
-        r"^##\s+Next\s+Steps?\s*\n(.*?)(?=\n##\s|\Z)", text, re.MULTILINE | re.DOTALL
-    )
-    result["next_steps"] = next_m.group(1).strip() if next_m else "None"
-
-    current_m = re.search(
-        r"^##\s+Current\s+Implementation\s*\n(.*?)(?=\n##\s|\Z)", text, re.MULTILINE | re.DOTALL
-    )
-    result["current_implementation"] = current_m.group(1).strip() if current_m else "None"
-
-    in_progress: list[str] = []
-    for m in re.finditer(r"Plan\s+(\d+).*?In\s*Progress", text, re.IGNORECASE):
-        in_progress.append(m.group(1))
-    result["in_progress_plans"] = in_progress
-
-    return result
+    return parse_workflow_file(root, config)
 
 
 def _tool_orient(
@@ -2427,6 +2398,16 @@ def _tool_orient(
         "next_action_focus": actions_payload.get("focus_plan"),
         "meta": meta,
     }
+    live = dict(workflow.get("workflow_live") or {})
+    live["focus_plan"] = actions_payload.get("focus_plan")
+    live["live_blocker_count"] = len(workflow.get("live_blockers") or [])
+    result["workflow_live"] = live
+    public_ws = {
+        key: value
+        for key, value in workflow.items()
+        if key not in {"live_blockers", "workflow_live"}
+    }
+    result["workflow_state"] = public_ws
     from agentscaffold.graph.sessions import get_session_context
 
     session_ctx = get_session_context(store, project=_current_project_or_none())
