@@ -426,6 +426,7 @@ def get_all_plans(
         sql=(
             'SELECT number AS "p.number", title AS "p.title",'
             ' status AS "p.status", planType AS "p.planType",'
+            ' filePath AS "p.filePath",'
             ' createdDate AS "p.createdDate", lastUpdated AS "p.lastUpdated"'
             f" FROM Plan{scope} ORDER BY number DESC"
         ),

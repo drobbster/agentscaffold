@@ -1,4 +1,4 @@
-"""Session next-action router for MCP agents (Plan 246)."""
+"""Session next-action router for MCP agents (Plan 246 / 266)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from agentscaffold.mcp.plan_card import build_plan_card
+from agentscaffold.mcp.workflow_state import blockers_that_name_focus
 from agentscaffold.review.filters import normalize_plan_status
 
 
@@ -24,7 +25,7 @@ def next_actions(
     actions: list[dict[str, Any]] = []
     meta = meta or {}
 
-    # Prefer explicit plan, else first in-progress from workflow, else newest draft/in-progress
+    # Prefer explicit plan, else first live focus from workflow, else newest draft/in-progress
     target_pn = plan_number
     if target_pn is None:
         in_prog = workflow.get("in_progress_plans") or []
@@ -46,20 +47,22 @@ def next_actions(
     if target_pn is not None:
         card = build_plan_card(store, int(target_pn), root=root, plan_row=plan)
 
-    blockers = (workflow.get("blockers") or "").strip()
-    if blockers and blockers.lower() not in {"none", "n/a", "-"}:
+    live_blockers = workflow.get("live_blockers")
+    if live_blockers is None:
+        live_blockers = blockers_that_name_focus(workflow.get("blockers") or "", target_pn)
+    if live_blockers:
         actions.append(
             {
                 "priority": 1,
                 "action": "Resolve workflow blockers before new implementation.",
                 "tool": "scaffold_orient",
                 "arguments": {},
-                "rationale": "workflow_state reports active blockers",
+                "rationale": "workflow_state reports a live blocker that names the focus plan",
             }
         )
 
     if card:
-        status = card.get("status_normalized")
+        status = _routing_status(card)
         if status in {"Draft", "Review"}:
             actions.append(
                 {
@@ -107,7 +110,7 @@ def next_actions(
                 }
             )
 
-    if meta.get("retrieval_status") == "degraded":
+    if _unexpected_retrieval_degradation(meta):
         actions.append(
             {
                 "priority": 3,
@@ -137,6 +140,29 @@ def next_actions(
         "actions": actions,
         "action_count": len(actions),
     }
+
+
+def _routing_status(card: dict[str, Any]) -> str:
+    """Normalize status, inferring from Execution Steps when metadata is missing."""
+    status = card.get("status_normalized") or "Unknown"
+    if status != "Unknown":
+        return status
+    unchecked = int(card.get("unchecked_steps") or 0)
+    checked = int(card.get("checked_steps") or 0)
+    if unchecked > 0 and checked > 0:
+        return "In Progress"
+    if unchecked > 0 and checked == 0:
+        return "Draft"
+    if unchecked == 0 and checked > 0:
+        return "Complete"
+    return "Unknown"
+
+
+def _unexpected_retrieval_degradation(meta: dict[str, Any]) -> bool:
+    if meta.get("retrieval_status") != "degraded":
+        return False
+    policy = str(meta.get("embedding_policy") or "").strip().lower()
+    return policy != "off"
 
 
 def _parse_plan_ref(value: Any) -> int | None:

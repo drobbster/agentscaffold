@@ -44,6 +44,12 @@ def test_normalize_plan_status():
     assert normalize_plan_status("COMPLETE") == "Complete"
     assert normalize_plan_status("Complete; 144-F control-plane done") == "Complete"
     assert normalize_plan_status("COMPLETE (2026-07-09)") == "Complete"
+    assert (
+        normalize_plan_status(
+            "COMPLETE (post-implementation review in section 14; CI green on 968c44c6)"
+        )
+        == "Complete"
+    )
     assert normalize_plan_status("In Progress") == "In Progress"
     assert normalize_plan_status("Draft") == "Draft"
     assert normalize_plan_status("SUPERSEDED") == "Superseded"

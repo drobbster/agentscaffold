@@ -21,20 +21,42 @@ _SUMMARY_LIST_CAPS: dict[str, int] = {
 
 _SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
+_SUMMARY_WORKFLOW_CHARS = 2000
+_FULL_WORKFLOW_CHARS = 8000
+_WORKFLOW_PROSE_KEYS = ("blockers", "next_steps", "current_implementation")
+
 
 def apply_detail(payload: dict[str, Any], detail: str | None) -> dict[str, Any]:
     """Trim list-heavy fields when ``detail=summary`` (default).
 
     Plan 247: challenges/gaps/open_findings are severity-sorted before capping
     so summary keeps the highest-value routing signals.
+    Plan 266: cap workflow_state prose so a diary file is not a session dump.
     """
     mode = (detail or "summary").strip().lower()
     payload = dict(payload)
     payload["detail"] = "full" if mode == "full" else "summary"
     if mode == "full":
-        return payload
+        return _cap_workflow_prose(payload, _FULL_WORKFLOW_CHARS)
+    return _cap_workflow_prose(_trim(payload), _SUMMARY_WORKFLOW_CHARS)
 
-    return _trim(payload)
+
+def _cap_workflow_prose(payload: dict[str, Any], limit: int) -> dict[str, Any]:
+    workflow = payload.get("workflow_state")
+    if not isinstance(workflow, dict):
+        return payload
+    capped = dict(workflow)
+    truncated: dict[str, int] = {}
+    for key in _WORKFLOW_PROSE_KEYS:
+        value = capped.get(key)
+        if isinstance(value, str) and len(value) > limit:
+            truncated[key] = len(value) - limit
+            capped[key] = value[:limit]
+    out = dict(payload)
+    out["workflow_state"] = capped
+    if truncated:
+        out["workflow_state_truncated"] = truncated
+    return out
 
 
 def _sev_key(item: Any) -> int:

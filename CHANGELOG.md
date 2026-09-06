@@ -8,6 +8,17 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Fixed
+- **`scaffold_orient` is a session router again on diary-style
+  `workflow_state.md`.** Focus comes from Current Implementation (`Next on
+  Plan N`), not the first historical "In Progress" sentence. Standing
+  Blockers escalate only when they name the focus plan. `plan_card`
+  refetches `filePath` when `get_all_plans` omitted it. Status normalize
+  uses the leftmost token. Embeddings `policy_off` is not a next action.
+  Summary caps workflow prose at 2,000 characters and adds `workflow_live`.
+  `Next on` / `Next:` are the only live Next-on forms (`Next week Plan N`
+  is not).
+
 ## [0.11.0] - 2026-09-05
 
 **Upgrade action required.** Run `scaffold agents generate-all` so the managed

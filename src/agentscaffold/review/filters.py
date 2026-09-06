@@ -110,10 +110,16 @@ def normalize_plan_status(raw: str | None) -> str:
     lowered = raw.strip().lower()
     if not lowered or lowered == "unknown":
         return "Unknown"
+    best_pos: int | None = None
+    best: str | None = None
     for token, canonical in _STATUS_CANON:
-        if token in lowered:
-            return canonical
-    return "Unknown"
+        pos = lowered.find(token)
+        if pos == -1:
+            continue
+        if best_pos is None or pos < best_pos:
+            best_pos = pos
+            best = canonical
+    return best or "Unknown"
 
 
 def recover_plan_date(date_field: str | None, status: str | None = None) -> str:
