@@ -925,6 +925,7 @@ def get_all_adrs(
             ' title AS "a.title",'
             ' status AS "a.status",'
             ' date AS "a.date",'
+            ' filePath AS "a.filePath",'
             ' supersededBy AS "a.supersededBy"'
             f"{_provenance_select(resolved, 'a')}"
             f" FROM ADR{scope} ORDER BY number"

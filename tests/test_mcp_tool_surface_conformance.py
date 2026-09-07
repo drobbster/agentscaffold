@@ -243,14 +243,105 @@ def test_code_tools_can_be_retargeted_and_federated(name):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="C1 (intent map) is completed by Plan 251, Phase E")
 def test_c1_intent_map_is_derived_from_the_registry():
-    raise AssertionError("declared but not implemented here")
+    from agentscaffold.mcp.intents import INTENT_PHRASES, assert_intent_coverage
+
+    names = set(tool_names())
+    assert names == set(INTENT_PHRASES)
+    assert_intent_coverage(list(tool_names()))
+    specs = {spec.name: spec.intents for spec in tool_specs()}
+    for name in names:
+        assert name in specs
+        assert list(specs[name]) == list(INTENT_PHRASES[name])
 
 
-@pytest.mark.skip(reason="C3 (scope stamp) is completed by Plan 251, Phase E")
-def test_c3_every_response_carries_a_scope_stamp():
-    raise AssertionError("declared but not implemented here")
+def test_c3_every_response_carries_a_scope_stamp(two_project_workspace):
+    from agentscaffold.doctor_tools import _arguments_for
+    from agentscaffold.mcp.registry import WRITE_TOOLS
+    from agentscaffold.mcp.server import _dispatch_tool
+
+    ws = two_project_workspace
+    working = ws.source_file(ws.alpha_name)
+    diary = {"stats", "hot_files", "recent_plans", "recent_studies", "active_adrs"}
+    # begin/complete still run the review chain under dry_run; they share
+    # `_resolution_meta` with every other tool, so the cheap tools prove the stamp.
+    skip_expensive = {"scaffold_begin_plan", "scaffold_complete_plan"}
+    for spec in tool_specs():
+        if spec.name in skip_expensive:
+            continue
+        arguments = _arguments_for(spec.name, working)
+        if spec.name in WRITE_TOOLS:
+            arguments["dry_run"] = True
+        payload = _dispatch_tool(spec.name, arguments)
+        meta = payload.get("meta") or {}
+        assert "guidance_rule_path" in meta, f"{spec.name} meta lacks C3 stamp: {payload}"
+        assert "guidance_is_generated" in meta, f"{spec.name} meta lacks C3 stamp"
+        path = meta.get("guidance_rule_path")
+        if path:
+            assert not str(path).startswith("/"), f"{spec.name} leaked absolute path: {path}"
+        if spec.name in {"scaffold_orient", "scaffold_projects"}:
+            guidance = payload.get("guidance") or {}
+            assert "guidance_rule_path" in guidance, f"{spec.name} lacks full guidance stamp"
+            assert diary.isdisjoint(guidance)
+
+
+def test_c5_unscopeable_call_returns_ambiguous_project(
+    two_project_workspace, monkeypatch: pytest.MonkeyPatch
+):
+    """Existing 249+257 resolver. Do not invent a second one."""
+    import agentscaffold.mcp.server as server_mod
+    from agentscaffold.mcp.server import _dispatch_tool
+
+    bare = two_project_workspace.root / "not-a-project"
+    bare.mkdir(exist_ok=True)
+    monkeypatch.setattr(server_mod, "_effective_mcp_root", lambda *a, **k: bare)
+    payload = _dispatch_tool("scaffold_orient", {})
+    assert payload.get("error_code") == "ambiguous_project"
+    assert sorted(payload.get("candidates") or []) == sorted(two_project_workspace.names)
+
+
+def test_c10_live_envelopes_from_probe_samples(two_project_workspace):
+    from agentscaffold.doctor_tools import _arguments_for
+    from agentscaffold.mcp.output_envelope import intersect_keys, validate_envelope
+    from agentscaffold.mcp.registry import WRITE_TOOLS
+    from agentscaffold.mcp.server import _dispatch_tool
+
+    ws = two_project_workspace
+    working = ws.source_file(ws.alpha_name)
+    for spec in tool_specs():
+        if spec.name in WRITE_TOOLS:
+            continue
+        arguments = _arguments_for(spec.name, working)
+        first = _dispatch_tool(spec.name, arguments)
+        second = _dispatch_tool(spec.name, arguments)
+        required = intersect_keys([first, second])
+        assert "stats" not in required
+        assert not validate_envelope(first, required), spec.name
+        assert not validate_envelope(second, required), spec.name
+
+
+def test_c10_orient_summary_and_full_are_two_envelopes(two_project_workspace):
+    from agentscaffold.mcp.output_envelope import intersect_keys, validate_envelope
+    from agentscaffold.mcp.server import _dispatch_tool
+
+    ws = two_project_workspace
+    working = str(ws.source_file(ws.alpha_name))
+    summary = _dispatch_tool("scaffold_orient", {"working_path": working, "detail": "summary"})
+    full = _dispatch_tool("scaffold_orient", {"working_path": working, "detail": "full"})
+    summary_req = intersect_keys([summary])
+    full_req = intersect_keys([full])
+    assert "stats" not in summary_req
+    assert not validate_envelope(summary, summary_req)
+    assert not validate_envelope(full, full_req)
+    for key in ("stats", "hot_files", "recent_plans", "recent_studies", "active_adrs"):
+        assert key not in summary
+
+
+def test_c10_missing_required_key_fails_validation():
+    from agentscaffold.mcp.output_envelope import validate_envelope
+
+    errors = validate_envelope({"meta": {}}, frozenset({"plan_number"}))
+    assert errors == ["missing plan_number"]
 
 
 @pytest.mark.skip(

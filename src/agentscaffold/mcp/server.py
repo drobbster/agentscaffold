@@ -46,256 +46,10 @@ _MCP_EXTRAS_MSG = "MCP server requires extra dependencies: pip install agentscaf
 # decide what it may safely run, and a second copy would drift.
 _GRAPH_WRITE_TOOLS: frozenset[str] = WRITE_TOOLS
 
-# ---------------------------------------------------------------------------
-# Intent metadata: single source of truth for semantic mapping.
-# Platform rule generators (cursor, windsurf, claude) read from this dict.
-# ---------------------------------------------------------------------------
+from agentscaffold.mcp.intents import intent_phrases
 
-TOOL_INTENTS: dict[str, list[str]] = {
-    "scaffold_prepare_review": [
-        "review plan X",
-        "critique plan X",
-        "devil's advocate on plan X",
-        "prepare plan X for review",
-        "let's review plan X",
-        "following the collab protocol for plan X",
-        "pre-reviews for plan X",
-        "all three reviews for plan X",
-        "pressure-test plan X",
-        "stress test plan X",
-        "challenge this plan before coding",
-    ],
-    "scaffold_prepare_implementation": [
-        "implement plan X",
-        "start plan X",
-        "execute plan X",
-        "begin implementation of plan X",
-        "what do I need to implement plan X",
-        "prep for implementing plan X",
-        "approved to go on plan X",
-        "begin implementation per collab protocol",
-        "start building plan X",
-        "begin building plan X",
-        "ready to build plan X",
-    ],
-    "scaffold_compare_plans": [
-        "does plan X conflict with plan Y",
-        "overlap between plans",
-        "check plan X vs plan Y",
-        "compare plans X and Y",
-        "any overlapping concerns between plan X and Y",
-        "do plans X and Y overlap",
-        "check for conflicts between X and Y",
-        "do these plans step on each other",
-        "are these plans stepping on each other",
-    ],
-    "scaffold_staleness_check": [
-        "is plan X stale",
-        "is this plan still valid",
-        "is plan X still valid",
-        "staleness review on plan X",
-        "has anything changed since plan X",
-        "does plan X need updating",
-        "check if plan X needs refactoring",
-        "has this plan gone out of date",
-        "is this plan out of date",
-    ],
-    "scaffold_prepare_rewrite": [
-        "rewrite plan X",
-        "update plan X",
-        "expand plan X",
-        "refresh plan X with current state",
-        "revise plan X",
-        "update plan X to use Y",
-    ],
-    "scaffold_prepare_retro": [
-        "retro on plan X",
-        "retrospective for plan X",
-        "post-implementation review",
-        "quant architect review on plan X",
-        "post implementation review and retro for plan X",
-        "share the review and retro",
-        "post implementation retrospective",
-        "let's do the post-implementation retrospective",
-    ],
-    "scaffold_orient": [
-        "where did we leave off",
-        "what's the current state",
-        "what's blocked",
-        "what are the next steps",
-        "where are we",
-        "what should I work on now",
-        "what are the next priorities",
-        "latest blockers and what's next",
-        "current blockers and next steps",
-    ],
-    "scaffold_session_start": [
-        "start a working session",
-        "open a scaffold session",
-        "begin recording this session",
-        "start session tracking",
-    ],
-    "scaffold_session_end": [
-        "end this session",
-        "close the working session",
-        "end session with summary",
-        "close this working session",
-    ],
-    "scaffold_session_record_decision": [
-        "record this decision",
-        "log a session decision",
-        "note a strategic decision",
-        "record this architectural call",
-        "capture this operational decision",
-    ],
-    "scaffold_session_context": [
-        "recent session context",
-        "show session context",
-    ],
-    "scaffold_session_list": [
-        "list sessions",
-        "show recent sessions",
-        "list working sessions",
-    ],
-    "scaffold_find_studies": [
-        "any studies on X",
-        "experiments related to X",
-        "what did we test for X",
-        "show me studies about X",
-        "prior experiments about X",
-        "any prior experiments about X",
-    ],
-    "scaffold_prior_experiments": [
-        "has this been tested",
-        "prior experiments for plan X",
-        "any evidence for this approach",
-        "what experiments relate to plan X",
-    ],
-    "scaffold_find_adrs": [
-        "any ADRs about X",
-        "what architectural decisions cover X",
-        "show me ADRs related to storage",
-        "which ADR governs X",
-        "what ADR blocks plan X",
-        "the ADR blocking them",
-        "which architecture decision governs X",
-        "what architecture decision governs X",
-    ],
-    "scaffold_decision_context": [
-        "what's the decision history for plan X",
-        "was there a spike for plan X",
-        "what ADR governs plan X",
-        "show me the full decision chain for plan X",
-        "what was the original intent for plan X",
-        "trace the decisions for plan X",
-        "trace the rationale chain for plan X",
-        "why was this plan decided this way",
-    ],
-    "scaffold_search": [
-        "search the workspace for X",
-        "search across all projects for X",
-        "find code related to X",
-        "find duplicates across projects",
-        "look for duplicate code in the workspace",
-        "search all projects for similar implementations",
-        "look across every project for similar implementations",
-    ],
-    "scaffold_record_finding": [
-        "record finding",
-        "log finding",
-        "note a finding",
-        "discovered issue in plan",
-        "review found an issue",
-        "I found an issue in plan X",
-        "log this review finding",
-        "capture this finding",
-    ],
-    "scaffold_resolve_finding": [
-        "mark finding resolved",
-        "close finding",
-        "fix has been addressed",
-        "resolved finding",
-        "finding has been closed",
-        "mark this issue as resolved",
-        "resolve this finding",
-        "finding is resolved",
-    ],
-    "scaffold_record_findings_batch": [
-        "record all findings",
-        "log all findings",
-        "record findings batch",
-        "record multiple findings",
-        "save all review findings",
-        "batch record findings",
-        "record findings in the plan appendix",
-        "log these findings",
-        "capture all findings",
-        "write all findings to graph",
-    ],
-    "scaffold_record_backlog_item": [
-        "add backlog item",
-        "record backlog item",
-        "log backlog item",
-        "add to backlog",
-        "create backlog item",
-        "note backlog item",
-        "track backlog item",
-    ],
-    "scaffold_resolve_backlog_item": [
-        "resolve backlog item",
-        "close backlog item",
-        "mark backlog item done",
-        "complete backlog item",
-        "archive backlog item",
-        "mark backlog item complete",
-        "backlog item is done",
-    ],
-    "scaffold_begin_plan": [
-        "begin plan X",
-        "start plan X",
-        "kick off plan X",
-        "let's start implementation of plan X",
-        "run the pre-reviews for plan X",
-        "follow the collab protocol to begin plan X",
-        "pre-review chain for plan X",
-        "run begin plan for plan X",
-    ],
-    "scaffold_complete_plan": [
-        "wrap up plan X",
-        "complete plan X",
-        "post-implementation for plan X",
-        "close out plan X",
-        "run the retro for plan X",
-        "follow the collab protocol to close plan X",
-        "run complete plan for plan X",
-        "finish plan X",
-    ],
-    "scaffold_diff_plan_vs_code": [
-        "diff plan X vs code",
-        "what's left on plan X",
-        "plan vs implementation for plan X",
-        "which planned files are missing",
-        "mid-implementation progress on plan X",
-    ],
-    "scaffold_grep_graph": [
-        "grep the workspace for X",
-        "ripgrep for X in the project",
-        "text search the repo for X",
-        "scaffold grep for X",
-    ],
-    "scaffold_why_empty": [
-        "why is search empty",
-        "why no callers",
-        "why empty impact",
-        "explain empty scaffold result",
-    ],
-    "scaffold_next_action": [
-        "what should I do next",
-        "next action",
-        "what tool should I call next",
-        "route me to the next step",
-    ],
-}
+# Back-compat alias; routing phrases live in mcp/intents.py (Plan 251 C1).
+TOOL_INTENTS = intent_phrases()
 
 _ROUTING_STOPWORDS = {
     "a",
@@ -400,6 +154,8 @@ _REQUIRED_STRING_ARGS: dict[str, tuple[str, ...]] = {
     "scaffold_search": ("query",),
     "scaffold_recall_governance": ("query",),
     "scaffold_grep_graph": ("pattern",),
+    "scaffold_find_studies": ("topic",),
+    "scaffold_find_adrs": ("topic",),
 }
 
 
@@ -824,8 +580,13 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
     if name == "scaffold_projects":
         from agentscaffold.mcp.projects import build_projects_payload
+        from agentscaffold.mcp.scope_stamp import compact_guidance_stamp, full_guidance_stamp
 
-        return build_projects_payload(resolution, restrict_to=_RESTRICT_TO or None)
+        payload = build_projects_payload(resolution, restrict_to=_RESTRICT_TO or None)
+        meta = payload.setdefault("meta", {})
+        meta.update(compact_guidance_stamp(resolution.root))
+        payload["guidance"] = full_guidance_stamp(resolution.root)
+        return payload
 
     # Project-scoped reads resolve their scope from "where we are", and this is
     # where the resolved project reaches them. It used to be os.chdir, which is
@@ -1119,6 +880,9 @@ def _resolution_meta(resolution: Any, arguments: dict[str, Any]) -> dict[str, An
     }
     if arguments.get("working_path") and source != ResolutionSource.WORKING_PATH.value:
         meta["working_path_unmatched"] = True
+    from agentscaffold.mcp.scope_stamp import compact_guidance_stamp
+
+    meta.update(compact_guidance_stamp(resolution.root))
     return meta
 
 
@@ -1864,6 +1628,23 @@ def _adr_is_active(raw_status: str | None) -> bool:
     return "supersed" not in s and "deprecat" not in s
 
 
+def _adr_matches_topic(adr: dict[str, Any], topic_lower: str) -> bool:
+    """Title first, then ADR file body when filePath is present (Plan 251 C6)."""
+    title = str(adr.get("a.title") or "")
+    if topic_lower in title.lower():
+        return True
+    raw_path = adr.get("a.filePath") or adr.get("filePath")
+    if not raw_path:
+        return False
+    path = Path(str(raw_path))
+    if not path.is_file():
+        return False
+    try:
+        return topic_lower in path.read_text(encoding="utf-8", errors="replace").lower()
+    except OSError:
+        return False
+
+
 def _empty_graph_warning(stats: dict[str, Any]) -> str | None:
     """Return a warning string when the graph looks empty, else None (Plan 239).
 
@@ -2525,6 +2306,9 @@ def _tool_orient(
         compact = compact_session_context(open_session)
         if compact:
             result["session_context"] = compact
+    from agentscaffold.mcp.scope_stamp import full_guidance_stamp
+
+    result["guidance"] = full_guidance_stamp(root)
     return apply_detail(result, arguments.get("detail"))
 
 
@@ -2538,7 +2322,9 @@ def _tool_find_studies(
         get_studies_by_title_tokens,
     )
 
-    topic = arguments.get("topic", "")
+    topic = arguments.get("topic")
+    if not (isinstance(topic, str) and topic.strip()):
+        return {"error": "topic is required.", "missing_argument": "topic", "meta": meta}
     outcome = arguments.get("outcome")
     scope = _scope_args(arguments)
 
@@ -2593,6 +2379,24 @@ def _tool_prior_experiments(
     if pn is None:
         return {"error": "plan_number is required.", "meta": meta}
 
+    from agentscaffold.review.queries import get_plan_by_number
+
+    plan = get_plan_by_number(store, int(pn))
+    if plan is None:
+        return {
+            "plan_number": pn,
+            "error": f"Plan {pn} not found.",
+            "why_empty": (
+                "No plan with that number exists in this project. "
+                "This is not the same as a plan that has no experiments."
+            ),
+            "directly_referenced": [],
+            "file_overlap_studies": [],
+            "total_count": 0,
+            "overlap_noise_filtered_count": 0,
+            "meta": meta,
+        }
+
     direct = get_studies_for_plan(store, pn)
 
     configured = getattr(getattr(config, "graph", None), "overlap_noise_paths", None)
@@ -2627,16 +2431,15 @@ def _tool_find_adrs(store: Any, arguments: dict[str, Any], meta: dict[str, Any])
     """Composite: search ADRs by topic keyword and/or status."""
     from agentscaffold.review.queries import get_all_adrs
 
-    topic = arguments.get("topic", "")
+    topic = arguments.get("topic")
+    if not (isinstance(topic, str) and topic.strip()):
+        return {"error": "topic is required.", "missing_argument": "topic", "meta": meta}
     status_filter = arguments.get("status")
     scope = _scope_args(arguments)
 
     all_adrs = get_all_adrs(store, **scope)
-    results = all_adrs
-
-    if topic:
-        topic_lower = topic.lower()
-        results = [a for a in results if topic_lower in a.get("a.title", "").lower()]
+    topic_lower = topic.lower()
+    results = [a for a in all_adrs if _adr_matches_topic(a, topic_lower)]
 
     if status_filter:
         status_lower = status_filter.lower()
@@ -2730,6 +2533,13 @@ def _tool_decision_context(
     }
 
 
+def _dry_run_write(meta: dict[str, Any], **preview: Any) -> dict[str, Any]:
+    """Shared dry_run payload for write tools that previously lacked it."""
+    payload = {"dry_run": True, "would_write": True, "meta": meta}
+    payload.update(preview)
+    return payload
+
+
 def _tool_record_finding(
     store: Any, arguments: dict[str, Any], meta: dict[str, Any]
 ) -> dict[str, Any]:
@@ -2746,6 +2556,9 @@ def _tool_record_finding(
             "error": "plan_number, review_type, category, and finding are required.",
             "meta": meta,
         }
+
+    if arguments.get("dry_run"):
+        return _dry_run_write(meta, plan_number=int(plan_number), review_type=review_type)
 
     result = record_finding(
         store,
@@ -2775,6 +2588,9 @@ def _tool_resolve_finding(
 
     if not finding_id or not resolution:
         return {"error": "finding_id and resolution are required.", "meta": meta}
+
+    if arguments.get("dry_run"):
+        return _dry_run_write(meta, finding_id=finding_id)
 
     result = resolve_finding(
         store,
@@ -2854,6 +2670,11 @@ def _tool_record_findings_batch(
     if not isinstance(findings, list):
         return {"error": "'findings' must be a list.", "meta": meta}
 
+    if arguments.get("dry_run"):
+        return _dry_run_write(
+            meta, plan_number=int(plan_number), would_write_count=len(findings)
+        )
+
     result = record_findings_batch(
         store,
         plan_number=int(plan_number),
@@ -2883,6 +2704,10 @@ def _tool_record_backlog_item(
         # Batch mode
         if not isinstance(items, list):
             return {"error": "'items' must be a list.", "meta": meta}
+        if arguments.get("dry_run"):
+            return _dry_run_write(
+                meta, plan_number=int(plan_number), would_write_count=len(items)
+            )
         result = record_backlog_items_batch(
             store,
             plan_number=int(plan_number),
@@ -2896,6 +2721,9 @@ def _tool_record_backlog_item(
     title = arguments.get("title", "")
     if not title:
         return {"error": "Either 'items' (array) or 'title' (string) is required.", "meta": meta}
+
+    if arguments.get("dry_run"):
+        return _dry_run_write(meta, plan_number=int(plan_number), title=title)
 
     result = record_backlog_item(
         store,
@@ -2920,6 +2748,9 @@ def _tool_resolve_backlog_item(
     item_id = arguments.get("item_id", "")
     if not item_id:
         return {"error": "item_id is required.", "meta": meta}
+
+    if arguments.get("dry_run"):
+        return _dry_run_write(meta, item_id=item_id)
 
     result = resolve_backlog_item(
         store,
@@ -3369,6 +3200,9 @@ def _tool_session_start(
     """Start or reuse the open working session."""
     from agentscaffold.graph.sessions import get_session, start_session
 
+    if arguments.get("dry_run"):
+        return _dry_run_write(meta, plan_numbers=arguments.get("plan_numbers") or [])
+
     session_id = start_session(
         store,
         plan_numbers=arguments.get("plan_numbers") or None,
@@ -3387,6 +3221,8 @@ def _tool_session_record_decision(
     decision = (arguments.get("decision") or "").strip()
     if not decision:
         return {"error": "decision is required.", "meta": meta}
+    if arguments.get("dry_run"):
+        return _dry_run_write(meta, decision=decision, kind=arguments.get("kind") or "operational")
     result = record_decision(
         store,
         decision=decision,
@@ -3407,6 +3243,9 @@ def _tool_session_end(
 ) -> dict[str, Any]:
     """Close a working session."""
     from agentscaffold.graph.sessions import end_session
+
+    if arguments.get("dry_run"):
+        return _dry_run_write(meta, session_id=arguments.get("session_id") or "")
 
     result = end_session(
         store,

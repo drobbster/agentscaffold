@@ -121,9 +121,14 @@ def test_checks_are_registered_rather_than_hardcoded(state_home: Path):
 
     names = [check.name for check in CHECKS]
     assert len(names) == len(set(names)), "check names must be unique"
-    assert {"registry", "guidance", "mcp_registration", "version_skew", "state_location"} <= set(
-        names
-    )
+    assert {
+        "registry",
+        "guidance",
+        "guidance_ignored",
+        "mcp_registration",
+        "version_skew",
+        "state_location",
+    } <= set(names)
 
 
 def test_strict_exits_non_zero_when_something_is_wrong(

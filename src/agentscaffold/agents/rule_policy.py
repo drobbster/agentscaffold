@@ -267,16 +267,26 @@ def _governance_guardrails_lines(config: ScaffoldConfig) -> list[str]:
 
 
 def _intent_map_lines(quote_intents: bool) -> list[str]:
-    from agentscaffold.mcp.server import TOOL_INTENTS
+    from agentscaffold.mcp.intents import assert_intent_coverage, intent_phrases
+    from agentscaffold.mcp.registry import tool_names
 
+    names = list(tool_names())
+    assert_intent_coverage(names)
     lines: list[str] = []
-    for tool_name, intents in TOOL_INTENTS.items():
+    for tool_name in names:
+        intents = intent_phrases().get(tool_name, [])
         lines.append(f"### {tool_name}")
         lines.append("")
         note = _INTENT_NOTES.get(tool_name)
         if note:
             lines.append(f"Note: {note}")
             lines.append("")
+        if not intents:
+            lines.append(
+                "Trigger phrases: none (situational only; empty list is an explicit waiver)."
+            )
+            lines.append("")
+            continue
         lines.append("Trigger phrases:")
         for intent in intents:
             if quote_intents:

@@ -28,13 +28,14 @@ class ToolSpec:
     name: str
     description: str
     input_schema: dict[str, Any]
+    intents: tuple[str, ...] = ()
 
 
 #: Advertised on every object-schema tool by :func:`tool_specs`.
 #:
 #: Per-call project scoping exists because the server runs from one fixed
 #: directory and cannot infer which project the agent is editing. Declaring it
-#: centrally keeps the 31 schemas from each having to remember it.
+#: centrally keeps the 36 schemas from each having to remember it.
 _WORKING_PATH_PROP = {
     "type": "string",
     "description": (
@@ -107,16 +108,26 @@ def tool_specs() -> list[ToolSpec]:
     Returns freshly-built specs so a caller that mutates a schema cannot affect
     the next caller.
     """
-    specs = _tool_specs()
-    for spec in specs:
+    from dataclasses import replace
+
+    from agentscaffold.mcp.intents import INTENT_PHRASES
+
+    specs = []
+    for spec in _tool_specs():
         apply_uniform_args(spec.input_schema)
+        apply_write_args(spec.name, spec.input_schema)
+        phrases = INTENT_PHRASES.get(spec.name)
+        if phrases is None:
+            specs.append(spec)
+            continue
+        specs.append(replace(spec, intents=tuple(phrases)))
     return specs
 
 
 def apply_uniform_args(schema: dict[str, Any] | None) -> dict[str, Any] | None:
     """Add the arguments every object-schema tool accepts, in place.
 
-    Declaring ``working_path`` here rather than in 31 schemas is the reason a
+    Declaring ``working_path`` here rather than in every schema is the reason a
     tool cannot be added without being scopeable. Left as a separate function so
     the edge cases stay directly testable: a caller that declared its own
     ``working_path`` keeps it, and a non-object schema is left alone rather than
@@ -127,6 +138,25 @@ def apply_uniform_args(schema: dict[str, Any] | None) -> dict[str, Any] | None:
     props = schema.setdefault("properties", {})
     if isinstance(props, dict):
         props.setdefault("working_path", dict(_WORKING_PATH_PROP))
+    return schema
+
+
+_DRY_RUN_PROP: dict[str, Any] = {
+    "type": "boolean",
+    "description": "When true, return the intended write without mutating the graph",
+    "default": False,
+}
+
+
+def apply_write_args(name: str, schema: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Add ``dry_run`` to every write tool that has an object schema."""
+    if name not in WRITE_TOOLS:
+        return schema
+    if not isinstance(schema, dict) or schema.get("type") != "object":
+        return schema
+    props = schema.setdefault("properties", {})
+    if isinstance(props, dict):
+        props.setdefault("dry_run", dict(_DRY_RUN_PROP))
     return schema
 
 
@@ -522,7 +552,10 @@ def _tool_specs() -> list[ToolSpec]:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "topic": {"type": "string", "description": "Keyword to search in ADR titles"},
+                    "topic": {
+                        "type": "string",
+                        "description": "Keyword to search in ADR title and body",
+                    },
                     "status": {
                         "type": "string",
                         "description": "Filter by ADR status (e.g. Accepted)",

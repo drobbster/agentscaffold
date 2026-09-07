@@ -9,6 +9,21 @@ introduce additive features and small behavior changes).
 ## [Unreleased]
 
 ### Added
+- **MCP responses carry a C3 guidance stamp.** Every tool `meta` includes
+  `guidance_rule_path` and `guidance_is_generated`. `scaffold_orient` and
+  `scaffold_projects` also return a `guidance` object with copy paths.
+  Paths are workspace-relative. Plan 273 summary still omits diary keys
+  (`stats`, `hot_files`, `recent_plans`, `recent_studies`, `active_adrs`).
+  Clients that assert an exact top-level key set will need to allow the
+  new `guidance` object and stamp fields.
+- **Generated rule files open with an `@generated` banner** (generator,
+  workspace-relative source, content hash). `AGENTS.md` gets a create-if-absent
+  guidance pointer outside managed markers. `scaffold doctor` warns when
+  those files are gitignored; remediation is `.cursor/*` plus
+  `!.cursor/rules/`, not a file-level negation under a directory exclude.
+- **`dry_run` on every graph write tool.** begin/complete already had it;
+  record/resolve finding, record_findings_batch, record/resolve backlog,
+  and session start/end/record_decision now honour it too.
 - **`scaffold_orient` returns `session_brief`.** Current work, blockers
   for that work, related items, and idle-next come from an open Session
   and plan-file Status, not the Current Implementation table. Summary

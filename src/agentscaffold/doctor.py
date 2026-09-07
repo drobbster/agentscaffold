@@ -198,6 +198,29 @@ def check_guidance(context: DoctorContext) -> CheckResult:
     )
 
 
+def check_guidance_ignored(context: DoctorContext) -> CheckResult:
+    """Guidance files that git will not commit (Plan 251 Step 11).
+
+    A parent-directory exclude (``.cursor/``) cannot be undone by a file-level
+    negation. Remediation is directory-scoped: ``.cursor/*`` plus
+    ``!.cursor/rules/``.
+    """
+    from agentscaffold.rendering import GUIDANCE_IGNORE_REMEDIATION, ignored_guidance_files
+
+    ignored = ignored_guidance_files(context.project_root)
+    if not ignored:
+        return CheckResult(
+            status="ok",
+            summary="Generated guidance files are not gitignored.",
+        )
+    return CheckResult(
+        status="warn",
+        summary=f"{len(ignored)} guidance file(s) are ignored by git.",
+        details=[str(path) for path in ignored],
+        remediation=GUIDANCE_IGNORE_REMEDIATION,
+    )
+
+
 # ---------------------------------------------------------------------------
 # MCP registration
 # ---------------------------------------------------------------------------
@@ -645,6 +668,7 @@ CHECKS: list[Check] = [
     Check("registry", "Workspace registry", check_registry),
     Check("workspace_id", "Workspace identity", check_workspace_id),
     Check("guidance", "Routing guidance", check_guidance),
+    Check("guidance_ignored", "Guidance not gitignored", check_guidance_ignored),
     Check("agent_docs", "Agent document integrity", check_agent_docs),
     Check("mcp_registration", "MCP registration", check_mcp_registration),
     Check("version_skew", "Version skew", check_version_skew),

@@ -127,6 +127,11 @@ def test_a_tool_called_from_each_project_answers_about_that_project(workspace):
         )
         callees = [c.get("name") for c in (payload.get("callees") or [])]
         assert own_symbol in callees, f"asked from {name}, got {callees}"
+        meta = payload.get("meta") or {}
+        assert "guidance_rule_path" in meta, f"{name} response missing C3 stamp"
+        path = meta.get("guidance_rule_path")
+        if path:
+            assert not str(path).startswith("/"), f"{name} stamp leaked an absolute path"
 
 
 @pytest.mark.smoke
