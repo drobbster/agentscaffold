@@ -56,6 +56,22 @@ introduce additive features and small behavior changes).
   to refresh managed blocks.
 
 ### Fixed
+- **`scaffold_staleness_check` plan-card checkbox counts match the plan file.**
+  The card only reads Execution Steps when `root` is set. Diff, begin-plan,
+  and orient already passed the project root; staleness (and rewrite, which
+  clones it) did not, so a live plan could show `0/0` on staleness and
+  `17` checked on diff. It now passes `root=default_start()` at that call
+  site only.
+- **Contract-only overlap no longer marks a complete plan stale.** The MCP
+  pack contract is on the overlap-noise denylist with the other
+  governance hubs. Contract-only overlap is not stale; mixed overlap with
+  real code still is. Operators with a custom `graph.overlap_noise_paths`
+  list are unchanged (an explicit list replaces the defaults).
+- **`scaffold_orient` no longer lists the same backlog item twice.**
+  Qualified `project::bi::hex` and unqualified `bi::hex` rows collapse to
+  one id (qualified preferred). `open_backlog_count` uses the same unique
+  suffix. The fetch window is wider than three so a leading duplicate
+  pair does not starve the unique top-3.
 - **Code-intel and governance retrieval tell the truth on a parsed repo.**
   Class context lists `HAS_METHOD` rows (`methods` / `method_count`).
   Function context drops self-CALLS (same name and filePath). Impact

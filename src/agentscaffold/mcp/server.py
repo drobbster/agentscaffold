@@ -1587,6 +1587,66 @@ def _scope_echo(scope: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+_BACKLOG_TOP3_FETCH = 32
+
+
+def _unqualified_backlog_id(item_id: str) -> str:
+    """Collapse ``project::bi::hex`` and ``bi::hex`` to the same suffix."""
+    raw = str(item_id or "").strip()
+    if "::bi::" in raw:
+        return "bi::" + raw.rsplit("::bi::", 1)[-1]
+    return raw
+
+
+def _is_qualified_backlog_id(item_id: str) -> bool:
+    return "::bi::" in str(item_id or "")
+
+
+def _backlog_row_id(row: dict[str, Any]) -> str:
+    return str(row.get("id") or row.get("bi.id") or "")
+
+
+def _dedup_backlog_items(
+    rows: list[dict[str, Any]] | None,
+    *,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Keep one row per unqualified ``bi::`` suffix; prefer the qualified id.
+
+    First-seen order of the suffix is preserved so query priority order stays.
+    Fetch a wider window than the display limit so a leading duplicate pair
+    does not starve the unique top-N (Plan 274).
+    """
+    by_key: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for row in rows or []:
+        raw = _backlog_row_id(row)
+        key = _unqualified_backlog_id(raw)
+        if not key:
+            continue
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = row
+            order.append(key)
+            continue
+        existing_id = _backlog_row_id(existing)
+        if _is_qualified_backlog_id(raw) and not _is_qualified_backlog_id(existing_id):
+            by_key[key] = row
+    out = [by_key[k] for k in order]
+    if limit is not None:
+        return out[:limit]
+    return out
+
+
+def _unique_open_backlog_count(rows: list[dict[str, Any]] | None) -> int:
+    keys = {
+        _unqualified_backlog_id(str(row.get("id") or row.get("bi.id") or ""))
+        for row in (rows or [])
+    }
+    keys.discard("")
+    return len(keys)
+
+
 def _clean_out_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """Strip ``alias.`` prefixes from agent-facing tool output rows (Plan 238).
 
@@ -2057,6 +2117,7 @@ def _tool_staleness_check(
                     f"Study {s.get('s.studyId')} outcome '{outcome}' may contradict approach"
                 )
 
+    from agentscaffold.active_root import default_start
     from agentscaffold.mcp.plan_card import build_plan_card
 
     return {
@@ -2065,7 +2126,7 @@ def _tool_staleness_check(
         "plan_status": plan.get("p.status"),
         "plan_status_normalized": normalize_plan_status(plan.get("p.status")),
         "last_updated": plan.get("p.lastUpdated"),
-        "plan_card": build_plan_card(store, int(pn), plan_row=plan),
+        "plan_card": build_plan_card(store, int(pn), root=default_start(), plan_row=plan),
         "stale_signals": signals,
         "is_stale": bool(signals),
         "lead_shared_files": lead,
@@ -2225,7 +2286,10 @@ def _tool_orient(
                 }
         recent_cards.append(cleaned)
 
-    open_backlog = get_open_backlog_items(store, limit=3)
+    open_backlog = _dedup_backlog_items(
+        get_open_backlog_items(store, limit=_BACKLOG_TOP3_FETCH),
+        limit=3,
+    )
 
     try:
         _bl_proj = _current_project_or_none()
@@ -2233,10 +2297,10 @@ def _tool_orient(
             f" AND project = '{_bl_proj.replace(chr(39), chr(39) * 2)}'" if _bl_proj else ""
         )
         count_rows = store.query(
-            "SELECT COUNT(*) AS cnt FROM BacklogItem"
+            "SELECT id AS id FROM BacklogItem"
             f" WHERE status NOT IN ('archived', 'unblockable'){_bl_proj_filter}"
         )
-        open_backlog_count = count_rows[0]["cnt"] if count_rows else 0
+        open_backlog_count = _unique_open_backlog_count(count_rows)
     except Exception:
         open_backlog_count = 0
 
@@ -2671,9 +2735,7 @@ def _tool_record_findings_batch(
         return {"error": "'findings' must be a list.", "meta": meta}
 
     if arguments.get("dry_run"):
-        return _dry_run_write(
-            meta, plan_number=int(plan_number), would_write_count=len(findings)
-        )
+        return _dry_run_write(meta, plan_number=int(plan_number), would_write_count=len(findings))
 
     result = record_findings_batch(
         store,
@@ -2705,9 +2767,7 @@ def _tool_record_backlog_item(
         if not isinstance(items, list):
             return {"error": "'items' must be a list.", "meta": meta}
         if arguments.get("dry_run"):
-            return _dry_run_write(
-                meta, plan_number=int(plan_number), would_write_count=len(items)
-            )
+            return _dry_run_write(meta, plan_number=int(plan_number), would_write_count=len(items))
         result = record_backlog_items_batch(
             store,
             plan_number=int(plan_number),
