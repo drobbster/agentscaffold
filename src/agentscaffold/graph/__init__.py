@@ -28,9 +28,9 @@ __all__ = [
 ]
 
 
-def graph_available(config: ScaffoldConfig | None = None) -> bool:
+def graph_available(config: ScaffoldConfig | None = None, *, start: Path | None = None) -> bool:
     """Return True if a knowledge graph database exists on disk."""
-    db_path = _resolve_db_path(config)
+    db_path = _resolve_db_path(config, start=start)
     return db_path.is_file()
 
 
@@ -40,6 +40,7 @@ def open_graph(
     backend: str | None = None,
     lock_timeout: float = 8.0,
     read_only: bool = False,
+    start: Path | None = None,
 ) -> GraphBackend:
     """Open an existing graph database for querying.
 
@@ -55,6 +56,10 @@ def open_graph(
             concurrent readers can query while an incremental index holds the
             lock; cross-process DuckDB file locks still raise GraphLockError
             quickly for soft ``refresh_in_progress`` handling.
+        start: Directory that owns the graph. Relative ``graph.db_path``
+            resolves here (same as ``run_pipeline(..., root=start)``). Omit
+            to use the process project root. Required when opening another
+            registered project's DuckDB from a different cwd (Plan 271).
 
     Raises:
         ValueError: if an unknown backend name is given.
@@ -62,7 +67,7 @@ def open_graph(
             for write opens, or DuckDB file lock for read opens).
     """
     backend_name = backend or _resolve_backend(config)
-    db_path = _resolve_db_path(config)
+    db_path = _resolve_db_path(config, start=start)
 
     if backend_name == "duckpgq":
         from agentscaffold.graph.locks import wait_for_graph_write_lock_clear
@@ -119,17 +124,18 @@ def index(
     )
 
 
-def _resolve_db_path(config: ScaffoldConfig | None) -> Path:
+def _resolve_db_path(config: ScaffoldConfig | None, start: Path | None = None) -> Path:
     """Resolve the graph DB path against the project root (Plan 221).
 
     Delegates to :func:`agentscaffold.paths.resolve_db_path` so a relative
     ``db_path`` resolves under the project root (nearest ``scaffold.yaml`` ->
     nearest ``.git`` -> cwd) instead of the bare working directory. This makes
     ``open_graph`` agree with ``run_pipeline`` when invoked from a subdirectory.
+    Pass ``start`` when the graph belongs to a different project than cwd.
     """
     from agentscaffold.paths import resolve_db_path
 
-    return resolve_db_path(config)
+    return resolve_db_path(config, start=start)
 
 
 def _resolve_backend(config: ScaffoldConfig | None) -> str:

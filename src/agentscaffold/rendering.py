@@ -186,7 +186,7 @@ def get_review_context(
                 generate_brief,
             )
 
-            brief = generate_brief(store, plan_number)
+            brief = generate_brief(store, plan_number, config=config)
             result["review_brief"] = brief
             result["review_brief_md"] = format_brief_markdown(brief)
 
@@ -196,7 +196,7 @@ def get_review_context(
                 generate_challenges,
             )
 
-            challenges = generate_challenges(store, plan_number)
+            challenges = generate_challenges(store, plan_number, config=config)
             result["adversarial_challenges"] = [
                 {"category": c.category, "text": c.text, "severity": c.severity} for c in challenges
             ]
@@ -208,7 +208,7 @@ def get_review_context(
                 generate_gaps,
             )
 
-            gaps = generate_gaps(store, plan_number)
+            gaps = generate_gaps(store, plan_number, config=config)
             result["gap_analysis"] = [
                 {"category": g.category, "text": g.text, "severity": g.severity} for g in gaps
             ]
@@ -220,7 +220,7 @@ def get_review_context(
                 verify_implementation,
             )
 
-            items = verify_implementation(store, plan_number)
+            items = verify_implementation(store, plan_number, config=config)
             result["verification"] = [
                 {"check": i.check, "status": i.status, "detail": i.detail} for i in items
             ]
@@ -232,7 +232,7 @@ def get_review_context(
                 generate_retro_enrichment,
             )
 
-            insights = generate_retro_enrichment(store, plan_number)
+            insights = generate_retro_enrichment(store, plan_number, config=config)
             result["retro_enrichment"] = [
                 {"category": i.category, "text": i.text} for i in insights
             ]

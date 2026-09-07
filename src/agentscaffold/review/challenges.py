@@ -11,9 +11,15 @@ CONSUMER, PERFORMANCE
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agentscaffold.graph.query_compat import ql, sql_escape
+from agentscaffold.review.file_impact_resolve import (
+    ImplementationProjectError,
+    query_store,
+    resolved_impacts,
+)
 from agentscaffold.review.filters import is_source_code_file
 from agentscaffold.review.queries import (
     get_contracts_for_file,
@@ -22,7 +28,6 @@ from agentscaffold.review.queries import (
     get_function_callers,
     get_learnings_for_file,
     get_plan_by_number,
-    get_plan_impacted_files,
     get_plans_impacting_file,
     get_transitive_consumers,
 )
@@ -41,7 +46,13 @@ class Challenge:
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
-def generate_challenges(store: GraphBackend, plan_number: int) -> list[Challenge]:
+def generate_challenges(
+    store: GraphBackend,
+    plan_number: int,
+    *,
+    root: Path | None = None,
+    config: Any = None,
+) -> list[Challenge]:
     """Generate adversarial challenges for a plan from graph data.
 
     Returns a list of Challenge objects, each grounded in evidence.
@@ -50,20 +61,32 @@ def generate_challenges(store: GraphBackend, plan_number: int) -> list[Challenge
     if plan is None:
         return []
 
-    impacted_files = get_plan_impacted_files(store, plan_number)
+    try:
+        with resolved_impacts(store, plan_number, root=root, config=config) as impacted_files:
+            return _challenges_from_rows(store, plan_number, impacted_files)
+    except ImplementationProjectError:
+        return []
+
+
+def _challenges_from_rows(
+    store: GraphBackend,
+    plan_number: int,
+    impacted_files: list[dict[str, Any]],
+) -> list[Challenge]:
     challenges: list[Challenge] = []
 
     for frow in impacted_files:
         fpath = frow.get("f.path", "")
-        if not fpath:
+        if not fpath or frow.get("resolution") == "skipped":
             continue
 
         flang = frow.get("f.language", "")
-        _check_dependency_blast(store, fpath, challenges)
-        _check_history(store, fpath, plan_number, challenges, language=flang)
-        _check_learnings(store, fpath, challenges)
-        _check_layer(store, fpath, impacted_files, challenges)
-        _check_contracts(store, fpath, challenges)
+        qstore = query_store(frow, store)
+        _check_dependency_blast(qstore, fpath, challenges)
+        _check_history(qstore, fpath, plan_number, challenges, language=flang)
+        _check_learnings(qstore, fpath, challenges)
+        _check_layer(qstore, fpath, impacted_files, challenges)
+        _check_contracts(qstore, fpath, challenges)
 
     # Plan-level checks (not per-file)
     _check_patterns(store, plan_number, impacted_files, challenges)

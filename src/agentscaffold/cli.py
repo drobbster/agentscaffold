@@ -1769,7 +1769,7 @@ def review_implement(
     config, store = _require_graph()
     root = Path.cwd()
     meta = {"source": "cli"}
-    result = _tool_prepare_implementation(store, {"plan_number": plan}, meta, root)
+    result = _tool_prepare_implementation(store, {"plan_number": plan}, meta, root, config)
     store.close()
     console.print(json.dumps(result, indent=2, default=str))
 

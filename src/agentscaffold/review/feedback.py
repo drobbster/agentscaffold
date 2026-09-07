@@ -10,9 +10,15 @@ Enriches post-execution retrospectives with:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agentscaffold.graph.query_compat import ql, sql_escape
+from agentscaffold.review.file_impact_resolve import (
+    ImplementationProjectError,
+    query_store,
+    resolved_impacts,
+)
 from agentscaffold.review.queries import (
     get_file_importers,
     get_function_callers,
@@ -35,7 +41,13 @@ class RetroInsight:
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
-def generate_retro_enrichment(store: GraphBackend, plan_number: int) -> list[RetroInsight]:
+def generate_retro_enrichment(
+    store: GraphBackend,
+    plan_number: int,
+    *,
+    root: Path | None = None,
+    config: Any = None,
+) -> list[RetroInsight]:
     """Generate retrospective enrichment for the given plan.
 
     Should be called during or after the retrospective.
@@ -44,15 +56,17 @@ def generate_retro_enrichment(store: GraphBackend, plan_number: int) -> list[Ret
     if plan is None:
         return []
 
-    impacted_files = get_plan_impacted_files(store, plan_number)
-    insights: list[RetroInsight] = []
-
-    _volatility_analysis(store, plan_number, impacted_files, insights)
-    _learning_patterns(store, plan_number, insights)
-    _complexity_profile(store, impacted_files, insights)
-    _hot_file_check(store, impacted_files, insights)
-
-    return insights
+    try:
+        with resolved_impacts(store, plan_number, root=root, config=config) as impacted_files:
+            usable = [f for f in impacted_files if f.get("resolution") != "skipped"]
+            insights: list[RetroInsight] = []
+            _volatility_analysis(store, plan_number, usable, insights)
+            _learning_patterns(store, plan_number, insights)
+            _complexity_profile(store, usable, insights)
+            _hot_file_check(store, usable, insights)
+            return insights
+    except ImplementationProjectError:
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -155,8 +169,8 @@ def _complexity_profile(
         if not fpath:
             continue
 
-        importers = get_file_importers(store, fpath)
-        callers = get_function_callers(store, fpath)
+        importers = get_file_importers(query_store(frow, store), fpath)
+        callers = get_function_callers(query_store(frow, store), fpath)
         total = len(importers) + len(callers)
 
         if total >= 10:

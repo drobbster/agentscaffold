@@ -142,7 +142,7 @@ def test_open_graph_error_avoids_still_running_wording(tmp_path: Path, monkeypat
     db = tmp_path / "graph.duckdb"
     _plant_lock(db, pid=os.getpid(), purpose="index")
     monkeypatch.setattr(locks_mod, "wait_for_graph_write_lock_clear", lambda *a, **k: False)
-    monkeypatch.setattr(graph_mod, "_resolve_db_path", lambda _config: db)
+    monkeypatch.setattr(graph_mod, "_resolve_db_path", lambda _config, start=None: db)
     monkeypatch.setattr(graph_mod, "_resolve_backend", lambda _config: "duckpgq")
 
     with pytest.raises(GraphLockError) as excinfo:

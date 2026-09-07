@@ -1005,13 +1005,13 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
             return _tool_validate(store, arguments, meta)
 
         elif name == "scaffold_review_context":
-            return _tool_review_context(store, arguments, meta)
+            return _tool_review_context(store, arguments, meta, root, config)
 
         elif name == "scaffold_prepare_review":
             return _tool_prepare_review(store, arguments, meta, root, config)
 
         elif name == "scaffold_prepare_implementation":
-            return _tool_prepare_implementation(store, arguments, meta, root)
+            return _tool_prepare_implementation(store, arguments, meta, root, config)
 
         elif name == "scaffold_compare_plans":
             return _tool_compare_plans(store, arguments, meta, config)
@@ -1729,7 +1729,11 @@ def _tool_validate(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) 
 
 
 def _tool_review_context(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    root: Path,
+    config: Any,
 ) -> dict[str, Any]:
     """Handle scaffold_review_context tool call (Dialectic Engine)."""
     plan_number = arguments.get("plan_number")
@@ -1743,7 +1747,7 @@ def _tool_review_context(
     if review_type in ("brief", "all"):
         from agentscaffold.review.brief import format_brief_markdown, generate_brief
 
-        brief = generate_brief(store, plan_number)
+        brief = generate_brief(store, plan_number, root=root, config=config)
         result["brief"] = brief
         result["brief_markdown"] = format_brief_markdown(brief)
 
@@ -1753,7 +1757,7 @@ def _tool_review_context(
             generate_challenges,
         )
 
-        challenges = generate_challenges(store, plan_number)
+        challenges = generate_challenges(store, plan_number, root=root, config=config)
         result["challenges"] = [
             {"category": c.category, "text": c.text, "severity": c.severity} for c in challenges
         ]
@@ -1762,7 +1766,7 @@ def _tool_review_context(
     if review_type in ("gaps", "all"):
         from agentscaffold.review.gaps import format_gaps_markdown, generate_gaps
 
-        gaps = generate_gaps(store, plan_number)
+        gaps = generate_gaps(store, plan_number, root=root, config=config)
         result["gaps"] = [
             {"category": g.category, "text": g.text, "severity": g.severity} for g in gaps
         ]
@@ -1774,7 +1778,7 @@ def _tool_review_context(
             verify_implementation,
         )
 
-        items = verify_implementation(store, plan_number)
+        items = verify_implementation(store, plan_number, root=root, config=config)
         result["verification"] = [
             {"check": i.check, "status": i.status, "detail": i.detail} for i in items
         ]
@@ -1786,7 +1790,7 @@ def _tool_review_context(
             generate_retro_enrichment,
         )
 
-        insights = generate_retro_enrichment(store, plan_number)
+        insights = generate_retro_enrichment(store, plan_number, root=root, config=config)
         result["retro_insights"] = [{"category": i.category, "text": i.text} for i in insights]
         result["retro_markdown"] = format_retro_markdown(insights)
 
@@ -1959,9 +1963,9 @@ def _tool_prepare_review(
     if pn is None:
         return {"error": "plan_number is required.", "meta": meta}
 
-    brief = generate_brief(store, pn)
-    challenges = generate_challenges(store, pn)
-    gaps = generate_gaps(store, pn)
+    brief = generate_brief(store, pn, root=root, config=config)
+    challenges = generate_challenges(store, pn, root=root, config=config)
+    gaps = generate_gaps(store, pn, root=root, config=config)
 
     # Collect impacted paths from the brief (avoids a redundant graph query)
     impacted_paths = [fp["path"] for fp in brief.get("file_profiles", []) if fp.get("path")]
@@ -2023,7 +2027,11 @@ def _tool_prepare_review(
 
 
 def _tool_prepare_implementation(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any], root: Path
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    root: Path,
+    config: Any = None,
 ) -> dict[str, Any]:
     """Composite: implementation preparation for a plan."""
     from agentscaffold.config import load_config as _load_config  # noqa: PLC0415
@@ -2032,7 +2040,6 @@ def _tool_prepare_implementation(
         get_contracts_for_file,
         get_file_importers,
         get_plan_dependencies,
-        get_plan_impacted_files,
         get_plan_reviewed_at,
     )
 
@@ -2058,19 +2065,21 @@ def _tool_prepare_implementation(
     except Exception:  # noqa: BLE001
         pass  # Config load failure should not block implementation
 
-    brief = generate_brief(store, pn)
-    impacted = get_plan_impacted_files(store, pn)
+    brief = generate_brief(store, pn, root=root, config=config)
+    impacted = brief.get("file_profiles", [])
     deps = get_plan_dependencies(store, int(pn))
 
     per_file: list[dict[str, Any]] = []
     for f in impacted:
-        fpath = f.get("f.path", "")
+        fpath = f.get("path", "")
         importers = get_file_importers(store, fpath)
         contracts = get_contracts_for_file(store, fpath)
         per_file.append(
             {
                 "path": fpath,
-                "change_type": f.get("r.changeType", ""),
+                "change_type": f.get("change_type", f.get("r.changeType", "")),
+                "resolution": f.get("resolution"),
+                "project": f.get("project"),
                 "consumer_count": len(importers),
                 "consumers": [i.get("a.path", "") for i in importers[:10]],
                 "contracts": [c.get("c.name", "") for c in contracts],

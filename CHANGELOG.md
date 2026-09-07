@@ -9,6 +9,13 @@ introduce additive features and small behavior changes).
 ## [Unreleased]
 
 ### Added
+- **File Impact paths can resolve to a named sibling project.** Optional
+  `implementation_project` in `scaffold.yaml` is a registered project
+  name, not a filesystem path. Review brief/verify/diff read the plan
+  markdown first, then local disk, then that sibling's disk and graph.
+  Unresolved paths are `skipped`, not a pass. Unregistered names error
+  without walking `$HOME`. `open_graph` / `graph_available` take
+  `start=` so the sibling hop opens that project's DuckDB, not cwd's.
 - **`scaffold graph impact`** prints importers and callers for a file or
   symbol. It is the CLI stand-in for MCP `scaffold_impact`, used by the
   equipped benchmark arm.

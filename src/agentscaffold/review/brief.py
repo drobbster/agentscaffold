@@ -7,8 +7,14 @@ layer analysis, and contract status for every file in the plan's impact map.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from agentscaffold.review.file_impact_resolve import (
+    ImplementationProjectError,
+    query_store,
+    resolved_impacts,
+)
 from agentscaffold.review.filters import (
     is_source_code_file,
     normalize_plan_status,
@@ -21,7 +27,6 @@ from agentscaffold.review.queries import (
     get_function_callers,
     get_learnings_for_file,
     get_plan_by_number,
-    get_plan_impacted_files,
     get_plans_impacting_file,
     get_transitive_consumers,
 )
@@ -30,7 +35,13 @@ if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
 
 
-def generate_brief(store: GraphBackend, plan_number: int) -> dict[str, Any]:
+def generate_brief(
+    store: GraphBackend,
+    plan_number: int,
+    *,
+    root: Path | None = None,
+    config: Any = None,
+) -> dict[str, Any]:
     """Generate a pre-review brief for the given plan.
 
     Returns a structured dict suitable for rendering into markdown or JSON.
@@ -39,8 +50,22 @@ def generate_brief(store: GraphBackend, plan_number: int) -> dict[str, Any]:
     if plan is None:
         return {"error": f"Plan {plan_number} not found in graph."}
 
-    impacted_files = get_plan_impacted_files(store, plan_number)
+    try:
+        with resolved_impacts(store, plan_number, root=root, config=config) as impacted_files:
+            return _brief_from_rows(store, plan, plan_number, impacted_files)
+    except ImplementationProjectError as exc:
+        return {
+            "error": str(exc),
+            "error_code": "implementation_project_unregistered",
+        }
 
+
+def _brief_from_rows(
+    store: GraphBackend,
+    plan: dict[str, Any],
+    plan_number: int,
+    impacted_files: list[dict[str, Any]],
+) -> dict[str, Any]:
     file_profiles: list[dict[str, Any]] = []
     all_learnings: list[dict[str, Any]] = []
     all_prior_plans: list[dict[str, Any]] = []
@@ -55,16 +80,37 @@ def generate_brief(store: GraphBackend, plan_number: int) -> dict[str, Any]:
         fpath = frow.get("f.path", "")
         if not fpath:
             continue
+        if frow.get("resolution") == "skipped":
+            file_profiles.append(
+                {
+                    "path": fpath,
+                    "change_type": frow.get("r.changeType", ""),
+                    "resolution": "skipped",
+                    "project": frow.get("project"),
+                    "reason": frow.get("reason") or "paths_outside_project",
+                    "direct_importers": 0,
+                    "transitive_consumers": 0,
+                    "external_callers": 0,
+                    "top_importers": [],
+                    "top_callers": [],
+                    "prior_plan_count": 0,
+                    "contract_count": 0,
+                    "contracts": [],
+                    "layer": None,
+                }
+            )
+            continue
 
         flang = frow.get("f.language", "")
         is_code = is_source_code_file(fpath, flang)
-        importers = get_file_importers(store, fpath)
-        callers = get_function_callers(store, fpath)
-        transitive = get_transitive_consumers(store, fpath)
-        prior_plans = get_plans_impacting_file(store, fpath)
-        learnings = get_learnings_for_file(store, fpath)
-        contracts = get_contracts_for_file(store, fpath)
-        layer = get_file_layer(store, fpath)
+        qstore = query_store(frow, store)
+        importers = get_file_importers(qstore, fpath)
+        callers = get_function_callers(qstore, fpath)
+        transitive = get_transitive_consumers(qstore, fpath)
+        prior_plans = get_plans_impacting_file(qstore, fpath)
+        learnings = get_learnings_for_file(qstore, fpath)
+        contracts = get_contracts_for_file(qstore, fpath)
+        layer = get_file_layer(qstore, fpath)
 
         if layer:
             layers_touched.add(f"Layer {layer.get('l.number', '?')}: {layer.get('l.name', '?')}")
@@ -95,6 +141,9 @@ def generate_brief(store: GraphBackend, plan_number: int) -> dict[str, Any]:
             {
                 "path": fpath,
                 "change_type": frow.get("r.changeType", ""),
+                "resolution": frow.get("resolution", "local"),
+                "project": frow.get("project"),
+                "reason": frow.get("reason"),
                 "direct_importers": len(importers),
                 "transitive_consumers": len(transitive),
                 "external_callers": len(callers),
@@ -144,7 +193,12 @@ def generate_brief(store: GraphBackend, plan_number: int) -> dict[str, Any]:
         },
         "file_profiles": file_profiles,
         "summary": {
-            "files_impacted": len(impacted_files),
+            "files_impacted": sum(
+                1
+                for f in impacted_files
+                if f.get("f.path") and f.get("resolution") in (None, "local", "sibling")
+            ),
+            "files_skipped": sum(1 for f in impacted_files if f.get("resolution") == "skipped"),
             "total_direct_importers": total_direct_importers,
             "total_transitive_consumers": total_transitive_consumers,
             "total_external_callers": total_callers,
@@ -194,6 +248,8 @@ def format_brief_markdown(brief: dict[str, Any]) -> str:
     lines.append("## Dependency Profile")
     lines.append("")
     lines.append(f"- Files impacted: {summary['files_impacted']}")
+    if summary.get("files_skipped"):
+        lines.append(f"- Files skipped (outside this project): {summary['files_skipped']}")
     lines.append(f"- Direct importers across all files: {summary['total_direct_importers']}")
     lines.append(f"- Transitive consumers (2-hop): {summary['total_transitive_consumers']}")
     lines.append(f"- External callers into these files: {summary['total_external_callers']}")
@@ -218,7 +274,13 @@ def format_brief_markdown(brief: dict[str, Any]) -> str:
         lines.append("## File-by-File Profile")
         lines.append("")
         for fp in brief["file_profiles"]:
-            lines.append(f"### {fp['path']} ({fp['change_type']})")
+            provenance = ""
+            if fp.get("project") or fp.get("resolution"):
+                provenance = (
+                    f" [{fp.get('resolution', 'local')}"
+                    f"{(' project=' + fp['project']) if fp.get('project') else ''}]"
+                )
+            lines.append(f"### {fp['path']} ({fp['change_type']}){provenance}")
             lines.append(
                 f"  - {fp['direct_importers']} direct importers, "
                 f"{fp['transitive_consumers']} transitive consumers"

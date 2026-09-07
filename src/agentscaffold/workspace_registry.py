@@ -301,6 +301,31 @@ def _reap_stale_lock(lock: Path, *, stale_after: float) -> None:
     _release_lock(lock)
 
 
+def find_registered_project_by_name(
+    name: str,
+    registry: Registry | None = None,
+) -> ResolvedProject | None:
+    """Return the registered project with *name*, or None.
+
+    Lookup is by the registry name only. It does not synthesise a project
+    from a directory basename and it does not walk the filesystem looking
+    for a matching folder. Names are unique across the registry.
+    """
+    validate_project_name(name)
+    reg = registry if registry is not None else load_registry()
+    for workspace in reg.workspaces:
+        for project in workspace.projects:
+            if project.name == name:
+                match_root = workspace.project_match_root(project)
+                return ResolvedProject(
+                    name=project.name,
+                    workspace_id=workspace.id,
+                    workspace_root=Path(workspace.root),
+                    project_root=Path(str(match_root)),
+                )
+    return None
+
+
 def load_registry(path: Path | None = None) -> Registry:
     """Load the registry, or an empty one when the file does not exist.
 
