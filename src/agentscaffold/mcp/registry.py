@@ -460,13 +460,12 @@ def _tool_specs() -> list[ToolSpec]:
         ToolSpec(
             name="scaffold_orient",
             description=(
-                "Get session orientation: codebase stats, recent plans, hot files, "
-                "recent studies, active ADRs, live workflow state (blockers, next "
-                "steps, in-progress plans), plus recommended_actions, "
-                "plan_progress, and next_action_focus. Use at session start or "
-                "when the user asks where we left off, what's blocked, or what "
-                "to do next. Prefer embedded recommended_actions over a separate "
-                "scaffold_next_action call."
+                "Answer four questions: what are we working on, what is blocked "
+                "for that work, what is related to it, and if nothing is in "
+                "flight what is next. Returns session_brief plus "
+                "recommended_actions, plan_progress, and next_action_focus. "
+                "Do not call this again as the next action. Prefer embedded "
+                "recommended_actions over a separate scaffold_next_action call."
             ),
             input_schema={
                 "type": "object",

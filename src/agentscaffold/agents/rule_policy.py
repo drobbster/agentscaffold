@@ -12,9 +12,11 @@ from agentscaffold.config import ScaffoldConfig
 # Notes appended under specific Intent Map entries (Plan 247 call compression).
 _INTENT_NOTES: dict[str, str] = {
     "scaffold_orient": (
-        "Primary session router. Prefer its `recommended_actions`, "
-        "`plan_progress`, and `next_action_focus` over a follow-up "
-        "`scaffold_next_action` call."
+        "Answers four questions: current work, blockers for that work, "
+        "related items, and idle-next (`session_brief`). Prefer "
+        "`recommended_actions` / `plan_progress` / `next_action_focus` "
+        "over a follow-up `scaffold_next_action` call. Never treat "
+        "another `scaffold_orient` as the next action."
     ),
     "scaffold_diff_plan_vs_code": (
         "Preferred mid-implementation progress check (next unchecked step, "

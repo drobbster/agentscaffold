@@ -2364,6 +2364,34 @@ def _tool_prepare_retro(
     }
 
 
+def _plan_progress_from_brief(brief: dict[str, Any]) -> list[dict[str, Any]]:
+    """In-flight and/or idle-next only (max 2)."""
+    rows: list[dict[str, Any]] = []
+    current = brief.get("current_work") or {}
+    nxt = brief.get("next") or {}
+    if current.get("kind") == "in_flight" and current.get("plan_number") is not None:
+        rows.append(
+            {
+                "plan_number": current.get("plan_number"),
+                "title": current.get("title"),
+                "status": current.get("status"),
+                "unchecked_steps": current.get("unchecked_steps"),
+                "next_unchecked_step": current.get("next_unchecked_step"),
+            }
+        )
+    nxt_pn = (nxt.get("arguments") or {}).get("plan_number")
+    if nxt_pn is not None and nxt_pn not in {r.get("plan_number") for r in rows}:
+        rows.append(
+            {
+                "plan_number": nxt_pn,
+                "title": "",
+                "status": "",
+                "action": nxt.get("action"),
+            }
+        )
+    return rows[:2]
+
+
 def _parse_workflow_state(root: Path, config: Any) -> dict[str, Any]:
     """Live-parse workflow_state.md for current project status."""
     from agentscaffold.mcp.workflow_state import parse_workflow_file
@@ -2433,10 +2461,20 @@ def _tool_orient(
 
     active_adrs = [a for a in adrs if _adr_is_active(a.get("a.status"))]
 
-    # Plan 247: fold next_action + compact plan_progress into orient so agents
-    # do not need a second hop after session start.
+    # Plan 273: session_brief drives routing. Diary focus is not used.
+    from agentscaffold.graph.sessions import find_open_session
     from agentscaffold.mcp.next_action import next_actions
+    from agentscaffold.mcp.session_brief import build_session_brief, compact_session_context
 
+    project = _current_project_or_none()
+    open_session = find_open_session(store, project=project)
+    brief = build_session_brief(
+        store,
+        root=root,
+        workflow=workflow,
+        project=project,
+        plan_number=arguments.get("plan_number"),
+    )
     actions_payload = next_actions(
         store,
         root=root,
@@ -2444,22 +2482,10 @@ def _tool_orient(
         workflow=workflow,
         meta=meta,
         plan_number=arguments.get("plan_number"),
+        project=project,
+        session_brief=brief,
     )
-    plan_progress: list[dict[str, Any]] = []
-    for card_row in recent_cards:
-        pc = card_row.get("plan_card")
-        if not pc:
-            continue
-        plan_progress.append(
-            {
-                "plan_number": card_row.get("number") or card_row.get("p.number"),
-                "title": card_row.get("title") or card_row.get("p.title"),
-                "status": card_row.get("status") or card_row.get("p.status"),
-                "unchecked_steps": pc.get("unchecked_steps"),
-                "checked_steps": pc.get("checked_steps"),
-                "open_finding_count": pc.get("open_finding_count"),
-            }
-        )
+    plan_progress = _plan_progress_from_brief(brief)
 
     result = {
         "stats": stats,
@@ -2473,8 +2499,9 @@ def _tool_orient(
         "open_backlog_count": open_backlog_count,
         "open_backlog_top3": _clean_out_rows(open_backlog),
         "recommended_actions": actions_payload.get("actions", []),
-        "plan_progress": plan_progress[:5],
+        "plan_progress": plan_progress,
         "next_action_focus": actions_payload.get("focus_plan"),
+        "session_brief": brief,
         "meta": meta,
     }
     live = dict(workflow.get("workflow_live") or {})
@@ -2489,9 +2516,15 @@ def _tool_orient(
     result["workflow_state"] = public_ws
     from agentscaffold.graph.sessions import get_session_context
 
-    session_ctx = get_session_context(store, project=_current_project_or_none())
-    if session_ctx:
-        result["session_context"] = session_ctx
+    detail_mode = (arguments.get("detail") or "summary").strip().lower()
+    if detail_mode == "full":
+        session_ctx = get_session_context(store, project=project)
+        if session_ctx:
+            result["session_context"] = session_ctx
+    else:
+        compact = compact_session_context(open_session)
+        if compact:
+            result["session_context"] = compact
     return apply_detail(result, arguments.get("detail"))
 
 
@@ -2972,6 +3005,7 @@ def _tool_next_action(
         workflow=workflow,
         meta=meta,
         plan_number=int(pn) if pn is not None else None,
+        project=_current_project_or_none(),
     )
     result["meta"] = meta
     return result

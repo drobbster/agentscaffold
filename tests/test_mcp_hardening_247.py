@@ -164,6 +164,32 @@ def test_orient_embeds_recommended_actions(tmp_path: Path) -> None:
             return_value={"blockers": "None", "next_steps": "", "in_progress_plans": []},
         ),
         patch(
+            "agentscaffold.mcp.session_brief.build_session_brief",
+            return_value={
+                "current_work": {
+                    "kind": "in_flight",
+                    "plan_number": 247,
+                    "title": "T",
+                    "status": "In Progress",
+                    "unchecked_steps": 1,
+                    "next_unchecked_step": "x",
+                },
+                "next": {
+                    "action": "Continue Plan 247",
+                    "tool": "scaffold_diff_plan_vs_code",
+                    "arguments": {"plan_number": 247},
+                },
+                "focus_plan": 247,
+                "blockers_for_work": [],
+                "related": {},
+                "house_blockers_count": 0,
+            },
+        ),
+        patch(
+            "agentscaffold.graph.sessions.find_open_session",
+            return_value=None,
+        ),
+        patch(
             "agentscaffold.mcp.next_action.next_actions",
             return_value={
                 "focus_plan": 247,

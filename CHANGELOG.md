@@ -9,6 +9,12 @@ introduce additive features and small behavior changes).
 ## [Unreleased]
 
 ### Added
+- **`scaffold_orient` returns `session_brief`.** Current work, blockers
+  for that work, related items, and idle-next come from an open Session
+  and plan-file Status, not the Current Implementation table. Summary
+  omits diary bodies. `recommended_actions` never suggests
+  `scaffold_orient`. Approval Required plus Draft/Review means present
+  for approval, not implement.
 - **File Impact paths can resolve to a named sibling project.** Optional
   `implementation_project` in `scaffold.yaml` is a registered project
   name, not a filesystem path. Review brief/verify/diff read the plan
