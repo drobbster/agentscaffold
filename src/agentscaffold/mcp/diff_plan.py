@@ -12,6 +12,11 @@ from agentscaffold.mcp.plan_card import (
     count_execution_checkboxes,
     next_unchecked_step,
 )
+from agentscaffold.review.file_impact_resolve import (
+    ImplementationProjectError,
+    query_root,
+    resolved_impacts,
+)
 
 _IDENT = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]{2,})\b")
 # Common English / markdown noise in plan notes.
@@ -44,8 +49,34 @@ _STOP = frozenset(
         "path",
         "type",
         "change",
+        "added",
+        "listed",
+        "reversed",
+        "medium",
+        "owns",
+        "high",
+        "low",
     }
 )
+
+_PLAN_ID_RE = re.compile(r"^L\d+$")
+
+
+def _is_symbol_token(tok: str) -> bool:
+    """True for CamelCase (2+ capitals) or snake_case identifiers, not prose."""
+    if tok.lower() in _STOP or len(tok) < 4:
+        return False
+    if _PLAN_ID_RE.fullmatch(tok):
+        return False
+    # ALL-CAPS is a filename or heading (CHANGELOG, README), not an identifier.
+    if tok.isupper():
+        return False
+    if tok.lower().startswith("test_"):
+        return False
+    if "_" in tok:
+        return True
+    uppers = sum(1 for c in tok if c.isupper())
+    return bool(tok[0].isupper() and uppers >= 2)
 
 
 def diff_plan_vs_code(
@@ -83,17 +114,35 @@ def diff_plan_vs_code(
         f.get("f.path", "") for f in get_plan_impacted_files(store, plan_number) if f.get("f.path")
     ]
     planned = markdown_paths or graph_paths
+    resolved_by_path: dict[str, dict[str, Any]] = {}
+    try:
+        with resolved_impacts(store, plan_number, root=root) as resolved_rows:
+            resolved_by_path = {r["f.path"]: r for r in resolved_rows if r.get("f.path")}
+    except ImplementationProjectError as exc:
+        return {
+            "error": str(exc),
+            "error_code": "implementation_project_unregistered",
+            "plan_number": plan_number,
+        }
 
     existing_on_disk: list[str] = []
     missing_on_disk: list[str] = []
     in_graph: list[str] = []
     not_in_graph: list[str] = []
+    skipped: list[str] = []
     symbol_spot_checks: list[dict[str, Any]] = []
 
     graph_set = set(graph_paths)
     notes_by_path = {r["path"]: r.get("change_type", "") for r in impact_rows}
     for rel in planned:
-        disk = root / rel
+        frow = resolved_by_path.get(rel, {})
+        if frow.get("resolution") == "skipped":
+            skipped.append(rel)
+            missing_on_disk.append(rel)
+            not_in_graph.append(rel)
+            continue
+        disk_root = query_root(frow, root)
+        disk = disk_root / rel
         if disk.is_file():
             existing_on_disk.append(rel)
             spot = _symbol_spot_check(disk, plan_text, notes_by_path.get(rel, ""), rel_path=rel)
@@ -116,6 +165,7 @@ def diff_plan_vs_code(
         "planned_files": planned,
         "existing_on_disk": existing_on_disk,
         "missing_on_disk": missing_on_disk,
+        "skipped": skipped,
         "in_graph": in_graph,
         "not_in_graph": not_in_graph,
         "unchecked_steps": unchecked,
@@ -160,15 +210,13 @@ def _symbol_spot_check(
     # mention in the plan; fall back to tokens from the filename stem.
     candidates: list[str] = []
     stem = file_path.stem
-    if stem and stem not in _STOP and len(stem) > 2:
+    if _is_symbol_token(stem):
         candidates.append(stem)
     # Tokens from plan lines mentioning this path
     for line in plan_text.splitlines():
         if file_path.name in line or str(file_path).replace("\\", "/") in line.replace("\\", "/"):
             for tok in _IDENT.findall(line):
-                if tok.lower() in _STOP or len(tok) < 4:
-                    continue
-                if tok[0].isupper() or "_" in tok:
+                if _is_symbol_token(tok):
                     candidates.append(tok)
     # Dedupe preserve order
     seen: set[str] = set()

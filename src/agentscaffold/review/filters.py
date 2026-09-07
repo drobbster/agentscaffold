@@ -150,6 +150,7 @@ def recover_plan_date(date_field: str | None, status: str | None = None) -> str:
 DEFAULT_OVERLAP_NOISE_PATHS: frozenset[str] = frozenset(
     {
         "docs/ai/contracts/README.md",
+        "docs/ai/contracts/mcp_agent_tools_interface.md",
         "docs/ai/state/workflow_state.md",
         "docs/ai/backlog.md",
         "docs/ai/architectural_design_changelog.md",

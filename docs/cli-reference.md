@@ -186,9 +186,22 @@ scaffold doctor --project-root /path/to/repo
 scaffold doctor --mcp-config /path/to/mcp.json
 ```
 
-Checks the registry, workspace identity, generated rule-file drift, MCP
-registration, version skew between the MCP server and your CLI, and where the
-graph resolves.
+Checks the registry, workspace identity, generated rule-file drift, whether
+generated guidance is gitignored, MCP registration, version skew between the
+MCP server and your CLI, and where the graph resolves.
+
+If `.cursor/` is ignored as a directory, a file-level negation cannot
+re-include `.cursor/rules/agentscaffold.mdc`. Use a directory-scoped pair
+instead:
+
+```
+.cursor/*
+!.cursor/rules/
+```
+
+`--tools` also validates each live probe against a generated envelope (required
+top-level keys from the intersection of two calls; `meta` stays open). This is
+a payload-shape check, not a committed JSON Schema per tool.
 
 It never repairs anything, so it is safe to run on a setup you already believe
 is broken. The default exit code is 0 whatever it finds, which makes it safe in
@@ -271,6 +284,7 @@ truncated or nonsensical text. A clean project will report nothing to prune.
 | `scaffold graph search QUERY` | Search the graph in natural language |
 | `scaffold graph stats` | Codebase statistics and health dashboard |
 | `scaffold graph orient` | Session orientation: stats, workflow state, recent activity |
+| `scaffold graph impact TARGET` | Importers and callers for a file or symbol |
 | `scaffold graph verify` | Spot-check graph accuracy against the filesystem |
 | `scaffold graph query SQL` | Run a raw SQL query against the graph |
 | `scaffold graph communities` | Show detected module communities |

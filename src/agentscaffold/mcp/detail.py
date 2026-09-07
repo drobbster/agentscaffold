@@ -19,6 +19,16 @@ _SUMMARY_LIST_CAPS: dict[str, int] = {
     "symbol_spot_checks": 5,
 }
 
+_SUMMARY_DROP_KEYS = frozenset(
+    {
+        "recent_plans",
+        "hot_files",
+        "recent_studies",
+        "active_adrs",
+        "stats",
+    }
+)
+
 _SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
 _SUMMARY_WORKFLOW_CHARS = 2000
@@ -31,14 +41,30 @@ def apply_detail(payload: dict[str, Any], detail: str | None) -> dict[str, Any]:
 
     Plan 247: challenges/gaps/open_findings are severity-sorted before capping
     so summary keeps the highest-value routing signals.
-    Plan 266: cap workflow_state prose so a diary file is not a session dump.
+    Plan 266: cap workflow_state prose on ``detail=full``.
+    Plan 273: summary omits diary bodies and dump lists.
     """
     mode = (detail or "summary").strip().lower()
     payload = dict(payload)
     payload["detail"] = "full" if mode == "full" else "summary"
     if mode == "full":
         return _cap_workflow_prose(payload, _FULL_WORKFLOW_CHARS)
-    return _cap_workflow_prose(_trim(payload), _SUMMARY_WORKFLOW_CHARS)
+    dropped = {k: v for k, v in payload.items() if k not in _SUMMARY_DROP_KEYS}
+    return _omit_workflow_prose(_trim(dropped))
+
+
+def _omit_workflow_prose(payload: dict[str, Any]) -> dict[str, Any]:
+    """Summary omits diary bodies (Plan 273). Full still uses the 266 caps."""
+    workflow = payload.get("workflow_state")
+    if not isinstance(workflow, dict):
+        return payload
+    kept = {key: value for key, value in workflow.items() if key not in _WORKFLOW_PROSE_KEYS}
+    out = dict(payload)
+    if kept:
+        out["workflow_state"] = kept
+    else:
+        out.pop("workflow_state", None)
+    return out
 
 
 def _cap_workflow_prose(payload: dict[str, Any], limit: int) -> dict[str, Any]:

@@ -11,12 +11,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-_HEADING_BLOCKERS = re.compile(
-    r"^##\s+Blockers?\s*\n(.*?)(?=\n##\s|\Z)", re.MULTILINE | re.DOTALL
-)
-_HEADING_NEXT = re.compile(
-    r"^##\s+Next\s+Steps?\s*\n(.*?)(?=\n##\s|\Z)", re.MULTILINE | re.DOTALL
-)
+_HEADING_BLOCKERS = re.compile(r"^##\s+Blockers?\s*\n(.*?)(?=\n##\s|\Z)", re.MULTILINE | re.DOTALL)
+_HEADING_NEXT = re.compile(r"^##\s+Next\s+Steps?\s*\n(.*?)(?=\n##\s|\Z)", re.MULTILINE | re.DOTALL)
 _HEADING_CURRENT = re.compile(
     r"^##\s+Current\s+Implementation\s*\n(.*?)(?=\n##\s|\Z)", re.MULTILINE | re.DOTALL
 )
@@ -88,6 +84,15 @@ def extract_focus_plans(workflow: dict[str, Any]) -> list[int]:
     if not _is_empty_section(next_head):
         scoped += next_head
     return _in_progress_scoped(scoped)
+
+
+def house_blockers_count(blockers_text: str, focus: int | None) -> int:
+    """Live blocker bullets that do not name *focus* (standing inventory)."""
+    live = _live_blocker_bullets(blockers_text)
+    if focus is None:
+        return len(live)
+    named = re.compile(rf"\bPlan\s+{int(focus)}\b", re.IGNORECASE)
+    return sum(1 for bullet in live if not named.search(bullet))
 
 
 def blockers_that_name_focus(blockers_text: str, focus: int | None) -> list[str]:

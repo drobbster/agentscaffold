@@ -8,7 +8,96 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Added
+- **MCP responses carry a C3 guidance stamp.** Every tool `meta` includes
+  `guidance_rule_path` and `guidance_is_generated`. `scaffold_orient` and
+  `scaffold_projects` also return a `guidance` object with copy paths.
+  Paths are workspace-relative. Plan 273 summary still omits diary keys
+  (`stats`, `hot_files`, `recent_plans`, `recent_studies`, `active_adrs`).
+  Clients that assert an exact top-level key set will need to allow the
+  new `guidance` object and stamp fields.
+- **Generated rule files open with an `@generated` banner** (generator,
+  workspace-relative source, content hash). `AGENTS.md` gets a create-if-absent
+  guidance pointer outside managed markers. `scaffold doctor` warns when
+  those files are gitignored; remediation is `.cursor/*` plus
+  `!.cursor/rules/`, not a file-level negation under a directory exclude.
+- **`dry_run` on every graph write tool.** begin/complete already had it;
+  record/resolve finding, record_findings_batch, record/resolve backlog,
+  and session start/end/record_decision now honour it too.
+- **`scaffold_orient` returns `session_brief`.** Current work, blockers
+  for that work, related items, and idle-next come from an open Session
+  and plan-file Status, not the Current Implementation table. Summary
+  omits diary bodies. `recommended_actions` never suggests
+  `scaffold_orient`. Approval Required plus Draft/Review means present
+  for approval, not implement.
+- **File Impact paths can resolve to a named sibling project.** Optional
+  `implementation_project` in `scaffold.yaml` is a registered project
+  name, not a filesystem path. Review brief/verify/diff read the plan
+  markdown first, then local disk, then that sibling's disk and graph.
+  Unresolved paths are `skipped`, not a pass. Unregistered names error
+  without walking `$HOME`. `open_graph` / `graph_available` take
+  `start=` so the sibling hop opens that project's DuckDB, not cwd's.
+- **`scaffold graph impact`** prints importers and callers for a file or
+  symbol. It is the CLI stand-in for MCP `scaffold_impact`, used by the
+  equipped benchmark arm.
+
+### Changed
+- **Benchmark equipped-arm wrappers follow the current CLI.** Container
+  scripts call `scaffold graph orient`, `scaffold graph search`,
+  `scaffold review prepare`, and `scaffold graph impact` from `/testbed`.
+  Equipped setup now runs `scaffold agents generate-all` before
+  `scaffold index` so situational routing lands in the container.
+  Live LLM smoke is still opt-in and requires a provider key.
+- **Generated routing maps job class to the first tool, not a call count.**
+  `Situational Tool Use` replaces `High-Value MCP-First Routes`. Call
+  compression applies only to fused fields already on the response.
+  A short Architectural Research Gate is generated; the full procedure
+  stays in project-owned `AGENTS.md`. Run `scaffold agents generate-all`
+  to refresh managed blocks.
+
 ### Fixed
+- **Plan-vs-code symbol spot-checks skip ALL-CAPS filenames and `test_*`
+  stems.** `CHANGELOG`, `README`, and `test_assembly` were reported as
+  missing symbols because the filename stem was always checked. Title-case
+  prose was already filtered (Plan 270); stems now use the same identifier
+  rule.
+- **`scaffold_staleness_check` plan-card checkbox counts match the plan file.**
+  The card only reads Execution Steps when `root` is set. Diff, begin-plan,
+  and orient already passed the project root; staleness (and rewrite, which
+  clones it) did not, so a live plan could show `0/0` on staleness and
+  `17` checked on diff. It now passes `root=default_start()` at that call
+  site only.
+- **Contract-only overlap no longer marks a complete plan stale.** The MCP
+  pack contract is on the overlap-noise denylist with the other
+  governance hubs. Contract-only overlap is not stale; mixed overlap with
+  real code still is. Operators with a custom `graph.overlap_noise_paths`
+  list are unchanged (an explicit list replaces the defaults).
+- **`scaffold_orient` no longer lists the same backlog item twice.**
+  Qualified `project::bi::hex` and unqualified `bi::hex` rows collapse to
+  one id (qualified preferred). `open_backlog_count` uses the same unique
+  suffix. The fetch window is wider than three so a leading duplicate
+  pair does not starve the unique top-3.
+- **Code-intel and governance retrieval tell the truth on a parsed repo.**
+  Class context lists `HAS_METHOD` rows (`methods` / `method_count`).
+  Function context drops self-CALLS (same name and filePath). Impact
+  same-file callers are labelled `self: true`. `scaffold_query` errors
+  name `CALLS` / `EXTENDS` / `IMPORTS` instead of `pg_views`. Finding
+  search hits use finding text as `name` and `plan::<n>` as `path`.
+  `find_studies` matches title tokens as well as tags. ADR ingest
+  accepts `**Status**` / `**Date**`. Symbol spot-checks skip Title-case
+  prose (`Added`, `Listed`).
+- **Review and validate checks no longer certify absence as a pass.**
+  TEST_COVERAGE / `test_delta` look on disk for `test_<stem>.py` when
+  `tests/` is not in the graph. Layers with a thin mapped subset
+  (`unmapped >= 10 * checked`) and contracts with `total_declared == 0`
+  return `not_evaluable`. `has_full_decision_chain` requires an ADR or
+  spike. Retro `plan_compliance` with zero resolved files is `skip`.
+- **`scaffold_validate` staleness checks the call's project root.** The
+  check opened the scoped graph and then tested `File` paths under
+  `_effective_mcp_root()` (launch-cwd heuristics). A `working_path` call
+  could report every file missing while `meta.freshness_status` was
+  `fresh`. It now uses `default_start()` so existence follows
+  `active_root`.
 - **A no-op incremental no longer holds DuckDB exclusive for a full-tree
   walk.** Incremental indexing prunes ignored directories (`.venv`,
   `node_modules`, `.scaffold`, ...) instead of `rglob`ing them, walks

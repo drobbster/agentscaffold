@@ -420,9 +420,14 @@ def _create_empty_dirs(directory: Path, writer: InitWriter) -> int:
 def _write_agents_md(directory: Path, context: dict, writer: InitWriter) -> bool:  # type: ignore[type-arg]
     """Write the scaffolded governance manual at the project root (once)."""
     from agentscaffold.agents.manual_diff import stamp_manual
+    from agentscaffold.rendering import ensure_agents_guidance_pointer
 
+    dest = directory / "AGENTS.md"
     content = stamp_manual(render_template("agents/agents_md.md.j2", context))
-    return writer.write_if_missing(directory / "AGENTS.md", content)
+    created = writer.write_if_missing(dest, content)
+    if dest.is_file() and not writer.dry_run:
+        ensure_agents_guidance_pointer(dest)
+    return created
 
 
 def _write_cursor_rules(directory: Path, context: dict, writer: InitWriter) -> bool:  # type: ignore[type-arg]

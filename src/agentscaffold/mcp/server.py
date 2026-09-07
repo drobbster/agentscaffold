@@ -46,256 +46,10 @@ _MCP_EXTRAS_MSG = "MCP server requires extra dependencies: pip install agentscaf
 # decide what it may safely run, and a second copy would drift.
 _GRAPH_WRITE_TOOLS: frozenset[str] = WRITE_TOOLS
 
-# ---------------------------------------------------------------------------
-# Intent metadata: single source of truth for semantic mapping.
-# Platform rule generators (cursor, windsurf, claude) read from this dict.
-# ---------------------------------------------------------------------------
+from agentscaffold.mcp.intents import intent_phrases
 
-TOOL_INTENTS: dict[str, list[str]] = {
-    "scaffold_prepare_review": [
-        "review plan X",
-        "critique plan X",
-        "devil's advocate on plan X",
-        "prepare plan X for review",
-        "let's review plan X",
-        "following the collab protocol for plan X",
-        "pre-reviews for plan X",
-        "all three reviews for plan X",
-        "pressure-test plan X",
-        "stress test plan X",
-        "challenge this plan before coding",
-    ],
-    "scaffold_prepare_implementation": [
-        "implement plan X",
-        "start plan X",
-        "execute plan X",
-        "begin implementation of plan X",
-        "what do I need to implement plan X",
-        "prep for implementing plan X",
-        "approved to go on plan X",
-        "begin implementation per collab protocol",
-        "start building plan X",
-        "begin building plan X",
-        "ready to build plan X",
-    ],
-    "scaffold_compare_plans": [
-        "does plan X conflict with plan Y",
-        "overlap between plans",
-        "check plan X vs plan Y",
-        "compare plans X and Y",
-        "any overlapping concerns between plan X and Y",
-        "do plans X and Y overlap",
-        "check for conflicts between X and Y",
-        "do these plans step on each other",
-        "are these plans stepping on each other",
-    ],
-    "scaffold_staleness_check": [
-        "is plan X stale",
-        "is this plan still valid",
-        "is plan X still valid",
-        "staleness review on plan X",
-        "has anything changed since plan X",
-        "does plan X need updating",
-        "check if plan X needs refactoring",
-        "has this plan gone out of date",
-        "is this plan out of date",
-    ],
-    "scaffold_prepare_rewrite": [
-        "rewrite plan X",
-        "update plan X",
-        "expand plan X",
-        "refresh plan X with current state",
-        "revise plan X",
-        "update plan X to use Y",
-    ],
-    "scaffold_prepare_retro": [
-        "retro on plan X",
-        "retrospective for plan X",
-        "post-implementation review",
-        "quant architect review on plan X",
-        "post implementation review and retro for plan X",
-        "share the review and retro",
-        "post implementation retrospective",
-        "let's do the post-implementation retrospective",
-    ],
-    "scaffold_orient": [
-        "where did we leave off",
-        "what's the current state",
-        "what's blocked",
-        "what are the next steps",
-        "where are we",
-        "what should I work on now",
-        "what are the next priorities",
-        "latest blockers and what's next",
-        "current blockers and next steps",
-    ],
-    "scaffold_session_start": [
-        "start a working session",
-        "open a scaffold session",
-        "begin recording this session",
-        "start session tracking",
-    ],
-    "scaffold_session_end": [
-        "end this session",
-        "close the working session",
-        "end session with summary",
-        "close this working session",
-    ],
-    "scaffold_session_record_decision": [
-        "record this decision",
-        "log a session decision",
-        "note a strategic decision",
-        "record this architectural call",
-        "capture this operational decision",
-    ],
-    "scaffold_session_context": [
-        "recent session context",
-        "show session context",
-    ],
-    "scaffold_session_list": [
-        "list sessions",
-        "show recent sessions",
-        "list working sessions",
-    ],
-    "scaffold_find_studies": [
-        "any studies on X",
-        "experiments related to X",
-        "what did we test for X",
-        "show me studies about X",
-        "prior experiments about X",
-        "any prior experiments about X",
-    ],
-    "scaffold_prior_experiments": [
-        "has this been tested",
-        "prior experiments for plan X",
-        "any evidence for this approach",
-        "what experiments relate to plan X",
-    ],
-    "scaffold_find_adrs": [
-        "any ADRs about X",
-        "what architectural decisions cover X",
-        "show me ADRs related to storage",
-        "which ADR governs X",
-        "what ADR blocks plan X",
-        "the ADR blocking them",
-        "which architecture decision governs X",
-        "what architecture decision governs X",
-    ],
-    "scaffold_decision_context": [
-        "what's the decision history for plan X",
-        "was there a spike for plan X",
-        "what ADR governs plan X",
-        "show me the full decision chain for plan X",
-        "what was the original intent for plan X",
-        "trace the decisions for plan X",
-        "trace the rationale chain for plan X",
-        "why was this plan decided this way",
-    ],
-    "scaffold_search": [
-        "search the workspace for X",
-        "search across all projects for X",
-        "find code related to X",
-        "find duplicates across projects",
-        "look for duplicate code in the workspace",
-        "search all projects for similar implementations",
-        "look across every project for similar implementations",
-    ],
-    "scaffold_record_finding": [
-        "record finding",
-        "log finding",
-        "note a finding",
-        "discovered issue in plan",
-        "review found an issue",
-        "I found an issue in plan X",
-        "log this review finding",
-        "capture this finding",
-    ],
-    "scaffold_resolve_finding": [
-        "mark finding resolved",
-        "close finding",
-        "fix has been addressed",
-        "resolved finding",
-        "finding has been closed",
-        "mark this issue as resolved",
-        "resolve this finding",
-        "finding is resolved",
-    ],
-    "scaffold_record_findings_batch": [
-        "record all findings",
-        "log all findings",
-        "record findings batch",
-        "record multiple findings",
-        "save all review findings",
-        "batch record findings",
-        "record findings in the plan appendix",
-        "log these findings",
-        "capture all findings",
-        "write all findings to graph",
-    ],
-    "scaffold_record_backlog_item": [
-        "add backlog item",
-        "record backlog item",
-        "log backlog item",
-        "add to backlog",
-        "create backlog item",
-        "note backlog item",
-        "track backlog item",
-    ],
-    "scaffold_resolve_backlog_item": [
-        "resolve backlog item",
-        "close backlog item",
-        "mark backlog item done",
-        "complete backlog item",
-        "archive backlog item",
-        "mark backlog item complete",
-        "backlog item is done",
-    ],
-    "scaffold_begin_plan": [
-        "begin plan X",
-        "start plan X",
-        "kick off plan X",
-        "let's start implementation of plan X",
-        "run the pre-reviews for plan X",
-        "follow the collab protocol to begin plan X",
-        "pre-review chain for plan X",
-        "run begin plan for plan X",
-    ],
-    "scaffold_complete_plan": [
-        "wrap up plan X",
-        "complete plan X",
-        "post-implementation for plan X",
-        "close out plan X",
-        "run the retro for plan X",
-        "follow the collab protocol to close plan X",
-        "run complete plan for plan X",
-        "finish plan X",
-    ],
-    "scaffold_diff_plan_vs_code": [
-        "diff plan X vs code",
-        "what's left on plan X",
-        "plan vs implementation for plan X",
-        "which planned files are missing",
-        "mid-implementation progress on plan X",
-    ],
-    "scaffold_grep_graph": [
-        "grep the workspace for X",
-        "ripgrep for X in the project",
-        "text search the repo for X",
-        "scaffold grep for X",
-    ],
-    "scaffold_why_empty": [
-        "why is search empty",
-        "why no callers",
-        "why empty impact",
-        "explain empty scaffold result",
-    ],
-    "scaffold_next_action": [
-        "what should I do next",
-        "next action",
-        "what tool should I call next",
-        "route me to the next step",
-    ],
-}
+# Back-compat alias; routing phrases live in mcp/intents.py (Plan 251 C1).
+TOOL_INTENTS = intent_phrases()
 
 _ROUTING_STOPWORDS = {
     "a",
@@ -400,6 +154,8 @@ _REQUIRED_STRING_ARGS: dict[str, tuple[str, ...]] = {
     "scaffold_search": ("query",),
     "scaffold_recall_governance": ("query",),
     "scaffold_grep_graph": ("pattern",),
+    "scaffold_find_studies": ("topic",),
+    "scaffold_find_adrs": ("topic",),
 }
 
 
@@ -824,8 +580,13 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
     if name == "scaffold_projects":
         from agentscaffold.mcp.projects import build_projects_payload
+        from agentscaffold.mcp.scope_stamp import compact_guidance_stamp, full_guidance_stamp
 
-        return build_projects_payload(resolution, restrict_to=_RESTRICT_TO or None)
+        payload = build_projects_payload(resolution, restrict_to=_RESTRICT_TO or None)
+        meta = payload.setdefault("meta", {})
+        meta.update(compact_guidance_stamp(resolution.root))
+        payload["guidance"] = full_guidance_stamp(resolution.root)
+        return payload
 
     # Project-scoped reads resolve their scope from "where we are", and this is
     # where the resolved project reaches them. It used to be os.chdir, which is
@@ -975,7 +736,10 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
             sql = arguments.get("sql", "")
             if not sql:
                 return {"error": "Missing 'sql' parameter.", "meta": meta}
-            rows = store.query(sql)
+            try:
+                rows = store.query(sql)
+            except Exception as exc:
+                return {"error": _query_error_message(sql, exc), "meta": meta}
             return {"results": rows, "count": len(rows), "meta": meta}
 
         elif name == "scaffold_context":
@@ -1002,13 +766,13 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
             return _tool_validate(store, arguments, meta)
 
         elif name == "scaffold_review_context":
-            return _tool_review_context(store, arguments, meta)
+            return _tool_review_context(store, arguments, meta, root, config)
 
         elif name == "scaffold_prepare_review":
             return _tool_prepare_review(store, arguments, meta, root, config)
 
         elif name == "scaffold_prepare_implementation":
-            return _tool_prepare_implementation(store, arguments, meta, root)
+            return _tool_prepare_implementation(store, arguments, meta, root, config)
 
         elif name == "scaffold_compare_plans":
             return _tool_compare_plans(store, arguments, meta, config)
@@ -1116,6 +880,9 @@ def _resolution_meta(resolution: Any, arguments: dict[str, Any]) -> dict[str, An
     }
     if arguments.get("working_path") and source != ResolutionSource.WORKING_PATH.value:
         meta["working_path_unmatched"] = True
+    from agentscaffold.mcp.scope_stamp import compact_guidance_stamp
+
+    meta.update(compact_guidance_stamp(resolution.root))
     return meta
 
 
@@ -1310,6 +1077,10 @@ def _tool_context(
         else []
     )
 
+    callers = [row for row in callers if not _same_symbol_row(row, node)]
+    callees = [row for row in callees if not _same_symbol_row(row, node)]
+    method_callers = [row for row in method_callers if not _same_symbol_row(row, node)]
+
     caller_count = len(callers) + len(method_callers)
     language = language_for_path(file_path)
     caveat = empty_result_caveat(
@@ -1321,12 +1092,18 @@ def _tool_context(
 
     bases: list[dict[str, Any]] = []
     subclasses: list[dict[str, Any]] = []
+    methods: list[dict[str, Any]] | None = None
     raw_id = node.get("id") or ""
-    if "class::" in raw_id and hasattr(store, "query_class_bases"):
-        bases = store.query_class_bases(raw_id)
-        subclasses = store.query_class_subclasses(raw_id)
+    if "class::" in raw_id:
+        if hasattr(store, "query_class_bases"):
+            bases = store.query_class_bases(raw_id)
+            subclasses = store.query_class_subclasses(raw_id)
+        if hasattr(store, "query_class_methods"):
+            methods = store.query_class_methods(raw_id)
+        else:
+            methods = []
 
-    return {
+    payload: dict[str, Any] = {
         "symbol": node,
         "callers": callers,
         "method_callers": method_callers,
@@ -1348,9 +1125,61 @@ def _tool_context(
             config_consumers=config_consumers,
             bases=bases,
             subclasses=subclasses,
+            methods=methods,
         ),
         "meta": meta,
     }
+    if methods is not None:
+        payload["methods"] = methods
+        payload["method_count"] = len(methods)
+        payload["construction_sites"] = []
+    return payload
+
+
+def _same_symbol_row(row: dict[str, Any], node: dict[str, Any]) -> bool:
+    """True when a caller/callee row is the same function as *node*."""
+    rname = row.get("name") or ""
+    rpath = row.get("filePath") or row.get("path") or ""
+    nname = node.get("name") or ""
+    npath = node.get("filePath") or ""
+    return bool(rname) and rname == nname and bool(rpath) and rpath == npath
+
+
+def _same_file_row(row: dict[str, Any], target: str) -> bool:
+    """True when a caller row lives in the impact target file."""
+    rpath = str(row.get("filePath") or row.get("path") or "")
+    if not rpath or not target:
+        return False
+    norm_r = rpath.replace("\\", "/")
+    norm_t = target.replace("\\", "/")
+    return norm_r == norm_t or norm_r.endswith("/" + norm_t) or norm_t.endswith("/" + norm_r)
+
+
+def _label_same_file_callers(rows: list[dict[str, Any]], target: str) -> list[dict[str, Any]]:
+    labelled: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        if _same_file_row(item, target):
+            item["self"] = True
+        labelled.append(item)
+    return labelled
+
+
+_EDGE_TABLES_HINT = (
+    "There is no 'edges' table. Graph relationships live in "
+    "CALLS, EXTENDS, IMPORTS, HAS_METHOD, and METHOD_CALLS "
+    "(query those tables, or use GRAPH_TABLE MATCH)."
+)
+
+
+def _query_error_message(sql: str, exc: BaseException) -> str:
+    raw = str(exc)
+    lowered = raw.lower()
+    mentions_missing = any(token in lowered for token in ("pg_views", "does not exist", "catalog"))
+    asks_edges = bool(re.search(r"\bfrom\s+edges\b", sql, re.I))
+    if mentions_missing or asks_edges:
+        return f"{raw} {_EDGE_TABLES_HINT}"
+    return raw
 
 
 def _config_consumers(store: Any, file_id: str) -> list[dict[str, Any]]:
@@ -1496,6 +1325,8 @@ def _tool_impact(
     )
 
     config_consumers = _config_consumers(store, file_id)
+    callers = _label_same_file_callers(callers, target)
+    method_callers = _label_same_file_callers(method_callers, target)
 
     language = language_for_path(target)
     result_count = len(flat_importers) + len(callers) + len(method_callers) + len(config_consumers)
@@ -1639,9 +1470,12 @@ def _tool_validate(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) 
         return {"report": report.to_dict(), "meta": meta}
 
     if check == "staleness":
+        from agentscaffold.active_root import default_start
         from agentscaffold.graph.verify import verify_graph
 
-        report = verify_graph(store, _effective_mcp_root())
+        # Existence/hash checks are against disk. Use the call's project root
+        # (active_root from dispatch / working_path), not launch-cwd heuristics.
+        report = verify_graph(store, default_start())
         return {"report": report, "meta": meta}
 
     if check == "contracts":
@@ -1659,7 +1493,11 @@ def _tool_validate(store: Any, arguments: dict[str, Any], meta: dict[str, Any]) 
 
 
 def _tool_review_context(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    root: Path,
+    config: Any,
 ) -> dict[str, Any]:
     """Handle scaffold_review_context tool call (Dialectic Engine)."""
     plan_number = arguments.get("plan_number")
@@ -1673,7 +1511,7 @@ def _tool_review_context(
     if review_type in ("brief", "all"):
         from agentscaffold.review.brief import format_brief_markdown, generate_brief
 
-        brief = generate_brief(store, plan_number)
+        brief = generate_brief(store, plan_number, root=root, config=config)
         result["brief"] = brief
         result["brief_markdown"] = format_brief_markdown(brief)
 
@@ -1683,7 +1521,7 @@ def _tool_review_context(
             generate_challenges,
         )
 
-        challenges = generate_challenges(store, plan_number)
+        challenges = generate_challenges(store, plan_number, root=root, config=config)
         result["challenges"] = [
             {"category": c.category, "text": c.text, "severity": c.severity} for c in challenges
         ]
@@ -1692,7 +1530,7 @@ def _tool_review_context(
     if review_type in ("gaps", "all"):
         from agentscaffold.review.gaps import format_gaps_markdown, generate_gaps
 
-        gaps = generate_gaps(store, plan_number)
+        gaps = generate_gaps(store, plan_number, root=root, config=config)
         result["gaps"] = [
             {"category": g.category, "text": g.text, "severity": g.severity} for g in gaps
         ]
@@ -1704,7 +1542,7 @@ def _tool_review_context(
             verify_implementation,
         )
 
-        items = verify_implementation(store, plan_number)
+        items = verify_implementation(store, plan_number, root=root, config=config)
         result["verification"] = [
             {"check": i.check, "status": i.status, "detail": i.detail} for i in items
         ]
@@ -1716,7 +1554,7 @@ def _tool_review_context(
             generate_retro_enrichment,
         )
 
-        insights = generate_retro_enrichment(store, plan_number)
+        insights = generate_retro_enrichment(store, plan_number, root=root, config=config)
         result["retro_insights"] = [{"category": i.category, "text": i.text} for i in insights]
         result["retro_markdown"] = format_retro_markdown(insights)
 
@@ -1747,6 +1585,66 @@ def _scope_echo(scope: dict[str, Any]) -> dict[str, Any]:
     if scope["project"]:
         return {"scope": "project", "project": scope["project"]}
     return {}
+
+
+_BACKLOG_TOP3_FETCH = 32
+
+
+def _unqualified_backlog_id(item_id: str) -> str:
+    """Collapse ``project::bi::hex`` and ``bi::hex`` to the same suffix."""
+    raw = str(item_id or "").strip()
+    if "::bi::" in raw:
+        return "bi::" + raw.rsplit("::bi::", 1)[-1]
+    return raw
+
+
+def _is_qualified_backlog_id(item_id: str) -> bool:
+    return "::bi::" in str(item_id or "")
+
+
+def _backlog_row_id(row: dict[str, Any]) -> str:
+    return str(row.get("id") or row.get("bi.id") or "")
+
+
+def _dedup_backlog_items(
+    rows: list[dict[str, Any]] | None,
+    *,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Keep one row per unqualified ``bi::`` suffix; prefer the qualified id.
+
+    First-seen order of the suffix is preserved so query priority order stays.
+    Fetch a wider window than the display limit so a leading duplicate pair
+    does not starve the unique top-N (Plan 274).
+    """
+    by_key: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for row in rows or []:
+        raw = _backlog_row_id(row)
+        key = _unqualified_backlog_id(raw)
+        if not key:
+            continue
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = row
+            order.append(key)
+            continue
+        existing_id = _backlog_row_id(existing)
+        if _is_qualified_backlog_id(raw) and not _is_qualified_backlog_id(existing_id):
+            by_key[key] = row
+    out = [by_key[k] for k in order]
+    if limit is not None:
+        return out[:limit]
+    return out
+
+
+def _unique_open_backlog_count(rows: list[dict[str, Any]] | None) -> int:
+    keys = {
+        _unqualified_backlog_id(str(row.get("id") or row.get("bi.id") or ""))
+        for row in (rows or [])
+    }
+    keys.discard("")
+    return len(keys)
 
 
 def _clean_out_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -1788,6 +1686,23 @@ def _adr_is_active(raw_status: str | None) -> bool:
     """
     s = (raw_status or "").lower()
     return "supersed" not in s and "deprecat" not in s
+
+
+def _adr_matches_topic(adr: dict[str, Any], topic_lower: str) -> bool:
+    """Title first, then ADR file body when filePath is present (Plan 251 C6)."""
+    title = str(adr.get("a.title") or "")
+    if topic_lower in title.lower():
+        return True
+    raw_path = adr.get("a.filePath") or adr.get("filePath")
+    if not raw_path:
+        return False
+    path = Path(str(raw_path))
+    if not path.is_file():
+        return False
+    try:
+        return topic_lower in path.read_text(encoding="utf-8", errors="replace").lower()
+    except OSError:
+        return False
 
 
 def _empty_graph_warning(stats: dict[str, Any]) -> str | None:
@@ -1889,9 +1804,9 @@ def _tool_prepare_review(
     if pn is None:
         return {"error": "plan_number is required.", "meta": meta}
 
-    brief = generate_brief(store, pn)
-    challenges = generate_challenges(store, pn)
-    gaps = generate_gaps(store, pn)
+    brief = generate_brief(store, pn, root=root, config=config)
+    challenges = generate_challenges(store, pn, root=root, config=config)
+    gaps = generate_gaps(store, pn, root=root, config=config)
 
     # Collect impacted paths from the brief (avoids a redundant graph query)
     impacted_paths = [fp["path"] for fp in brief.get("file_profiles", []) if fp.get("path")]
@@ -1953,7 +1868,11 @@ def _tool_prepare_review(
 
 
 def _tool_prepare_implementation(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any], root: Path
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    root: Path,
+    config: Any = None,
 ) -> dict[str, Any]:
     """Composite: implementation preparation for a plan."""
     from agentscaffold.config import load_config as _load_config  # noqa: PLC0415
@@ -1962,7 +1881,6 @@ def _tool_prepare_implementation(
         get_contracts_for_file,
         get_file_importers,
         get_plan_dependencies,
-        get_plan_impacted_files,
         get_plan_reviewed_at,
     )
 
@@ -1988,19 +1906,21 @@ def _tool_prepare_implementation(
     except Exception:  # noqa: BLE001
         pass  # Config load failure should not block implementation
 
-    brief = generate_brief(store, pn)
-    impacted = get_plan_impacted_files(store, pn)
+    brief = generate_brief(store, pn, root=root, config=config)
+    impacted = brief.get("file_profiles", [])
     deps = get_plan_dependencies(store, int(pn))
 
     per_file: list[dict[str, Any]] = []
     for f in impacted:
-        fpath = f.get("f.path", "")
+        fpath = f.get("path", "")
         importers = get_file_importers(store, fpath)
         contracts = get_contracts_for_file(store, fpath)
         per_file.append(
             {
                 "path": fpath,
-                "change_type": f.get("r.changeType", ""),
+                "change_type": f.get("change_type", f.get("r.changeType", "")),
+                "resolution": f.get("resolution"),
+                "project": f.get("project"),
                 "consumer_count": len(importers),
                 "consumers": [i.get("a.path", "") for i in importers[:10]],
                 "contracts": [c.get("c.name", "") for c in contracts],
@@ -2197,6 +2117,7 @@ def _tool_staleness_check(
                     f"Study {s.get('s.studyId')} outcome '{outcome}' may contradict approach"
                 )
 
+    from agentscaffold.active_root import default_start
     from agentscaffold.mcp.plan_card import build_plan_card
 
     return {
@@ -2205,7 +2126,7 @@ def _tool_staleness_check(
         "plan_status": plan.get("p.status"),
         "plan_status_normalized": normalize_plan_status(plan.get("p.status")),
         "last_updated": plan.get("p.lastUpdated"),
-        "plan_card": build_plan_card(store, int(pn), plan_row=plan),
+        "plan_card": build_plan_card(store, int(pn), root=default_start(), plan_row=plan),
         "stale_signals": signals,
         "is_stale": bool(signals),
         "lead_shared_files": lead,
@@ -2285,6 +2206,34 @@ def _tool_prepare_retro(
     }
 
 
+def _plan_progress_from_brief(brief: dict[str, Any]) -> list[dict[str, Any]]:
+    """In-flight and/or idle-next only (max 2)."""
+    rows: list[dict[str, Any]] = []
+    current = brief.get("current_work") or {}
+    nxt = brief.get("next") or {}
+    if current.get("kind") == "in_flight" and current.get("plan_number") is not None:
+        rows.append(
+            {
+                "plan_number": current.get("plan_number"),
+                "title": current.get("title"),
+                "status": current.get("status"),
+                "unchecked_steps": current.get("unchecked_steps"),
+                "next_unchecked_step": current.get("next_unchecked_step"),
+            }
+        )
+    nxt_pn = (nxt.get("arguments") or {}).get("plan_number")
+    if nxt_pn is not None and nxt_pn not in {r.get("plan_number") for r in rows}:
+        rows.append(
+            {
+                "plan_number": nxt_pn,
+                "title": "",
+                "status": "",
+                "action": nxt.get("action"),
+            }
+        )
+    return rows[:2]
+
+
 def _parse_workflow_state(root: Path, config: Any) -> dict[str, Any]:
     """Live-parse workflow_state.md for current project status."""
     from agentscaffold.mcp.workflow_state import parse_workflow_file
@@ -2337,7 +2286,10 @@ def _tool_orient(
                 }
         recent_cards.append(cleaned)
 
-    open_backlog = get_open_backlog_items(store, limit=3)
+    open_backlog = _dedup_backlog_items(
+        get_open_backlog_items(store, limit=_BACKLOG_TOP3_FETCH),
+        limit=3,
+    )
 
     try:
         _bl_proj = _current_project_or_none()
@@ -2345,19 +2297,29 @@ def _tool_orient(
             f" AND project = '{_bl_proj.replace(chr(39), chr(39) * 2)}'" if _bl_proj else ""
         )
         count_rows = store.query(
-            "SELECT COUNT(*) AS cnt FROM BacklogItem"
+            "SELECT id AS id FROM BacklogItem"
             f" WHERE status NOT IN ('archived', 'unblockable'){_bl_proj_filter}"
         )
-        open_backlog_count = count_rows[0]["cnt"] if count_rows else 0
+        open_backlog_count = _unique_open_backlog_count(count_rows)
     except Exception:
         open_backlog_count = 0
 
     active_adrs = [a for a in adrs if _adr_is_active(a.get("a.status"))]
 
-    # Plan 247: fold next_action + compact plan_progress into orient so agents
-    # do not need a second hop after session start.
+    # Plan 273: session_brief drives routing. Diary focus is not used.
+    from agentscaffold.graph.sessions import find_open_session
     from agentscaffold.mcp.next_action import next_actions
+    from agentscaffold.mcp.session_brief import build_session_brief, compact_session_context
 
+    project = _current_project_or_none()
+    open_session = find_open_session(store, project=project)
+    brief = build_session_brief(
+        store,
+        root=root,
+        workflow=workflow,
+        project=project,
+        plan_number=arguments.get("plan_number"),
+    )
     actions_payload = next_actions(
         store,
         root=root,
@@ -2365,22 +2327,10 @@ def _tool_orient(
         workflow=workflow,
         meta=meta,
         plan_number=arguments.get("plan_number"),
+        project=project,
+        session_brief=brief,
     )
-    plan_progress: list[dict[str, Any]] = []
-    for card_row in recent_cards:
-        pc = card_row.get("plan_card")
-        if not pc:
-            continue
-        plan_progress.append(
-            {
-                "plan_number": card_row.get("number") or card_row.get("p.number"),
-                "title": card_row.get("title") or card_row.get("p.title"),
-                "status": card_row.get("status") or card_row.get("p.status"),
-                "unchecked_steps": pc.get("unchecked_steps"),
-                "checked_steps": pc.get("checked_steps"),
-                "open_finding_count": pc.get("open_finding_count"),
-            }
-        )
+    plan_progress = _plan_progress_from_brief(brief)
 
     result = {
         "stats": stats,
@@ -2394,8 +2344,9 @@ def _tool_orient(
         "open_backlog_count": open_backlog_count,
         "open_backlog_top3": _clean_out_rows(open_backlog),
         "recommended_actions": actions_payload.get("actions", []),
-        "plan_progress": plan_progress[:5],
+        "plan_progress": plan_progress,
         "next_action_focus": actions_payload.get("focus_plan"),
+        "session_brief": brief,
         "meta": meta,
     }
     live = dict(workflow.get("workflow_live") or {})
@@ -2410,9 +2361,18 @@ def _tool_orient(
     result["workflow_state"] = public_ws
     from agentscaffold.graph.sessions import get_session_context
 
-    session_ctx = get_session_context(store, project=_current_project_or_none())
-    if session_ctx:
-        result["session_context"] = session_ctx
+    detail_mode = (arguments.get("detail") or "summary").strip().lower()
+    if detail_mode == "full":
+        session_ctx = get_session_context(store, project=project)
+        if session_ctx:
+            result["session_context"] = session_ctx
+    else:
+        compact = compact_session_context(open_session)
+        if compact:
+            result["session_context"] = compact
+    from agentscaffold.mcp.scope_stamp import full_guidance_stamp
+
+    result["guidance"] = full_guidance_stamp(root)
     return apply_detail(result, arguments.get("detail"))
 
 
@@ -2420,15 +2380,27 @@ def _tool_find_studies(
     store: Any, arguments: dict[str, Any], meta: dict[str, Any]
 ) -> dict[str, Any]:
     """Composite: search studies by topic and/or outcome."""
-    from agentscaffold.review.queries import get_studies_by_outcome, get_studies_by_tags
+    from agentscaffold.review.queries import (
+        get_studies_by_outcome,
+        get_studies_by_tags,
+        get_studies_by_title_tokens,
+    )
 
-    topic = arguments.get("topic", "")
+    topic = arguments.get("topic")
+    if not (isinstance(topic, str) and topic.strip()):
+        return {"error": "topic is required.", "missing_argument": "topic", "meta": meta}
     outcome = arguments.get("outcome")
     scope = _scope_args(arguments)
 
     results: list[dict[str, Any]] = []
     if topic:
         results = get_studies_by_tags(store, [topic], **scope)
+        title_hits = get_studies_by_title_tokens(store, topic, **scope)
+        existing_ids = {r.get("s.studyId") for r in results}
+        for hit in title_hits:
+            if hit.get("s.studyId") not in existing_ids:
+                results.append(hit)
+                existing_ids.add(hit.get("s.studyId"))
 
     if outcome:
         outcome_results = get_studies_by_outcome(store, outcome, **scope)
@@ -2471,6 +2443,24 @@ def _tool_prior_experiments(
     if pn is None:
         return {"error": "plan_number is required.", "meta": meta}
 
+    from agentscaffold.review.queries import get_plan_by_number
+
+    plan = get_plan_by_number(store, int(pn))
+    if plan is None:
+        return {
+            "plan_number": pn,
+            "error": f"Plan {pn} not found.",
+            "why_empty": (
+                "No plan with that number exists in this project. "
+                "This is not the same as a plan that has no experiments."
+            ),
+            "directly_referenced": [],
+            "file_overlap_studies": [],
+            "total_count": 0,
+            "overlap_noise_filtered_count": 0,
+            "meta": meta,
+        }
+
     direct = get_studies_for_plan(store, pn)
 
     configured = getattr(getattr(config, "graph", None), "overlap_noise_paths", None)
@@ -2505,16 +2495,15 @@ def _tool_find_adrs(store: Any, arguments: dict[str, Any], meta: dict[str, Any])
     """Composite: search ADRs by topic keyword and/or status."""
     from agentscaffold.review.queries import get_all_adrs
 
-    topic = arguments.get("topic", "")
+    topic = arguments.get("topic")
+    if not (isinstance(topic, str) and topic.strip()):
+        return {"error": "topic is required.", "missing_argument": "topic", "meta": meta}
     status_filter = arguments.get("status")
     scope = _scope_args(arguments)
 
     all_adrs = get_all_adrs(store, **scope)
-    results = all_adrs
-
-    if topic:
-        topic_lower = topic.lower()
-        results = [a for a in results if topic_lower in a.get("a.title", "").lower()]
+    topic_lower = topic.lower()
+    results = [a for a in all_adrs if _adr_matches_topic(a, topic_lower)]
 
     if status_filter:
         status_lower = status_filter.lower()
@@ -2599,13 +2588,20 @@ def _tool_decision_context(
         "supporting_studies": _clean_out_rows(studies),
         "plan_dependencies": _clean_out_rows(deps),
         "session_decisions": session_decisions,
-        "has_full_decision_chain": bool(adrs or spikes or studies or session_decisions),
+        "has_full_decision_chain": bool(adrs or spikes),
         **({"project": scope["project"]} if scope["project"] else {}),
         # If the graph is empty the chain looks absent even when it exists in
         # docs; flag so a False is not read as a confirmed "no decisions".
         "graph_warning": _empty_graph_warning(store.get_stats()),
         "meta": meta,
     }
+
+
+def _dry_run_write(meta: dict[str, Any], **preview: Any) -> dict[str, Any]:
+    """Shared dry_run payload for write tools that previously lacked it."""
+    payload = {"dry_run": True, "would_write": True, "meta": meta}
+    payload.update(preview)
+    return payload
 
 
 def _tool_record_finding(
@@ -2624,6 +2620,9 @@ def _tool_record_finding(
             "error": "plan_number, review_type, category, and finding are required.",
             "meta": meta,
         }
+
+    if arguments.get("dry_run"):
+        return _dry_run_write(meta, plan_number=int(plan_number), review_type=review_type)
 
     result = record_finding(
         store,
@@ -2653,6 +2652,9 @@ def _tool_resolve_finding(
 
     if not finding_id or not resolution:
         return {"error": "finding_id and resolution are required.", "meta": meta}
+
+    if arguments.get("dry_run"):
+        return _dry_run_write(meta, finding_id=finding_id)
 
     result = resolve_finding(
         store,
@@ -2732,6 +2734,9 @@ def _tool_record_findings_batch(
     if not isinstance(findings, list):
         return {"error": "'findings' must be a list.", "meta": meta}
 
+    if arguments.get("dry_run"):
+        return _dry_run_write(meta, plan_number=int(plan_number), would_write_count=len(findings))
+
     result = record_findings_batch(
         store,
         plan_number=int(plan_number),
@@ -2761,6 +2766,8 @@ def _tool_record_backlog_item(
         # Batch mode
         if not isinstance(items, list):
             return {"error": "'items' must be a list.", "meta": meta}
+        if arguments.get("dry_run"):
+            return _dry_run_write(meta, plan_number=int(plan_number), would_write_count=len(items))
         result = record_backlog_items_batch(
             store,
             plan_number=int(plan_number),
@@ -2774,6 +2781,9 @@ def _tool_record_backlog_item(
     title = arguments.get("title", "")
     if not title:
         return {"error": "Either 'items' (array) or 'title' (string) is required.", "meta": meta}
+
+    if arguments.get("dry_run"):
+        return _dry_run_write(meta, plan_number=int(plan_number), title=title)
 
     result = record_backlog_item(
         store,
@@ -2798,6 +2808,9 @@ def _tool_resolve_backlog_item(
     item_id = arguments.get("item_id", "")
     if not item_id:
         return {"error": "item_id is required.", "meta": meta}
+
+    if arguments.get("dry_run"):
+        return _dry_run_write(meta, item_id=item_id)
 
     result = resolve_backlog_item(
         store,
@@ -2883,6 +2896,7 @@ def _tool_next_action(
         workflow=workflow,
         meta=meta,
         plan_number=int(pn) if pn is not None else None,
+        project=_current_project_or_none(),
     )
     result["meta"] = meta
     return result
@@ -3246,6 +3260,9 @@ def _tool_session_start(
     """Start or reuse the open working session."""
     from agentscaffold.graph.sessions import get_session, start_session
 
+    if arguments.get("dry_run"):
+        return _dry_run_write(meta, plan_numbers=arguments.get("plan_numbers") or [])
+
     session_id = start_session(
         store,
         plan_numbers=arguments.get("plan_numbers") or None,
@@ -3264,6 +3281,8 @@ def _tool_session_record_decision(
     decision = (arguments.get("decision") or "").strip()
     if not decision:
         return {"error": "decision is required.", "meta": meta}
+    if arguments.get("dry_run"):
+        return _dry_run_write(meta, decision=decision, kind=arguments.get("kind") or "operational")
     result = record_decision(
         store,
         decision=decision,
@@ -3284,6 +3303,9 @@ def _tool_session_end(
 ) -> dict[str, Any]:
     """Close a working session."""
     from agentscaffold.graph.sessions import end_session
+
+    if arguments.get("dry_run"):
+        return _dry_run_write(meta, session_id=arguments.get("session_id") or "")
 
     result = end_session(
         store,

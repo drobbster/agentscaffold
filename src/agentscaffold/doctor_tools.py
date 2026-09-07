@@ -74,6 +74,7 @@ _PROBE_ARGUMENTS: dict[str, dict[str, Any]] = {
     "finding_id": {"finding_id": "probe::none"},
     "resolution": {"resolution": "probe"},
     "item_id": {"item_id": "probe::none"},
+    "decision": {"decision": "probe"},
 }
 
 
@@ -122,6 +123,29 @@ def _invoke(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     from agentscaffold.mcp.server import _dispatch_tool
 
     return _dispatch_tool(name, arguments)
+
+
+def _envelope_error(name: str, arguments: dict[str, Any], first: dict[str, Any]) -> str | None:
+    """Validate live probe samples against a generated envelope (Plan 251 C10).
+
+    Required keys are the intersection of N live calls, not a hand-written
+    schema. ``meta`` stays open. Diary keys are never required. Write tools
+    are sampled once so a probe does not mutate twice.
+    """
+    from agentscaffold.mcp.output_envelope import intersect_keys, validate_envelope
+
+    samples = [first]
+    if name not in WRITE_TOOLS:
+        second = _invoke(name, arguments)
+        if isinstance(second, dict):
+            samples.append(second)
+    required = intersect_keys(samples)
+    errors: list[str] = []
+    for sample in samples:
+        errors.extend(validate_envelope(sample, required))
+    if errors:
+        return "; ".join(errors)
+    return None
 
 
 def probe_tools(
@@ -179,8 +203,19 @@ def _probe_one(
 
     started = time.perf_counter()
     try:
-        result = _invoke(name, _arguments_for(name, working_path))
-        return _classify(name, result, (time.perf_counter() - started) * 1000)
+        arguments = _arguments_for(name, working_path)
+        result = _invoke(name, arguments)
+        probe = _classify(name, result, (time.perf_counter() - started) * 1000)
+        if probe.status == "ok" and isinstance(result, dict):
+            envelope_error = _envelope_error(name, arguments, result)
+            if envelope_error:
+                return ToolProbe(
+                    name=name,
+                    status="fail",
+                    detail=envelope_error,
+                    elapsed_ms=probe.elapsed_ms,
+                )
+        return probe
     except lock_error as exc:
         return ToolProbe(
             name=name,

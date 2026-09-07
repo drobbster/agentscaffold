@@ -7,10 +7,10 @@ from unittest.mock import MagicMock, patch
 
 from agentscaffold.mcp.detail import apply_detail
 from agentscaffold.mcp.next_action import (
-    _routing_status,
     _unexpected_retrieval_degradation,
     next_actions,
 )
+from agentscaffold.mcp.session_brief import _routing_status
 from agentscaffold.mcp.workflow_state import parse_workflow_file, parse_workflow_text
 from agentscaffold.review.filters import normalize_plan_status
 
@@ -180,14 +180,25 @@ def test_standing_blockers_without_focus_are_not_priority_one(tmp_path: Path) ->
         _ws("## Blockers", "- **Plan 022**: standing.", "## Next Steps", "- Keep going.")
     )
     assert parsed["workflow_live"]["focus_plan"] is None
-    result = next_actions(
-        MagicMock(),
-        root=tmp_path,
-        config=MagicMock(),
-        workflow=parsed,
-        meta={},
-    )
+    with (
+        patch(
+            "agentscaffold.graph.sessions.find_open_session",
+            return_value=None,
+        ),
+        patch(
+            "agentscaffold.review.queries.get_all_plans",
+            return_value=[],
+        ),
+    ):
+        result = next_actions(
+            MagicMock(),
+            root=tmp_path,
+            config=MagicMock(),
+            workflow=parsed,
+            meta={},
+        )
     assert not any("Resolve workflow blockers" in a["action"] for a in result["actions"])
+    assert not any(a.get("tool") == "scaffold_orient" for a in result["actions"])
 
 
 def test_missing_workflow_file() -> None:
@@ -227,20 +238,38 @@ def test_routing_status_inferred_from_checkbox_mix() -> None:
     )
 
 
-def test_unknown_all_checked_recommends_close_out(tmp_path: Path) -> None:
+def test_unknown_all_checked_falls_through_instead_of_orient(tmp_path: Path) -> None:
+    path = tmp_path / "docs" / "ai" / "plans" / "7-done.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "## 8. Execution Steps\n- [x] a\n- [x] b\n- [x] c\n- [x] d\n- [x] e\n",
+        encoding="utf-8",
+    )
+    row = {"p.number": 7, "p.status": "unknown", "p.filePath": str(path)}
     with (
         patch(
-            "agentscaffold.review.queries.get_plan_by_number",
-            return_value={"p.number": 7, "p.status": "unknown", "p.filePath": ""},
+            "agentscaffold.graph.sessions.find_open_session",
+            return_value=None,
         ),
         patch(
-            "agentscaffold.mcp.next_action.build_plan_card",
-            return_value={
-                "plan_number": 7,
-                "status_normalized": "Unknown",
-                "unchecked_steps": 0,
-                "checked_steps": 5,
-            },
+            "agentscaffold.review.queries.get_plan_by_number",
+            return_value=row,
+        ),
+        patch(
+            "agentscaffold.review.queries.get_all_plans",
+            return_value=[row],
+        ),
+        patch(
+            "agentscaffold.graph.findings.get_open_findings",
+            return_value=[],
+        ),
+        patch(
+            "agentscaffold.graph.backlog.get_backlog_items_for_plan",
+            return_value=[],
+        ),
+        patch(
+            "agentscaffold.graph.sessions.session_decisions_for_plan",
+            return_value=[],
         ),
     ):
         result = next_actions(
@@ -250,24 +279,42 @@ def test_unknown_all_checked_recommends_close_out(tmp_path: Path) -> None:
             workflow={"in_progress_plans": ["7"], "live_blockers": []},
             meta={},
         )
-    assert any("next priority plan" in a["action"].lower() for a in result["actions"])
-    assert result["actions"][0]["rationale"] == "target plan already complete"
+    assert not any(a.get("tool") == "scaffold_orient" for a in result["actions"])
+    assert result["session_brief"]["current_work"]["kind"] == "idle"
 
 
 def test_unknown_all_unchecked_recommends_begin_plan(tmp_path: Path) -> None:
+    path = tmp_path / "docs" / "ai" / "plans" / "7-draft.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "## 8. Execution Steps\n- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d\n",
+        encoding="utf-8",
+    )
+    row = {"p.number": 7, "p.status": "unknown", "p.filePath": str(path)}
     with (
         patch(
-            "agentscaffold.review.queries.get_plan_by_number",
-            return_value={"p.number": 7, "p.status": "unknown", "p.filePath": ""},
+            "agentscaffold.graph.sessions.find_open_session",
+            return_value=None,
         ),
         patch(
-            "agentscaffold.mcp.next_action.build_plan_card",
-            return_value={
-                "plan_number": 7,
-                "status_normalized": "Unknown",
-                "unchecked_steps": 4,
-                "checked_steps": 0,
-            },
+            "agentscaffold.review.queries.get_plan_by_number",
+            return_value=row,
+        ),
+        patch(
+            "agentscaffold.review.queries.get_all_plans",
+            return_value=[row],
+        ),
+        patch(
+            "agentscaffold.graph.findings.get_open_findings",
+            return_value=[],
+        ),
+        patch(
+            "agentscaffold.graph.backlog.get_backlog_items_for_plan",
+            return_value=[],
+        ),
+        patch(
+            "agentscaffold.graph.sessions.session_decisions_for_plan",
+            return_value=[],
         ),
     ):
         result = next_actions(
@@ -309,7 +356,7 @@ def test_summary_does_not_truncate_short_prose() -> None:
     }
     summary = apply_detail(payload, "summary")
     assert "workflow_state_truncated" not in summary
-    assert summary["workflow_state"]["next_steps"] == "short"
+    assert "next_steps" not in (summary.get("workflow_state") or {})
 
 
 def test_singular_blocker_heading() -> None:

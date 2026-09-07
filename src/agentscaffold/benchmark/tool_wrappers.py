@@ -1,37 +1,39 @@
-"""Container-local AgentScaffold tool wrapper scripts."""
+"""Container-local AgentScaffold tool wrapper scripts.
+
+These are CLI stand-ins for the equipped benchmark arm. The container has no
+MCP client, so each wrapper runs from ``/testbed`` (the copied task repo) and
+calls the current ``scaffold`` CLI. Cwd is how 0.10+ resolves the project.
+"""
 
 from __future__ import annotations
 
+_PREAMBLE = "#!/bin/bash\nset -euo pipefail\ncd /testbed\n"
+
 SCAFFOLD_TOOL_SCRIPTS: dict[str, str] = {
-    "scaffold-search": """#!/bin/bash
-set -euo pipefail
-query="${1:-}"
+    "scaffold-orient": _PREAMBLE + "scaffold graph orient\n",
+    "scaffold-search": _PREAMBLE
+    + """query="${1:-}"
 if [ -z "$query" ]; then
   echo "Usage: scaffold-search <query>" >&2
   exit 2
 fi
-cd /testbed
 scaffold graph search "$query"
 """,
-    "scaffold-review": """#!/bin/bash
-set -euo pipefail
-plan="${1:-}"
+    "scaffold-review": _PREAMBLE
+    + """plan="${1:-}"
 if [ -z "$plan" ]; then
-  echo "Usage: scaffold-review <plan-number-or-file>" >&2
+  echo "Usage: scaffold-review <plan-number>" >&2
   exit 2
 fi
-cd /testbed
-scaffold review brief "$plan"
+scaffold review prepare "$plan"
 """,
-    "scaffold-impact": """#!/bin/bash
-set -euo pipefail
-target="${1:-}"
+    "scaffold-impact": _PREAMBLE
+    + """target="${1:-}"
 if [ -z "$target" ]; then
-  echo "Usage: scaffold-impact <symbol-or-path>" >&2
+  echo "Usage: scaffold-impact <file-or-symbol>" >&2
   exit 2
 fi
-cd /testbed
-scaffold graph search "$target" --kind code --top 10
+scaffold graph impact "$target"
 """,
 }
 

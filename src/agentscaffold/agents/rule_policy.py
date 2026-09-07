@@ -12,9 +12,11 @@ from agentscaffold.config import ScaffoldConfig
 # Notes appended under specific Intent Map entries (Plan 247 call compression).
 _INTENT_NOTES: dict[str, str] = {
     "scaffold_orient": (
-        "Primary session router. Prefer its `recommended_actions`, "
-        "`plan_progress`, and `next_action_focus` over a follow-up "
-        "`scaffold_next_action` call."
+        "Answers four questions: current work, blockers for that work, "
+        "related items, and idle-next (`session_brief`). Prefer "
+        "`recommended_actions` / `plan_progress` / `next_action_focus` "
+        "over a follow-up `scaffold_next_action` call. Never treat "
+        "another `scaffold_orient` as the next action."
     ),
     "scaffold_diff_plan_vs_code": (
         "Preferred mid-implementation progress check (next unchecked step, "
@@ -87,29 +89,37 @@ def _tool_selection_policy_lines() -> list[str]:
         "- Graph/index is unavailable or stale.",
         "- MCP output does not contain the specific detail needed.",
         "",
-        "## High-Value MCP-First Routes",
+        "## Situational Tool Use",
         "",
-        "- Plan review/gap/challenge -> `scaffold_prepare_review` first",
-        "- Project status/blockers/next steps -> `scaffold_orient` first",
-        "  (use embedded `recommended_actions` / `plan_progress`; do not also",
-        "  call `scaffold_next_action` unless those fields are absent)",
-        "- Mid-implementation progress / what's left on a plan ->",
-        "  `scaffold_diff_plan_vs_code` first",
-        "- Decision lineage (ADR/spike/study plus session decisions) ->",
-        "  `scaffold_decision_context` first",
-        "- A strategic, architectural, or operational call (approve, defer,",
-        "  stay the course, change scope) -> `scaffold_session_record_decision`",
-        "- Symbol context/impact -> `scaffold_context` or `scaffold_impact` first",
-        "- Open or close a working session -> `scaffold_session_start` /",
-        "  `scaffold_session_end` (prefer `session_context` already embedded",
-        "  in `scaffold_orient` over a follow-up `scaffold_session_context`)",
-        "- Empty search/impact/context -> consume inline `why_empty` +",
-        "  `grep_fallback` on that same response before extra tool hops",
+        "Match the job class to the first tool. Use as many tools as the job",
+        "needs. Count is not the metric. Do not substitute grep, memory, or a",
+        "diary dump for the tool named for that job.",
+        "",
+        "| Job | MUST use first | Do not substitute |",
+        "|-----|----------------|-------------------|",
+        "| Where did we leave off | `scaffold_orient` | diary file dump |",
+        "| What's left on a plan | `scaffold_diff_plan_vs_code` | re-read the plan |",
+        "| Review / critique a plan | `scaffold_prepare_review` | grep the plan |",
+        "| Why was this decided | `scaffold_decision_context` | re-read ADRs ad hoc |",
+        (
+            "| Any prior experiment | `scaffold_find_studies` / "
+            "`scaffold_prior_experiments` | memory |"
+        ),
+        "| What ADR governs X | `scaffold_find_adrs` | glob `docs/ai/adrs` |",
+        "| Blast radius of a file | `scaffold_impact` | grep imports only |",
+        "| Callers of a symbol | `scaffold_context` | grep the name only |",
+        (
+            "| Parsed vs invisible | `scaffold_validate` (`check=coverage`) | "
+            "assume the graph is complete |"
+        ),
+        "| Do these plans overlap | `scaffold_compare_plans` | eyeball File Impact |",
+        "| Record a strategic call | `scaffold_session_record_decision` | chat only |",
         "",
         "## Call Compression Discipline",
         "",
-        "Prefer fewer, richer MCP calls. Do not undo fused responses with",
-        "redundant follow-ups:",
+        "Do not undo fused responses with redundant follow-ups. Compression",
+        "applies only to fields already on the response. It is not a session",
+        "budget and not a preferred call count.",
         "",
         "- After `scaffold_orient`, act on `recommended_actions` /",
         "  `plan_progress` / `next_action_focus` instead of calling",
@@ -125,6 +135,26 @@ def _tool_selection_policy_lines() -> list[str]:
         "  full plan file just to check progress.",
         "- After `scaffold_orient`, use embedded `session_context` rather than",
         "  calling `scaffold_session_context` unless that field is absent.",
+        "",
+    ]
+
+
+def _research_gate_lines() -> list[str]:
+    return [
+        "## Architectural Research Gate",
+        "",
+        "Before creating or materially revising a plan that changes topology,",
+        "public contracts, persistence, security boundaries, or cross-repo",
+        "resolution, search the web and local ADRs/studies for how similar",
+        "systems solve it. Not required for typo fixes, single-function",
+        "bugfixes, or docs-only edits.",
+        "",
+        "- Record alternatives, source links, and pros/cons vs the design you",
+        "  were already considering (an Industry cross-check in the plan).",
+        "- You may keep the original design.",
+        "- If the web is unreachable, say so and use local ADRs/studies only;",
+        "  do not skip the alternatives table.",
+        "- Full procedure: project-owned `AGENTS.md` Architectural Research Gate.",
         "",
     ]
 
@@ -237,16 +267,26 @@ def _governance_guardrails_lines(config: ScaffoldConfig) -> list[str]:
 
 
 def _intent_map_lines(quote_intents: bool) -> list[str]:
-    from agentscaffold.mcp.server import TOOL_INTENTS
+    from agentscaffold.mcp.intents import assert_intent_coverage, intent_phrases
+    from agentscaffold.mcp.registry import tool_names
 
+    names = list(tool_names())
+    assert_intent_coverage(names)
     lines: list[str] = []
-    for tool_name, intents in TOOL_INTENTS.items():
+    for tool_name in names:
+        intents = intent_phrases().get(tool_name, [])
         lines.append(f"### {tool_name}")
         lines.append("")
         note = _INTENT_NOTES.get(tool_name)
         if note:
             lines.append(f"Note: {note}")
             lines.append("")
+        if not intents:
+            lines.append(
+                "Trigger phrases: none (situational only; empty list is an explicit waiver)."
+            )
+            lines.append("")
+            continue
         lines.append("Trigger phrases:")
         for intent in intents:
             if quote_intents:
@@ -268,6 +308,7 @@ def generate_canonical_guidance_body(config: ScaffoldConfig) -> str:
     """
     lines: list[str] = ["# AgentScaffold Routing Guidance", ""]
     lines.extend(_tool_selection_policy_lines())
+    lines.extend(_research_gate_lines())
     lines.extend(_session_working_rhythm_lines())
     lines.extend(_graph_trust_discipline_lines())
     lines.extend(_workspace_scope_discipline_lines())
@@ -291,6 +332,7 @@ def generate_rule_policy_document(
         lines.extend(intro_lines)
         lines.append("")
     lines.extend(_tool_selection_policy_lines())
+    lines.extend(_research_gate_lines())
     lines.extend(_session_working_rhythm_lines())
     lines.extend(_graph_trust_discipline_lines())
     lines.extend(_workspace_scope_discipline_lines())

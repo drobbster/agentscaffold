@@ -196,3 +196,27 @@ def test_tool_probes_are_typed_records_not_free_text():
     """The table has to be machine-readable for CI to gate on it."""
     probe = ToolProbe(name="x", status="ok", detail="fine", elapsed_ms=1.0)
     assert probe.status in {"ok", "fail", "skip", "busy"}
+
+
+def test_envelope_mismatch_fails_the_probe(context, monkeypatch):
+    """C10: a live sample whose meta is not an object fails the probe."""
+    from agentscaffold import doctor_tools
+
+    doctor_context, _ = context
+    real = doctor_tools._invoke
+    stats_calls = {"n": 0}
+
+    def flicker(name, arguments):
+        payload = real(name, arguments)
+        if name == "scaffold_stats" and isinstance(payload, dict):
+            stats_calls["n"] += 1
+            if stats_calls["n"] > 1:
+                broken = dict(payload)
+                broken["meta"] = "not-an-object"
+                return broken
+        return payload
+
+    monkeypatch.setattr("agentscaffold.doctor_tools._invoke", flicker)
+    by_name = {p.name: p for p in probe_tools(doctor_context)}
+    assert by_name["scaffold_stats"].status == "fail"
+    assert "meta" in (by_name["scaffold_stats"].detail or "")

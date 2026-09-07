@@ -146,7 +146,10 @@ def test_test_coverage_gaps_skips_non_code():
     ]
     out: list = []
     # No test files exist for anything -> only the code file should be flagged.
-    with patch("agentscaffold.review.gaps.ql", return_value=[]):
+    with (
+        patch("agentscaffold.review.test_presence.ql", return_value=[]),
+        patch("agentscaffold.review.test_presence.disk_has_test", return_value=False),
+    ):
         _test_coverage_gaps(MagicMock(), impacted, out)
 
     assert len(out) == 1

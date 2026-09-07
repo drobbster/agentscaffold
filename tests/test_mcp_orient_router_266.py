@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -123,6 +124,25 @@ def test_plan_card_refetch_when_get_all_plans_row_omits_filepath(tmp_path: Path)
     assert "Step 7" in (card["next_unchecked_step"] or "")
 
 
+def _related_stack() -> ExitStack:
+    stack = ExitStack()
+    stack.enter_context(patch("agentscaffold.graph.sessions.find_open_session", return_value=None))
+    stack.enter_context(patch("agentscaffold.graph.findings.get_open_findings", return_value=[]))
+    stack.enter_context(
+        patch(
+            "agentscaffold.graph.backlog.get_backlog_items_for_plan",
+            return_value=[],
+        )
+    )
+    stack.enter_context(
+        patch(
+            "agentscaffold.graph.sessions.session_decisions_for_plan",
+            return_value=[],
+        )
+    )
+    return stack
+
+
 def test_next_actions_continue_270_skips_standing_blockers_and_policy_off(
     tmp_path: Path,
 ) -> None:
@@ -135,6 +155,10 @@ def test_next_actions_continue_270_skips_standing_blockers_and_policy_off(
             return_value=full,
         ),
         patch(
+            "agentscaffold.review.queries.get_all_plans",
+            return_value=[full],
+        ),
+        patch(
             "agentscaffold.review.queries.get_plan_impacted_files",
             return_value=[],
         ),
@@ -142,6 +166,7 @@ def test_next_actions_continue_270_skips_standing_blockers_and_policy_off(
             "agentscaffold.mcp.plan_card._open_finding_summary",
             return_value={"count": 0, "ids": []},
         ),
+        _related_stack(),
     ):
         result = next_actions(
             store,
@@ -174,6 +199,10 @@ def test_search_degraded_action_when_embeddings_not_policy_off(tmp_path: Path) -
             return_value=full,
         ),
         patch(
+            "agentscaffold.review.queries.get_all_plans",
+            return_value=[full],
+        ),
+        patch(
             "agentscaffold.review.queries.get_plan_impacted_files",
             return_value=[],
         ),
@@ -181,6 +210,7 @@ def test_search_degraded_action_when_embeddings_not_policy_off(tmp_path: Path) -
             "agentscaffold.mcp.plan_card._open_finding_summary",
             return_value={"count": 0, "ids": []},
         ),
+        _related_stack(),
     ):
         result = next_actions(
             store,
@@ -211,6 +241,10 @@ def test_named_blocker_is_priority_one(tmp_path: Path) -> None:
             return_value=full,
         ),
         patch(
+            "agentscaffold.review.queries.get_all_plans",
+            return_value=[full],
+        ),
+        patch(
             "agentscaffold.review.queries.get_plan_impacted_files",
             return_value=[],
         ),
@@ -218,6 +252,7 @@ def test_named_blocker_is_priority_one(tmp_path: Path) -> None:
             "agentscaffold.mcp.plan_card._open_finding_summary",
             return_value={"count": 0, "ids": []},
         ),
+        _related_stack(),
     ):
         result = next_actions(
             store,
@@ -227,8 +262,10 @@ def test_named_blocker_is_priority_one(tmp_path: Path) -> None:
             meta={"embedding_policy": "off"},
         )
 
-    assert result["actions"][0]["priority"] == 1
-    assert "blockers" in result["actions"][0]["action"].lower()
+    brief = result["session_brief"]
+    assert any(b.get("kind") == "named_blocker" for b in brief["blockers_for_work"])
+    assert not any(a.get("tool") == "scaffold_orient" for a in result["actions"])
+    assert result["actions"][0]["tool"] == "scaffold_diff_plan_vs_code"
 
 
 def test_explicit_plan_number_wins_over_extracted_focus(tmp_path: Path) -> None:
@@ -240,6 +277,20 @@ def test_explicit_plan_number_wins_over_extracted_focus(tmp_path: Path) -> None:
         "p.filePath": "",
         "p.lastUpdated": "",
     }
+    path = tmp_path / "docs" / "ai" / "plans" / "10-other.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "## 0. Metadata\n- Status: In Progress\n\n"
+        "## 8. Execution Steps\n- [x] a\n- [ ] b\n- [ ] c\n- [ ] d\n",
+        encoding="utf-8",
+    )
+    other = {
+        "p.number": 10,
+        "p.title": "Other",
+        "p.status": "In Progress",
+        "p.filePath": str(path),
+        "p.lastUpdated": "",
+    }
     store = MagicMock()
     with (
         patch(
@@ -247,14 +298,10 @@ def test_explicit_plan_number_wins_over_extracted_focus(tmp_path: Path) -> None:
             return_value=other,
         ),
         patch(
-            "agentscaffold.mcp.next_action.build_plan_card",
-            return_value={
-                "plan_number": 10,
-                "status_normalized": "In Progress",
-                "unchecked_steps": 3,
-                "checked_steps": 1,
-            },
+            "agentscaffold.review.queries.get_all_plans",
+            return_value=[other],
         ),
+        _related_stack(),
     ):
         result = next_actions(
             store,
@@ -272,32 +319,30 @@ def test_explicit_plan_number_wins_over_extracted_focus(tmp_path: Path) -> None:
 def test_clean_workflow_falls_through_to_graph_in_progress(tmp_path: Path) -> None:
     parsed = parse_workflow_text(CLEAN_WORKFLOW)
     assert parsed["in_progress_plans"] == []
+    path = tmp_path / "docs" / "ai" / "plans" / "10-clean.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "## 0. Metadata\n- Status: In Progress\n\n## 8. Execution Steps\n- [ ] a\n- [ ] b\n",
+        encoding="utf-8",
+    )
     store = MagicMock()
     graph_row = {
         "p.number": 10,
         "p.title": "Clean plan",
         "p.status": "In Progress",
-        "p.filePath": "",
+        "p.filePath": str(path),
         "p.lastUpdated": "",
     }
     with (
         patch(
             "agentscaffold.review.queries.get_plan_by_number",
-            return_value=None,
+            return_value=graph_row,
         ),
         patch(
             "agentscaffold.review.queries.get_all_plans",
             return_value=[graph_row],
         ),
-        patch(
-            "agentscaffold.mcp.next_action.build_plan_card",
-            return_value={
-                "plan_number": 10,
-                "status_normalized": "In Progress",
-                "unchecked_steps": 2,
-                "checked_steps": 0,
-            },
-        ),
+        _related_stack(),
     ):
         result = next_actions(
             store,
@@ -309,6 +354,7 @@ def test_clean_workflow_falls_through_to_graph_in_progress(tmp_path: Path) -> No
 
     assert result["focus_plan"] == 10
     assert not any("blockers" in a["action"].lower() for a in result["actions"])
+    assert not any(a.get("tool") == "scaffold_orient" for a in result["actions"])
 
 
 def test_normalize_complete_before_embedded_review() -> None:
@@ -337,8 +383,7 @@ def test_summary_caps_workflow_prose_and_keeps_excerpt() -> None:
     summary = apply_detail(payload, "summary")
     full = apply_detail(payload, "full")
 
-    assert len(summary["workflow_state"]["next_steps"]) == 2000
-    assert summary["workflow_state_truncated"]["next_steps"] == 8000
+    assert "next_steps" not in (summary.get("workflow_state") or {})
     assert summary["workflow_live"]["current_excerpt"].startswith("- Next on Plan 270")
     assert len(full["workflow_state"]["next_steps"]) == 8000
     assert full["workflow_state_truncated"]["next_steps"] == 2000

@@ -20,6 +20,14 @@ from agentscaffold.graph.query_compat import ql, sql_escape
 logger = logging.getLogger(__name__)
 
 
+def _finding_display_name(text: str, limit: int = 80) -> str:
+    """Truncate finding text for the search-hit ``name`` field."""
+    cleaned = " ".join((text or "").split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3].rstrip() + "..."
+
+
 def _project_of(value: str | None) -> str | None:
     """Normalize a stored ``project`` column value to ``str | None``.
 
@@ -368,6 +376,8 @@ def _keyword_search(
             for row in rows:
                 name = row.get("n.name", row.get("n.id", ""))
                 path = row.get("n.filePath", "")
+                if table == "ReviewFinding":
+                    name = _finding_display_name(str(name or ""))
                 description = row.get("n.description", "")
                 status = row.get("n.status", "")
                 score = _text_match_score(terms, name, path, description, status)
@@ -483,6 +493,8 @@ def _semantic_search(
         for hit in hits:
             name = hit.get("n.name", hit.get("n.path", "unknown"))
             path = hit.get("n.filePath", hit.get("n.path", ""))
+            if table == "ReviewFinding":
+                name = _finding_display_name(str(name or ""))
 
             results.append(
                 SearchResult(
@@ -605,8 +617,10 @@ def _governance_keyword_cols(table: str) -> str:
         )
     if table == "ReviewFinding":
         return (
-            'id AS "n.id", category AS "n.name", finding AS "n.description",'
-            ' status AS "n.status", severity AS "n.filePath"'
+            'id AS "n.id", finding AS "n.name",'
+            " CASE WHEN planNumber IS NULL THEN ''"
+            " ELSE 'plan::' || CAST(planNumber AS VARCHAR) END AS \"n.filePath\","
+            ' status AS "n.status", category AS "n.description"'
         )
     if table == "Study":
         return (
