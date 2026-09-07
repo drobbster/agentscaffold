@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from agentscaffold.agents.rule_policy import generate_rule_policy_document
+from agentscaffold.agents.rule_policy import (
+    generate_canonical_guidance_body,
+    generate_rule_policy_document,
+)
 from agentscaffold.config import ScaffoldConfig
 from agentscaffold.mcp.coverage import (
     HEURISTIC_CONFIDENCE_THRESHOLD,
@@ -164,8 +167,34 @@ def test_rule_policy_identical_across_quote_modes_for_compression() -> None:
     plain = generate_rule_policy_document(config=cfg, title="A", quote_intents=False)
     assert "Call Compression Discipline" in quoted
     assert "Call Compression Discipline" in plain
-    assert "High-Value MCP-First Routes" in quoted
-    assert "High-Value MCP-First Routes" in plain
+    assert "Situational Tool Use" in quoted
+    assert "Situational Tool Use" in plain
+
+
+def _assert_plan_272_routing(doc: str) -> None:
+    assert "Situational Tool Use" in doc
+    assert "Architectural Research Gate" in doc
+    assert "Call Compression Discipline" in doc
+    assert "scaffold_decision_context" in doc
+    assert "scaffold_find_studies" in doc
+    assert "scaffold_find_adrs" in doc
+    assert "scaffold_compare_plans" in doc
+    assert "check=coverage" in doc
+    assert "Count is not the metric" in doc
+    assert "Prefer fewer, richer MCP calls" not in doc
+    assert "High-Value MCP-First Routes" not in doc
+    assert "three tools is fine" not in doc
+    assert "call at least" not in doc.lower()
+
+
+def test_rule_policy_includes_situational_tool_use_and_research_gate() -> None:
+    doc = generate_rule_policy_document(config=ScaffoldConfig(), title="Test Rules")
+    _assert_plan_272_routing(doc)
+
+
+def test_canonical_guidance_includes_situational_tool_use_and_research_gate() -> None:
+    doc = generate_canonical_guidance_body(ScaffoldConfig())
+    _assert_plan_272_routing(doc)
 
 
 def test_rule_policy_includes_multiproject_scope_discipline() -> None:

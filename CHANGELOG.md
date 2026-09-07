@@ -8,6 +8,14 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Changed
+- **Generated routing maps job class to the first tool, not a call count.**
+  `Situational Tool Use` replaces `High-Value MCP-First Routes`. Call
+  compression applies only to fused fields already on the response.
+  A short Architectural Research Gate is generated; the full procedure
+  stays in project-owned `AGENTS.md`. Run `scaffold agents generate-all`
+  to refresh managed blocks.
+
 ### Fixed
 - **Code-intel and governance retrieval tell the truth on a parsed repo.**
   Class context lists `HAS_METHOD` rows (`methods` / `method_count`).
