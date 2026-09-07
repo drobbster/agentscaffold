@@ -8,6 +8,13 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-07
+
+Upgrade: after installing 0.12.0, point Cursor MCP back at the published
+`scaffold` (Homebrew / `uv tool`) instead of the sibling `.venv` pin.
+No graph schema bump. Operators with a custom `graph.overlap_noise_paths`
+list are unchanged (an explicit list replaces the defaults).
+
 ### Added
 - **MCP responses carry a C3 guidance stamp.** Every tool `meta` includes
   `guidance_rule_path` and `guidance_is_generated`. `scaffold_orient` and
