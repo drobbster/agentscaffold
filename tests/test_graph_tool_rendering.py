@@ -219,8 +219,21 @@ def test_orient_excludes_superseded_adr_and_cleans():
         patch("agentscaffold.review.queries.get_open_backlog_items", return_value=[]),
         patch.object(server, "_parse_workflow_state", return_value={}),
         patch.object(server, "_current_project_or_none", return_value=None),
+        patch("agentscaffold.graph.sessions.find_open_session", return_value=None),
+        patch("agentscaffold.graph.sessions.get_session_context", return_value={}),
+        patch("agentscaffold.graph.findings.get_open_findings", return_value=[]),
+        patch(
+            "agentscaffold.graph.backlog.get_backlog_items_for_plan",
+            return_value=[],
+        ),
+        patch(
+            "agentscaffold.graph.sessions.session_decisions_for_plan",
+            return_value=[],
+        ),
     ):
-        result = server._tool_orient(store, {}, Path("/tmp"), None)
+        result = server._tool_orient(
+            store, {}, Path("/tmp"), None, {"detail": "full"}
+        )
 
     active_titles = [a["title"] for a in result["active_adrs"]]
     assert active_titles == ["Active one"]

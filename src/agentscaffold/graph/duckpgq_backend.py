@@ -1164,6 +1164,30 @@ class DuckPGQBackend:
             for row in rows
         ]
 
+    def query_class_methods(self, class_id: str) -> list[dict[str, Any]]:
+        """Return HAS_METHOD rows leaving *class_id*, ordered by source line."""
+        rows = self.query(
+            "SELECT m.id AS id, m.name AS name, m.filePath AS filePath, "
+            "m.startLine AS startLine, m.endLine AS endLine, "
+            "m.signature AS signature, m.className AS className "
+            "FROM HAS_METHOD e JOIN Method m ON m.id = e.dst "
+            "WHERE e.src = ? "
+            "ORDER BY m.startLine, m.name",
+            {"src": class_id},
+        )
+        return [
+            {
+                "id": row.get("id") or "",
+                "name": row.get("name") or "",
+                "filePath": row.get("filePath") or "",
+                "startLine": row.get("startLine"),
+                "endLine": row.get("endLine"),
+                "signature": row.get("signature") or "",
+                "className": row.get("className") or "",
+            }
+            for row in rows
+        ]
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------

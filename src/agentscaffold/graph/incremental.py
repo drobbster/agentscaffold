@@ -75,25 +75,23 @@ def compute_changeset(
             "unchanged": int,
         }
     """
-    from agentscaffold.graph.structure import (
-        DEFAULT_IGNORE,
-        _detect_language,
-        _load_gitignore_patterns,
-        _should_ignore,
-    )
+    from agentscaffold.graph.structure import collect_ignore_patterns, scan_indexable_files
 
-    ignore_patterns = list(DEFAULT_IGNORE)
-    ignore_patterns.extend(_load_gitignore_patterns(root))
-    if graph_config:
-        ignore_patterns.extend(graph_config.ignore)
+    ignore_patterns = collect_ignore_patterns(root, graph_config)
 
     allowed_languages: set[str] | None = None
     if graph_config and graph_config.languages:
         allowed_languages = set(graph_config.languages)
 
-    # Build map of graph files. Content hash remains the source of truth when
-    # metadata differs or is missing; matching (mtime, size) avoids reading the
-    # file body for the common unchanged case.
+    root = root.resolve()
+    disk_files = set(
+        scan_indexable_files(root, ignore_patterns, allowed_languages=allowed_languages)
+    )
+    return diff_changeset(store, root, disk_files)
+
+
+def load_graph_file_index(store: GraphBackend) -> dict[str, dict[str, Any]]:
+    """Return path -> File metadata for changeset comparison."""
     graph_files: dict[str, dict[str, Any]] = {}
     for row in ql(
         store,
@@ -107,26 +105,17 @@ def compute_changeset(
             "size": row.get("f.size"),
             "lastModified": row.get("f.lastModified"),
         }
+    return graph_files
 
-    # Walk disk
-    disk_files: set[str] = set()
+
+def diff_changeset(
+    store: GraphBackend,
+    root: Path,
+    disk_files: set[str],
+) -> dict[str, Any]:
+    """Compare a precomputed disk inventory against File rows in *store*."""
+    graph_files = load_graph_file_index(store)
     root = root.resolve()
-    for item in sorted(root.rglob("*")):
-        if not item.is_file():
-            continue
-        try:
-            rel = str(item.relative_to(root))
-        except ValueError:
-            continue
-        if _should_ignore(rel, ignore_patterns):
-            continue
-
-        language = _detect_language(item)
-        if allowed_languages and language not in allowed_languages:
-            continue
-
-        disk_files.add(rel)
-
     added: list[str] = []
     modified: list[str] = []
     unchanged = 0

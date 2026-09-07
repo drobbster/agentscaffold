@@ -335,9 +335,15 @@ Knowledge-graph backend, indexing, and governance paths.
 ### Incremental index policy
 
 Generated edit hooks run `scaffold index --incremental` in the background using a
-single-flight lock and a coalesced trailing run. `incremental_min_interval_seconds`
+single-flight lock and a coalesced trailing run. A no-op incremental walks the
+tree without opening DuckDB, then briefly diffs `File` rows; it does not take
+`graph.write.lock`. The hook ignores edits under `.scaffold/` (and other
+state-dir sidecars) and does not coalesce a trailing run after
+`index.last_result` is `noop`. `incremental_min_interval_seconds`
 adds an optional interval guard for very high-edit-volume sessions; leave it at
-`0` to run after every coalesced edit burst.
+`0` to run after every coalesced edit burst. `graph.embeddings: true` still
+causes every CLI incremental (including the hook) to reconcile embeddings even
+when structure is unchanged.
 
 Incremental indexing keeps embeddings out of the per-edit hot path. If you pass
 `--embeddings` explicitly with `--incremental`, AgentScaffold scopes embedding

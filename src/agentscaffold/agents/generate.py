@@ -15,9 +15,12 @@ from agentscaffold.rendering import (
     MANAGED_BLOCK_END,
     canonical_guidance_document,
     canonical_guidance_path,
+    ensure_agents_guidance_pointer,
     get_default_context,
     get_graph_context,
     guidance_hash,
+    ignored_guidance_files,
+    prepend_generated_banner,
     render_template,
     stamp_guidance,
     write_canonical_guidance,
@@ -197,14 +200,23 @@ def write_workspace_agents_router(
 
 
 def _guidance_stamper(config: ScaffoldConfig, project_root: Path) -> Callable[[str], str]:
-    """Return a function that stamps rule content with the canonical hash.
+    """Return a function that stamps rule content with provenance.
 
-    Identity for a lone or ``project_local`` repo, which has no canonical file to
-    cite and whose generated output must stay byte-for-byte as before (ADR-024).
+    Shared workspaces cite the canonical file. Lone / ``project_local`` repos
+    still get an ``@generated`` banner (Plan 251) hashed from the body itself,
+    with a workspace-relative source -- never an absolute home path.
     """
     canonical = canonical_guidance_path(project_root)
     if canonical is None:
-        return lambda content: content
+        def _local_stamp(content: str) -> str:
+            return prepend_generated_banner(
+                content,
+                generator="scaffold agents generate-all",
+                source=".cursor/rules/agentscaffold.mdc",
+                digest=guidance_hash(content),
+            )
+
+        return _local_stamp
 
     sha = guidance_hash(canonical_guidance_document(config))
     source = os.path.relpath(canonical, project_root).replace(os.sep, "/")
@@ -262,6 +274,7 @@ def run_agents_generate(force: bool = False, allow_append: bool = False) -> None
         _lift_legacy_agents_block(dest, content)
     status = write_managed_block(dest, content, force=force, allow_append=allow_append)
     _report_managed_write(status, str(dest.relative_to(Path.cwd())))
+    ensure_agents_guidance_pointer(dest)
 
 
 def run_agents_generate_to(
@@ -285,6 +298,7 @@ def run_agents_generate_to(
     if not force:
         _lift_legacy_agents_block(dest, content)
     write_managed_block(dest, content, force=force, allow_append=allow_append)
+    ensure_agents_guidance_pointer(dest)
 
 
 def run_agents_generate_all_platforms(
@@ -392,6 +406,9 @@ def run_agents_generate_all_platforms(
             allow_append=allow_append,
         )
         _report_managed_write(status, "AGENTS.md")
+        pointer_status = ensure_agents_guidance_pointer(agents_md_path)
+        if pointer_status in {"created", "inserted"}:
+            console.print("[green]Wrote[/green] AGENTS.md guidance pointer")
     else:
         console.print(
             "[dim]dry-run[/dim] would update AGENTS.md managed block (existing content preserved)"
@@ -514,6 +531,23 @@ def run_agents_generate_all_platforms(
     if config.enforcement.platform_enabled("windsurf"):
         p = write_windsurf_hooks(config.enforcement, project_root, dry_run=dry_run)
         written["windsurf"].append(p)
+
+    if not dry_run:
+        ignored = ignored_guidance_files(project_root)
+        if ignored:
+            from agentscaffold.rendering import GUIDANCE_IGNORE_REMEDIATION
+
+            console.print(
+                "[yellow]Warning[/yellow] generated guidance is gitignored and "
+                "will not be committed:"
+            )
+            for path in ignored:
+                try:
+                    shown = path.relative_to(project_root)
+                except ValueError:
+                    shown = path
+                console.print(f"  {shown}")
+            console.print(GUIDANCE_IGNORE_REMEDIATION)
 
     total = sum(len(v) for v in written.values())
     console.print(f"[green]All-platforms generation complete ({total} artifacts).[/green]")

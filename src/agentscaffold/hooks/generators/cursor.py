@@ -67,10 +67,40 @@ _INDEX_HOOK_TEMPLATE = """#!/usr/bin/env bash
 # Disable with SCAFFOLD_HOOK_DISABLE=1 or by deleting .cursor/hooks.json.
 set -uo pipefail
 
-# Cursor passes JSON on stdin (file_path, edits); consume and ignore it.
-cat >/dev/null 2>&1 || true
+# Cursor afterFileEdit stdin is JSON with file_path. Ignore AgentScaffold
+# state-dir writes so stamp/log updates cannot retrigger this hook (Plan 267).
+payload=$(cat 2>/dev/null || true)
 
 emit() { printf '%s\\n' '{}'; }
+
+file_path=$(printf '%s' "$payload" | python3 -c '
+import json, sys
+try:
+    raw = sys.stdin.read()
+    data = json.loads(raw) if raw.strip() else {}
+except Exception:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+path = data.get("file_path") or data.get("path") or ""
+tool_input = data.get("tool_input") or data.get("toolInput") or {}
+if not path and isinstance(tool_input, dict):
+    path = tool_input.get("file_path") or tool_input.get("path") or ""
+print(path)
+' 2>/dev/null || true)
+
+case "$file_path" in
+  *"/.scaffold/"*|*"/.scaffold"|".scaffold/"*|".scaffold")
+    emit
+    exit 0
+    ;;
+esac
+case "$file_path" in
+  *graph.write.lock*|*index.request*|*index.last_success*|*index-hook.log*|*index.last_result*|*freshness_watermark.json*|*governance.fingerprint*|*index.lock*)
+    emit
+    exit 0
+    ;;
+esac
 
 if [ "${SCAFFOLD_HOOK_DISABLE:-0}" = "1" ]; then
   emit
@@ -137,6 +167,8 @@ if mkdir "$lock_dir" 2>/dev/null; then
       start=$(date +%s)
       "$scaffold_bin" index --incremental >> "$log_file" 2>&1 || true
       date +%s > "$success_stamp" 2>/dev/null || true
+      last_result=$(tr -d '[:space:]' < "$state_dir/index.last_result" 2>/dev/null || echo changed)
+      [ "$last_result" = "noop" ] && break
       req=$(cat "$req_stamp" 2>/dev/null || echo 0)
       [ "$req" -le "$start" ] && break
     done

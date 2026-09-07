@@ -249,9 +249,13 @@ def test_orient_reports_only_the_asking_projects_state(asked_from: str, two_proj
         f"orient asked from {asked_from} named {other}'s plan file"
     )
     # Non-vacuity: orient must actually be reporting this project's state.
-    assert OWNED[asked_from]["token"] in text or str(OWNED[asked_from]["plan"]) in text, (
-        f"orient asked from {asked_from} reported nothing about it"
-    )
+    own_plan = str(OWNED[asked_from]["plan"])
+    own_followup = str(OWNED[asked_from]["plan"] + 1)
+    assert (
+        OWNED[asked_from]["token"] in text
+        or own_plan in text
+        or own_followup in text
+    ), f"orient asked from {asked_from} reported nothing about it"
 
 
 @pytest.mark.parametrize("asked_from", [ALPHA, BETA])

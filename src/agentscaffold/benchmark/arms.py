@@ -40,12 +40,16 @@ EQUIPPED_ARM = BenchmarkArm(
     scaffold_enabled=True,
     setup_commands=(
         "scaffold init --non-interactive",
+        "scaffold agents generate-all",
         "scaffold index",
     ),
     tracked_tool_markers=SCAFFOLD_TOOL_MARKERS,
     prompt_guidance=(
-        "Use AgentScaffold guidance and graph/MCP tools before broad file reads. "
-        "Prefer targeted graph-backed orientation, impact analysis, and review evidence."
+        "Match the job to the first AgentScaffold tool. Use as many tools as the "
+        "job needs; count is not the metric. Work in /testbed (the task repo). "
+        "Use scaffold-orient for status, scaffold-review for plan critique, "
+        "scaffold-impact for blast radius, and scaffold-search for lookup. "
+        "Do not substitute grep for those jobs."
     ),
 )
 

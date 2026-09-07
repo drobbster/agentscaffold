@@ -981,6 +981,8 @@ def index_cmd(
     # Honor the config default (graph.embeddings) when the flag is not passed,
     # so embeddings can be enabled repo-wide via scaffold.yaml without requiring
     # --embeddings on every index invocation (including the PostToolUse hook).
+    # Footgun (Plan 267 / rf::c17e46127d50): that OR makes a no-structure hook
+    # run take the write lock for embedding reconcile. Leave the OR unchanged.
     embeddings = with_embeddings or bool(getattr(config.graph, "embeddings", False))
     if embeddings:
         # Pin the embedding model + weights cache before indexing so the model
@@ -996,6 +998,14 @@ def index_cmd(
         audit=audit,
         force_rebuild=force_rebuild,
     )
+    if incremental:
+        from agentscaffold.graph.pipeline import write_index_last_result
+        from agentscaffold.paths import resolve_db_path
+
+        write_index_last_result(
+            resolve_db_path(config, start=path),
+            "noop" if summary.get("noop") else "changed",
+        )
 
     # Plan 223: on a fresh/ephemeral cache, governance is rebuilt from the
     # committed artifact. Point the operator at where the durable record lives.
@@ -1416,6 +1426,36 @@ def graph_orient() -> None:
             console.print(f"  ADR-{a.get('a.number')}: {a.get('a.title')} [{a.get('a.status')}]")
 
 
+@graph_app.command("impact")
+def graph_impact(
+    target: str = typer.Argument(..., help="File path or symbol to compute blast radius for."),
+    depth: int = typer.Option(2, "--depth", "-d", help="Importer traversal depth."),
+) -> None:
+    """Show importers and callers for a file or symbol (CLI for scaffold_impact)."""
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+    from agentscaffold.mcp.server import _build_meta, _tool_impact
+
+    config = load_config()
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found. Run 'scaffold index' first.[/red]")
+        raise SystemExit(1)
+
+    store = open_graph(config)
+    root = Path.cwd()
+    meta = _build_meta(store, root)
+    result = _tool_impact(store, {"file_or_symbol": target, "depth": depth}, meta, root)
+    store.close()
+    if result.get("error"):
+        console.print(f"[red]{result['error']}[/red]")
+        raise SystemExit(1)
+    markdown = result.get("markdown")
+    if markdown:
+        console.print(markdown)
+        return
+    console.print(str(result))
+
+
 @graph_app.command("verify")
 def graph_verify(
     deep: bool = typer.Option(False, "--deep", help="Re-parse a sample of files for deep check."),
@@ -1729,7 +1769,7 @@ def review_implement(
     config, store = _require_graph()
     root = Path.cwd()
     meta = {"source": "cli"}
-    result = _tool_prepare_implementation(store, {"plan_number": plan}, meta, root)
+    result = _tool_prepare_implementation(store, {"plan_number": plan}, meta, root, config)
     store.close()
     console.print(json.dumps(result, indent=2, default=str))
 

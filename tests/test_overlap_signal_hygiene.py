@@ -12,10 +12,13 @@ from agentscaffold.review.filters import (
     resolve_overlap_noise_paths,
 )
 
+MCP_CONTRACT_PATH = "docs/ai/contracts/mcp_agent_tools_interface.md"
+
 
 def test_default_noise_paths_include_governance_hubs():
     assert "docs/ai/contracts/README.md" in DEFAULT_OVERLAP_NOISE_PATHS
     assert "docs/ai/state/workflow_state.md" in DEFAULT_OVERLAP_NOISE_PATHS
+    assert MCP_CONTRACT_PATH in DEFAULT_OVERLAP_NOISE_PATHS
 
 
 def test_resolve_overlap_noise_paths_none_uses_defaults():
@@ -122,6 +125,71 @@ def test_staleness_mixed_overlap_still_stale():
         "docs/ai/contracts/README.md"
         in result["overlapping_completed_plans"][0]["overlap_noise_filtered"]
     )
+
+
+def test_staleness_mcp_contract_only_overlap_not_stale():
+    from agentscaffold.mcp.server import _tool_staleness_check
+
+    store = MagicMock()
+    store.get_stats.return_value = {"files": 10, "plans": 2}
+
+    def _impacted(_s, num, **_k):
+        return [{"f.path": MCP_CONTRACT_PATH}]
+
+    with (
+        patch(
+            "agentscaffold.review.queries.get_plan_by_number",
+            return_value={"p.title": "New", "p.status": "Draft", "p.lastUpdated": "2026-09-07"},
+        ),
+        patch("agentscaffold.review.queries.get_plan_impacted_files", side_effect=_impacted),
+        patch(
+            "agentscaffold.review.queries.get_all_plans",
+            return_value=[
+                {"p.number": 266, "p.title": "Prior", "p.status": "COMPLETE (2026-09-05)"},
+            ],
+        ),
+        patch("agentscaffold.review.queries.get_studies_for_plan", return_value=[]),
+    ):
+        result = _tool_staleness_check(store, {"plan_number": 274}, {})
+
+    assert result["is_stale"] is False
+    assert result["overlapping_completed_plans"] == []
+    assert result["overlap_noise_filtered_count"] == 1
+
+
+def test_staleness_mcp_contract_plus_code_still_stale():
+    from agentscaffold.mcp.server import _tool_staleness_check
+
+    store = MagicMock()
+    store.get_stats.return_value = {"files": 10, "plans": 2}
+
+    def _impacted(_s, num, **_k):
+        return [
+            {"f.path": MCP_CONTRACT_PATH},
+            {"f.path": "src/agentscaffold/mcp/server.py"},
+        ]
+
+    with (
+        patch(
+            "agentscaffold.review.queries.get_plan_by_number",
+            return_value={"p.title": "New", "p.status": "Draft", "p.lastUpdated": "2026-09-07"},
+        ),
+        patch("agentscaffold.review.queries.get_plan_impacted_files", side_effect=_impacted),
+        patch(
+            "agentscaffold.review.queries.get_all_plans",
+            return_value=[
+                {"p.number": 266, "p.title": "Prior", "p.status": "COMPLETE (2026-09-05)"},
+            ],
+        ),
+        patch("agentscaffold.review.queries.get_studies_for_plan", return_value=[]),
+    ):
+        result = _tool_staleness_check(store, {"plan_number": 274}, {})
+
+    assert result["is_stale"] is True
+    assert result["overlapping_completed_plans"][0]["shared_files"] == [
+        "src/agentscaffold/mcp/server.py"
+    ]
+    assert MCP_CONTRACT_PATH in result["overlapping_completed_plans"][0]["overlap_noise_filtered"]
 
 
 def test_compare_governance_only_is_low_conflict():

@@ -44,6 +44,12 @@ def test_normalize_plan_status():
     assert normalize_plan_status("COMPLETE") == "Complete"
     assert normalize_plan_status("Complete; 144-F control-plane done") == "Complete"
     assert normalize_plan_status("COMPLETE (2026-07-09)") == "Complete"
+    assert (
+        normalize_plan_status(
+            "COMPLETE (post-implementation review in section 14; CI green on 968c44c6)"
+        )
+        == "Complete"
+    )
     assert normalize_plan_status("In Progress") == "In Progress"
     assert normalize_plan_status("Draft") == "Draft"
     assert normalize_plan_status("SUPERSEDED") == "Superseded"
@@ -140,7 +146,10 @@ def test_test_coverage_gaps_skips_non_code():
     ]
     out: list = []
     # No test files exist for anything -> only the code file should be flagged.
-    with patch("agentscaffold.review.gaps.ql", return_value=[]):
+    with (
+        patch("agentscaffold.review.test_presence.ql", return_value=[]),
+        patch("agentscaffold.review.test_presence.disk_has_test", return_value=False),
+    ):
         _test_coverage_gaps(MagicMock(), impacted, out)
 
     assert len(out) == 1

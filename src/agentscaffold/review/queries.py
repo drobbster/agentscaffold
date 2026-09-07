@@ -11,6 +11,7 @@ dicts use the dot-qualified convention (e.g. ``"a.path"``).
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from agentscaffold.graph.query_compat import ql, ql_scalar, sql_escape
@@ -426,6 +427,7 @@ def get_all_plans(
         sql=(
             'SELECT number AS "p.number", title AS "p.title",'
             ' status AS "p.status", planType AS "p.planType",'
+            ' filePath AS "p.filePath",'
             ' createdDate AS "p.createdDate", lastUpdated AS "p.lastUpdated"'
             f" FROM Plan{scope} ORDER BY number DESC"
         ),
@@ -737,6 +739,39 @@ def get_studies_by_tags(
     )
 
 
+_TITLE_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}")
+
+
+def get_studies_by_title_tokens(
+    store: GraphBackend,
+    topic: str,
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+) -> list[dict[str, Any]]:
+    """Return studies whose title contains any token from *topic* (OR)."""
+    tokens = [t.lower() for t in _TITLE_TOKEN_RE.findall(topic) if len(t) >= 3]
+    if not tokens:
+        return []
+    sql_conditions = " OR ".join(f"CONTAINS(lower(title), '{sql_escape(t)}')" for t in tokens)
+    resolved = _resolve_scope(project, all_projects)
+    scope = _sql_scope(resolved, "AND")
+    return ql(
+        store,
+        sql=(
+            'SELECT studyId AS "s.studyId",'
+            ' title AS "s.title",'
+            ' status AS "s.status",'
+            ' outcome AS "s.outcome",'
+            ' confidence AS "s.confidence",'
+            ' tags AS "s.tags"'
+            f"{_provenance_select(resolved, 's')}"
+            f" FROM Study WHERE ({sql_conditions}){scope}"
+            " ORDER BY started DESC"
+        ),
+    )
+
+
 def get_studies_by_outcome(
     store: GraphBackend,
     outcome: str,
@@ -890,6 +925,7 @@ def get_all_adrs(
             ' title AS "a.title",'
             ' status AS "a.status",'
             ' date AS "a.date",'
+            ' filePath AS "a.filePath",'
             ' supersededBy AS "a.supersededBy"'
             f"{_provenance_select(resolved, 'a')}"
             f" FROM ADR{scope} ORDER BY number"

@@ -607,8 +607,22 @@ class ScaffoldConfig(BaseModel):
     import_config: ImportConfig = Field(default_factory=ImportConfig, alias="import")
     collab: CollabConfig = Field(default_factory=CollabConfig)
     enforcement: EnforcementConfig = Field(default_factory=lambda: _get_enforcement_default())
+    # Named registered sibling whose disk/graph File Impact paths may resolve
+    # to when they are missing here (Plan 271). A filesystem path is rejected.
+    implementation_project: str | None = None
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("implementation_project")
+    @classmethod
+    def _implementation_project_is_a_name(cls, value: str | None) -> str | None:
+        if value is None or value == "":
+            return None
+        if "/" in value or "\\" in value or value.startswith("~") or Path(value).is_absolute():
+            raise ValueError(
+                "implementation_project must be a registered project name, not a filesystem path"
+            )
+        return validate_project_name(value)
 
 
 def _get_enforcement_default() -> EnforcementConfig:

@@ -417,7 +417,7 @@ class TestVerification:
 
         items = verify_implementation(store, 42)
         for item in items:
-            assert item.status in ("pass", "warn", "fail")
+            assert item.status in ("pass", "warn", "fail", "skip")
 
     def test_verify_nonexistent_plan(self, indexed_store):
         store, _summary = indexed_store

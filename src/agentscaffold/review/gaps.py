@@ -11,17 +11,23 @@ Four analysis types:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agentscaffold.graph.query_compat import ql, sql_escape
+from agentscaffold.review.file_impact_resolve import (
+    ImplementationProjectError,
+    query_store,
+    resolved_impacts,
+)
 from agentscaffold.review.filters import is_source_code_file
 from agentscaffold.review.queries import (
     get_file_importers,
     get_file_layer,
     get_plan_by_number,
-    get_plan_impacted_files,
     get_plans_impacting_file,
 )
+from agentscaffold.review.test_presence import source_has_tests
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
@@ -37,7 +43,13 @@ class GapFinding:
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
-def generate_gaps(store: GraphBackend, plan_number: int) -> list[GapFinding]:
+def generate_gaps(
+    store: GraphBackend,
+    plan_number: int,
+    *,
+    root: Path | None = None,
+    config: Any = None,
+) -> list[GapFinding]:
     """Generate gap findings for an expansion review.
 
     Returns a list of GapFinding objects, each with evidence.
@@ -46,16 +58,27 @@ def generate_gaps(store: GraphBackend, plan_number: int) -> list[GapFinding]:
     if plan is None:
         return []
 
-    impacted_files = get_plan_impacted_files(store, plan_number)
+    try:
+        with resolved_impacts(store, plan_number, root=root, config=config) as impacted_files:
+            return _gaps_from_rows(store, plan_number, impacted_files)
+    except ImplementationProjectError:
+        return []
+
+
+def _gaps_from_rows(
+    store: GraphBackend,
+    plan_number: int,
+    impacted_files: list[dict[str, Any]],
+) -> list[GapFinding]:
     gaps: list[GapFinding] = []
+    usable = [f for f in impacted_files if f.get("resolution") != "skipped"]
+    impacted_paths = {f.get("f.path", "") for f in usable}
 
-    impacted_paths = {f.get("f.path", "") for f in impacted_files}
-
-    _consumer_audit(store, impacted_files, impacted_paths, gaps)
-    _integration_points(store, impacted_files, gaps)
+    _consumer_audit(store, usable, impacted_paths, gaps)
+    _integration_points(store, usable, gaps)
     _similar_plan_patterns(store, plan_number, impacted_paths, gaps)
-    _test_coverage_gaps(store, impacted_files, gaps)
-    _dependency_completeness(store, impacted_files, impacted_paths, gaps)
+    _test_coverage_gaps(store, usable, gaps)
+    _dependency_completeness(store, usable, impacted_paths, gaps)
 
     return gaps
 
@@ -79,7 +102,7 @@ def _consumer_audit(
         if not fpath:
             continue
 
-        importers = get_file_importers(store, fpath)
+        importers = get_file_importers(query_store(frow, store), fpath)
         for imp in importers:
             imp_path = imp.get("a.path", "")
             if imp_path and imp_path not in impacted_paths:
@@ -119,12 +142,13 @@ def _integration_points(
         if not fpath:
             continue
 
-        src_layer = get_file_layer(store, fpath)
+        qstore = query_store(frow, store)
+        src_layer = get_file_layer(qstore, fpath)
         if not src_layer:
             continue
 
         src_num = src_layer.get("l.number")
-        importers = get_file_importers(store, fpath)
+        importers = get_file_importers(qstore, fpath)
 
         for imp in importers:
             imp_path = imp.get("a.path", "")
@@ -219,18 +243,7 @@ def _test_coverage_gaps(
         if not is_source_code_file(fpath, frow.get("f.language", "")):
             continue
 
-        # Check if any test file references the source
-        escaped = sql_escape(fpath)
-        file_stem = escaped.split("/")[-1].split(".")[0]
-        test_refs = ql(
-            store,
-            sql=(
-                'SELECT path AS "f.path" FROM File'
-                f" WHERE CONTAINS(path, 'test') AND CONTAINS(path, '{file_stem}') LIMIT 3"
-            ),
-        )
-
-        if not test_refs:
+        if not source_has_tests(store, fpath):
             missing_tests.append(fpath)
 
     if missing_tests:

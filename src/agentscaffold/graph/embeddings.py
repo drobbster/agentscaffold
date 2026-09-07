@@ -513,8 +513,11 @@ _NODE_SEARCH_COLS: dict[str, str] = {
         ' f.status AS "n.status", f.description AS "n.description"'
     ),
     "ReviewFinding": (
-        'f.id AS "n.id", f.category AS "n.name", f.finding AS "n.description",'
-        ' f.severity AS "n.severity", f.status AS "n.status", f.planNumber AS "n.number"'
+        'f.id AS "n.id", f.finding AS "n.name",'
+        " CASE WHEN f.planNumber IS NULL THEN ''"
+        " ELSE 'plan::' || CAST(f.planNumber AS VARCHAR) END AS \"n.filePath\","
+        ' f.category AS "n.description", f.severity AS "n.severity",'
+        ' f.status AS "n.status", f.planNumber AS "n.number"'
     ),
     "Study": (
         'f.id AS "n.id", f.title AS "n.name", f.filePath AS "n.filePath",'

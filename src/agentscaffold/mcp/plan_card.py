@@ -43,6 +43,12 @@ def build_plan_card(
     checked = 0
     next_step: str | None = None
     plan_path = plan.get("p.filePath") or plan.get("filePath") or ""
+    if root is not None and not plan_path:
+        fetched = get_plan_by_number(store, plan_number)
+        if fetched:
+            plan_path = fetched.get("p.filePath") or fetched.get("filePath") or ""
+            if plan_path:
+                plan = {**plan, "p.filePath": plan_path}
     if root is not None and plan_path:
         full = Path(plan_path)
         if not full.is_absolute():
