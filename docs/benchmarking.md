@@ -50,8 +50,14 @@ defined, extracts trajectory metrics, and writes `summary.json`.
 
 Live smoke is manual and opt-in only. Do not run it in CI.
 
+There is no substitute live smoke without a model-provider key. Offline
+tests (injected runner, fake mini-swe-agent adapter, wrapper script
+assertions) cover wiring. `doctor` without `--live` checks Docker and
+optional extras. `doctor --live` and `run --confirm-live` still need an
+API key and spend credits.
+
 ```bash
-cd packages/agentscaffold
+cd /path/to/agentscaffold
 pip install -e ".[benchmark]"
 export OPENROUTER_API_KEY=...
 scaffold benchmark doctor --live --model claude-haiku
@@ -64,9 +70,13 @@ scaffold benchmark run \
 scaffold benchmark report .scaffold/benchmark/results/smoke
 ```
 
-The smoke should produce a `summary.json` with one task, both arms, real API
-call/cost metrics when provider pricing is available, and a markdown report. If
-pricing is unavailable, do not use the run for cost-savings claims.
+The equipped arm installs `scaffold-*` wrappers that call the current CLI
+(`graph orient`, `graph search`, `review prepare`, `graph impact`) from
+`/testbed`, then runs `scaffold init`, `scaffold agents generate-all`, and
+`scaffold index`. The smoke should produce a `summary.json` with one task,
+both arms, real API call/cost metrics when provider pricing is available,
+and a markdown report. If pricing is unavailable, do not use the run for
+cost-savings claims.
 
 ## Cost And Pricing
 

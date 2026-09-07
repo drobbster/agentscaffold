@@ -8,7 +8,18 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Added
+- **`scaffold graph impact`** prints importers and callers for a file or
+  symbol. It is the CLI stand-in for MCP `scaffold_impact`, used by the
+  equipped benchmark arm.
+
 ### Changed
+- **Benchmark equipped-arm wrappers follow the current CLI.** Container
+  scripts call `scaffold graph orient`, `scaffold graph search`,
+  `scaffold review prepare`, and `scaffold graph impact` from `/testbed`.
+  Equipped setup now runs `scaffold agents generate-all` before
+  `scaffold index` so situational routing lands in the container.
+  Live LLM smoke is still opt-in and requires a provider key.
 - **Generated routing maps job class to the first tool, not a call count.**
   `Situational Tool Use` replaces `High-Value MCP-First Routes`. Call
   compression applies only to fused fields already on the response.

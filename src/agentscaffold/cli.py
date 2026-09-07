@@ -1426,6 +1426,36 @@ def graph_orient() -> None:
             console.print(f"  ADR-{a.get('a.number')}: {a.get('a.title')} [{a.get('a.status')}]")
 
 
+@graph_app.command("impact")
+def graph_impact(
+    target: str = typer.Argument(..., help="File path or symbol to compute blast radius for."),
+    depth: int = typer.Option(2, "--depth", "-d", help="Importer traversal depth."),
+) -> None:
+    """Show importers and callers for a file or symbol (CLI for scaffold_impact)."""
+    from agentscaffold.config import load_config
+    from agentscaffold.graph import graph_available, open_graph
+    from agentscaffold.mcp.server import _build_meta, _tool_impact
+
+    config = load_config()
+    if not graph_available(config):
+        console.print("[red]No knowledge graph found. Run 'scaffold index' first.[/red]")
+        raise SystemExit(1)
+
+    store = open_graph(config)
+    root = Path.cwd()
+    meta = _build_meta(store, root)
+    result = _tool_impact(store, {"file_or_symbol": target, "depth": depth}, meta, root)
+    store.close()
+    if result.get("error"):
+        console.print(f"[red]{result['error']}[/red]")
+        raise SystemExit(1)
+    markdown = result.get("markdown")
+    if markdown:
+        console.print(markdown)
+        return
+    console.print(str(result))
+
+
 @graph_app.command("verify")
 def graph_verify(
     deep: bool = typer.Option(False, "--deep", help="Re-parse a sample of files for deep check."),

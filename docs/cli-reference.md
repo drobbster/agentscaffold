@@ -271,6 +271,7 @@ truncated or nonsensical text. A clean project will report nothing to prune.
 | `scaffold graph search QUERY` | Search the graph in natural language |
 | `scaffold graph stats` | Codebase statistics and health dashboard |
 | `scaffold graph orient` | Session orientation: stats, workflow state, recent activity |
+| `scaffold graph impact TARGET` | Importers and callers for a file or symbol |
 | `scaffold graph verify` | Spot-check graph accuracy against the filesystem |
 | `scaffold graph query SQL` | Run a raw SQL query against the graph |
 | `scaffold graph communities` | Show detected module communities |
