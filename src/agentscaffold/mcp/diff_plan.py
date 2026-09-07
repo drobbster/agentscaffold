@@ -68,6 +68,11 @@ def _is_symbol_token(tok: str) -> bool:
         return False
     if _PLAN_ID_RE.fullmatch(tok):
         return False
+    # ALL-CAPS is a filename or heading (CHANGELOG, README), not an identifier.
+    if tok.isupper():
+        return False
+    if tok.lower().startswith("test_"):
+        return False
     if "_" in tok:
         return True
     uppers = sum(1 for c in tok if c.isupper())
@@ -205,7 +210,7 @@ def _symbol_spot_check(
     # mention in the plan; fall back to tokens from the filename stem.
     candidates: list[str] = []
     stem = file_path.stem
-    if stem and stem not in _STOP and len(stem) > 2:
+    if _is_symbol_token(stem):
         candidates.append(stem)
     # Tokens from plan lines mentioning this path
     for line in plan_text.splitlines():

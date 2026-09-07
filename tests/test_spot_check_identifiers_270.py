@@ -16,6 +16,9 @@ def test_prose_tokens_are_not_symbols() -> None:
     assert not _is_symbol_token("L261")
     assert _is_symbol_token("WidgetFactory")
     assert _is_symbol_token("source_has_tests")
+    assert not _is_symbol_token("CHANGELOG")
+    assert not _is_symbol_token("README")
+    assert not _is_symbol_token("test_assembly")
 
 
 def test_spot_check_skips_prose_on_plan_line(tmp_path: Path) -> None:
@@ -32,3 +35,19 @@ def test_spot_check_skips_prose_on_plan_line(tmp_path: Path) -> None:
     assert "Listed" not in result["missing_symbols"]
     assert "Reversed" not in result["missing_symbols"]
     assert "Medium" not in result["missing_symbols"]
+
+
+def test_spot_check_skips_allcaps_and_test_file_stems(tmp_path: Path) -> None:
+    log = tmp_path / "CHANGELOG.md"
+    log.write_text("## [Unreleased]\n\n- A note.\n", encoding="utf-8")
+    test = tmp_path / "test_assembly.py"
+    test.write_text("def test_build() -> None:\n    assert True\n", encoding="utf-8")
+    plan = (
+        "| File | Change Type | Notes |\n"
+        "| `CHANGELOG.md` | MODIFY | CHANGELOG Added |\n"
+        "| `test_assembly.py` | MODIFY | test_assembly Listed |\n"
+    )
+    log_result = _symbol_spot_check(log, plan, "MODIFY", rel_path="CHANGELOG.md")
+    test_result = _symbol_spot_check(test, plan, "MODIFY", rel_path="test_assembly.py")
+    assert log_result is None or "CHANGELOG" not in (log_result.get("missing_symbols") or [])
+    assert test_result is None or "test_assembly" not in (test_result.get("missing_symbols") or [])

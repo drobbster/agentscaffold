@@ -56,6 +56,11 @@ introduce additive features and small behavior changes).
   to refresh managed blocks.
 
 ### Fixed
+- **Plan-vs-code symbol spot-checks skip ALL-CAPS filenames and `test_*`
+  stems.** `CHANGELOG`, `README`, and `test_assembly` were reported as
+  missing symbols because the filename stem was always checked. Title-case
+  prose was already filtered (Plan 270); stems now use the same identifier
+  rule.
 - **`scaffold_staleness_check` plan-card checkbox counts match the plan file.**
   The card only reads Execution Steps when `root` is set. Diff, begin-plan,
   and orient already passed the project root; staleness (and rewrite, which
