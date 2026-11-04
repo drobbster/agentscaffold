@@ -9,6 +9,16 @@ introduce additive features and small behavior changes).
 ## [Unreleased]
 
 ### Added
+- **Monorepo-absolute Python imports resolve.** A project at
+  `<repo>/company/team_x/` that imports its own code as
+  `company.team_x.foo` now gets IMPORTS edges for those imports. The prefix is
+  inferred from the project's path below its git root
+  (`graph.infer_module_prefix`, default on), and `graph.module_prefixes` maps
+  further prefixes to directories. Each IMPORTS edge records the lookup that
+  resolved it in a new `strategy` column, and `scaffold_validate`
+  (`check=coverage`) reports the counts as `import_strategies`. Existing graphs
+  gain the column when next opened for writing; their edges show as
+  `unrecorded` until the next full index.
 - **The MCP server delivers the working procedure itself.** The initialize
   result now carries short instructions (start a session, orient, route by
   intent, close the session; at most 1,500 characters), so agents follow the

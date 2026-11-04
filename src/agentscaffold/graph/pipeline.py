@@ -254,6 +254,14 @@ def quiet_pipeline_output() -> Iterator[None]:
                 _QUIET_PREVIOUS = None
 
 
+def _module_prefixes(root: Path, graph_config: Any) -> dict[str, str]:
+    """Monorepo module prefixes for import resolution (Plan 278)."""
+    from agentscaffold.config import GraphConfig
+    from agentscaffold.graph.source_roots import effective_module_prefixes
+
+    return effective_module_prefixes(root, graph_config or GraphConfig())
+
+
 def run_pipeline(
     root: Path,
     config: ScaffoldConfig | None = None,
@@ -429,7 +437,9 @@ def run_pipeline(
             from agentscaffold.graph.calls import process_calls
             from agentscaffold.graph.imports import process_imports
 
-            import_result = process_imports(store, root, symbol_table)
+            import_result = process_imports(
+                store, root, symbol_table, prefixes=_module_prefixes(root, graph_config)
+            )
             summary["imports"] = import_result
 
             total_imports = import_result["resolved"] + import_result["unresolved"]
@@ -740,7 +750,13 @@ def _run_incremental(
         from agentscaffold.graph.calls import process_calls
         from agentscaffold.graph.imports import process_imports
 
-        import_result = process_imports(store, root, symbol_table, file_paths=affected_files)
+        import_result = process_imports(
+            store,
+            root,
+            symbol_table,
+            file_paths=affected_files,
+            prefixes=_module_prefixes(root, graph_config),
+        )
         summary["imports"] = import_result
 
         from agentscaffold.graph.parsing import process_extends

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -45,8 +46,14 @@ def process_imports(
     root: Path,
     symbol_table: SymbolTable,
     file_paths: set[str] | None = None,
+    *,
+    prefixes: Mapping[str, str] | None = None,
 ) -> dict[str, int]:
     """Resolve imports and create IMPORTS edges.
+
+    ``prefixes`` maps monorepo module prefixes to directories under *root*
+    (Plan 278). Both the full and the incremental path must pass the same
+    mapping: the incremental path deletes a file's edges before re-resolving.
 
     Returns summary with resolved/unresolved counts.
     """
@@ -92,6 +99,7 @@ def process_imports(
                 file_path,
                 file_id_map,
                 root,
+                prefixes=prefixes,
             )
         elif language in ("typescript", "javascript"):
             r, u = _resolve_ts_imports(
@@ -126,6 +134,8 @@ def _resolve_python_imports(
     file_path: str,
     file_id_map: dict[str, str],
     root: Path,
+    *,
+    prefixes: Mapping[str, str] | None = None,
 ) -> tuple[int, int]:
     """Resolve Python import statements.
 
@@ -138,15 +148,16 @@ def _resolve_python_imports(
     unresolved = 0
     seen_edges: set[tuple[str, str]] = set()
 
-    def _resolve_from(module: str, names: str) -> None:
+    def _resolve(module: str, names: str) -> None:
         nonlocal resolved, unresolved
-        target_path = _python_module_to_path(module, file_path, root)
-        if target_path and target_path in file_id_map:
+        resolution = _resolve_python_module(module, file_path, root, prefixes=prefixes)
+        if resolution and resolution[0] in file_id_map:
+            target_path, strategy = resolution
             target_id = file_id_map[target_path]
             edge_key = (file_id, target_id)
             if edge_key not in seen_edges:
                 seen_edges.add(edge_key)
-                _create_import_edge(store, file_id, target_id, names.strip())
+                _create_import_edge(store, file_id, target_id, names, strategy)
             resolved += 1
         else:
             unresolved += 1
@@ -156,30 +167,20 @@ def _resolve_python_imports(
         module = match.group(1)
         names_raw = match.group(2)
         names = ", ".join(n.strip() for n in names_raw.replace("\n", ",").split(",") if n.strip())
-        _resolve_from(module, names)
+        _resolve(module, names)
 
     # Single-line: from X import A, B, C
     for match in _PY_FROM_INLINE_RE.finditer(source):
         module = match.group(1)
         names = match.group(2).strip().rstrip("\\")
-        _resolve_from(module, names)
+        _resolve(module, names.strip())
 
     # Direct: import X, import X, Y
     for match in _PY_DIRECT_IMPORT_RE.finditer(source):
         for mod in match.group(1).split(","):
             mod = mod.strip()
-            if not mod:
-                continue
-            target_path = _python_module_to_path(mod, file_path, root)
-            if target_path and target_path in file_id_map:
-                target_id = file_id_map[target_path]
-                edge_key = (file_id, target_id)
-                if edge_key not in seen_edges:
-                    seen_edges.add(edge_key)
-                    _create_import_edge(store, file_id, target_id, mod.split(".")[-1])
-                resolved += 1
-            else:
-                unresolved += 1
+            if mod:
+                _resolve(mod, mod.split(".")[-1])
 
     return resolved, unresolved
 
@@ -188,13 +189,27 @@ def _python_module_to_path(
     module: str,
     source_file: str,
     root: Path,
+    *,
+    prefixes: Mapping[str, str] | None = None,
 ) -> str | None:
-    """Convert a Python module path to a file path.
+    """Convert a Python module path to a file path, or None when unresolved."""
+    resolution = _resolve_python_module(module, source_file, root, prefixes=prefixes)
+    return resolution[0] if resolution else None
 
-    Tries multiple resolution strategies:
-    1. Direct file match (module.py)
-    2. Package init (__init__.py)
-    3. Relative import resolution
+
+def _resolve_python_module(
+    module: str,
+    source_file: str,
+    root: Path,
+    *,
+    prefixes: Mapping[str, str] | None = None,
+) -> tuple[str, str] | None:
+    """Resolve a Python module to ``(path, strategy)``.
+
+    Strategies, in order: ``direct`` (module.py), ``package`` (__init__.py),
+    ``prefix`` (a monorepo module prefix stripped, Plan 278), ``source_relative``
+    (from the importing file's directory), ``src_prefix`` (src/, lib/, libs/).
+    Relative imports use ``relative`` alone.
     """
     # A relative import resolves within one package and nowhere else. Handled
     # first and returned unconditionally, because the strategies below are for
@@ -202,40 +217,76 @@ def _python_module_to_path(
     # top-level core.py belonging to nobody, which is a worse answer than no
     # answer for a tool that reports blast radius.
     if module.startswith("."):
-        return _relative_module_to_path(module, source_file, root)
+        path = _relative_module_to_path(module, source_file, root)
+        return (path, "relative") if path else None
 
     parts = module.split(".")
 
     # Strategy 1: direct file
     candidate = "/".join(parts) + ".py"
     if (root / candidate).is_file():
-        return candidate
+        return candidate, "direct"
 
     # Strategy 2: package __init__
     candidate = "/".join(parts) + "/__init__.py"
     if (root / candidate).is_file():
-        return "/".join(parts) + "/__init__.py"
+        return candidate, "package"
+
+    # Strategy 2b: monorepo module prefix. After the exact-path strategies, so a
+    # file that really sits at the dotted path keeps winning.
+    if prefixes:
+        path = _prefixed_module_to_path(module, root, prefixes)
+        if path:
+            return path, "prefix"
 
     # Strategy 3: relative from source file's directory
     source_dir = str(Path(source_file).parent)
     if source_dir != ".":
         relative_candidate = source_dir + "/" + "/".join(parts) + ".py"
         if (root / relative_candidate).is_file():
-            return relative_candidate
+            return relative_candidate, "source_relative"
 
         relative_candidate = source_dir + "/" + "/".join(parts) + "/__init__.py"
         if (root / relative_candidate).is_file():
-            return relative_candidate
+            return relative_candidate, "source_relative"
 
     # Strategy 4: strip common prefixes (src/, lib/, libs/)
     for prefix in ("src/", "lib/", "libs/"):
         candidate = prefix + "/".join(parts) + ".py"
         if (root / candidate).is_file():
-            return candidate
+            return candidate, "src_prefix"
         candidate = prefix + "/".join(parts) + "/__init__.py"
         if (root / candidate).is_file():
-            return candidate
+            return candidate, "src_prefix"
 
+    return None
+
+
+def _prefixed_module_to_path(module: str, root: Path, prefixes: Mapping[str, str]) -> str | None:
+    """Strip the longest matching module prefix and probe its mapped directory.
+
+    A prefix matches whole dotted segments only: ``company.team_x`` matches
+    ``company.team_x.foo`` but not ``company.team_xx``. The module equal to a
+    prefix is the root package of its directory.
+    """
+    for prefix in sorted(prefixes, key=len, reverse=True):
+        if module == prefix:
+            rest: list[str] = []
+        elif module.startswith(prefix + "."):
+            rest = module[len(prefix) + 1 :].split(".")
+        else:
+            continue
+
+        directory = prefixes[prefix].strip("/")
+        base = [] if directory in ("", ".") else [directory]
+        candidates = (
+            ["/".join([*base, "__init__.py"])]
+            if not rest
+            else ["/".join([*base, *rest]) + ".py", "/".join([*base, *rest, "__init__.py"])]
+        )
+        for candidate in candidates:
+            if (root / candidate).is_file():
+                return candidate
     return None
 
 
@@ -317,7 +368,7 @@ def _resolve_ts_imports(
         target_path = _ts_specifier_to_path(specifier, file_path, root)
         if target_path and target_path in file_id_map:
             target_id = file_id_map[target_path]
-            _create_import_edge(store, file_id, target_id, specifier.split("/")[-1])
+            _create_import_edge(store, file_id, target_id, specifier.split("/")[-1], "relative")
             resolved += 1
         else:
             unresolved += 1
@@ -358,13 +409,14 @@ def _create_import_edge(
     from_id: str,
     to_id: str,
     imported_names: str,
+    strategy: str,
 ) -> None:
-    """Create an IMPORTS edge between two File nodes."""
+    """Create an IMPORTS edge between two File nodes, recording how it resolved."""
     store.create_edge(
         "IMPORTS",
         "File",
         from_id,
         "File",
         to_id,
-        {"importedNames": imported_names},
+        {"importedNames": imported_names, "strategy": strategy},
     )

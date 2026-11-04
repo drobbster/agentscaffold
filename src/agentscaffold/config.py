@@ -565,6 +565,32 @@ class GraphConfig(BaseModel):
     incremental_min_interval_seconds: int = 0
     embedding_min_interval_seconds: int = 0
     async_embeddings: str = "off"
+    # Plan 278: monorepo-absolute Python imports. The project's dotted path below
+    # its VCS root is inferred as a prefix for the project root; module_prefixes
+    # maps further prefixes to directories relative to the project root.
+    infer_module_prefix: bool = True
+    module_prefixes: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("module_prefixes")
+    @classmethod
+    def validate_module_prefixes(cls, value: dict[str, str]) -> dict[str, str]:
+        """Keys are dotted module names; values stay inside the project root."""
+        from pathlib import PurePosixPath
+
+        from agentscaffold.graph.source_roots import is_module_name
+
+        cleaned: dict[str, str] = {}
+        for prefix, directory in value.items():
+            if not is_module_name(prefix):
+                raise ValueError(f"module_prefixes key {prefix!r} is not a dotted module name")
+            rel = PurePosixPath(directory.replace("\\", "/") or ".")
+            if rel.is_absolute() or ".." in rel.parts:
+                raise ValueError(
+                    f"module_prefixes[{prefix!r}] = {directory!r} must be a path "
+                    "inside the project root"
+                )
+            cleaned[prefix] = str(rel)
+        return cleaned
 
     @field_validator("async_embeddings", mode="before")
     @classmethod

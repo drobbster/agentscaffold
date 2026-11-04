@@ -134,7 +134,7 @@ def repo_coverage(store: Any) -> dict[str, Any]:
         f"For unparsed files and dynamic/config-driven wiring, an empty "
         f"structural result is unconfirmed -- verify with grep."
     )
-    return {
+    result: dict[str, Any] = {
         "available": True,
         "total_files": total,
         "parsed_files": parsed,
@@ -143,3 +143,35 @@ def repo_coverage(store: Any) -> dict[str, Any]:
         "by_language": by_language,
         "summary": summary,
     }
+    strategies = _import_strategies(store)
+    if strategies is not None:
+        result["import_strategies"] = strategies
+        prefixed = strategies.get("prefix", 0)
+        if prefixed:
+            result["summary"] = (
+                f"{summary} {prefixed} imports resolved through a monorepo module prefix."
+            )
+    return result
+
+
+def _import_strategies(store: Any) -> dict[str, int] | None:
+    """Count IMPORTS edges by resolution strategy (Plan 278).
+
+    Edges written before the strategy was recorded count as ``unrecorded``
+    until the next full index. None when the column is not there yet (a graph
+    not opened read-write since the upgrade).
+    """
+    try:
+        rows = store.query("SELECT strategy, COUNT(*) AS n FROM IMPORTS GROUP BY strategy")
+    except Exception:
+        return None
+    counts: dict[str, int] = {}
+    for r in rows:
+        if not isinstance(r, dict) or "strategy" not in r:
+            continue
+        name = r.get("strategy") or "unrecorded"
+        try:
+            counts[name] = counts.get(name, 0) + int(r.get("n") or 0)
+        except (TypeError, ValueError):
+            continue
+    return counts

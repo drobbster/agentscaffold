@@ -97,6 +97,38 @@ def test_repo_coverage_totals_and_summary() -> None:
     assert "verify with grep" in cov["summary"]
 
 
+def test_repo_coverage_reports_import_strategies() -> None:
+    """Plan 278: per-strategy counts, with a sentence when the prefix resolved anything."""
+
+    class _Store:
+        def query(self, sql: str) -> list[dict[str, Any]]:
+            if "IMPORTS" in sql:
+                return [
+                    {"strategy": "direct", "n": 40},
+                    {"strategy": "prefix", "n": 12},
+                    {"strategy": "", "n": 3},
+                ]
+            return [{"language": "python", "n": 10}]
+
+    cov = repo_coverage(_Store())
+    assert cov["import_strategies"] == {"direct": 40, "prefix": 12, "unrecorded": 3}
+    assert "12 imports resolved through a monorepo module prefix" in cov["summary"]
+
+
+def test_repo_coverage_without_a_strategy_column_omits_the_counts() -> None:
+    """A graph not yet opened read-write since the upgrade has no IMPORTS.strategy."""
+
+    class _Store:
+        def query(self, sql: str) -> list[dict[str, Any]]:
+            if "IMPORTS" in sql:
+                raise RuntimeError('Referenced column "strategy" not found')
+            return [{"language": "python", "n": 10}]
+
+    cov = repo_coverage(_Store())
+    assert cov["available"] is True
+    assert "import_strategies" not in cov
+
+
 def test_repo_coverage_unavailable_on_error() -> None:
     class _BadStore:
         def query(self, sql: str) -> list[dict[str, Any]]:  # noqa: ARG002
