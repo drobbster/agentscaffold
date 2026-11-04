@@ -418,6 +418,17 @@ monorepo root above a team folder, or a multi-project workspace root. Indexing
 there would build one graph over every project at once. Run it from each
 project's folder, or pass `--force-root` if one combined graph is what you want.
 
+### Imports like `company.team_x.foo` have no edges
+
+A project in a monorepo subfolder is indexed from its own folder, so the
+module named by its full repository path is resolved through an inferred
+prefix (`company.team_x` for `<repo>/company/team_x/`). If those imports still
+show no callers or impact, check `import_strategies` in `scaffold_validate`
+(`check=coverage`): a `prefix` count of zero means nothing matched. A folder
+name with a hyphen or a Python keyword disables inference; map the prefix
+yourself with `graph.module_prefixes`. See
+[Monorepo module prefixes](configuration.md#monorepo-module-prefixes).
+
 ### The workspace is recorded under two different ids
 
 `workspace.yaml` and the registry disagree. Resolution prefers the manifest, so

@@ -78,6 +78,7 @@ ADDITIVE_COLUMNS: tuple[AdditiveColumn, ...] = (
     AdditiveColumn("BacklogItem", "resolution", "VARCHAR DEFAULT ''"),
     AdditiveColumn("EXTENDS", "resolved", "BOOLEAN DEFAULT false"),
     AdditiveColumn("EXTENDS", "baseName", "VARCHAR DEFAULT ''"),
+    AdditiveColumn("IMPORTS", "strategy", "VARCHAR DEFAULT ''"),
     AdditiveColumn("Session", "decisions", "VARCHAR DEFAULT '[]'"),
     AdditiveColumn("Session", "endedAt", "VARCHAR DEFAULT ''"),
     AdditiveColumn("Session", "lastActivity", "VARCHAR DEFAULT ''"),
@@ -420,7 +421,7 @@ EDGE_DEFS: list[EdgeDef] = [
     EdgeDef("DEFINES_CLASS", "File", "Class"),
     EdgeDef("DEFINES_INTERFACE", "File", "Interface"),
     EdgeDef("HAS_METHOD", "Class", "Method"),
-    EdgeDef("IMPORTS", "File", "File", (("importedNames", "VARCHAR"),)),
+    EdgeDef("IMPORTS", "File", "File", (("importedNames", "VARCHAR"), ("strategy", "VARCHAR"))),
     EdgeDef("CALLS", "Function", "Function", (("confidence", "DOUBLE"), ("reason", "VARCHAR"))),
     EdgeDef(
         "METHOD_CALLS",

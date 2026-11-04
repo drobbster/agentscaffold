@@ -146,6 +146,15 @@ def _git_root(start: Path | None = None) -> Path | None:
     return None
 
 
+def vcs_root(path: Path) -> Path | None:
+    """Return the version-control root containing *path*, or None outside one.
+
+    A ``.git`` file counts as well as a directory, so worktrees and submodules
+    resolve to their own checkout.
+    """
+    return _git_root(path)
+
+
 _DEFAULT_DB_PATH = ".scaffold/graph.duckdb"
 
 #: Filename of the graph database once it lives under the state directory. The

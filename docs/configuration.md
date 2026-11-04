@@ -381,6 +381,42 @@ Knowledge-graph backend, indexing, and governance paths.
 | incremental_min_interval_seconds | int | `0` | Minimum seconds between generated async structural-index hook runs. `0` disables the interval guard; the hook remains single-flight/coalesced |
 | embedding_min_interval_seconds | int | `0` | Minimum seconds between async embedding refreshes. `0` disables the interval guard; requests remain single-flight/coalesced |
 | async_embeddings | `"off" \| "idle" \| "interval" \| "commit"` | `off` | Controls whether AgentScaffold schedules background embedding refreshes. `off` preserves historical behavior and never loads the embedding model |
+| infer_module_prefix | bool | `true` | Treat the project's dotted path below its git root as a Python module prefix for the project root (see below) |
+| module_prefixes | map of str to str | `{}` | Extra Python module prefixes, each mapped to a directory relative to the project root |
+
+### Monorepo module prefixes
+
+A project in a subfolder of a larger repository, such as
+`<repo>/company/team_x/`, is usually imported by its full path from the
+repository root: `from company.team_x.foo import bar`. The graph is built from
+the project root, where that file is `foo.py`, so without help those imports
+resolve to nothing and impact and caller queries miss them.
+
+`infer_module_prefix` handles the common case. The project's path below its
+git root (`company/team_x`) becomes the prefix `company.team_x`, mapped to the
+project root. Nothing is inferred when the project is the git root, when there
+is no git root, or when a folder name cannot appear in an import (`team-x`,
+`class`). The prefix is tried after the exact-path lookups, so a file that
+really sits at `company/team_x/foo.py` under the project root still wins.
+
+`module_prefixes` adds mappings the inference cannot see:
+
+```yaml
+graph:
+  module_prefixes:
+    team_x: "."          # import team_x.foo -> foo.py
+    team_x.core: src     # import team_x.core.util -> src/util.py
+```
+
+Keys must be dotted module names; values must stay inside the project root. An
+entry for the same prefix as the inferred one replaces it, and the longest
+matching prefix is tried first. Set `infer_module_prefix: false` to use only
+the explicit entries.
+
+`scaffold_validate` with `check=coverage` reports `import_strategies`: how
+many imports each lookup resolved, with `prefix` for these. Edges indexed
+before this was recorded show as `unrecorded` until the next full
+`scaffold index`.
 
 ### Incremental index policy
 
