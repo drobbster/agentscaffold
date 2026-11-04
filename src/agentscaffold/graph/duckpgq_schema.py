@@ -86,6 +86,8 @@ ADDITIVE_COLUMNS: tuple[AdditiveColumn, ...] = (
     AdditiveColumn("ReviewFinding", "evidence", "VARCHAR DEFAULT ''"),
     AdditiveColumn("Learning", "evidenceKind", "VARCHAR DEFAULT 'unspecified'"),
     AdditiveColumn("Learning", "evidence", "VARCHAR DEFAULT ''"),
+    AdditiveColumn("ReviewFinding", "paths", "VARCHAR DEFAULT '[]'"),
+    AdditiveColumn("Learning", "paths", "VARCHAR DEFAULT '[]'"),
 )
 
 # Bumped to 12 by Plan 281: PlanReview node (preserved review stamp).
@@ -247,7 +249,8 @@ _AUTHORED_NODE_TABLES: list[str] = [
         target       VARCHAR,
         status       VARCHAR,
         evidenceKind VARCHAR DEFAULT 'unspecified',
-        evidence     VARCHAR DEFAULT ''
+        evidence     VARCHAR DEFAULT '',
+        paths        VARCHAR DEFAULT '[]'
     )
     """,
     """
@@ -261,7 +264,8 @@ _AUTHORED_NODE_TABLES: list[str] = [
         resolution   VARCHAR,
         status       VARCHAR,
         evidenceKind VARCHAR DEFAULT 'unspecified',
-        evidence     VARCHAR DEFAULT ''
+        evidence     VARCHAR DEFAULT '',
+        paths        VARCHAR DEFAULT '[]'
     )
     """,
     """

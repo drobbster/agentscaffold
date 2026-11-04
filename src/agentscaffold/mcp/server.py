@@ -852,13 +852,13 @@ def _run_tool(
         return _tool_decision_context(store, arguments, meta)
 
     elif name == "scaffold_record_finding":
-        return _tool_record_finding(store, arguments, meta)
+        return _tool_record_finding(store, arguments, meta, root)
 
     elif name == "scaffold_resolve_finding":
         return _tool_resolve_finding(store, arguments, meta)
 
     elif name == "scaffold_record_findings_batch":
-        return _tool_record_findings_batch(store, arguments, meta)
+        return _tool_record_findings_batch(store, arguments, meta, root)
 
     elif name == "scaffold_record_backlog_item":
         return _tool_record_backlog_item(store, arguments, meta)
@@ -870,7 +870,7 @@ def _run_tool(
         return _tool_begin_plan(store, arguments, meta, root, config)
 
     elif name == "scaffold_complete_plan":
-        return _tool_complete_plan(store, arguments, meta)
+        return _tool_complete_plan(store, arguments, meta, root)
 
     elif name == "scaffold_session_start":
         return _tool_session_start(store, arguments, meta, session_project, config)
@@ -2860,7 +2860,7 @@ def _dry_run_write(meta: dict[str, Any], **preview: Any) -> dict[str, Any]:
 
 
 def _tool_record_finding(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any], root: Path | None = None
 ) -> dict[str, Any]:
     """Record a review finding in the knowledge graph."""
     from agentscaffold.graph.findings import record_finding  # noqa: PLC0415
@@ -2891,6 +2891,7 @@ def _tool_record_finding(
         evidence_kind=arguments.get("evidence_kind"),
         evidence=arguments.get("evidence"),
         project=_current_project_or_none(),
+        project_root=root,
     )
     result["meta"] = meta
     return result
@@ -2974,7 +2975,7 @@ def _wrap_resolve_result(
 
 
 def _tool_record_findings_batch(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any], root: Path | None = None
 ) -> dict[str, Any]:
     """Record multiple ReviewFindings in one transaction."""
     from agentscaffold.graph.findings import record_findings_batch  # noqa: PLC0415
@@ -2998,6 +2999,7 @@ def _tool_record_findings_batch(
         review_type=review_type,
         findings=findings,
         project=_current_project_or_none(),
+        project_root=root,
     )
     result["meta"] = meta
     return result
@@ -3301,6 +3303,7 @@ def _tool_begin_plan(
             review_type="pre_review",
             findings=findings_to_write,
             project=_current_project_or_none(),
+            project_root=root,
         )
 
     # --- Stamp Plan.reviewedAt ---
@@ -3392,7 +3395,7 @@ def _select_findings_to_persist(
 
 
 def _tool_complete_plan(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any], root: Path | None = None
 ) -> dict[str, Any]:
     """Composite: full post-implementation chain.
 
@@ -3447,6 +3450,7 @@ def _tool_complete_plan(
             review_type="post_retro",
             findings=retro_findings,
             project=_current_project_or_none(),
+            project_root=root,
         )
 
     # --- Write backlog items if provided ---

@@ -9,11 +9,14 @@ Performance target: <200ms per write.
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from agentscaffold.graph.backend import GraphBackend
 
 
@@ -40,6 +43,27 @@ def _normalize_evidence(kind: str | None, evidence: str | None) -> tuple[str, st
     if len(text) > _MAX_EVIDENCE:
         text = text[: _MAX_EVIDENCE - 16] + " ...[truncated]"
     return normalized_kind, text
+
+
+def _finding_paths(
+    file_paths: list[str] | None,
+    texts: list[str | None],
+    project_root: Path | None,
+) -> list[str]:
+    """Explicit and mentioned paths, project-relative when the root is known (Plan 281)."""
+    from agentscaffold.review.path_mentions import collect_paths  # noqa: PLC0415
+
+    return collect_paths(file_paths, texts, project_root=project_root)
+
+
+def _link_files(store: GraphBackend, finding_id: str, paths: list[str], proj_filter: str) -> None:
+    """FINDING_ABOUT_FILE for each path with a File node in the owning project."""
+    for fp in paths:
+        rows = store.query(f"SELECT id FROM File WHERE path = '{_esc(fp)}'{proj_filter}")
+        if rows:
+            store.create_edge(
+                "FINDING_ABOUT_FILE", "ReviewFinding", finding_id, "File", rows[0]["id"]
+            )
 
 
 def _plan_id_for_number(
@@ -140,11 +164,14 @@ def record_finding(
     evidence_kind: str | None = None,
     evidence: str | None = None,
     project: str | None = None,
+    project_root: Path | None = None,
 ) -> dict[str, Any]:
     """Record a review finding in the knowledge graph.
 
     Creates a ReviewFinding node and connects it to relevant files and
-    functions via FINDING_ABOUT_FILE and FINDING_ABOUT_FUNC edges.
+    functions via FINDING_ABOUT_FILE and FINDING_ABOUT_FUNC edges. The
+    ``paths`` column keeps every explicit and mentioned path, including those
+    with no File node in this project.
 
     Args:
         store: Open GraphBackend instance.
@@ -160,6 +187,8 @@ def record_finding(
         project: Owning project in a multi-project workspace; stamps the
             ``project`` column and scopes the deterministic ID and File lookups.
             None (single-project) keeps the original unscoped behavior.
+        project_root: Root used to make paths project-relative. None only
+            cleans them.
 
     Returns:
         Dict with ``id``, ``status``, and timing info.
@@ -169,6 +198,7 @@ def record_finding(
     now = datetime.now(timezone.utc).isoformat()
     proj_filter = f" AND project = '{_esc(project)}'" if project else ""
     kind, citation = _normalize_evidence(evidence_kind, evidence)
+    paths = _finding_paths(file_paths, [finding, citation], project_root)
 
     props: dict[str, Any] = {
         "id": finding_id,
@@ -182,6 +212,7 @@ def record_finding(
         "project": project or "",
         "evidenceKind": kind,
         "evidence": citation,
+        "paths": json.dumps(paths),
     }
 
     from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
@@ -189,16 +220,9 @@ def record_finding(
     with governance_write_lock(store):
         store.create_node("ReviewFinding", props)
 
-        # Link to files (scoped to the owning project: file paths are not unique
-        # across projects in a multi-project workspace).
-        for fp in file_paths or []:
-            rows = store.query(f"SELECT id FROM File WHERE path = '{_esc(fp)}'{proj_filter}")
-            file_id = rows[0]["id"] if rows else None
-
-            if file_id:
-                store.create_edge(
-                    "FINDING_ABOUT_FILE", "ReviewFinding", finding_id, "File", file_id
-                )
+        # Scoped to the owning project: file paths are not unique across
+        # projects in a multi-project workspace.
+        _link_files(store, finding_id, paths, proj_filter)
 
         # Link to functions
         for fn_id in function_ids or []:
@@ -415,6 +439,7 @@ def record_findings_batch(
     review_type: str,
     findings: list[dict[str, Any]],
     project: str | None = None,
+    project_root: Path | None = None,
 ) -> dict[str, Any]:
     """Record multiple ReviewFinding nodes in a single transaction.
 
@@ -429,6 +454,7 @@ def record_findings_batch(
         findings: List of finding dicts.
         project: Owning project in a multi-project workspace; stamps the
             ``project`` column and scopes the deterministic IDs and File lookups.
+        project_root: Root used to make paths project-relative.
 
     Returns:
         Dict with ``ids``, ``count``, and ``elapsed_ms``.
@@ -454,6 +480,9 @@ def record_findings_batch(
                 kind, citation = _normalize_evidence(
                     item.get("evidence_kind"), item.get("evidence")
                 )
+                paths = _finding_paths(
+                    item.get("file_paths"), [finding_text, citation], project_root
+                )
 
                 props: dict[str, Any] = {
                     "id": finding_id,
@@ -467,18 +496,10 @@ def record_findings_batch(
                     "project": project or "",
                     "evidenceKind": kind,
                     "evidence": citation,
+                    "paths": json.dumps(paths),
                 }
                 store.create_node("ReviewFinding", props)
-
-                for fp in item.get("file_paths") or []:
-                    rows = store.query(
-                        f"SELECT id FROM File WHERE path = '{_esc(fp)}'{proj_filter}"
-                    )
-                    file_id = rows[0]["id"] if rows else None
-                    if file_id:
-                        store.create_edge(
-                            "FINDING_ABOUT_FILE", "ReviewFinding", finding_id, "File", file_id
-                        )
+                _link_files(store, finding_id, paths, proj_filter)
 
                 for fn_id in item.get("function_ids") or []:
                     store.create_edge(
