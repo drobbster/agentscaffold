@@ -17,8 +17,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from agentscaffold.config import CONFIG_FILENAME
-
 #: Environment variable that overrides the org/user home directory.
 HOME_ENV_VAR = "AGENTSCAFFOLD_HOME"
 
@@ -43,5 +41,9 @@ def resolve_home_config() -> Path | None:
     An absent home config is intentionally a no-op (not an error): a repo may set
     ``extends: home`` and still work on a machine that has no shared config.
     """
+    # Imported here so the edit-hook router can resolve the home directory
+    # without importing config (and pydantic) on every edit.
+    from agentscaffold.config import CONFIG_FILENAME  # noqa: PLC0415
+
     candidate = resolve_home_dir() / CONFIG_FILENAME
     return candidate if candidate.is_file() else None

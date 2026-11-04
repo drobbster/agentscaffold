@@ -41,8 +41,32 @@ introduce additive features and small behavior changes).
 - **`scaffold doctor` adds a `governance_mapping` check** that names mapped
   sections the manual lacks, and warns when the manual itself is missing.
 - **Plan templates carry an `- Approved: Pending` metadata line.**
+- **`scaffold agents install --scope user`** delivers routing guidance, a
+  per-project pointer and edit hooks from your home directory, so they reach a
+  registered project that is not the editor's workspace root, and a repository
+  you cannot add files to. Cursor gets generated plugins selected by a
+  `workspaceOpen` hook; Claude Code gets `SessionStart`, `PostToolUse` and
+  `PreToolUse` hooks. Shared settings files are merged with a backup;
+  `--uninstall` removes what the install recorded.
+- **Pre-edit hooks guard read-only paths.** Agent edits to a project's
+  `semi_autonomous.safety.read_only_paths` are refused with a message naming
+  the setting. Turn off with `agents.protect_read_only_paths: false`.
+- **`scaffold-hook` console script**, the light entry point generated hooks
+  run, and new config `agents.durability` (`committed` or `local`).
+- **`scaffold doctor` adds `guidance_reachable` and `hooks_ran` checks**, and
+  its drift check covers user-scope copies.
 
 ### Changed
+- **Generated hook scripts are one-line shims into a Python router.** The
+  project-level `.cursor/hooks/scaffold-index.sh` and git post-commit and
+  post-merge hooks no longer contain shell logic. Single-flight locking and
+  coalescing now live in the graph's state directory (under the user state
+  directory for a registered workspace, not the project's `.scaffold/`), and
+  lock age is read the same way on macOS and Linux. Re-run
+  `scaffold agents hooks` to regenerate existing scripts. The
+  `write_cursor_hooks` and `write_embedding_commit_hooks` functions take
+  `hook_command` in place of `scaffold_bin` and `min_interval_seconds`; the
+  interval now comes from the project's config when the hook runs.
 - **The `mcp` extra now requires `mcp>=1.3.0,<2`** (was `>=1.0.0`), the first
   SDK release whose server accepts initialize instructions.
 - **`scaffold_prepare_implementation` enforces approval.** For a plan with

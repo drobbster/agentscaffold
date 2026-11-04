@@ -186,9 +186,11 @@ scaffold doctor --project-root /path/to/repo
 scaffold doctor --mcp-config /path/to/mcp.json
 ```
 
-Checks the registry, workspace identity, generated rule-file drift, whether
-generated guidance is gitignored, MCP registration, version skew between the
-MCP server and your CLI, and where the graph resolves.
+Checks the registry, workspace identity, generated rule-file drift (including
+user-scope copies), whether generated guidance is gitignored, whether it
+reaches the editor, MCP registration, version skew between the MCP server and
+your CLI, where the graph resolves, and whether an installed edit hook has
+actually run.
 
 If `.cursor/` is ignored as a directory, a file-level negation cannot
 re-include `.cursor/rules/agentscaffold.mdc`. Use a directory-scoped pair
@@ -403,11 +405,16 @@ scaffold study create "Compare retrieval strategies"
 | `scaffold agents windsurf` | `.windsurfrules` |
 | `scaffold agents skills` | `SKILL.md` files for Claude and Cursor |
 | `scaffold agents hooks` | Platform-native lifecycle hooks |
+| `scaffold agents install --scope user` | Guidance and hooks in your home directory, for every registered project |
 | `scaffold agents prompt` | A generic system-prompt snippet for any platform |
 
 ```bash
 scaffold agents generate-all
 scaffold agents generate-all --allow-append   # append routing when the overlap guard refuses
+scaffold agents install --scope user --dry-run
+scaffold agents install --scope user          # all registered projects, every client found
+scaffold agents install --scope user --project api --client cursor
+scaffold agents install --scope user --uninstall
 scaffold agents repair                        # dry run
 scaffold agents repair --apply
 scaffold agents diff-manual                   # dry run
@@ -420,6 +427,25 @@ the same flag.
 Run `generate-all` after changing `scaffold.yaml`, and whenever `scaffold doctor`
 reports that generated rule files have drifted. Use `repair` on a duplicated
 `AGENTS.md`. Use `diff-manual` to pull template updates into a manual you own.
+
+`agents install --scope user` is for projects whose repository files you
+cannot or do not want to change, and for a project below its repository root,
+which an editor opened at that root never sees. It writes nothing into any
+repository. For Cursor it writes generated plugins under
+`$AGENTSCAFFOLD_HOME/cursor-plugins` and adds `workspaceOpen`, `afterFileEdit`
+and `preToolUse` entries to `~/.cursor/hooks.json`; for Claude Code it adds
+`SessionStart`, `PostToolUse` and `PreToolUse` entries to
+`~/.claude/settings.json`. Entries from other tools are kept, a timestamped
+`.bak` is written before the first change, and a settings file that is not
+valid JSON is refused rather than overwritten. `--components rules` or
+`--components hooks` installs half. `--scope project` (the default) is the
+same as `generate-all`. See
+[Multi-project workspaces](multi-project.md#guidance-outside-the-repository).
+
+Generated hooks run `scaffold-hook <event>`, a light entry point that answers
+in tens of milliseconds and starts a detached worker for the actual indexing.
+`scaffold hook` and `scaffold hook-worker` are the same machinery behind the
+full CLI; they are hidden because only generated hooks call them.
 
 ---
 
@@ -518,6 +544,8 @@ Requires the `benchmark` extra: `pip install "agentscaffold[benchmark]"`.
 | `AGENTSCAFFOLD_PROJECT` | Pin the MCP server's project anchor (single-workspace installs only) |
 | `XDG_STATE_HOME` | Base for graph state (default `~/.local/state`) |
 | `XDG_CACHE_HOME` | Base for the embedding model cache (default `~/.cache`) |
+| `SCAFFOLD_HOOK_DISABLE` | `1` makes every generated hook answer at once and do nothing |
+| `SCAFFOLD_HOOK_TIMING` | `1` makes a hook print how long it took to stderr |
 
 `AGENTSCAFFOLD_DB_PATH` is the one to reach for in CI and containers: it pins
 the database wherever your cache already lives, and takes precedence over both

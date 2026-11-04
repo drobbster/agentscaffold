@@ -657,7 +657,6 @@ def agents_hooks(
     from agentscaffold.hooks.generators.claude_code import write_claude_code_hooks
     from agentscaffold.hooks.generators.cursor import (
         generate_cursor_enforcement_files,
-        resolve_scaffold_bin,
         write_cursor_hooks,
     )
     from agentscaffold.hooks.generators.windsurf import write_windsurf_hooks
@@ -677,8 +676,6 @@ def agents_hooks(
             path = write_claude_code_hooks(
                 enforcement,
                 root,
-                scaffold_bin=resolve_scaffold_bin(),
-                min_interval_seconds=config.graph.incremental_min_interval_seconds,
                 dry_run=dry_run,
             )
             label = "Would write" if dry_run else "Wrote"
@@ -688,8 +685,6 @@ def agents_hooks(
             paths += write_cursor_hooks(
                 enforcement,
                 root,
-                scaffold_bin=resolve_scaffold_bin(),
-                min_interval_seconds=config.graph.incremental_min_interval_seconds,
                 dry_run=dry_run,
             )
             label = "Would write" if dry_run else "Wrote"
@@ -703,6 +698,110 @@ def agents_hooks(
             console.print(f"[green]{label}[/green] {path.relative_to(root)}")
         else:
             console.print(f"[red]Unknown platform: {plat}[/red]")
+
+
+@agents_app.command("install")
+def agents_install(
+    scope: str = typer.Option(
+        "project",
+        "--scope",
+        help="'project' writes into the repository (same as generate-all); "
+        "'user' writes guidance and hooks into your home directory only.",
+    ),
+    project: list[str] = typer.Option(
+        [], "--project", help="Registered project to cover (repeatable; default: all)."
+    ),
+    components: str = typer.Option(
+        "rules,hooks", "--components", help="Comma-separated: rules, hooks."
+    ),
+    client: list[str] = typer.Option(
+        [],
+        "--client",
+        help="cursor or claude (repeatable; default: every client installed here).",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="List changes without writing."),
+    uninstall: bool = typer.Option(
+        False, "--uninstall", help="Remove what a user-scope install wrote."
+    ),
+) -> None:
+    """Install agent guidance and hooks.
+
+    With --scope user, guidance and hooks reach a registered project even when
+    it is not the editor's workspace root, and nothing is written into the
+    repository (ADR-028).
+    """
+    if scope == "project":
+        if uninstall or project or client:
+            console.print("[red]--uninstall, --project and --client need --scope user.[/red]")
+            raise typer.Exit(code=2)
+        agents_generate_all(dry_run=dry_run, force=False, allow_append=False)
+        return
+    if scope != "user":
+        console.print(f"[red]Unknown scope: {scope} (use 'project' or 'user').[/red]")
+        raise typer.Exit(code=2)
+
+    from agentscaffold.agents.user_scope import (
+        UserScopeError,
+        install_user_scope,
+        uninstall_user_scope,
+    )
+
+    try:
+        if uninstall:
+            report = uninstall_user_scope(projects=project or None, dry_run=dry_run)
+        else:
+            report = install_user_scope(
+                projects=project or None,
+                components=[c.strip() for c in components.split(",") if c.strip()],
+                clients=client or None,
+                dry_run=dry_run,
+            )
+    except UserScopeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    prefix = "Would " if dry_run else ""
+    for label, paths in (
+        ("write", report.written),
+        ("merge into", report.merged),
+        ("remove", report.removed),
+    ):
+        for path in paths:
+            console.print(f"[green]{prefix}{label}[/green] {path}")
+    for path in report.backups:
+        console.print(f"[dim]Backed up to {path}[/dim]")
+    if report.unchanged and not (report.written or report.merged or report.removed):
+        console.print("[dim]Already up to date.[/dim]")
+    for note in report.notes:
+        console.print(f"[yellow]{note}[/yellow]")
+
+
+@app.command("hook", hidden=True)
+def hook(
+    event: str = typer.Argument(..., help="Router event, e.g. cursor-after-edit."),
+    scope: str = typer.Option("user", "--scope", help="user or project."),
+) -> None:
+    """Run one editor hook event (generated hooks call this; see scaffold-hook)."""
+    from agentscaffold.hooks.router import main as router_main
+
+    raise typer.Exit(code=router_main([event, "--scope", scope]))
+
+
+@app.command("hook-worker", hidden=True)
+def hook_worker(
+    kind: str = typer.Argument(..., help="index or embed."),
+    root: Path = typer.Option(..., "--root", help="Project root."),
+    event: str = typer.Option("", "--event", help="Hook event that started this worker."),
+) -> None:
+    """Background work started by the hook router (detached; not for direct use)."""
+    from agentscaffold.hooks.worker import run_embed_worker, run_index_worker
+
+    if kind == "index":
+        run_index_worker(root, event=event)
+    elif kind == "embed":
+        run_embed_worker(root, event=event)
+    else:
+        raise typer.Exit(code=2)
 
 
 @agents_app.command("skills")

@@ -243,6 +243,16 @@ def _workspace_scope_discipline_lines() -> list[str]:
 
 
 def _governance_guardrails_lines(config: ScaffoldConfig) -> list[str]:
+    return [
+        *governance_guardrail_lines(config),
+        "",
+        "## Intent Map",
+        "",
+    ]
+
+
+def governance_guardrail_lines(config: ScaffoldConfig) -> list[str]:
+    """The per-project guardrails section, which depends on *config*."""
     lines = [
         "## Governance Guardrails (Always Apply)",
         "",
@@ -258,13 +268,6 @@ def _governance_guardrails_lines(config: ScaffoldConfig) -> list[str]:
     if config.standards.core:
         standards = ", ".join(f"`{s}`" for s in config.standards.core)
         lines.append(f"- Follow core standards: {standards}.")
-    lines.extend(
-        [
-            "",
-            "## Intent Map",
-            "",
-        ]
-    )
     return lines
 
 
@@ -315,6 +318,24 @@ def generate_canonical_guidance_body(config: ScaffoldConfig) -> str:
     lines.extend(_graph_trust_discipline_lines())
     lines.extend(_workspace_scope_discipline_lines())
     lines.extend(_governance_guardrails_lines(config))
+    lines.extend(_intent_map_lines(quote_intents=True))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def generate_user_scope_routing_body() -> str:
+    """Routing guidance for the shared user-scope plugin (Plan 277).
+
+    One copy serves every registered project in a workspace, so it carries
+    nothing that depends on a project's configuration: the guardrails go in
+    each project's pointer rule instead.
+    """
+    lines: list[str] = ["# AgentScaffold Routing Guidance", ""]
+    lines.extend(_tool_selection_policy_lines())
+    lines.extend(_research_gate_lines())
+    lines.extend(_session_working_rhythm_lines())
+    lines.extend(_graph_trust_discipline_lines())
+    lines.extend(_workspace_scope_discipline_lines())
+    lines.extend(["## Intent Map", ""])
     lines.extend(_intent_map_lines(quote_intents=True))
     return "\n".join(lines).rstrip() + "\n"
 

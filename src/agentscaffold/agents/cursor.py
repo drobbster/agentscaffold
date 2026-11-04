@@ -241,24 +241,14 @@ def run_cursor_setup(force: bool = False) -> None:
 
     if config.enforcement.platform_enabled("cursor"):
         from agentscaffold.hooks.generators.cursor import (
-            resolve_scaffold_bin,
             write_cursor_hooks,
             write_embedding_commit_hooks,
         )
 
-        for path in write_cursor_hooks(
-            config.enforcement,
-            project_root,
-            scaffold_bin=resolve_scaffold_bin(),
-            min_interval_seconds=config.graph.incremental_min_interval_seconds,
-        ):
+        for path in write_cursor_hooks(config.enforcement, project_root):
             console.print(f"[green]Wrote[/green] {path.relative_to(project_root)}")
         if getattr(config.graph, "async_embeddings", "off") == "commit":
-            for path in write_embedding_commit_hooks(
-                project_root,
-                scaffold_bin=resolve_scaffold_bin(),
-                min_interval_seconds=config.graph.embedding_min_interval_seconds,
-            ):
+            for path in write_embedding_commit_hooks(project_root):
                 console.print(f"[green]Wrote[/green] {path.relative_to(project_root)}")
 
 
