@@ -51,8 +51,12 @@ POOL_DEPTH = 10
 RECALL_LIFT = 0.15
 MIN_PRECISION = 0.5
 
+SEMANTIC_SLOTS = 2
+
 NON_SEMANTIC = ("links", "paths", "overlap")
-SEMANTIC = ("semantic", "semantic_rerank")
+SHIPPED_SEMANTIC = ("semantic", "semantic_rerank")
+BLENDED = ("blend", "blend_rerank")
+SEMANTIC_ONLY = ("semantic_only", "semantic_only_rerank")
 
 
 @dataclass(frozen=True)
@@ -61,14 +65,26 @@ class Arm:
     match_kinds: tuple[str, ...]
     semantic: bool = False
     rerank: bool = False
+    pool_depth: int | None = None
 
 
+# The shipped ranking puts semantic hits after every structural match, so the
+# semantic arms' top 10 rarely differ from overlap's. The semantic-only arms
+# pool their own top 5 so semantic hits get judged at all.
 ARMS: tuple[Arm, ...] = (
     Arm("links", ("linked",)),
     Arm("paths", ("linked", "path")),
     Arm("overlap", ("linked", "path", "plan_overlap", "adr")),
     Arm("semantic", MATCH_ORDER, semantic=True),
     Arm("semantic_rerank", MATCH_ORDER, semantic=True, rerank=True),
+    Arm("semantic_only", ("semantic",), semantic=True, pool_depth=K),
+    Arm("semantic_only_rerank", ("semantic",), semantic=True, rerank=True, pool_depth=K),
+)
+
+# Derived arms: (name, structural arm, semantic arm). Scored, not pooled.
+BLENDS: tuple[tuple[str, str, str], ...] = (
+    ("blend", "overlap", "semantic_only"),
+    ("blend_rerank", "overlap", "semantic_only_rerank"),
 )
 
 
@@ -192,8 +208,30 @@ def run_arms(
             rerank=arm.rerank,
             match_kinds=arm.match_kinds,
         )
-        out[arm.name] = [i for i in result.items if _earlier(i, case.number)][:depth]
+        limit = depth if arm.pool_depth is None else min(depth, arm.pool_depth)
+        out[arm.name] = [i for i in result.items if _earlier(i, case.number)][:limit]
     return out
+
+
+def blend(
+    structural: Sequence[str], semantic: Sequence[str], *, k: int = K, slots: int = SEMANTIC_SLOTS
+) -> list[str]:
+    """Top ``k - slots`` structural keys, then up to *slots* new semantic keys, then refill."""
+    base = list(dict.fromkeys(structural))
+    keys = base[: max(k - slots, 0)]
+    added = 0
+    for key in semantic:
+        if added == slots:
+            break
+        if key not in keys:
+            keys.append(key)
+            added += 1
+    for key in base:
+        if len(keys) >= k:
+            break
+        if key not in keys:
+            keys.append(key)
+    return keys[:k]
 
 
 def pool(rankings: dict[str, list[PrecedentItem]]) -> list[PrecedentItem]:
@@ -231,7 +269,12 @@ def build_sheet(
         "pool_depth": depth,
         "slices": [],
     }
-    rankings: dict[str, Any] = {"k": K, "arms": [a.name for a in ARMS], "slices": {}}
+    rankings: dict[str, Any] = {
+        "k": K,
+        "semantic_slots": SEMANTIC_SLOTS,
+        "arms": [a.name for a in ARMS] + [name for name, _, _ in BLENDS],
+        "slices": {},
+    }
     for sl in slices:
         scope = sl.sources[0].scope_project if sl.sources else None
         cases = select_plans(
@@ -250,10 +293,10 @@ def build_sheet(
                     "candidates": [_candidate(i) for i in pool(ranked)],
                 }
             )
-            ranked_out[str(case.number)] = {
-                "split": case.split,
-                "arms": {name: [item_key(i) for i in items] for name, items in ranked.items()},
-            }
+            keys = {name: [item_key(i) for i in items] for name, items in ranked.items()}
+            for name, structural, semantic in BLENDS:
+                keys[name] = blend(keys[structural], keys[semantic])
+            ranked_out[str(case.number)] = {"split": case.split, "arms": keys}
         labels["slices"].append(
             {
                 "project": sl.project,
@@ -341,20 +384,29 @@ def score(
     return out
 
 
+def _choice(arms: Sequence[str], every: Sequence[str]) -> str | None:
+    """The first passing arm, preferring the one without rerank."""
+    return next((a for a in arms if a in every), None)
+
+
 def decide(slices: dict[str, Any]) -> dict[str, Any]:
     """Apply the study's rule for the semantic default.
 
-    On only when a semantic arm lifts holdout recall at 5 by at least 0.15
-    over the best non-semantic arm in every slice, with precision at 5 of at
-    least 0.5. Passing in some slices only leaves it off and names them.
+    An arm passes in a slice when it lifts holdout recall at 5 by at least
+    0.15 over the best non-semantic arm, with precision at 5 of at least 0.5.
+    Semantic is on by default only when a shipped semantic arm passes in every
+    slice. A blended arm (structural results with reserved semantic slots)
+    passing everywhere while the shipped arms do not is a proposal to change
+    the ranking, not a default. Passing in some slices only names them.
     """
-    passing: dict[str, list[str]] = {arm: [] for arm in SEMANTIC}
+    scored = SHIPPED_SEMANTIC + BLENDED + SEMANTIC_ONLY
+    passing: dict[str, list[str]] = {arm: [] for arm in scored}
     detail: dict[str, Any] = {}
     for project, data in slices.items():
         arms = data["arms"]
         best = max((arms.get(a, {}).get("recall_at_k") or 0.0 for a in NON_SEMANTIC), default=0.0)
         detail[project] = {"best_non_semantic_recall": best}
-        for arm in SEMANTIC:
+        for arm in scored:
             stats = arms.get(arm, {})
             recall = stats.get("recall_at_k") or 0.0
             precision = stats.get("precision_at_k") or 0.0
@@ -365,9 +417,13 @@ def decide(slices: dict[str, Any]) -> dict[str, Any]:
                 passing[arm].append(project)
     every = [arm for arm, hits in passing.items() if slices and len(hits) == len(slices)]
     some = {arm: hits for arm, hits in passing.items() if hits and arm not in every}
+    shipped = _choice(SHIPPED_SEMANTIC, every)
+    blended = None if shipped else _choice(BLENDED, every)
+    chosen = shipped or blended
     return {
-        "semantic_default": bool(every),
-        "rerank": bool(every) and every[0] == "semantic_rerank" and "semantic" not in every,
+        "semantic_default": shipped is not None,
+        "propose_semantic_slots": blended is not None,
+        "rerank": chosen is not None and chosen.endswith("_rerank"),
         "passes_everywhere": every,
         "passes_in_some_slices": some,
         "detail": detail,

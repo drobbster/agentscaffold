@@ -10,8 +10,10 @@ import yaml
 from agentscaffold.review.precedent import PrecedentItem
 from eval.precedent.run_precedent_eval import (
     ARMS,
+    BLENDS,
     LABELS_FILE,
     RANKINGS_FILE,
+    blend,
     decide,
     is_complete,
     open_slices,
@@ -124,7 +126,9 @@ def test_sheet_pools_only_earlier_precedent(repo: Path, tmp_path: Path):
     import json
 
     rankings = json.loads((out / RANKINGS_FILE).read_text())
-    assert set(rankings["slices"]["lone"]["30"]["arms"]) == {a.name for a in ARMS}
+    arms = rankings["slices"]["lone"]["30"]["arms"]
+    assert set(arms) == {a.name for a in ARMS} | {name for name, _, _ in BLENDS}
+    assert len(arms["semantic_only"]) <= 5
 
 
 def test_sheet_never_overwrites_labels(repo: Path, tmp_path: Path):
@@ -231,14 +235,13 @@ def test_score_is_recall_and_precision_at_five_on_the_holdout():
     assert semantic["precision_at_k"] == 0.0
 
 
-def _slice(links: float, semantic: float, precision: float) -> dict:
+def _slice(links: float, semantic: float, precision: float, arm: str = "semantic") -> dict:
     return {
         "arms": {
             "links": {"recall_at_k": links},
             "paths": {"recall_at_k": links},
             "overlap": {"recall_at_k": links},
-            "semantic": {"recall_at_k": semantic, "precision_at_k": precision},
-            "semantic_rerank": {"recall_at_k": 0.0, "precision_at_k": 0.0},
+            arm: {"recall_at_k": semantic, "precision_at_k": precision},
         }
     }
 
@@ -255,3 +258,24 @@ def test_semantic_defaults_on_only_when_it_helps_every_slice():
 
     imprecise = decide({"a": _slice(0.1, 0.9, 0.4)})
     assert imprecise["semantic_default"] is False
+
+
+def test_a_blend_passing_everywhere_proposes_slots_not_a_default():
+    result = decide(
+        {"a": _slice(0.4, 0.6, 0.6, arm="blend"), "b": _slice(0.3, 0.5, 0.5, arm="blend")}
+    )
+    assert result["semantic_default"] is False
+    assert result["propose_semantic_slots"] is True
+    assert result["rerank"] is False
+
+    rerank_only = decide({"a": _slice(0.1, 0.5, 0.9, arm="blend_rerank")})
+    assert rerank_only["propose_semantic_slots"] is True
+    assert rerank_only["rerank"] is True
+
+
+def test_blend_reserves_semantic_slots_and_refills():
+    structural = ["s1", "s2", "s3", "s4", "s5"]
+    assert blend(structural, ["m1", "m2", "m3"]) == ["s1", "s2", "s3", "m1", "m2"]
+    assert blend(structural, ["s1", "m1"]) == ["s1", "s2", "s3", "m1", "s4"]
+    assert blend(structural, []) == structural
+    assert blend(["s1"], ["m1", "m2", "m3"]) == ["s1", "m1", "m2"]
