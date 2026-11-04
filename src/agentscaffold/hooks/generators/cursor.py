@@ -27,12 +27,16 @@ from agentscaffold.hooks.events import HookEvent
 
 # Native Cursor hooks (.cursor/hooks.json). Cursor's afterFileEdit event fires
 # after the agent edits a file -- the right place to keep the knowledge graph
-# fresh. The command receives JSON on stdin (file_path, edits) and must emit a
-# JSON object on stdout; we wrap the index call in a script that keeps scaffold
-# output on stderr and prints "{}" so Cursor treats it as a clean success.
+# fresh. The generated script is a one-line shim into the hook router
+# (``agentscaffold.hooks.router``, Plan 277): path resolution, single-flight
+# locking and the state directory live in Python, not shell, and the router
+# always answers with one JSON object.
 CURSOR_HOOKS_VERSION = 1
 INDEX_HOOK_REL_PATH = ".cursor/hooks/scaffold-index.sh"
 EMBED_COMMIT_HOOK_REL_PATHS = (".git/hooks/post-commit", ".git/hooks/post-merge")
+
+#: Present in every router shim; anything else at INDEX_HOOK_REL_PATH predates it.
+ROUTER_SHIM_MARKER = "AgentScaffold hook shim"
 
 
 def resolve_scaffold_bin() -> str:
@@ -50,212 +54,59 @@ def resolve_scaffold_bin() -> str:
     return "scaffold"
 
 
-# Debounce window note: instead of a fixed-window throttle (which can drop the
-# final edit of a burst and leave the graph stale), the script below uses a
-# single-flight lock plus a coalesced trailing run. Rapid multi-file edits never
-# stack: at most one incremental index runs at a time, and if edits arrive while
-# it runs, exactly one more (coalesced) index runs afterward. The hook returns
-# immediately so Cursor is never blocked.
-_INDEX_HOOK_TEMPLATE = """#!/usr/bin/env bash
-# AgentScaffold afterFileEdit hook: keep the knowledge graph fresh.
-#
-# Non-blocking + single-flight: rapid multi-file edits never stack. At most one
-# incremental index runs at a time; if edits arrive while it runs, exactly one
-# more (coalesced) index runs afterward so nothing is left stale. The hook
-# returns immediately with "{}" so Cursor is never blocked.
-#
-# Disable with SCAFFOLD_HOOK_DISABLE=1 or by deleting .cursor/hooks.json.
-set -uo pipefail
+def resolve_hook_command() -> str:
+    """The shell command prefix that runs the hook router.
 
-# Cursor afterFileEdit stdin is JSON with file_path. Ignore AgentScaffold
-# state-dir writes so stamp/log updates cannot retrigger this hook (Plan 267).
-payload=$(cat 2>/dev/null || true)
-
-emit() { printf '%s\\n' '{}'; }
-
-file_path=$(printf '%s' "$payload" | python3 -c '
-import json, sys
-try:
-    raw = sys.stdin.read()
-    data = json.loads(raw) if raw.strip() else {}
-except Exception:
-    data = {}
-if not isinstance(data, dict):
-    data = {}
-path = data.get("file_path") or data.get("path") or ""
-tool_input = data.get("tool_input") or data.get("toolInput") or {}
-if not path and isinstance(tool_input, dict):
-    path = tool_input.get("file_path") or tool_input.get("path") or ""
-print(path)
-' 2>/dev/null || true)
-
-case "$file_path" in
-  *"/.scaffold/"*|*"/.scaffold"|".scaffold/"*|".scaffold")
-    emit
-    exit 0
-    ;;
-esac
-case "$file_path" in
-  *graph.write.lock*|*index.request*|*index.last_success*|*index-hook.log*|*index.last_result*|*freshness_watermark.json*|*governance.fingerprint*|*index.lock*)
-    emit
-    exit 0
-    ;;
-esac
-
-if [ "${SCAFFOLD_HOOK_DISABLE:-0}" = "1" ]; then
-  emit
-  exit 0
-fi
-
-scaffold_bin="__SCAFFOLD_BIN__"
-state_dir=".scaffold"
-lock_dir="$state_dir/index.lock"
-write_lock_dir="$state_dir/graph.write.lock"
-req_stamp="$state_dir/index.request"
-success_stamp="$state_dir/index.last_success"
-log_file="$state_dir/index-hook.log"
-min_interval_seconds=__MIN_INTERVAL_SECONDS__
-mkdir -p "$state_dir" 2>/dev/null || true
-
-now=$(date +%s)
-
-if [ "$min_interval_seconds" -gt 0 ] && [ ! -d "$lock_dir" ] && [ -f "$success_stamp" ]; then
-  last_success=$(cat "$success_stamp" 2>/dev/null || echo 0)
-  if [ $((now - last_success)) -lt "$min_interval_seconds" ]; then
-    emit
-    exit 0
-  fi
-fi
-
-# Record this edit as an index request (used to coalesce a trailing run).
-printf '%s\\n' "$now" > "$req_stamp" 2>/dev/null || true
-
-# Reap a stale lock left behind by a killed indexer (older than 10 minutes).
-if [ -d "$lock_dir" ]; then
-  lock_mtime=$(stat -f %m "$lock_dir" 2>/dev/null \\
-    || stat -c %Y "$lock_dir" 2>/dev/null || echo "$now")
-  if [ $((now - lock_mtime)) -gt 600 ]; then
-    rmdir "$lock_dir" 2>/dev/null || true
-  fi
-fi
-
-if [ -d "$write_lock_dir" ]; then
-  write_lock_mtime=$(stat -f %m "$write_lock_dir" 2>/dev/null \\
-    || stat -c %Y "$write_lock_dir" 2>/dev/null || echo "$now")
-  if [ $((now - write_lock_mtime)) -gt 600 ]; then
-    rm -f "$write_lock_dir/owner.json" 2>/dev/null || true
-    rmdir "$write_lock_dir" 2>/dev/null || true
-  fi
-fi
-
-# Single-flight: acquire the lock or let the running indexer pick up our request.
-if mkdir "$lock_dir" 2>/dev/null; then
-  (
-    trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
-    while :; do
-      while [ -d "$write_lock_dir" ]; do
-        now_wait=$(date +%s)
-        write_lock_mtime=$(stat -f %m "$write_lock_dir" 2>/dev/null \\
-          || stat -c %Y "$write_lock_dir" 2>/dev/null || echo "$now_wait")
-        if [ $((now_wait - write_lock_mtime)) -gt 600 ]; then
-          rm -f "$write_lock_dir/owner.json" 2>/dev/null || true
-          rmdir "$write_lock_dir" 2>/dev/null || true
-          break
-        fi
-        sleep 1
-      done
-      start=$(date +%s)
-      "$scaffold_bin" index --incremental >> "$log_file" 2>&1 || true
-      date +%s > "$success_stamp" 2>/dev/null || true
-      last_result=$(tr -d '[:space:]' < "$state_dir/index.last_result" 2>/dev/null || echo changed)
-      [ "$last_result" = "noop" ] && break
-      req=$(cat "$req_stamp" 2>/dev/null || echo 0)
-      [ "$req" -le "$start" ] && break
-    done
-  ) >/dev/null 2>&1 &
-  disown 2>/dev/null || true
-fi
-
-emit
-exit 0
-"""
-
-_EMBED_COMMIT_HOOK_TEMPLATE = """#!/usr/bin/env bash
-# AgentScaffold git hook: refresh embeddings after commit/merge.
-#
-# Non-blocking + single-flight. This runs outside the per-edit structural hook
-# and exits immediately, so git operations are not delayed.
-set -uo pipefail
-
-if [ "${SCAFFOLD_HOOK_DISABLE:-0}" = "1" ]; then
-  exit 0
-fi
-
-scaffold_bin="__SCAFFOLD_BIN__"
-state_dir=".scaffold"
-lock_dir="$state_dir/embedding.lock"
-structural_lock_dir="$state_dir/index.lock"
-success_stamp="$state_dir/embedding.last_success"
-log_file="$state_dir/embedding-hook.log"
-min_interval_seconds=__MIN_INTERVAL_SECONDS__
-mkdir -p "$state_dir" 2>/dev/null || true
-
-now=$(date +%s)
-
-if [ -d "$structural_lock_dir" ]; then
-  printf '%s %s\\n' "$now" "deferred: structural index lock active" \\
-    >> "$log_file" 2>/dev/null || true
-  exit 0
-fi
-
-if [ "$min_interval_seconds" -gt 0 ] && [ -f "$success_stamp" ]; then
-  last_success=$(cat "$success_stamp" 2>/dev/null || echo 0)
-  if [ $((now - last_success)) -lt "$min_interval_seconds" ]; then
-    exit 0
-  fi
-fi
-
-if mkdir "$lock_dir" 2>/dev/null; then
-  (
-    trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
-    "$scaffold_bin" index --incremental --embeddings >> "$log_file" 2>&1 || true
-    date +%s > "$success_stamp" 2>/dev/null || true
-  ) >/dev/null 2>&1 &
-  disown 2>/dev/null || true
-fi
-
-exit 0
-"""
-
-
-def render_index_hook_script(scaffold_bin: str = "scaffold", min_interval_seconds: int = 0) -> str:
-    """Return the bash wrapper that refreshes the graph on afterFileEdit.
-
-    The wrapper is non-blocking and single-flight: it backgrounds the
-    incremental index behind a lock so concurrent edits cannot stack multiple
-    indexers, and coalesces a trailing run so the last edit of a burst is still
-    captured. ``scaffold_bin`` is the executable invoked for indexing.
+    Prefers the ``scaffold-hook`` console script beside the running interpreter,
+    which imports only the router; ``scaffold hook`` works too but pays the full
+    CLI's start-up on every edit.
     """
-    return _INDEX_HOOK_TEMPLATE.replace("__SCAFFOLD_BIN__", scaffold_bin).replace(
-        "__MIN_INTERVAL_SECONDS__", str(max(0, int(min_interval_seconds)))
+    import shlex
+    import sys
+
+    bindir = Path(sys.executable).parent
+    for name in ("scaffold-hook", "scaffold-hook.exe"):
+        candidate = bindir / name
+        if candidate.exists():
+            return shlex.quote(str(candidate))
+    return f"{shlex.quote(resolve_scaffold_bin())} hook"
+
+
+def render_index_hook_script(hook_command: str = "scaffold hook") -> str:
+    """Return the project-level edit hook: a shim into the hook router.
+
+    ``--scope project`` lets the router serve a repo that was never registered,
+    using the hook's working directory as the project root, as the shell
+    script it replaces did.
+    """
+    return (
+        "#!/bin/sh\n"
+        f"# {ROUTER_SHIM_MARKER} (generated by AgentScaffold; do not edit).\n"
+        "# Routes the edit to the owning project's incremental index.\n"
+        "# Disable with SCAFFOLD_HOOK_DISABLE=1 or by deleting .cursor/hooks.json.\n"
+        f"exec {hook_command} cursor-after-edit --scope project\n"
     )
 
 
-def render_embedding_commit_hook_script(
-    scaffold_bin: str = "scaffold",
-    min_interval_seconds: int = 0,
-) -> str:
-    """Return the non-blocking git hook wrapper for commit-boundary embeddings."""
-    return _EMBED_COMMIT_HOOK_TEMPLATE.replace("__SCAFFOLD_BIN__", scaffold_bin).replace(
-        "__MIN_INTERVAL_SECONDS__", str(max(0, int(min_interval_seconds)))
+def render_embedding_commit_hook_script(hook_command: str = "scaffold hook") -> str:
+    """Return the git post-commit/post-merge hook: a shim into the hook router."""
+    return (
+        "#!/bin/sh\n"
+        f"# {ROUTER_SHIM_MARKER} (generated by AgentScaffold; do not edit).\n"
+        "# Refreshes embeddings after a commit; returns immediately.\n"
+        f"exec {hook_command} git-post-commit --scope project </dev/null\n"
     )
+
+
+def is_router_shim(text: str) -> bool:
+    """True when a generated hook script is a router shim, not the older shell hook."""
+    return ROUTER_SHIM_MARKER in text
 
 
 def write_embedding_commit_hooks(
     output_dir: Path,
     *,
-    scaffold_bin: str = "scaffold",
-    min_interval_seconds: int = 0,
+    hook_command: str | None = None,
     dry_run: bool = False,
 ) -> list[Path]:
     """Write git post-commit/post-merge hooks for async embedding refresh."""
@@ -263,7 +114,7 @@ def write_embedding_commit_hooks(
     if dry_run:
         return paths
 
-    content = render_embedding_commit_hook_script(scaffold_bin, min_interval_seconds)
+    content = render_embedding_commit_hook_script(hook_command or resolve_hook_command())
     for path in paths:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
@@ -288,16 +139,16 @@ def write_cursor_hooks(
     config: EnforcementConfig,
     output_dir: Path,
     *,
-    scaffold_bin: str = "scaffold",
-    min_interval_seconds: int = 0,
+    hook_command: str | None = None,
     dry_run: bool = False,
 ) -> list[Path]:
-    """Write ``.cursor/hooks.json`` + the index wrapper script.
+    """Write ``.cursor/hooks.json`` + the index hook shim.
 
     Generates a native Cursor ``afterFileEdit`` hook so the knowledge graph is
     refreshed automatically after the agent edits files (the deterministic
     equivalent of the Claude Code PostToolUse freshness trigger). Merges into an
-    existing ``hooks.json`` without clobbering unrelated events.
+    existing ``hooks.json`` without clobbering unrelated events. The minimum
+    index interval is read from ``scaffold.yaml`` when the hook runs.
 
     Returns the list of paths written (script, then hooks.json).
     """
@@ -311,7 +162,7 @@ def write_cursor_hooks(
         return [script_path, hooks_path]
 
     script_path.parent.mkdir(parents=True, exist_ok=True)
-    script_path.write_text(render_index_hook_script(scaffold_bin, min_interval_seconds))
+    script_path.write_text(render_index_hook_script(hook_command or resolve_hook_command()))
     script_path.chmod(0o755)
 
     payload = generate_cursor_hooks_config(config)

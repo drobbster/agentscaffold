@@ -170,6 +170,13 @@ class AgentsConfig(BaseModel):
     cursor_rules: bool = True
     manual_path: str = "AGENTS.md"
     governance: GovernanceConfig = Field(default_factory=GovernanceConfig)
+    #: ``local`` declares that generated guidance is deliberately not committed
+    #: (it is delivered by the user-scope install), so doctor stops warning
+    #: that it is gitignored.
+    durability: Literal["committed", "local"] = "committed"
+    #: Pre-edit hooks refuse agent edits to
+    #: ``semi_autonomous.safety.read_only_paths`` (Plan 277 Step D3).
+    protect_read_only_paths: bool = True
 
 
 # ---------------------------------------------------------------------------

@@ -87,6 +87,7 @@ dev = [
 
 [project.scripts]
 scaffold = "agentscaffold.cli:app"
+scaffold-hook = "agentscaffold.hooks.router:console_main"
 
 [project.urls]
 Homepage = "https://github.com/drobbster/agentscaffold"

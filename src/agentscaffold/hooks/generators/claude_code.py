@@ -105,8 +105,7 @@ def write_claude_code_hooks(
     output_dir: Path,
     *,
     include_builtins: bool = True,
-    scaffold_bin: str = "scaffold",
-    min_interval_seconds: int = 0,
+    hook_command: str | None = None,
     dry_run: bool = False,
 ) -> Path:
     """Write ``.claude/settings.json`` with generated hooks.
@@ -132,11 +131,12 @@ def write_claude_code_hooks(
         from agentscaffold.hooks.generators.cursor import (
             INDEX_HOOK_REL_PATH,
             render_index_hook_script,
+            resolve_hook_command,
         )
 
         script_path = output_dir / INDEX_HOOK_REL_PATH
         script_path.parent.mkdir(parents=True, exist_ok=True)
-        script_path.write_text(render_index_hook_script(scaffold_bin, min_interval_seconds))
+        script_path.write_text(render_index_hook_script(hook_command or resolve_hook_command()))
         script_path.chmod(0o755)
 
     hooks_payload = generate_claude_code_hooks(config, include_builtins=include_builtins)

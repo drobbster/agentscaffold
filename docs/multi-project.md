@@ -241,6 +241,50 @@ Clients differ in whether they show server instructions to the model; the
 response hint is the fallback for those that do not. To turn both off, see
 [`AGENTSCAFFOLD_MCP_INSTRUCTIONS`](configuration.md#agentscaffold_mcp_instructions).
 
+### Guidance outside the repository
+
+Server instructions say how to work; they do not carry the routing table, the
+per-project pointer, or the edit hooks that keep the graph fresh. Those live in
+`.cursor/` and `.claude/`, which an editor reads only from the folder it
+opened. A project at `services/api` inside a monorepo opened at its root gets
+none of them, and neither does a repository you are not allowed to add files to.
+
+A user-scope install delivers all of it from your home directory instead:
+
+```bash
+scaffold agents install --scope user --dry-run   # see what would change
+scaffold agents install --scope user
+```
+
+It covers every registered project (`--project` narrows that) for every client
+whose configuration directory exists (`--client cursor` or `--client claude`
+chooses).
+
+- **Cursor.** One shared routing plugin and one small pointer plugin per
+  project are generated under `$AGENTSCAFFOLD_HOME/cursor-plugins`. A
+  `workspaceOpen` hook in `~/.cursor/hooks.json` returns the plugins for the
+  projects inside the opened folder, so the rules load there and nowhere else.
+  The plugins ship no MCP server: the one entry from `scaffold mcp install`
+  still serves everything.
+- **Claude Code.** A `SessionStart` hook adds the pointer text for the projects
+  under the session's folder to its context.
+- **Hooks, both clients.** An after-edit hook resolves the edited file to its
+  registered project and starts that project's incremental index in the
+  background; edits outside every registered project return immediately. A
+  pre-edit hook refuses agent edits to the project's
+  `semi_autonomous.safety.read_only_paths` (see
+  [`agents.protect_read_only_paths`](configuration.md#agents)).
+
+The install only merges: other tools' hook entries survive, a timestamped
+`.bak` is kept, and `--uninstall` removes exactly what the install manifest
+(`$AGENTSCAFFOLD_HOME/user-install.json`) lists. User-scope guidance is
+personal; teammates who want it run the same command.
+
+Project-level hooks written by `scaffold agents hooks` now run the same router,
+so the two scopes share one lock. A project still on the older shell hook keeps
+its own lock; the install names those projects, and `doctor` warns about them.
+Re-run `scaffold agents hooks` in each to bring it onto the router.
+
 ---
 
 ## Checking a setup
@@ -254,10 +298,13 @@ scaffold doctor --strict   # exit non-zero if anything is not clean
 |---|---|
 | Workspace registry | Registered roots that no longer exist, and projects declared in a `workspace.yaml` but never registered |
 | Workspace identity | `workspace.yaml` and the registry naming one workspace differently |
-| Routing guidance | Generated rule files stale against the canonical source |
+| Routing guidance | Generated rule files stale against the canonical source, and user-scope copies missing, edited or stale |
+| Guidance not gitignored | Generated guidance git will not commit (OK with `agents.durability: local`) |
+| Guidance reaches the editor | Project-level rules and hooks in a project below its repository root, and whether a user-scope install covers it |
 | MCP registration | Legacy per-project entries, directory binding, hardcoded interpreters |
 | Version skew | Whether the MCP server runs the same AgentScaffold as your CLI |
 | Graph state location | Where the graph resolves, and in-tree databases being ignored |
+| Edit hook activity | An installed edit hook that has never run, and two hooks with different locks |
 
 A `skip` means the check did not apply, and is never a fault.
 

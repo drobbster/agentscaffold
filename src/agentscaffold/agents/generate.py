@@ -348,9 +348,6 @@ def run_agents_generate_all_platforms(
         write_cursor_hooks,
         write_embedding_commit_hooks,
     )
-    from agentscaffold.hooks.generators.cursor import (
-        resolve_scaffold_bin as _resolve_scaffold_bin,
-    )
     from agentscaffold.hooks.generators.windsurf import write_windsurf_hooks  # noqa: PLC0415
 
     written: dict[str, list[Path]] = {
@@ -445,8 +442,6 @@ def run_agents_generate_all_platforms(
         p = write_claude_code_hooks(
             config.enforcement,
             project_root,
-            scaffold_bin=_resolve_scaffold_bin(),
-            min_interval_seconds=config.graph.incremental_min_interval_seconds,
             dry_run=dry_run,
         )
         written["hooks"].append(p)
@@ -497,8 +492,6 @@ def run_agents_generate_all_platforms(
             write_cursor_hooks(
                 config.enforcement,
                 project_root,
-                scaffold_bin=_resolve_scaffold_bin(),
-                min_interval_seconds=config.graph.incremental_min_interval_seconds,
                 dry_run=dry_run,
             )
         )
@@ -506,8 +499,6 @@ def run_agents_generate_all_platforms(
         written["hooks"].extend(
             write_embedding_commit_hooks(
                 project_root,
-                scaffold_bin=_resolve_scaffold_bin(),
-                min_interval_seconds=config.graph.embedding_min_interval_seconds,
                 dry_run=dry_run,
             )
         )
