@@ -760,6 +760,8 @@ def agents_install(
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
 
+    from rich.markup import escape
+
     prefix = "Would " if dry_run else ""
     for label, paths in (
         ("write", report.written),
@@ -767,13 +769,13 @@ def agents_install(
         ("remove", report.removed),
     ):
         for path in paths:
-            console.print(f"[green]{prefix}{label}[/green] {path}")
+            console.print(f"[green]{prefix}{label}[/green] {escape(str(path))}", soft_wrap=True)
     for path in report.backups:
-        console.print(f"[dim]Backed up to {path}[/dim]")
+        console.print(f"[dim]Backed up to {escape(str(path))}[/dim]", soft_wrap=True)
     if report.unchanged and not (report.written or report.merged or report.removed):
         console.print("[dim]Already up to date.[/dim]")
     for note in report.notes:
-        console.print(f"[yellow]{note}[/yellow]")
+        console.print(f"[yellow]{escape(note)}[/yellow]", soft_wrap=True)
 
 
 @app.command("hook", hidden=True)
