@@ -222,6 +222,29 @@ def test_impact_reports_every_governance_fact_about_the_file(
     assert "Governance impact" in result["markdown"]
 
 
+def test_impact_governance_section_is_not_capped(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    store = _store(tmp_path, read_only=False)
+    try:
+        for i in range(12):
+            record_finding(
+                store,
+                plan_number=100 + i,
+                review_type="devils_advocate",
+                category="RISK",
+                severity="low",
+                finding=f"Further router risk {i}.",
+                file_paths=[ROUTER],
+            )
+    finally:
+        store.close()
+    result = _dispatch("scaffold_impact", repo, monkeypatch, file_or_symbol=ROUTER)
+    gov = result["governance_impact"]
+    assert gov["counts"]["findings"] == 20
+    assert len(gov["findings"]) == 20
+
+
 def test_impact_without_precedent_is_unchanged(repo: Path, monkeypatch: pytest.MonkeyPatch):
     with_section = _dispatch("scaffold_impact", repo, monkeypatch, file_or_symbol=ROUTER)
     without = _dispatch(
