@@ -13,6 +13,7 @@ from eval.precedent.run_precedent_eval import (
     LABELS_FILE,
     RANKINGS_FILE,
     decide,
+    is_complete,
     open_slices,
     pool,
     require_current_schema,
@@ -84,6 +85,25 @@ def test_selection_takes_completed_plans_that_list_files(repo: Path):
     assert [c.split for c in cases] == [c.split for c in again]
     assert next(c for c in cases if c.number == 10).paths == [ROUTER]
     assert [c.number for c in two] == numbers[-2:]
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("Complete", True),
+        ("COMPLETE (2026-07-10)", True),
+        ("**Complete** (approved 2026-07-30 by daverobb)", True),
+        ("Complete -- released as 0.10.6 on 2026-08-13", True),
+        ("done", True),
+        ("Draft", False),
+        ("In Progress", False),
+        ("Incomplete", False),
+        ("unknown", False),
+        (None, False),
+    ],
+)
+def test_free_text_statuses_count_as_complete(status, expected):
+    assert is_complete(status) is expected
 
 
 def test_sheet_pools_only_earlier_precedent(repo: Path, tmp_path: Path):

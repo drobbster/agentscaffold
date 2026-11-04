@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
@@ -90,7 +91,12 @@ class Slice:
 # Plan selection
 # ---------------------------------------------------------------------------
 
-_COMPLETE = {"complete", "completed", "done"}
+_COMPLETE = re.compile(r"^[\s*_`]*(complete|completed|done)\b", re.IGNORECASE)
+
+
+def is_complete(status: Any) -> bool:
+    """Plan statuses are free text: ``**Complete** (released ...)`` counts."""
+    return bool(_COMPLETE.match(str(status or "")))
 
 
 def _rows(store: Any, sql: str) -> list[dict[str, Any]]:
@@ -139,7 +145,7 @@ def select_plans(
     )
     cases: list[PlanCase] = []
     for row in rows:
-        if str(row.get("status") or "").strip().lower() not in _COMPLETE:
+        if not is_complete(row.get("status")):
             continue
         paths = _plan_paths(store, str(row["id"]), row.get("impactPaths"))
         if not paths:
