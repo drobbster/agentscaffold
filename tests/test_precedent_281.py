@@ -235,6 +235,24 @@ def test_semantic_matches_rank_last_and_carry_a_score(graph, monkeypatch: pytest
     assert [i.match for i in on.items].count("semantic") == 1
 
 
+def test_rerank_is_passed_to_the_semantic_search(graph, monkeypatch: pytest.MonkeyPatch):
+    from agentscaffold.graph import search
+
+    calls: list[bool] = []
+
+    def fake(*_a, **kwargs):
+        calls.append(kwargs.get("rerank", False))
+        return []
+
+    monkeypatch.setattr(search, "hybrid_search", fake)
+    for rerank in (False, True):
+        precedent_for(
+            [PrecedentSource("here", graph)], [CORE], plan_number=PLAN,
+            query_text="core boundaries", semantic=True, rerank=rerank,
+        )  # fmt: skip
+    assert calls == [False, True]
+
+
 def test_output_is_deterministic(graph):
     first = precedent_for([PrecedentSource("here", graph)], [CORE], plan_number=PLAN, budget=None)
     second = precedent_for([PrecedentSource("here", graph)], [CORE], plan_number=PLAN, budget=None)

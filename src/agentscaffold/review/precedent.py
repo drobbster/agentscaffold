@@ -143,10 +143,14 @@ def precedent_for(
     query_text: str = "",
     budget: int | None = 5,
     semantic: bool = False,
+    rerank: bool = False,
     match_kinds: Collection[str] = MATCH_ORDER,
     statistic_categories: Collection[str] = DEFAULT_STATISTIC_CATEGORIES,
 ) -> PrecedentResult:
-    """Rank earlier items about *paths* across *sources*; at most *budget* (None: all)."""
+    """Rank earlier items about *paths* across *sources*; at most *budget* (None: all).
+
+    *rerank* applies a cross-encoder to the semantic layer only.
+    """
     wanted = [p for p in dict.fromkeys(paths) if p]
     if not wanted:
         return PrecedentResult(items=[], total=0, sources=[s.name for s in sources])
@@ -157,7 +161,9 @@ def precedent_for(
 
     candidates: list[PrecedentItem] = []
     for source in sources:
-        candidates.extend(_from_source(source, wanted, plan_number, kinds, stats, query_text))
+        candidates.extend(
+            _from_source(source, wanted, plan_number, kinds, stats, query_text, rerank)
+        )
 
     ranked = sorted(candidates, key=_rank_key)
     seen: set[tuple[str, str]] = set()
@@ -192,6 +198,7 @@ def _from_source(
     kinds: set[str],
     stats: set[str],
     query_text: str,
+    rerank: bool = False,
 ) -> list[PrecedentItem]:
     out: list[PrecedentItem] = []
 
@@ -246,7 +253,7 @@ def _from_source(
                 )
 
     if "semantic" in kinds and query_text.strip():
-        out.extend(_semantic(source, query_text, paths, plan_number, stats))
+        out.extend(_semantic(source, query_text, paths, plan_number, stats, rerank))
     return out
 
 
@@ -414,6 +421,7 @@ def _semantic(
     paths: list[str],
     plan_number: int | None,
     stats: set[str],
+    rerank: bool = False,
 ) -> list[PrecedentItem]:
     from agentscaffold.graph.search import hybrid_search  # noqa: PLC0415
 
@@ -425,6 +433,7 @@ def _semantic(
             top_k=20,
             tables=["ReviewFinding", "Learning", "ADR"],
             project=source.scope_project,
+            rerank=rerank,
         )
     except Exception as exc:  # noqa: BLE001 - no embeddings or model: no semantic layer
         logger.debug("semantic precedent unavailable: %s", exc)
