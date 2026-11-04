@@ -236,7 +236,21 @@ def run_mcp_server() -> None:
 
 async def _serve() -> None:
     """Async entry point for the MCP server."""
-    server = Server("agentscaffold")
+    global _procedure_delivery
+    from agentscaffold.mcp.procedure_hint import procedure_delivery_enabled
+
+    _procedure_delivery = procedure_delivery_enabled()
+    server = _build_server()
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(read_stream, write_stream, server.create_initialization_options())
+
+
+def _build_server() -> Server:
+    """The configured server, with the working procedure as its instructions (Plan 275)."""
+    from agentscaffold.agents.rule_policy import generate_server_instructions
+
+    instructions = generate_server_instructions() if _procedure_delivery_enabled() else None
+    server = Server("agentscaffold", instructions=instructions)
 
     @server.list_tools()  # type: ignore[no-untyped-call,untyped-decorator]
     async def list_tools() -> list[Tool]:
@@ -255,8 +269,7 @@ async def _serve() -> None:
     async def read_resource(uri: str) -> str:
         return json.dumps(_dispatch_resource(uri), indent=2, default=str)
 
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+    return server
 
 
 # ---------------------------------------------------------------------------
@@ -722,138 +735,192 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
             }
 
     try:
-        if name == "scaffold_stats":
-            result = store.get_stats()
-            # Counts are workspace-wide by design -- this is the graph's health
-            # dashboard, not a per-project report. Said explicitly because the
-            # tool accepts working_path and its neighbours all scope to one
-            # project, so an unlabelled "functions: 5" reads as this project's 5.
-            result["scope"] = _stats_scope_label()
-            result["meta"] = meta
-            return result
-
-        elif name == "scaffold_query":
-            sql = arguments.get("sql", "")
-            if not sql:
-                return {"error": "Missing 'sql' parameter.", "meta": meta}
-            try:
-                rows = store.query(sql)
-            except Exception as exc:
-                return {"error": _query_error_message(sql, exc), "meta": meta}
-            return {"results": rows, "count": len(rows), "meta": meta}
-
-        elif name == "scaffold_context":
-            return _tool_context(store, arguments, meta, root)
-
-        elif name == "scaffold_impact":
-            return _tool_impact(store, arguments, meta, root)
-
-        elif name == "scaffold_search":
-            if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
-                from agentscaffold.graph.embeddings import configure_embeddings
-
-                configure_embeddings(config.search.embedding_model, config.search.cache_dir)
-            return _tool_search(store, arguments, meta, root)
-
-        elif name == "scaffold_recall_governance":
-            if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
-                from agentscaffold.graph.embeddings import configure_embeddings
-
-                configure_embeddings(config.search.embedding_model, config.search.cache_dir)
-            return _tool_search(store, {**arguments, "kind": "governance"}, meta, root)
-
-        elif name == "scaffold_validate":
-            return _tool_validate(store, arguments, meta)
-
-        elif name == "scaffold_review_context":
-            return _tool_review_context(store, arguments, meta, root, config)
-
-        elif name == "scaffold_prepare_review":
-            return _tool_prepare_review(store, arguments, meta, root, config)
-
-        elif name == "scaffold_prepare_implementation":
-            return _tool_prepare_implementation(store, arguments, meta, root, config)
-
-        elif name == "scaffold_compare_plans":
-            return _tool_compare_plans(store, arguments, meta, config)
-
-        elif name == "scaffold_staleness_check":
-            return _tool_staleness_check(store, arguments, meta, config)
-
-        elif name == "scaffold_prepare_rewrite":
-            return _tool_prepare_rewrite(store, arguments, meta, config)
-
-        elif name == "scaffold_prepare_retro":
-            return _tool_prepare_retro(store, arguments, meta)
-
-        elif name == "scaffold_orient":
-            return _tool_orient(store, meta, root, config, arguments)
-
-        elif name == "scaffold_diff_plan_vs_code":
-            return _tool_diff_plan_vs_code(store, arguments, meta, root)
-
-        elif name == "scaffold_grep_graph":
-            return _tool_grep_graph(arguments, meta, root)
-
-        elif name == "scaffold_why_empty":
-            return _tool_why_empty(store, arguments, meta)
-
-        elif name == "scaffold_next_action":
-            return _tool_next_action(store, arguments, meta, root, config)
-
-        elif name == "scaffold_find_studies":
-            return _tool_find_studies(store, arguments, meta)
-
-        elif name == "scaffold_prior_experiments":
-            return _tool_prior_experiments(store, arguments, meta, config)
-
-        elif name == "scaffold_find_adrs":
-            return _tool_find_adrs(store, arguments, meta)
-
-        elif name == "scaffold_decision_context":
-            return _tool_decision_context(store, arguments, meta)
-
-        elif name == "scaffold_record_finding":
-            return _tool_record_finding(store, arguments, meta)
-
-        elif name == "scaffold_resolve_finding":
-            return _tool_resolve_finding(store, arguments, meta)
-
-        elif name == "scaffold_record_findings_batch":
-            return _tool_record_findings_batch(store, arguments, meta)
-
-        elif name == "scaffold_record_backlog_item":
-            return _tool_record_backlog_item(store, arguments, meta)
-
-        elif name == "scaffold_resolve_backlog_item":
-            return _tool_resolve_backlog_item(store, arguments, meta)
-
-        elif name == "scaffold_begin_plan":
-            return _tool_begin_plan(store, arguments, meta, root, config)
-
-        elif name == "scaffold_complete_plan":
-            return _tool_complete_plan(store, arguments, meta)
-
-        elif name == "scaffold_session_start":
-            return _tool_session_start(store, arguments, meta)
-
-        elif name == "scaffold_session_end":
-            return _tool_session_end(store, arguments, meta)
-
-        elif name == "scaffold_session_record_decision":
-            return _tool_session_record_decision(store, arguments, meta)
-
-        elif name == "scaffold_session_context":
-            return _tool_session_context(store, arguments, meta)
-
-        elif name == "scaffold_session_list":
-            return _tool_session_list(store, arguments, meta)
-
-        else:
-            return {"error": f"Unknown tool: {name}"}
-
+        result = _run_tool(name, store, arguments, meta, root, config)
+        _attach_session_meta(name, store, result)
+        return result
     finally:
         store.close()
+
+
+def _run_tool(
+    name: str,
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    root: Path,
+    config: Any,
+) -> dict[str, Any]:
+    """Route one tool call to its implementation on an open store."""
+    if name == "scaffold_stats":
+        result: dict[str, Any] = store.get_stats()
+        # Counts are workspace-wide by design -- this is the graph's health
+        # dashboard, not a per-project report. Said explicitly because the
+        # tool accepts working_path and its neighbours all scope to one
+        # project, so an unlabelled "functions: 5" reads as this project's 5.
+        result["scope"] = _stats_scope_label()
+        result["meta"] = meta
+        return result
+
+    elif name == "scaffold_query":
+        sql = arguments.get("sql", "")
+        if not sql:
+            return {"error": "Missing 'sql' parameter.", "meta": meta}
+        try:
+            rows = store.query(sql)
+        except Exception as exc:
+            return {"error": _query_error_message(sql, exc), "meta": meta}
+        return {"results": rows, "count": len(rows), "meta": meta}
+
+    elif name == "scaffold_context":
+        return _tool_context(store, arguments, meta, root)
+
+    elif name == "scaffold_impact":
+        return _tool_impact(store, arguments, meta, root)
+
+    elif name == "scaffold_search":
+        if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
+            from agentscaffold.graph.embeddings import configure_embeddings
+
+            configure_embeddings(config.search.embedding_model, config.search.cache_dir)
+        return _tool_search(store, arguments, meta, root)
+
+    elif name == "scaffold_recall_governance":
+        if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
+            from agentscaffold.graph.embeddings import configure_embeddings
+
+            configure_embeddings(config.search.embedding_model, config.search.cache_dir)
+        return _tool_search(store, {**arguments, "kind": "governance"}, meta, root)
+
+    elif name == "scaffold_validate":
+        return _tool_validate(store, arguments, meta)
+
+    elif name == "scaffold_review_context":
+        return _tool_review_context(store, arguments, meta, root, config)
+
+    elif name == "scaffold_prepare_review":
+        return _tool_prepare_review(store, arguments, meta, root, config)
+
+    elif name == "scaffold_prepare_implementation":
+        return _tool_prepare_implementation(store, arguments, meta, root, config)
+
+    elif name == "scaffold_compare_plans":
+        return _tool_compare_plans(store, arguments, meta, config)
+
+    elif name == "scaffold_staleness_check":
+        return _tool_staleness_check(store, arguments, meta, config)
+
+    elif name == "scaffold_prepare_rewrite":
+        return _tool_prepare_rewrite(store, arguments, meta, config)
+
+    elif name == "scaffold_prepare_retro":
+        return _tool_prepare_retro(store, arguments, meta)
+
+    elif name == "scaffold_orient":
+        return _tool_orient(store, meta, root, config, arguments)
+
+    elif name == "scaffold_diff_plan_vs_code":
+        return _tool_diff_plan_vs_code(store, arguments, meta, root)
+
+    elif name == "scaffold_grep_graph":
+        return _tool_grep_graph(arguments, meta, root)
+
+    elif name == "scaffold_why_empty":
+        return _tool_why_empty(store, arguments, meta)
+
+    elif name == "scaffold_next_action":
+        return _tool_next_action(store, arguments, meta, root, config)
+
+    elif name == "scaffold_find_studies":
+        return _tool_find_studies(store, arguments, meta)
+
+    elif name == "scaffold_prior_experiments":
+        return _tool_prior_experiments(store, arguments, meta, config)
+
+    elif name == "scaffold_find_adrs":
+        return _tool_find_adrs(store, arguments, meta)
+
+    elif name == "scaffold_decision_context":
+        return _tool_decision_context(store, arguments, meta)
+
+    elif name == "scaffold_record_finding":
+        return _tool_record_finding(store, arguments, meta)
+
+    elif name == "scaffold_resolve_finding":
+        return _tool_resolve_finding(store, arguments, meta)
+
+    elif name == "scaffold_record_findings_batch":
+        return _tool_record_findings_batch(store, arguments, meta)
+
+    elif name == "scaffold_record_backlog_item":
+        return _tool_record_backlog_item(store, arguments, meta)
+
+    elif name == "scaffold_resolve_backlog_item":
+        return _tool_resolve_backlog_item(store, arguments, meta)
+
+    elif name == "scaffold_begin_plan":
+        return _tool_begin_plan(store, arguments, meta, root, config)
+
+    elif name == "scaffold_complete_plan":
+        return _tool_complete_plan(store, arguments, meta)
+
+    elif name == "scaffold_session_start":
+        return _tool_session_start(store, arguments, meta)
+
+    elif name == "scaffold_session_end":
+        return _tool_session_end(store, arguments, meta)
+
+    elif name == "scaffold_session_record_decision":
+        return _tool_session_record_decision(store, arguments, meta)
+
+    elif name == "scaffold_session_context":
+        return _tool_session_context(store, arguments, meta)
+
+    elif name == "scaffold_session_list":
+        return _tool_session_list(store, arguments, meta)
+
+    else:
+        return {"error": f"Unknown tool: {name}"}
+
+
+#: Tools whose responses carry no session-state keys: the session tools answer
+#: the question themselves, and ``scaffold_projects`` is not project-scoped.
+_SESSION_META_EXCLUDED = frozenset(
+    {
+        "scaffold_session_start",
+        "scaffold_session_end",
+        "scaffold_session_list",
+        "scaffold_session_context",
+        "scaffold_session_record_decision",
+        "scaffold_projects",
+    }
+)
+
+_PROCEDURE_HINT_TOOLS = frozenset({"scaffold_orient"} | (WRITE_TOOLS - _SESSION_META_EXCLUDED))
+
+#: Opt-out read once at server start; ``None`` until then, so in-process
+#: callers (tests, the CLI) read the environment on each call instead.
+_procedure_delivery: bool | None = None
+
+
+def _procedure_delivery_enabled() -> bool:
+    from agentscaffold.mcp.procedure_hint import procedure_delivery_enabled
+
+    if _procedure_delivery is not None:
+        return _procedure_delivery
+    return procedure_delivery_enabled()
+
+
+def _attach_session_meta(name: str, store: Any, result: Any) -> None:
+    """Add ``session_open`` / ``procedure_hint`` to a successful tool result (Plan 275)."""
+    if name in _SESSION_META_EXCLUDED or not isinstance(result, dict) or "error" in result:
+        return
+    if not _procedure_delivery_enabled():
+        return
+    from agentscaffold.mcp.procedure_hint import session_meta
+
+    extra = session_meta(store, _current_project_or_none(), with_hint=name in _PROCEDURE_HINT_TOOLS)
+    if extra:
+        result.setdefault("meta", {}).update(extra)
 
 
 def _resolution_meta(resolution: Any, arguments: dict[str, Any]) -> dict[str, Any]:

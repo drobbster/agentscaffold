@@ -226,6 +226,21 @@ A single-project repository has no canonical file and nothing to drift from.
 Personalize with `*.local` overlays (`AGENTS.local.md`,
 `.cursor/rules/local.*.mdc`) rather than by gitignoring the team `AGENTS.md`.
 
+### When the rule files are not yours
+
+In a monorepo or a team repository you often cannot add AgentScaffold rules to
+the root `AGENTS.md` or `.cursor/rules/`, and a client opened at that root never
+sees the per-project copies. The server covers this case itself: its initialize
+result carries the working procedure (start a session, orient, route by intent,
+close the session), and `scaffold_orient` and the governance write tools return
+`meta.procedure_hint` while no session is open for the project the call resolved
+to. Sessions are tracked per project, so a session open in one project does not
+count for another.
+
+Clients differ in whether they show server instructions to the model; the
+response hint is the fallback for those that do not. To turn both off, see
+[`AGENTSCAFFOLD_MCP_INSTRUCTIONS`](configuration.md#agentscaffold_mcp_instructions).
+
 ---
 
 ## Checking a setup

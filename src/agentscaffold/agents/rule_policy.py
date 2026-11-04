@@ -8,6 +8,7 @@ same MCP-first + call-compression controls regardless of IDE.
 from __future__ import annotations
 
 from agentscaffold.config import ScaffoldConfig
+from agentscaffold.mcp.resources import GUIDANCE_ROUTING_URI
 
 # Notes appended under specific Intent Map entries (Plan 247 call compression).
 _INTENT_NOTES: dict[str, str] = {
@@ -315,6 +316,37 @@ def generate_canonical_guidance_body(config: ScaffoldConfig) -> str:
     lines.extend(_governance_guardrails_lines(config))
     lines.extend(_intent_map_lines(quote_intents=True))
     return "\n".join(lines).rstrip() + "\n"
+
+
+def generate_server_instructions() -> str:
+    """The working procedure sent in the MCP initialize result (Plan 275).
+
+    Takes no project input: one server serves every registered project, and the
+    initialize handshake happens before any tool call names one. Kept to at most
+    1,500 characters because some clients truncate longer instructions; the
+    full policy stays in the routing resource it points to.
+    """
+    return (
+        "AgentScaffold provides governed planning and code-intelligence tools for\n"
+        "registered projects. One server serves every project, so pass working_path (the\n"
+        "file or directory you are working on) on every project-scoped call.\n"
+        "\n"
+        "Procedure for each chat:\n"
+        "1. Call scaffold_session_start, then scaffold_orient. Act on its\n"
+        "   recommended_actions; do not call scaffold_orient again as the next step.\n"
+        "2. Route by intent before grepping or re-reading files: plan progress ->\n"
+        "   scaffold_diff_plan_vs_code; plan review -> scaffold_prepare_review; decision\n"
+        "   history -> scaffold_decision_context; ADRs -> scaffold_find_adrs; blast radius\n"
+        "   -> scaffold_impact; callers -> scaffold_context.\n"
+        "3. Tools write graph state and you update the files. After recording a finding,\n"
+        "   backlog item or decision, update the matching markdown (plan appendix,\n"
+        "   backlog, workflow state).\n"
+        "4. Record strategic calls with scaffold_session_record_decision.\n"
+        "5. Finish with scaffold_session_end and a one-line summary.\n"
+        "\n"
+        "An empty graph result means unconfirmed, not unused: read why_empty and\n"
+        f"grep_fallback. Full policy: resource {GUIDANCE_ROUTING_URI}.\n"
+    )
 
 
 def generate_rule_policy_document(

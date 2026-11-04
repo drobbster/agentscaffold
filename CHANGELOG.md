@@ -8,6 +8,22 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Added
+- **The MCP server delivers the working procedure itself.** The initialize
+  result now carries short instructions (start a session, orient, route by
+  intent, close the session; at most 1,500 characters), so agents follow the
+  procedure in repositories whose rule files AgentScaffold does not own.
+  Tool `meta` gains `session_open`, and `scaffold_orient` plus the governance
+  write tools add `procedure_hint` while no session is open for the resolved
+  project. Session tools, `scaffold_projects` and error responses carry
+  neither key. The `scaffold_session_start` and `scaffold_orient` descriptions
+  now state the call order. Set `AGENTSCAFFOLD_MCP_INSTRUCTIONS=off` to turn
+  all of this off.
+
+### Changed
+- **The `mcp` extra now requires `mcp>=1.3.0,<2`** (was `>=1.0.0`), the first
+  SDK release whose server accepts initialize instructions.
+
 ## [0.12.0] - 2026-09-07
 
 Upgrade: after installing 0.12.0, point Cursor MCP back at the published

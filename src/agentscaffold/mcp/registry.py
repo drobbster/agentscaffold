@@ -490,6 +490,8 @@ def _tool_specs() -> list[ToolSpec]:
         ToolSpec(
             name="scaffold_orient",
             description=(
+                "Call this second in every new chat, right after "
+                "scaffold_session_start. "
                 "Answer four questions: what are we working on, what is blocked "
                 "for that work, what is related to it, and if nothing is in "
                 "flight what is next. Returns session_brief plus "
@@ -1012,9 +1014,10 @@ def _tool_specs() -> list[ToolSpec]:
         ToolSpec(
             name="scaffold_session_start",
             description=(
-                "Start a working session in the knowledge graph. Returns the session "
-                "id. If a session is already open for this project, returns that id "
-                "instead of minting a second one."
+                "Call this first in every new chat, before any other AgentScaffold "
+                "write. Start a working session in the knowledge graph. Returns the "
+                "session id. If a session is already open for this project, returns "
+                "that id instead of minting a second one."
             ),
             input_schema={
                 "type": "object",
