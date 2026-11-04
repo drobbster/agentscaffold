@@ -640,6 +640,65 @@ def check_graph_schema(context: DoctorContext) -> CheckResult:
     )
 
 
+def check_governance_mapping(context: DoctorContext) -> CheckResult:
+    """Manual sections the MCP server is configured to deliver but cannot find (Plan 280).
+
+    Tools still succeed when a mapped heading is missing; they report it in
+    ``missing``. This check names each one so the mapping or the manual can be
+    fixed. Headings listed under ``agents.governance.optional`` are never
+    reported.
+    """
+    from agentscaffold.agents.governance_manual import load_manual, normalize_heading
+    from agentscaffold.config import ScaffoldConfig, load_config
+
+    config_path = context.project_root / "scaffold.yaml"
+    try:
+        config = load_config(config_path) if config_path.is_file() else ScaffoldConfig()
+    except Exception as exc:
+        return CheckResult(
+            status="warn", summary="Could not read scaffold.yaml.", details=[str(exc)]
+        )
+    agents = config.agents
+    manual = load_manual(context.project_root, agents.manual_path)
+    if manual is None:
+        if not agents.agents_md:
+            return CheckResult(status="ok", summary="No governance manual is configured.")
+        return CheckResult(
+            status="warn",
+            summary=f"No governance manual at {agents.manual_path}.",
+            details=["scaffold_orient and the lifecycle tools will deliver no manual sections."],
+            remediation=(
+                "Create the manual (scaffold init writes the template), or point "
+                "agents.manual_path at it in scaffold.yaml."
+            ),
+        )
+
+    governance = agents.governance
+    optional = {normalize_heading(name.split(" / ")[-1]) for name in governance.optional}
+    mapped = [("orient", name) for name in governance.orient]
+    for step in ("review", "implementation", "completion", "backlog"):
+        mapped += [(step, name) for name in getattr(governance.steps, step)]
+    missing = [
+        f"{step}: {name}"
+        for step, name in mapped
+        if manual.resolve(name) is None and normalize_heading(name.split(" / ")[-1]) not in optional
+    ]
+    if not missing:
+        return CheckResult(
+            status="ok",
+            summary=f"All {len(mapped)} mapped sections found in {manual.path}.",
+        )
+    return CheckResult(
+        status="warn",
+        summary=f"{len(missing)} mapped section(s) not found in {manual.path}.",
+        details=missing,
+        remediation=(
+            "Rename the heading in the manual, update agents.governance in scaffold.yaml, "
+            "or list it under agents.governance.optional."
+        ),
+    )
+
+
 def check_agent_docs(context: DoctorContext) -> CheckResult:
     """Heading overlap in AGENTS.md -- the Plan 260 duplication."""
     from agentscaffold.agents.repair import heading_overlap, split_managed
@@ -670,6 +729,7 @@ CHECKS: list[Check] = [
     Check("guidance", "Routing guidance", check_guidance),
     Check("guidance_ignored", "Guidance not gitignored", check_guidance_ignored),
     Check("agent_docs", "Agent document integrity", check_agent_docs),
+    Check("governance_mapping", "Governance manual mapping", check_governance_mapping),
     Check("mcp_registration", "MCP registration", check_mcp_registration),
     Check("version_skew", "Version skew", check_version_skew),
     Check("state_location", "Graph state location", check_state_location),

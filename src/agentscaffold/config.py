@@ -119,9 +119,57 @@ class ReviewsConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class GovernanceStepsConfig(BaseModel):
+    """Manual sections delivered with each lifecycle step (Plan 280).
+
+    Defaults name the shipped template's headings; lookup ignores a trailing
+    qualifier such as ``(Mandatory)``.
+    """
+
+    review: list[str] = Field(
+        default_factory=lambda: [
+            "Plan Lifecycle / Gate: Draft -> Review",
+            "Plan Lifecycle / Gate: Review -> Ready",
+            "Spike Requirements",
+            "Review Output Format",
+            "Review Terminology",
+        ]
+    )
+    implementation: list[str] = Field(
+        default_factory=lambda: [
+            "Plan Lifecycle / Gate: Ready -> In Progress",
+            "Execution Rules",
+            "Test Requirements",
+            "Breaking Changes Protocol",
+            "Linter Warning Protocol",
+        ]
+    )
+    completion: list[str] = Field(
+        default_factory=lambda: [
+            "Plan Lifecycle / Gate: In Progress -> Complete",
+            "Retrospective Requirements",
+            "Runbook Rules",
+            "Architecture Changelog Scope",
+        ]
+    )
+    backlog: list[str] = Field(default_factory=lambda: ["Backlog Rules"])
+
+
+class GovernanceConfig(BaseModel):
+    """Which parts of the governance manual the MCP server delivers (Plan 280)."""
+
+    orient: list[str] = Field(default_factory=lambda: ["Hard Prohibitions", "Approval Gates"])
+    orient_budget: int = Field(default=2800, ge=0)
+    step_budget: int = Field(default=6000, ge=0)
+    steps: GovernanceStepsConfig = Field(default_factory=GovernanceStepsConfig)
+    optional: list[str] = Field(default_factory=list)
+
+
 class AgentsConfig(BaseModel):
     agents_md: bool = True
     cursor_rules: bool = True
+    manual_path: str = "AGENTS.md"
+    governance: GovernanceConfig = Field(default_factory=GovernanceConfig)
 
 
 # ---------------------------------------------------------------------------

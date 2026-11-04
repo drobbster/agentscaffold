@@ -134,6 +134,13 @@ INTENT_PHRASES: dict[str, list[str]] = {
         "which architecture decision governs X",
         "what architecture decision governs X",
     ],
+    "scaffold_governance": [
+        "show the governance rules for X",
+        "what does AGENTS.md say about X",
+        "what do our rules say about X",
+        "show the governance manual section on X",
+        "read the truncated governance section",
+    ],
     "scaffold_decision_context": [
         "what's the decision history for plan X",
         "was there a spike for plan X",

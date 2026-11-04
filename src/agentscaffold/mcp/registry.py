@@ -568,6 +568,29 @@ def _tool_specs() -> list[ToolSpec]:
             },
         ),
         ToolSpec(
+            name="scaffold_governance",
+            description=(
+                "Read the project's governance manual (the project-owned part of "
+                "AGENTS.md). Without a section, returns the full table of contents; with "
+                "one, returns that section's text, or found=false and the closest "
+                "headings. Use when asked what the rules say about a topic, or to read a "
+                "section a lifecycle tool listed as truncated."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "section": {
+                        "type": "string",
+                        "description": (
+                            "Heading or heading path, e.g. 'Backlog Rules' or "
+                            "'Plan Lifecycle / Ready -> In Progress'"
+                        ),
+                    },
+                    "project": _SCOPE_PROPS["project"],
+                },
+            },
+        ),
+        ToolSpec(
             name="scaffold_decision_context",
             description=(
                 "Get the full decision chain for a plan: governing ADRs, validation "

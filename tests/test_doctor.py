@@ -61,10 +61,16 @@ def _snapshot(root: Path) -> dict[str, str]:
     return out
 
 
-def _project(root: Path, name: str = "proj") -> Path:
+def _project(root: Path, name: str = "proj", *, manual: bool = True) -> Path:
+    """A project as ``scaffold init`` leaves it: config plus the shipped manual."""
+    from agentscaffold.agents.manual_diff import render_governance_manual
+    from agentscaffold.config import ScaffoldConfig
+
     directory = root / name
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "scaffold.yaml").write_text(f"framework:\n  project_name: {name}\n")
+    if manual:
+        (directory / "AGENTS.md").write_text(render_governance_manual(ScaffoldConfig()))
     return directory
 
 
@@ -711,6 +717,63 @@ def test_agent_docs_reports_overlap(tmp_path: Path) -> None:
     )
     assert result.status == "warn"
     assert "Planning Rules" in " ".join(result.details)
+
+
+def _governance_check(project: Path, tmp_path: Path):
+    from agentscaffold.doctor import DoctorContext, check_governance_mapping
+
+    return check_governance_mapping(
+        DoctorContext(project_root=project, mcp_config_path=tmp_path / "mcp.json")
+    )
+
+
+def test_governance_mapping_ok_with_the_shipped_manual(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    result = _governance_check(project, tmp_path)
+    assert result.status == "ok", result.details
+
+
+def test_governance_mapping_names_each_missing_section(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    (project / "scaffold.yaml").write_text(
+        "framework:\n  project_name: proj\n"
+        "agents:\n  governance:\n    orient: [Hard Prohibitions, Release Train]\n"
+        "    steps:\n      review: [Spike Requirements]\n"
+        "      implementation: []\n      completion: []\n      backlog: []\n"
+    )
+    (project / "AGENTS.md").write_text("## Hard Prohibitions\n\nNo.\n")
+    result = _governance_check(project, tmp_path)
+    assert result.status == "warn"
+    assert result.details == ["orient: Release Train", "review: Spike Requirements"]
+    assert "agents.governance.optional" in (result.remediation or "")
+
+
+def test_governance_mapping_ignores_optional_sections(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    (project / "scaffold.yaml").write_text(
+        "framework:\n  project_name: proj\n"
+        "agents:\n  governance:\n    orient: [Hard Prohibitions, Release Train]\n"
+        "    optional: [Release Train]\n"
+        "    steps:\n      review: []\n      implementation: []\n"
+        "      completion: []\n      backlog: []\n"
+    )
+    (project / "AGENTS.md").write_text("## Hard Prohibitions\n\nNo.\n")
+    assert _governance_check(project, tmp_path).status == "ok"
+
+
+def test_governance_mapping_warns_when_the_manual_is_missing(tmp_path: Path) -> None:
+    project = _project(tmp_path, manual=False)
+    result = _governance_check(project, tmp_path)
+    assert result.status == "warn"
+    assert "AGENTS.md" in result.summary
+
+
+def test_governance_mapping_quiet_when_no_manual_is_configured(tmp_path: Path) -> None:
+    project = _project(tmp_path, manual=False)
+    (project / "scaffold.yaml").write_text(
+        "framework:\n  project_name: proj\nagents:\n  agents_md: false\n"
+    )
+    assert _governance_check(project, tmp_path).status == "ok"
 
 
 def test_graph_schema_check_skips_when_there_is_no_graph(state_home: Path, tmp_path: Path):

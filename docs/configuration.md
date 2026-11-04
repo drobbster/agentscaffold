@@ -108,7 +108,7 @@ Gates control transitions between plan lifecycle states: Draft -> Review -> Read
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | review_checklist | bool | true | Require plan review checklist completed |
-| approval_gates | bool | true | Require human approval for approval-required changes |
+| approval_gates | bool | true | Require human approval for approval-required changes. While true, `scaffold_prepare_implementation` refuses a plan with `Approval Required: Yes` until an approval is recorded (see [agents](#agents)) |
 | interactive_gate | bool | true | Require human confirmation when "review it with me" requested |
 
 ### gates.in_progress_to_complete
@@ -187,6 +187,41 @@ Domain packs can add approval gates (e.g. `financial_calculations`, `model_deplo
 |-------|------|---------|-------------|
 | agents_md | bool | true | Generate AGENTS.md |
 | cursor_rules | bool | true | Generate .cursor/rules.md |
+| manual_path | str | `AGENTS.md` | The project's governance manual, relative to the project root. A path outside the root is ignored |
+| governance | object | see below | Which manual sections the MCP server delivers, and when |
+
+### agents.governance
+
+The MCP server reads the manual's `##` and `###` sections (outside managed
+blocks and fenced code) and attaches the ones that govern each step.
+`scaffold_orient` returns them as `governance`; the lifecycle tools return them
+as `governance_sections`; `scaffold_governance` returns the table of contents
+or any one section. Heading names ignore case, surrounding whitespace, a
+leading `Gate:` and a trailing parenthetical. Address a `###` section as
+`Parent / Child`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| orient | list[str] | `[Hard Prohibitions, Approval Gates]` | Sections attached to `scaffold_orient` |
+| orient_budget | int | 2800 | Character limit for the orient block |
+| step_budget | int | 6000 | Character limit for each lifecycle block |
+| steps.review | list[str] | the Draft -> Review and Review -> Ready gates under Plan Lifecycle, Spike Requirements, Review Output Format, Review Terminology | `scaffold_begin_plan`, `scaffold_prepare_review` |
+| steps.implementation | list[str] | the Ready -> In Progress gate, Execution Rules, Test Requirements, Breaking Changes Protocol, Linter Warning Protocol | `scaffold_prepare_implementation` |
+| steps.completion | list[str] | the In Progress -> Complete gate, Retrospective Requirements, Runbook Rules, Architecture Changelog Scope | `scaffold_complete_plan`, `scaffold_prepare_retro` |
+| steps.backlog | list[str] | `[Backlog Rules]` | `scaffold_record_backlog_item` |
+| optional | list[str] | `[]` | Mapped headings that may be absent without being reported in `missing` or by `scaffold doctor` |
+
+Sections that do not fit the budget are listed in `truncated`; fetch them with
+`scaffold_governance(section=...)`. Mapped headings the manual lacks are
+listed in `missing` and reported by the `governance_mapping` doctor check;
+they never fail a tool call.
+
+**Approval.** When `gates.ready_to_in_progress.approval_gates` is true and a
+plan says `Approval Required: Yes`, `scaffold_prepare_implementation` returns
+only a `gate` (with the question to ask) until the approval is recorded,
+either as `- Approved: YYYY-MM-DD by <name>` in the plan metadata or as a
+`**Plan N -- APPROVED ...**` entry under `## Approvals` in the workflow state
+file. `- Approved: Pending`, the plan template default, is not an approval.
 
 ---
 

@@ -54,8 +54,14 @@ def build_lone_project(
     workflow: str | None = None,
     draft_plan: bool = False,
     extra_config: str = "",
+    manual: str | None = None,
+    extra_files: dict[str, str] | None = None,
 ) -> Path:
-    """Copy, index and register a lone repository; return its root."""
+    """Copy, index and register a lone repository; return its root.
+
+    *extra_files* maps repository-relative paths to contents written before
+    indexing.
+    """
     from agentscaffold.config import load_config
     from agentscaffold.graph.pipeline import run_pipeline
     from agentscaffold.workspace_registry import register_workspace
@@ -71,6 +77,12 @@ def build_lone_project(
     if draft_plan:
         plan = repo / "docs" / "ai" / "plans" / f"plan_{DRAFT_PLAN_NUMBER:03d}_retry_budget.md"
         plan.write_text(DRAFT_PLAN)
+    if manual is not None:
+        (repo / "AGENTS.md").write_text(manual)
+    for relative, content in (extra_files or {}).items():
+        target = repo / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
     run_pipeline(root=repo, config=load_config(repo / "scaffold.yaml"))
     register_workspace(repo, name=name)
     return repo
