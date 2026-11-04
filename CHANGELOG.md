@@ -8,6 +8,47 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Added
+- **The MCP server delivers the working procedure itself.** The initialize
+  result now carries short instructions (start a session, orient, route by
+  intent, close the session; at most 1,500 characters), so agents follow the
+  procedure in repositories whose rule files AgentScaffold does not own.
+  Tool `meta` gains `session_open`, and `scaffold_orient` plus the governance
+  write tools add `procedure_hint` while no session is open for the resolved
+  project. Session tools, `scaffold_projects` and error responses carry
+  neither key. The `scaffold_session_start` and `scaffold_orient` descriptions
+  now state the call order. Set `AGENTSCAFFOLD_MCP_INSTRUCTIONS=off` to turn
+  all of this off.
+- **`scaffold_session_start` accepts `force_new`**, which closes the current
+  project's open session and starts a new one.
+- **`scaffold_orient` flags stale state.** `workflow_state` gains
+  `last_updated`, `stale` (more than 14 days since the file's Last Updated
+  line) and `contradictions` (plans listed In Progress whose plan file says
+  Complete or Superseded). Orient adds `session_warning` when the open session
+  is older than `sessions.warn_after_hours`. The idle-next row of
+  `plan_progress` now carries the plan's title and status.
+- **New `sessions` config section** with `idle_hours` (default 12) and
+  `warn_after_hours` (default 24). See `docs/configuration.md`.
+
+### Changed
+- **The `mcp` extra now requires `mcp>=1.3.0,<2`** (was `>=1.0.0`), the first
+  SDK release whose server accepts initialize instructions.
+- **Sessions are per project and close when idle.** Sessions are stamped with
+  the resolved project (MCP `working_path`, or the working directory for
+  `scaffold session start` and `end`), and lookups match that project exactly,
+  so one project's start, decisions and end no longer reuse or close another
+  project's session. A session with no session or governance write activity
+  for `sessions.idle_hours` is closed the next time a session starts or a
+  decision is recorded, with ` [closed: idle]` appended to its summary;
+  sessions written before this release (no project) are closed the same way
+  once idle. Until then they are not reported as the project's open session,
+  so the first chat after upgrading sees `session_open: false` and should call
+  `scaffold_session_start`. Set `sessions.idle_hours: 0` for the previous never-expire
+  behavior. The graph gains an additive `Session.lastActivity` column; no
+  re-index is needed.
+- **Workflow blockers match zero-padded plan numbers**, so a blocker naming
+  `Plan 090` is attributed to plan 90.
+
 ## [0.12.0] - 2026-09-07
 
 Upgrade: after installing 0.12.0, point Cursor MCP back at the published

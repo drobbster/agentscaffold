@@ -37,11 +37,19 @@ def build_session_brief(
     workflow: dict[str, Any],
     project: str | None = None,
     plan_number: int | None = None,
+    open_session: dict[str, Any] | None | object = ...,
 ) -> dict[str, Any]:
-    """Return the locked ``session_brief`` object."""
+    """Return the locked ``session_brief`` object.
+
+    *open_session* is the session orient already looked up (stamped project,
+    idle-aware; Plan 276). When omitted, the brief looks it up itself.
+    """
     from agentscaffold.graph.sessions import find_open_session
 
-    session = find_open_session(store, project=project)
+    if open_session is ...:
+        session = find_open_session(store, project=project)
+    else:
+        session = open_session if isinstance(open_session, dict) else None
     candidate, source = _resolve_candidate(store, root, session, explicit=plan_number)
     card = None
     status = ""
@@ -197,6 +205,25 @@ def _gated_status(store: Any, root: Path, plan_row: dict[str, Any]) -> str:
     if card is None:
         return status
     return _routing_status({**card, "status_normalized": "Unknown"})
+
+
+def plan_file_status(store: Any, root: Path, plan_number: int) -> str:
+    """The plan's normalized Status, read from its file (graph value as fallback)."""
+    return plan_title_and_status(store, root, plan_number)[1]
+
+
+def plan_title_and_status(store: Any, root: Path, plan_number: int) -> tuple[str, str]:
+    """``(title, normalized status)`` for a plan, or ``("", "")`` when unknown."""
+    from agentscaffold.review.queries import get_plan_by_number
+
+    try:
+        row = get_plan_by_number(store, int(plan_number))
+    except Exception:  # noqa: BLE001 - a missing plan is not an orient failure
+        return "", ""
+    if row is None:
+        return "", ""
+    status = _status_from_text(_read_plan_text(root, row), row.get("p.status") or "")
+    return str(row.get("p.title") or ""), status
 
 
 def _read_plan_text(root: Path, plan_row: dict[str, Any]) -> str:

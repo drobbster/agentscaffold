@@ -184,3 +184,16 @@ def test_the_registry_imports_without_the_mcp_sdk():
 def test_each_tool_is_individually_addressable(spec: ToolSpec):
     """Proves the registry is parametrisable, which is what Phase F needs it for."""
     assert get_tool_spec(spec.name) is not None
+
+
+def test_session_start_and_orient_descriptions_state_the_call_order():
+    """Plan 275: clients that drop server instructions still see the order."""
+    start = get_tool_spec("scaffold_session_start")
+    orient = get_tool_spec("scaffold_orient")
+    assert start is not None and orient is not None
+    assert start.description.startswith(
+        "Call this first in every new chat, before any other AgentScaffold write."
+    )
+    assert orient.description.startswith(
+        "Call this second in every new chat, right after scaffold_session_start."
+    )
