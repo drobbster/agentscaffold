@@ -191,6 +191,12 @@ Domain packs can add approval gates (e.g. `financial_calculations`, `model_deplo
 | governance | object | see below | Which manual sections the MCP server delivers, and when |
 | durability | `committed` or `local` | `committed` | `local` means generated guidance is meant to stay uncommitted, so `scaffold doctor` stops warning that it is gitignored |
 | protect_read_only_paths | bool | true | Generated pre-edit hooks refuse agent edits to `semi_autonomous.safety.read_only_paths` in this project |
+| claude_md | `full` or `import` | `full` | `import` makes the `CLAUDE.md` managed block a single `@AGENTS.md` line instead of a second copy of the routing |
+
+`claude_md: import` relies on Claude Code expanding `@AGENTS.md`, so it only
+applies where `AGENTS.md` carries the full routing. In a shared-layout
+workspace the project `AGENTS.md` is a short stub, so `generate-all` ignores
+the setting there, says so, and keeps the full document in `CLAUDE.md`.
 
 `protect_read_only_paths` is a guardrail for agents that follow it, not an
 access control: it applies only where AgentScaffold's hooks are installed

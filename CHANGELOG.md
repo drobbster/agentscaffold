@@ -55,6 +55,17 @@ introduce additive features and small behavior changes).
   run, and new config `agents.durability` (`committed` or `local`).
 - **`scaffold doctor` adds `guidance_reachable` and `hooks_ran` checks**, and
   its drift check covers user-scope copies.
+- **`scaffold agents repair --prefer-managed`** drops unmarked copies of the
+  managed block's headings even when they differ, which recovers an
+  `AGENTS.md` that carried routing before 0.12 (it adds the managed block
+  first). Headings `agents.governance` reads from are kept and named.
+  `--apply` saves `AGENTS.md.bak`.
+- **`agents.claude_md: import`** writes `@AGENTS.md` as the `CLAUDE.md`
+  managed block instead of a second copy of the routing. Ignored, with a
+  message, in a shared-layout workspace, where `AGENTS.md` is only a stub.
+- **`scaffold doctor` adds an `unstamped_rows` check** counting graph rows with
+  an empty `project` in a multi-project workspace, and `state_location` now
+  also reports leftover `.scaffold/graph.duckdb` files in project folders.
 
 ### Changed
 - **Generated hook scripts are one-line shims into a Python router.** The
@@ -93,6 +104,28 @@ introduce additive features and small behavior changes).
   re-index is needed.
 - **Workflow blockers match zero-padded plan numbers**, so a blocker naming
   `Plan 090` is attributed to plan 90.
+- **The workspace-root `AGENTS.md` router is written only where AgentScaffold
+  already manages it.** A team-owned root `AGENTS.md` is no longer appended to,
+  and a missing one is no longer created, by `generate-all` or
+  `workspace migrate-layout`; both report the skip. Pass
+  `scaffold agents generate-all --include-workspace` for the old behavior.
+- **`scaffold index` refuses a directory that only contains projects** (an
+  unregistered monorepo root above a registered team folder, or a
+  multi-project workspace root that is not itself a project) and names the
+  projects inside, instead of building one graph over all of them or failing
+  with a scoping error. The check is in `agentscaffold.graph.index()`, so the
+  edit hook and background refresh refuse too. `--force-root` overrides it.
+
+### Fixed
+- **Single-to-multi-project migration re-keys session rows already stamped
+  with the project name.** Sessions written since project-scoped sessions
+  carry the project on a bare id even in a lone repo; the migration skipped
+  them, leaving rows that failed the multi-project integrity check.
+- **A marker-less `AGENTS.md` with pre-0.12 routing** now refuses with the
+  `scaffold agents repair --prefer-managed --apply` remedy instead of
+  suggesting `--allow-append`, which would have added a second copy.
+- **Generated workspace router and project stub omit the "Security templates"
+  line** when `paths.security_dir` is empty, instead of rendering a blank path.
 
 ## [0.12.0] - 2026-09-07
 

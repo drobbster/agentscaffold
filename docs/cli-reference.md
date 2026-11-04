@@ -69,11 +69,17 @@ the workspace's shared assets into the project.
 ```bash
 scaffold index                   # full build
 scaffold index --incremental     # only what changed
+scaffold index --force-root      # index a directory that only contains projects
 ```
 
 The graph backs search, impact analysis, and every governance query. Build it
 once after `init`, then rebuild after significant changes. See
 [Knowledge graph](#knowledge-graph) for what you can ask it.
+
+`index` refuses a directory that is not itself a project but contains
+registered ones (a monorepo root above a team folder, or a multi-project
+workspace root), and names the projects inside. Run it from each project
+instead. `--force-root` indexes the whole directory as one project.
 
 ---
 
@@ -411,18 +417,35 @@ scaffold study create "Compare retrieval strategies"
 ```bash
 scaffold agents generate-all
 scaffold agents generate-all --allow-append   # append routing when the overlap guard refuses
+scaffold agents generate-all --include-workspace  # also write an unmanaged workspace-root router
 scaffold agents install --scope user --dry-run
 scaffold agents install --scope user          # all registered projects, every client found
 scaffold agents install --scope user --project api --client cursor
 scaffold agents install --scope user --uninstall
 scaffold agents repair                        # dry run
 scaffold agents repair --apply
+scaffold agents repair --prefer-managed       # dry run: the managed block wins
+scaffold agents repair --prefer-managed --apply
 scaffold agents diff-manual                   # dry run
 scaffold agents diff-manual --apply
 ```
 
 `--force` rewrites the whole file. `--allow-append` only appends. They are not
 the same flag.
+
+In a shared workspace, `generate-all` refreshes the workspace-root `AGENTS.md`
+router only when AgentScaffold already manages that file; otherwise it skips it
+and says so. `--include-workspace` writes it anyway, appending a managed block
+and leaving the existing text alone.
+
+`repair` refuses when two copies of a heading differ. `--prefer-managed` treats
+the managed block as authoritative instead: it drops every unmarked section
+whose heading is in the block, even when the text differs. That is the fix for
+an `AGENTS.md` that carried routing sections before 0.12 introduced markers;
+on such a file it adds the managed block first. Headings that
+[`agents.governance`](configuration.md#agents) reads from are never dropped;
+`repair` names them so you can merge them by hand. `--apply` saves
+`AGENTS.md.bak` first.
 
 Run `generate-all` after changing `scaffold.yaml`, and whenever `scaffold doctor`
 reports that generated rule files have drifted. Use `repair` on a duplicated

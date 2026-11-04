@@ -16,6 +16,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from agentscaffold.agents.manual_diff import parse_heading_paths, project_owned_text
 
@@ -40,6 +41,19 @@ def normalize_heading(segment: str) -> str:
 
 def _split_path(name: str) -> tuple[str, ...]:
     return tuple(normalize_heading(part) for part in name.split(PATH_SEPARATOR) if part.strip())
+
+
+def governance_protected_headings(config: Any) -> set[str]:
+    """Normalized `##` headings the governance mapping reads from (Plan 279).
+
+    ``scaffold agents repair --prefer-managed`` must never drop these, even when
+    one shares a heading with the managed routing block.
+    """
+    governance = config.agents.governance
+    names = list(governance.orient) + list(governance.optional)
+    for step in type(governance.steps).model_fields:
+        names += list(getattr(governance.steps, step))
+    return {parts[0] for parts in map(_split_path, names) if parts}
 
 
 @dataclass(frozen=True, eq=False)
