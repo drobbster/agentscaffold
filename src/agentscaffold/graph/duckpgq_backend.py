@@ -159,6 +159,7 @@ _PRESERVED_NODE_TABLES: tuple[str, ...] = (
     "ReviewFinding",
     "BacklogItem",
     "Session",
+    "PlanReview",
     "GraphMeta",
 )
 _PRESERVED_EDGE_TABLES: tuple[str, ...] = (
@@ -545,7 +546,7 @@ class DuckPGQBackend:
     def clear_derived(self, project: str | None = None) -> None:
         """Clear index-derived data while preserving user-generated knowledge.
 
-        Keeps: ReviewFinding (+ edges), Session (+ edges)
+        Keeps: ReviewFinding (+ edges), Session (+ edges), BacklogItem, PlanReview
         Clears: everything else (files, functions, classes, communities, governance, etc.)
 
         This is the correct method for full re-indexing -- learned knowledge
@@ -558,7 +559,7 @@ class DuckPGQBackend:
         """
         self._ensure_writable()
         # Tables that represent knowledge gained through work, not derived from code
-        preserve_nodes = {"ReviewFinding", "BacklogItem", "Session", "GraphMeta"}
+        preserve_nodes = set(_PRESERVED_NODE_TABLES)
         preserve_edges = {
             "FINDING_ABOUT_FILE",
             "FINDING_ABOUT_FUNC",

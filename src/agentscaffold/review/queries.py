@@ -12,6 +12,7 @@ dicts use the dot-qualified convention (e.g. ``"a.path"``).
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from agentscaffold.graph.query_compat import ql, ql_scalar, sql_escape
@@ -1086,29 +1087,128 @@ def get_backlog_items_for_plan(
 # ---------------------------------------------------------------------------
 
 
-def stamp_plan_reviewed(store: GraphBackend, plan_number: int) -> str | None:
-    """Set ``reviewedAt`` on the Plan node for the given plan number.
+def stamp_plan_reviewed(
+    store: GraphBackend,
+    plan_number: int,
+    *,
+    commits: Mapping[str, str] | None = None,
+) -> str | None:
+    """Record that the pre-implementation review ran for *plan_number*.
+
+    The stamp lives in the preserved ``PlanReview`` table (Plan 281), because
+    Plan rows are rebuilt on every governance reindex. ``Plan.reviewedAt`` is
+    still set for older readers. *commits* maps a project name to the HEAD
+    commit at review; None keeps any commits already recorded.
 
     Returns the ISO timestamp written, or None if the Plan node does not exist.
     """
     from datetime import datetime, timezone  # noqa: PLC0415
 
-    now = datetime.now(timezone.utc).isoformat()
-    rows = store.query(f"SELECT id FROM Plan WHERE number = {plan_number}")
-    if not rows:
+    plan = _plan_row(store, plan_number)
+    if plan is None:
         return None
-    plan_id = rows[0]["id"]
-    store.execute(f"UPDATE Plan SET reviewedAt = '{now}' WHERE id = '{plan_id}'")
+    plan_id, project = plan
+    now = datetime.now(timezone.utc).isoformat()
+    store.execute(f"UPDATE Plan SET reviewedAt = '{now}' WHERE id = '{sql_escape(plan_id)}'")
+    _write_plan_review(store, plan_number, project, now, commits)
     return now
+
+
+def get_plan_review(store: GraphBackend, plan_number: int) -> dict[str, Any] | None:
+    """Return ``{reviewedAt, reviewedCommits}`` for *plan_number*, or None if never stamped.
+
+    Reads ``PlanReview`` for the plan's project, falling back to
+    ``Plan.reviewedAt`` for graphs that predate the table.
+    """
+    plan = _plan_row(store, plan_number)
+    project = plan[1] if plan else None
+    scope = "" if project is None else f" AND COALESCE(project, '') = '{sql_escape(project)}'"
+    try:
+        rows = store.query(
+            "SELECT reviewedAt, reviewedCommits FROM PlanReview"
+            f" WHERE planNumber = {int(plan_number)}{scope}"
+        )
+    except Exception:  # noqa: BLE001 - a graph without the table is not stamped there
+        rows = []
+    if rows and rows[0].get("reviewedAt"):
+        return {
+            "reviewedAt": rows[0]["reviewedAt"],
+            "reviewedCommits": _json_object(rows[0].get("reviewedCommits")),
+        }
+    if plan is None:
+        return None
+    legacy = store.query(f"SELECT reviewedAt FROM Plan WHERE id = '{sql_escape(plan[0])}'")
+    value = legacy[0].get("reviewedAt") if legacy else None
+    return {"reviewedAt": value, "reviewedCommits": {}} if value else None
 
 
 def get_plan_reviewed_at(store: GraphBackend, plan_number: int) -> str | None:
     """Return the ``reviewedAt`` timestamp for the given plan, or None."""
-    rows = store.query(f"SELECT reviewedAt FROM Plan WHERE number = {plan_number}")
+    review = get_plan_review(store, plan_number)
+    return review["reviewedAt"] if review else None
+
+
+def _plan_row(store: GraphBackend, plan_number: int) -> tuple[str, str] | None:
+    """Return ``(id, project)`` of the Plan node for *plan_number*, or None."""
+    rows = store.query(
+        f"SELECT id, COALESCE(project, '') AS project FROM Plan WHERE number = {int(plan_number)}"
+    )
     if not rows:
         return None
-    val = rows[0].get("reviewedAt")
-    return val if val else None
+    return str(rows[0]["id"]), str(rows[0].get("project") or "")
+
+
+def _write_plan_review(
+    store: GraphBackend,
+    plan_number: int,
+    project: str,
+    reviewed_at: str,
+    commits: Mapping[str, str] | None,
+) -> None:
+    """Insert or update the plan's PlanReview row, creating the table on an older graph."""
+    import json  # noqa: PLC0415
+
+    from agentscaffold.config import PROJECT_DELIMITER  # noqa: PLC0415
+    from agentscaffold.graph.duckpgq_schema import NODE_TABLES  # noqa: PLC0415
+
+    # A graph built before SCHEMA_VERSION 12 lacks the table until its next
+    # rebuild; creating it here keeps the stamp, and the rebuild carries it over.
+    ddl = next(stmt for stmt in NODE_TABLES if "CREATE TABLE IF NOT EXISTS PlanReview" in stmt)
+    store.execute(ddl)
+
+    existing = store.query(
+        f"SELECT id FROM PlanReview WHERE planNumber = {int(plan_number)}"
+        f" AND COALESCE(project, '') = '{sql_escape(project)}'"
+    )
+    if existing:
+        assignments = f"reviewedAt = '{sql_escape(reviewed_at)}'"
+        if commits is not None:
+            assignments += f", reviewedCommits = '{sql_escape(json.dumps(dict(commits)))}'"
+        store.execute(
+            f"UPDATE PlanReview SET {assignments} WHERE id = '{sql_escape(existing[0]['id'])}'"
+        )
+        return
+    raw_id = f"planreview::{int(plan_number)}"
+    store.create_node(
+        "PlanReview",
+        {
+            "id": f"{project}{PROJECT_DELIMITER}{raw_id}" if project else raw_id,
+            "planNumber": int(plan_number),
+            "reviewedAt": reviewed_at,
+            "reviewedCommits": json.dumps(dict(commits or {})),
+            "project": project,
+        },
+    )
+
+
+def _json_object(raw: Any) -> dict[str, Any]:
+    import json  # noqa: PLC0415
+
+    try:
+        value = json.loads(raw) if isinstance(raw, str) and raw else {}
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 # ---------------------------------------------------------------------------

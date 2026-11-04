@@ -88,12 +88,13 @@ ADDITIVE_COLUMNS: tuple[AdditiveColumn, ...] = (
     AdditiveColumn("Learning", "evidence", "VARCHAR DEFAULT ''"),
 )
 
-# Bumped to 11 by Plan 265: PlanStep node, PLAN_HAS_STEP, and DEPENDS_ON_STEPS.
+# Bumped to 12 by Plan 281: PlanReview node (preserved review stamp).
+# Version 11 was Plan 265: PlanStep node, PLAN_HAS_STEP, and DEPENDS_ON_STEPS.
 # Version 10 was Plan 252 (relative-import IMPORTS edges, no DDL change).
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # ---------------------------------------------------------------------------
-# Node table DDL (22 tables)
+# Node table DDL (23 tables)
 # ---------------------------------------------------------------------------
 
 _AUTHORED_NODE_TABLES: list[str] = [
@@ -273,6 +274,14 @@ _AUTHORED_NODE_TABLES: list[str] = [
         decisions     VARCHAR,
         endedAt       VARCHAR,
         lastActivity  VARCHAR DEFAULT ''
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS PlanReview (
+        id              VARCHAR PRIMARY KEY,
+        planNumber      BIGINT,
+        reviewedAt      VARCHAR,
+        reviewedCommits VARCHAR DEFAULT '{}'
     )
     """,
     """

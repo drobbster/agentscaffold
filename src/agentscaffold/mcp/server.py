@@ -2059,17 +2059,17 @@ def _tool_prepare_implementation(
     if pn is None:
         return {"error": "plan_number is required.", "meta": meta}
 
-    # --- Strict gate: check Plan.reviewedAt when gate_strict is enabled ---
+    # --- Strict gate: the pre-implementation review must have stamped the plan ---
     try:
-        cfg = _load_config()
+        cfg = config if config is not None else _load_config()
         if cfg.freshness.gate_strict and bool(arguments.get("gate_transition")):
             reviewed_at = get_plan_reviewed_at(store, pn)
             if reviewed_at is None:
                 return {
                     "error": (
                         f"scaffold_begin_plan must be called before implementation of Plan {pn}. "
-                        "The pre-review chain has not been completed (Plan.reviewedAt is NULL). "
-                        "Run 'begin plan {pn}' first."
+                        "The pre-review chain has not been completed (no review stamp). "
+                        f"Run 'begin plan {pn}' first."
                     ),
                     "gate_deferred": True,
                     "meta": meta,
