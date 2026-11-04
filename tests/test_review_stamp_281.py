@@ -96,6 +96,29 @@ def test_stamp_survives_a_schema_rebuild(tmp_path: Path):
     assert _reviewed_at(tmp_path) == ts
 
 
+def test_upgrading_a_graph_from_before_the_table_keeps_its_stamps(tmp_path: Path):
+    repo = _project(tmp_path)
+    legacy = "2026-10-01T12:00:00+00:00"
+    store = DuckPGQBackend(_db(tmp_path))
+    try:
+        store.execute("DROP TABLE PlanReview")
+        store.execute(f"UPDATE Plan SET reviewedAt = '{legacy}' WHERE number = {PLAN}")
+        store.execute("UPDATE GraphMeta SET schemaVersion = 11")
+    finally:
+        store.close()
+
+    run_pipeline(repo, load_config(repo / "scaffold.yaml"), quiet=True)
+
+    store = DuckPGQBackend(_db(tmp_path), read_only=True)
+    try:
+        rows = store.query("SELECT planNumber, reviewedAt FROM PlanReview")
+        review = get_plan_review(store, PLAN)
+    finally:
+        store.close()
+    assert [(r["planNumber"], r["reviewedAt"]) for r in rows] == [(PLAN, legacy)]
+    assert review == {"reviewedAt": legacy, "reviewedCommits": {}}
+
+
 def test_stamp_is_written_to_the_governance_artifact(tmp_path: Path):
     from agentscaffold.graph.governance_store import serialize_governance
 

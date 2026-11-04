@@ -811,6 +811,10 @@ class DuckPGQBackend:
                 "columns": columns,
                 "rows": self.query(f"SELECT * FROM {table}"),
             }
+        if "PlanReview" not in nodes:
+            legacy = self._legacy_plan_reviews()
+            if legacy is not None:
+                nodes["PlanReview"] = legacy
 
         for table in _PRESERVED_EDGE_TABLES:
             columns = self._table_columns(table)
@@ -826,6 +830,38 @@ class DuckPGQBackend:
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "nodes": nodes,
             "edges": edges,
+        }
+
+    def _legacy_plan_reviews(self) -> dict[str, Any] | None:
+        """PlanReview rows from ``Plan.reviewedAt`` on a graph built before schema 12.
+
+        Those graphs kept the stamp only on the Plan row, which the rebuild
+        re-ingests from markdown, so it is carried over as a PlanReview row.
+        """
+        plan_cols = self._table_columns("Plan")
+        if "reviewedAt" not in plan_cols:
+            return None
+        project_col = "project" if "project" in plan_cols else "''"
+        rows = self.query(
+            f"SELECT number, reviewedAt, {project_col} AS project FROM Plan"
+            " WHERE number IS NOT NULL AND COALESCE(reviewedAt, '') <> ''"
+        )
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            project = str(row.get("project") or "")
+            raw_id = f"planreview::{int(row['number'])}"
+            out.append(
+                {
+                    "id": f"{project}{PROJECT_DELIMITER}{raw_id}" if project else raw_id,
+                    "planNumber": int(row["number"]),
+                    "reviewedAt": str(row["reviewedAt"]),
+                    "reviewedCommits": "{}",
+                    "project": project,
+                }
+            )
+        return {
+            "columns": ["id", "planNumber", "reviewedAt", "reviewedCommits", "project"],
+            "rows": out,
         }
 
     def import_governance(self, data: dict[str, Any]) -> dict[str, Any]:
