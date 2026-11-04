@@ -1853,6 +1853,45 @@ def review_verify_impl(
     console.print(format_verification_markdown(items))
 
 
+@review_app.command("precedent")
+def review_precedent(
+    paths: list[str] = typer.Argument(..., help="Project-relative file paths."),
+    plan: int | None = typer.Option(None, "--plan", help="Exclude this plan's own items."),
+    limit: int | None = typer.Option(None, "--limit", help="Most items to show (default: all)."),
+    as_json: bool = typer.Option(False, "--json", help="Print JSON for CI."),
+) -> None:
+    """Earlier findings, learnings and ADRs about these files (Plan 281)."""
+    import json as _json
+
+    from agentscaffold.config import find_config
+    from agentscaffold.review.precedent import precedent_for_paths
+
+    config, store = _require_graph()
+    found = find_config()
+    root = found.parent if found is not None else Path.cwd()
+    try:
+        result = precedent_for_paths(
+            store, paths, root=root, config=config, plan_number=plan, budget=limit
+        )
+    finally:
+        store.close()
+    if result is None:
+        console.print("Precedent is disabled (precedent.enabled: false).")
+        return
+    if as_json:
+        print(_json.dumps(result.to_dict(), indent=2))
+        return
+    console.print(f"{len(result.items)} of {result.total} precedent items")
+    for item in result.items:
+        plan_label = f"Plan {item.plan_number}" if item.plan_number is not None else "no plan"
+        console.print(
+            f"- {item.id} ({plan_label}, {item.match} {item.path}, {item.project}): {item.text}",
+            markup=False,
+        )
+    for gone in result.sources_unavailable:
+        console.print(f"- source {gone['project']} unavailable: {gone['reason']}", markup=False)
+
+
 @review_app.command("retro")
 def review_retro(
     plan: int = typer.Argument(..., help="Plan number to enrich retrospective for."),

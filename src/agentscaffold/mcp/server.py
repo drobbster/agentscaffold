@@ -781,7 +781,7 @@ def _run_tool(
         return _tool_context(store, arguments, meta, root)
 
     elif name == "scaffold_impact":
-        return _tool_impact(store, arguments, meta, root)
+        return _tool_impact(store, arguments, meta, root, config)
 
     elif name == "scaffold_search":
         if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
@@ -1424,6 +1424,7 @@ def _tool_impact(
     arguments: dict[str, Any],
     meta: dict[str, Any],
     root: Path | None = None,
+    config: Any = None,
 ) -> dict[str, Any]:
     """Handle scaffold_impact tool call."""
     from agentscaffold.graph.query_compat import ql
@@ -1546,7 +1547,58 @@ def _tool_impact(
             kind="impact",
             target=target,
         )
+    if root is not None and arguments.get("include_precedent", True) is not False:
+        governance = _governance_impact(store, target, root, config)
+        if governance is not None:
+            from agentscaffold.mcp.render import format_governance_impact_markdown
+
+            payload["governance_impact"] = governance
+            payload["markdown"] += format_governance_impact_markdown(governance)
     return payload
+
+
+def _governance_impact(store: Any, target: str, root: Path, config: Any) -> dict[str, Any] | None:
+    """Every finding, learning, ADR and contract about *target* (Plan 281).
+
+    Facts about the file only: no semantic matches and nothing that merely
+    shares an earlier plan with it. Uncapped, like the dependency results.
+    """
+    from agentscaffold.review.precedent import STRUCTURAL_MATCHES, precedent_for_paths
+    from agentscaffold.review.queries import get_contracts_for_file
+
+    try:
+        result = precedent_for_paths(
+            store, [target], root=root, config=config, budget=None, match_kinds=STRUCTURAL_MATCHES
+        )
+    except Exception as exc:  # noqa: BLE001 - governance facts must not break impact
+        logger.debug("governance_impact skipped: %s", exc)
+        return None
+    if result is None:
+        return None
+    by_kind: dict[str, list[dict[str, Any]]] = {"finding": [], "learning": [], "adr": []}
+    for item in result.items:
+        by_kind[item.kind].append(item.to_dict())
+    contracts = [
+        {
+            "name": c.get("c.name", ""),
+            "version": c.get("c.version", ""),
+            "path": c.get("c.filePath"),
+        }
+        for c in get_contracts_for_file(store, target)
+    ]
+    return {
+        "findings": by_kind["finding"],
+        "learnings": by_kind["learning"],
+        "adrs": by_kind["adr"],
+        "contracts": contracts,
+        "counts": {
+            "findings": len(by_kind["finding"]),
+            "learnings": len(by_kind["learning"]),
+            "adrs": len(by_kind["adr"]),
+            "contracts": len(contracts),
+        },
+        "sources_unavailable": result.sources_unavailable,
+    }
 
 
 def _tool_search(
@@ -2118,7 +2170,24 @@ def _tool_prepare_implementation(
     }
     if approval is not None:
         payload["approval"] = approval
+    _attach_compact_precedent(payload, brief, config)
     return apply_detail(payload, arguments.get("detail"))
+
+
+def _attach_compact_precedent(payload: dict[str, Any], brief: dict[str, Any], config: Any) -> None:
+    """Short precedent reminder while coding (Plan 281), taken from the brief."""
+    section = brief.get("precedent") if isinstance(brief, dict) else None
+    if not isinstance(section, dict):
+        return
+    from agentscaffold.config import PrecedentConfig  # noqa: PLC0415
+
+    limit = getattr(config, "precedent", None) or PrecedentConfig()
+    keys = ("id", "kind", "match", "plan", "project", "text")
+    payload["precedent"] = [
+        {key: item.get(key) for key in keys} for item in section.get("items", [])
+    ][: limit.max_compact]
+    if section.get("sources_unavailable"):
+        payload["precedent_sources_unavailable"] = section["sources_unavailable"]
 
 
 def _approval_check(

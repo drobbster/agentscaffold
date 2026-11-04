@@ -213,6 +213,14 @@ def _tool_specs() -> list[ToolSpec]:
                         "description": "Traversal depth (default 2)",
                         "default": 2,
                     },
+                    "include_precedent": {
+                        "type": "boolean",
+                        "description": (
+                            "Include governance_impact: every finding, learning, ADR and "
+                            "contract about the file (default true)"
+                        ),
+                        "default": True,
+                    },
                     **_SCOPE_PROPS,
                 },
                 "required": ["file_or_symbol"],

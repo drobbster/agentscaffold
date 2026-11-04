@@ -659,6 +659,35 @@ class SearchConfig(BaseModel):
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 
+class PrecedentConfig(BaseModel):
+    """Earlier findings, learnings and ADRs fed into the reviews (Plan 281).
+
+    ``sources``: registered project names read for precedent besides the
+    current project and ``implementation_project``. ``semantic`` adds
+    embedding matches after the structural ones; the precedent study sets its
+    default. ``statistic_categories`` are finding categories that are counts,
+    not judgments, and are never returned as precedent.
+    """
+
+    enabled: bool = True
+    semantic: bool = False
+    sources: list[str] = Field(default_factory=list)
+    max_challenges: int = Field(default=5, ge=0)
+    max_brief: int = Field(default=10, ge=0)
+    max_compact: int = Field(default=5, ge=0)
+    statistic_categories: list[str] = Field(
+        default_factory=lambda: ["HISTORY", "VOLATILITY", "HOT_FILE", "COMPLEXITY"]
+    )
+
+    @field_validator("sources")
+    @classmethod
+    def _sources_are_project_names(cls, value: list[str]) -> list[str]:
+        try:
+            return [validate_project_name(name) for name in value]
+        except ConfigError as exc:
+            raise ValueError(str(exc)) from exc
+
+
 # ---------------------------------------------------------------------------
 # Framework (top-level) configuration
 # ---------------------------------------------------------------------------
@@ -703,6 +732,7 @@ class ScaffoldConfig(BaseModel):
     freshness: FreshnessConfig = Field(default_factory=FreshnessConfig)
     sessions: SessionsConfig = Field(default_factory=SessionsConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
+    precedent: PrecedentConfig = Field(default_factory=PrecedentConfig)
     import_config: ImportConfig = Field(default_factory=ImportConfig, alias="import")
     collab: CollabConfig = Field(default_factory=CollabConfig)
     enforcement: EnforcementConfig = Field(default_factory=lambda: _get_enforcement_default())

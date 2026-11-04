@@ -1132,6 +1132,8 @@ def process_governance(
     plan_dependencies: list[tuple[str, list[int]]] = []
     step_dependencies: list[tuple[str, list[dict[str, Any]]]] = []
     if plans_dir.is_dir():
+        from agentscaffold.review.path_mentions import collect_paths  # noqa: PLC0415
+
         seen_plan_ids: set[str] = set()
         for plan_file in sorted(plans_dir.glob("*.md")):
             data = _parse_plan(plan_file)
@@ -1156,6 +1158,11 @@ def process_governance(
                     "filePath": data["filepath"],
                     "createdDate": data["created"],
                     "lastUpdated": data["last_updated"],
+                    "impactPaths": json.dumps(
+                        collect_paths(
+                            None, [i["path"] for i in data["file_impacts"]], project_root=root
+                        )
+                    ),
                 },
             )
             plan_count += 1

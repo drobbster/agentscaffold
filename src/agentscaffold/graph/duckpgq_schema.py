@@ -88,6 +88,7 @@ ADDITIVE_COLUMNS: tuple[AdditiveColumn, ...] = (
     AdditiveColumn("Learning", "evidence", "VARCHAR DEFAULT ''"),
     AdditiveColumn("ReviewFinding", "paths", "VARCHAR DEFAULT '[]'"),
     AdditiveColumn("Learning", "paths", "VARCHAR DEFAULT '[]'"),
+    AdditiveColumn("Plan", "impactPaths", "VARCHAR DEFAULT '[]'"),
 )
 
 # Bumped to 12 by Plan 281: PlanReview node (preserved review stamp).
@@ -216,7 +217,8 @@ _AUTHORED_NODE_TABLES: list[str] = [
         filePath    VARCHAR,
         createdDate VARCHAR,
         lastUpdated VARCHAR,
-        reviewedAt  VARCHAR DEFAULT NULL
+        reviewedAt  VARCHAR DEFAULT NULL,
+        impactPaths VARCHAR DEFAULT '[]'
     )
     """,
     """

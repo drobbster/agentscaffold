@@ -353,7 +353,9 @@ def test_graph_table_plan_impacts_query(conn):
         "INSERT INTO File VALUES ('f:1', 'src/main.py', 'python', 100, '2026-01-01', 50, 'abc', '')"
     )
     conn.execute(
-        "INSERT INTO Plan VALUES ('p:1', 1, 'Test Plan', 'COMPLETE', 'feature',"
+        "INSERT INTO Plan (id, number, title, status, planType, filePath,"
+        " createdDate, lastUpdated, reviewedAt, project)"
+        " VALUES ('p:1', 1, 'Test Plan', 'COMPLETE', 'feature',"
         " 'docs/plans/1.md', '2026-01-01', '2026-01-01', NULL, '')"
     )
     conn.execute("INSERT INTO PLAN_IMPACTS VALUES ('p:1', 'f:1', 'MODIFY')")
@@ -401,7 +403,8 @@ def test_graph_table_adr_governs_two_hop(conn):
     init_schema(conn)
     conn.execute("INSERT INTO File VALUES ('f:1', 'src/a.py', 'python', 10, '', 5, '', '')")
     conn.execute(
-        "INSERT INTO Plan VALUES"
+        "INSERT INTO Plan (id, number, title, status, planType, filePath,"
+        " createdDate, lastUpdated, reviewedAt, project) VALUES"
         " ('p:1', 1, 'Plan One', 'COMPLETE', 'feature', '', '2026-01-01', '', NULL, '')"
     )
     conn.execute(
