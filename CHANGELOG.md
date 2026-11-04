@@ -41,7 +41,9 @@ introduce additive features and small behavior changes).
   for `sessions.idle_hours` is closed the next time a session starts or a
   decision is recorded, with ` [closed: idle]` appended to its summary;
   sessions written before this release (no project) are closed the same way
-  once idle. Set `sessions.idle_hours: 0` for the previous never-expire
+  once idle. Until then they are not reported as the project's open session,
+  so the first chat after upgrading sees `session_open: false` and should call
+  `scaffold_session_start`. Set `sessions.idle_hours: 0` for the previous never-expire
   behavior. The graph gains an additive `Session.lastActivity` column; no
   re-index is needed.
 - **Workflow blockers match zero-padded plan numbers**, so a blocker naming
