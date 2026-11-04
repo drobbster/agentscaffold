@@ -29,10 +29,31 @@ introduce additive features and small behavior changes).
   `plan_progress` now carries the plan's title and status.
 - **New `sessions` config section** with `idle_hours` (default 12) and
   `warn_after_hours` (default 24). See `docs/configuration.md`.
+- **The MCP server delivers the project's governance manual.** `scaffold_orient`
+  adds a `governance` block with the manual's table of contents and its Hard
+  Prohibitions and Approval Gates sections. The review, implementation,
+  completion and backlog tools add `governance_sections` with the sections
+  that govern that step. Each block has a character budget and lists sections
+  it could not fit (`truncated`) or find (`missing`). The new read-only
+  `scaffold_governance` tool returns the table of contents or any one section.
+  The manual path and the step-to-section mapping are configurable under
+  `agents.manual_path` and `agents.governance`.
+- **`scaffold doctor` adds a `governance_mapping` check** that names mapped
+  sections the manual lacks, and warns when the manual itself is missing.
+- **Plan templates carry an `- Approved: Pending` metadata line.**
 
 ### Changed
 - **The `mcp` extra now requires `mcp>=1.3.0,<2`** (was `>=1.0.0`), the first
   SDK release whose server accepts initialize instructions.
+- **`scaffold_prepare_implementation` enforces approval.** For a plan with
+  `Approval Required: Yes` and no recorded approval, it returns only a `gate`
+  naming the question to ask the human and how to record the answer (an
+  `- Approved: YYYY-MM-DD by <name>` line in the plan, or an entry under
+  `## Approvals` in the workflow state file). This applies on every call, not
+  only with `gate_transition`; set
+  `gates.ready_to_in_progress.approval_gates: false` to turn it off. While such
+  a plan is in Draft, Review or Ready, the session brief's next action is to
+  present it for approval.
 - **Sessions are per project and close when idle.** Sessions are stamped with
   the resolved project (MCP `working_path`, or the working directory for
   `scaffold session start` and `end`), and lookups match that project exactly,

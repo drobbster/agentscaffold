@@ -132,6 +132,7 @@ _TOOL_SIGNAL_TOKENS: dict[str, set[str]] = {
     "scaffold_find_studies": {"study", "studies", "experiment", "experiments", "tested"},
     "scaffold_prior_experiments": {"prior", "experiments", "evidence", "tested"},
     "scaffold_find_adrs": {"adr", "architecture", "decision", "governs"},
+    "scaffold_governance": {"governance", "rules", "manual", "agents", "section"},
     "scaffold_decision_context": {"decision", "history", "chain", "spike", "intent", "adr"},
     "scaffold_search": {"search", "find", "workspace", "projects", "duplicate", "similar"},
     "scaffold_record_finding": {"record", "log", "finding", "discovered", "issue", "capture"},
@@ -740,6 +741,7 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
         result = _run_tool(name, store, arguments, meta, root, config, session_project)
         _touch_session_activity(name, store, arguments, result, session_project, config)
         _attach_session_meta(name, store, result, session_project, config)
+        _attach_governance(name, result, root, config)
         return result
     finally:
         store.close()
@@ -843,6 +845,9 @@ def _run_tool(
     elif name == "scaffold_find_adrs":
         return _tool_find_adrs(store, arguments, meta)
 
+    elif name == "scaffold_governance":
+        return _tool_governance(arguments, meta, root, config)
+
     elif name == "scaffold_decision_context":
         return _tool_decision_context(store, arguments, meta)
 
@@ -943,6 +948,58 @@ def _attach_session_meta(
     )
     if extra:
         result.setdefault("meta", {}).update(extra)
+
+
+def _attach_governance(name: str, result: Any, root: Path, config: Any) -> None:
+    """Add the governance manual block for orient and the lifecycle tools (Plan 280).
+
+    Attached here, once per response, because the composite tools call other
+    handlers and would otherwise carry a nested second copy.
+    """
+    if not isinstance(result, dict) or "error" in result:
+        return
+    from agentscaffold.mcp.governance_delivery import STEP_FOR_TOOL, orient_block, step_block
+
+    if name != "scaffold_orient" and name not in STEP_FOR_TOOL:
+        return
+    try:
+        if name == "scaffold_orient":
+            result["governance"] = orient_block(root, config)
+            return
+        block = step_block(name, root, config)
+    except Exception:
+        logger.debug("Governance manual delivery failed for %s", name, exc_info=True)
+        return
+    if block is not None:
+        result["governance_sections"] = block
+
+
+def _tool_governance(
+    arguments: dict[str, Any], meta: dict[str, Any], root: Path, config: Any
+) -> dict[str, Any]:
+    """Table of contents or one section of the governance manual (Plan 280)."""
+    from agentscaffold.mcp.governance_delivery import project_manual
+
+    manual = project_manual(root, config)
+    if manual is None:
+        manual_path = getattr(getattr(config, "agents", None), "manual_path", "AGENTS.md")
+        return {"path": None, "reason": f"no manual at {manual_path}", "meta": meta}
+    requested = str(arguments.get("section") or "").strip()
+    payload: dict[str, Any] = {"path": manual.path, "sha256": manual.sha256}
+    if not requested:
+        payload["headings"] = list(manual.headings)
+    else:
+        canonical = manual.resolve(requested)
+        if canonical is None:
+            payload.update(
+                {"found": False, "section": requested, "suggestions": manual.suggestions(requested)}
+            )
+        else:
+            payload.update(
+                {"found": True, "section": canonical, "text": manual.section(canonical) or ""}
+            )
+    payload["meta"] = meta
+    return payload
 
 
 #: Governance writes that count as session activity (Plan 276). Session tools
@@ -2020,6 +2077,10 @@ def _tool_prepare_implementation(
     except Exception:  # noqa: BLE001
         pass  # Config load failure should not block implementation
 
+    gate, approval = _approval_check(store, root, config, int(pn))
+    if gate is not None:
+        return {"plan_number": pn, "gate": gate, "meta": meta}
+
     brief = generate_brief(store, pn, root=root, config=config)
     impacted = brief.get("file_profiles", [])
     deps = get_plan_dependencies(store, int(pn))
@@ -2055,7 +2116,38 @@ def _tool_prepare_implementation(
         ],
         "meta": meta,
     }
+    if approval is not None:
+        payload["approval"] = approval
     return apply_detail(payload, arguments.get("detail"))
+
+
+def _approval_check(
+    store: Any, root: Path, config: Any, plan_number: int
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """``(refusal, approval)`` for implementation prep (Plan 280).
+
+    Runs on every call, not only with ``gate_transition``: leaving out a flag
+    must not bypass a required approval.
+    """
+    from agentscaffold.config import GatesConfig, GraphConfig
+    from agentscaffold.mcp.governance_delivery import (
+        approval_gate,
+        approval_record,
+        approval_required,
+    )
+    from agentscaffold.mcp.session_brief import plan_text
+
+    gates = getattr(config, "gates", None) or GatesConfig()
+    if not gates.ready_to_in_progress.approval_gates:
+        return None, None
+    text = plan_text(store, root, plan_number)
+    if not approval_required(text):
+        return None, None
+    graph = getattr(config, "graph", None) or GraphConfig()
+    record = approval_record(text, plan_number, root / graph.workflow_state_file)
+    if record is not None:
+        return None, record
+    return approval_gate(plan_number), None
 
 
 def _tool_compare_plans(

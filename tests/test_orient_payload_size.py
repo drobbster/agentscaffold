@@ -32,6 +32,12 @@ ALLOWANCES: dict[str, tuple[int, str]] = {
         "workflow_state.last_updated, stale and contradictions; plan_progress idle-next "
         "title and status (measured 248 on this fixture; session_warning is absent by default)",
     ),
+    "280": (
+        2830,
+        "governance block: path, hash, ## headings, Hard Prohibitions and Approval Gates, "
+        "bounded by agents.governance.orient_budget (2,800) plus its key; measured 2,630 "
+        "with the shipped template's manual",
+    ),
 }
 
 #: Freshness and retrieval states change a few characters between runs.
@@ -58,10 +64,17 @@ def orient_measure(payload: dict[str, Any], root) -> int:
 
 
 def _default_orient(tmp_path):
+    from agentscaffold.agents.manual_diff import render_governance_manual
+    from agentscaffold.config import ScaffoldConfig
     from agentscaffold.mcp.server import _dispatch_tool
     from tests.fixtures.lone_project import STALE_WORKFLOW, build_lone_project
 
-    repo = build_lone_project(tmp_path, workflow=STALE_WORKFLOW, draft_plan=True)
+    repo = build_lone_project(
+        tmp_path,
+        workflow=STALE_WORKFLOW,
+        draft_plan=True,
+        manual=render_governance_manual(ScaffoldConfig()),
+    )
     return _dispatch_tool("scaffold_orient", {"working_path": str(repo)}), repo
 
 
@@ -75,9 +88,14 @@ def test_default_orient_stays_under_the_shared_ceiling(tmp_path, monkeypatch) ->
 
 
 def test_baseline_still_describes_orient_without_plan_additions(tmp_path, monkeypatch) -> None:
-    """With the opt-out on, orient carries no Plan 275 keys; the baseline must stay honest."""
+    """With the opt-out on, orient carries no Plan 275 keys; the baseline must stay honest.
+
+    Plan 280's ``governance`` block is removed before measuring: it has its own
+    allowance and no opt-out variable.
+    """
     monkeypatch.setenv("AGENTSCAFFOLD_MCP_INSTRUCTIONS", "off")
     payload, repo = _default_orient(tmp_path)
+    payload.pop("governance", None)
     measured = orient_measure(payload, repo)
     allowance_276 = ALLOWANCES.get("276", (0, ""))[0]
     assert measured <= BASELINE_0_12_0 + allowance_276 + SLACK

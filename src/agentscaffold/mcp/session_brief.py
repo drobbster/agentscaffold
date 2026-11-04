@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from agentscaffold.mcp.governance_delivery import approval_record
 from agentscaffold.mcp.plan_card import build_plan_card
 from agentscaffold.mcp.workflow_state import (
     blockers_that_name_focus,
@@ -21,6 +22,9 @@ from agentscaffold.review.filters import normalize_plan_status
 _GATED = frozenset({"Draft", "Review", "Ready", "In Progress"})
 _STATUS_LINE = re.compile(r"^-\s*Status:\s*(.+)$", re.MULTILINE)
 _APPROVAL_LINE = re.compile(r"^-\s*Approval Required:\s*(.+)$", re.MULTILINE | re.IGNORECASE)
+
+#: Statuses before implementation, where a required approval is still awaited.
+_AWAITING_APPROVAL_STATUSES = frozenset({"Draft", "Review", "Ready"})
 
 _IDLE_NEXT = {
     "action": "Nothing in flight; no gated plan found.",
@@ -54,6 +58,7 @@ def build_session_brief(
     card = None
     status = ""
     approval_required = False
+    awaiting_approval = False
     text = ""
     if candidate is not None:
         pn = int(candidate.get("p.number"))
@@ -66,6 +71,11 @@ def build_session_brief(
                 status = inferred
             card = {**card, "status_normalized": status}
         approval_required = _approval_required(text)
+        awaiting_approval = (
+            approval_required
+            and status in _AWAITING_APPROVAL_STATUSES
+            and approval_record(text, pn, workflow.get("path")) is None
+        )
 
     in_flight = _is_in_flight(status, card)
     focus_pn = int(card["plan_number"]) if card is not None else None
@@ -78,11 +88,11 @@ def build_session_brief(
             source=source,
             approval_required=approval_required,
         )
-        nxt = _next_for(card, status, approval_required)
+        nxt = _next_for(card, status, awaiting_approval)
         related_pn = focus_pn
     elif card is not None:
         current_work = _idle_work()
-        nxt = _next_for(card, status, approval_required)
+        nxt = _next_for(card, status, awaiting_approval)
         related_pn = focus_pn
     else:
         current_work = _idle_work()
@@ -91,11 +101,14 @@ def build_session_brief(
 
     named = blockers_that_name_focus(workflow.get("blockers") or "", related_pn)
     blockers_for_work: list[dict[str, Any]] = []
-    if approval_required and status in {"Draft", "Review"}:
+    if awaiting_approval:
         blockers_for_work.append(
             {
                 "kind": "approval",
-                "text": f"Plan {related_pn} requires approval (Status is {status}).",
+                "text": (
+                    f"Plan {related_pn} requires approval and none is recorded "
+                    f"(Status is {status})."
+                ),
             }
         )
     for bullet in named:
@@ -226,6 +239,17 @@ def plan_title_and_status(store: Any, root: Path, plan_number: int) -> tuple[str
     return str(row.get("p.title") or ""), status
 
 
+def plan_text(store: Any, root: Path, plan_number: int) -> str:
+    """The plan file's text, or ``""`` when the plan or its file is unknown."""
+    from agentscaffold.review.queries import get_plan_by_number
+
+    try:
+        row = get_plan_by_number(store, int(plan_number))
+    except Exception:  # noqa: BLE001 - a missing plan reads as no text
+        return ""
+    return _read_plan_text(root, row) if row is not None else ""
+
+
 def _read_plan_text(root: Path, plan_row: dict[str, Any]) -> str:
     path = plan_row.get("p.filePath") or plan_row.get("filePath") or ""
     if not path:
@@ -315,15 +339,15 @@ def _current_work(
 def _next_for(
     card: dict[str, Any],
     status: str,
-    approval_required: bool,
+    awaiting_approval: bool,
 ) -> dict[str, Any]:
     pn = card["plan_number"]
-    if approval_required and status in {"Draft", "Review"}:
+    if awaiting_approval:
         return {
             "action": f"Present Plan {pn} for approval (do not implement).",
             "tool": "scaffold_begin_plan",
             "arguments": {"plan_number": pn, "dry_run": True},
-            "rationale": "Approval Required and Status is still Draft/Review",
+            "rationale": f"Approval Required, no approval recorded, Status is {status}",
         }
     if status in {"Draft", "Review"}:
         return {

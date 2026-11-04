@@ -10,6 +10,7 @@ from pathlib import Path
 from agentscaffold.config import ScaffoldConfig
 from agentscaffold.rendering import (
     MANAGED_BLOCK_BEGIN,
+    MANAGED_BLOCK_END,
     get_default_context,
     guidance_hash,
     render_template,
@@ -77,6 +78,74 @@ def unmanaged_region(text: str) -> str:
     if begin == -1:
         return text
     return text[:begin]
+
+
+def project_owned_text(text: str) -> str:
+    """Return *text* with every managed block removed, keeping text on both sides.
+
+    Unlike :func:`unmanaged_region`, text after the end marker is kept: it is
+    outside the markers and therefore project-owned (ADR-027).
+    """
+    parts: list[str] = []
+    rest = text
+    while True:
+        begin = rest.find(MANAGED_BLOCK_BEGIN)
+        if begin == -1:
+            parts.append(rest)
+            break
+        parts.append(rest[:begin])
+        end = rest.find(MANAGED_BLOCK_END, begin)
+        if end == -1:
+            break
+        rest = rest[end + len(MANAGED_BLOCK_END) :]
+    return "".join(parts)
+
+
+_HEADING_RE = re.compile(r"^(?P<hashes>#{2,3}) (?P<title>.+)$")
+
+
+@dataclass(frozen=True)
+class HeadingSection:
+    """One `##` or `###` heading with its path and the body up to the next heading."""
+
+    path: tuple[str, ...]
+    level: int
+    body: str
+
+
+def parse_heading_paths(text: str) -> list[HeadingSection]:
+    """Split *text* into `##` and `###` sections addressed by heading path.
+
+    A `###` heading's path is ``(parent_h2, heading)``. Headings inside fenced
+    code blocks are body text. Text before the first `##` is dropped.
+    """
+    sections: list[HeadingSection] = []
+    path: tuple[str, ...] | None = None
+    level = 0
+    body: list[str] = []
+    in_fence = False
+
+    def flush() -> None:
+        if path is not None:
+            sections.append(HeadingSection(path, level, "\n".join(body).strip("\n")))
+
+    for line in text.splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            in_fence = not in_fence
+        heading = None if in_fence else _HEADING_RE.match(line)
+        if heading is None:
+            body.append(line)
+            continue
+        flush()
+        title = heading.group("title").strip()
+        if len(heading.group("hashes")) == 2:
+            path, level = (title,), 2
+        else:
+            parent = path[0] if path is not None else ""
+            path, level = (parent, title), 3
+        body = []
+    flush()
+    return sections
 
 
 def render_governance_manual(config: ScaffoldConfig) -> str:

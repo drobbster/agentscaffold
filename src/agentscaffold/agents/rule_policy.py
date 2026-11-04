@@ -107,6 +107,7 @@ def _tool_selection_policy_lines() -> list[str]:
             "`scaffold_prior_experiments` | memory |"
         ),
         "| What ADR governs X | `scaffold_find_adrs` | glob `docs/ai/adrs` |",
+        "| What the manual says about X | `scaffold_governance` | re-read `AGENTS.md` |",
         "| Blast radius of a file | `scaffold_impact` | grep imports only |",
         "| Callers of a symbol | `scaffold_context` | grep the name only |",
         (
