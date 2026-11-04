@@ -628,6 +628,83 @@ def test_state_check_flags_an_orphaned_in_tree_directory(
     assert ".scaffold" in result.output
 
 
+def test_state_check_flags_an_orphan_inside_a_project_folder(state_home: Path, tmp_path: Path):
+    """Plan 279: a team folder's old .scaffold/ outlives the move to the state dir."""
+    from agentscaffold.doctor import DoctorContext, check_state_location
+    from agentscaffold.paths import ensure_workspace_state_dir
+
+    workspace = _shared_workspace(tmp_path)
+    workspace_id = _register(workspace, projects=[("alpha", "alpha"), ("beta", "beta")])
+    ensure_workspace_state_dir(workspace_id).joinpath("graph.duckdb").write_bytes(b"live")
+    (workspace / "beta" / ".scaffold").mkdir()
+    (workspace / "beta" / ".scaffold" / "graph.duckdb").write_bytes(b"orphan")
+
+    result = check_state_location(
+        DoctorContext(project_root=workspace / "alpha", mcp_config_path=tmp_path / "mcp.json")
+    )
+
+    assert result.status == "warn"
+    assert any(str(workspace / "beta" / ".scaffold") in detail for detail in result.details)
+
+
+def test_state_check_quiet_when_the_in_tree_graph_is_the_live_one(state_home: Path, tmp_path: Path):
+    """An unregistered repo keeps its graph in-tree; that is not an orphan."""
+    from agentscaffold.doctor import DoctorContext, check_state_location
+
+    project = _project(tmp_path)
+    (project / ".scaffold").mkdir()
+    (project / ".scaffold" / "graph.duckdb").write_bytes(b"live")
+
+    result = check_state_location(
+        DoctorContext(project_root=project, mcp_config_path=tmp_path / "mcp.json")
+    )
+
+    assert result.status == "ok"
+
+
+def _graph_with_session_rows(db: Path, projects: list[str]) -> None:
+    import duckdb
+
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(str(db))
+    conn.execute("CREATE TABLE Session (id VARCHAR PRIMARY KEY, project VARCHAR DEFAULT '')")
+    for number, project in enumerate(projects):
+        conn.execute("INSERT INTO Session VALUES (?, ?)", [f"session::{number}", project])
+    conn.close()
+
+
+def test_unstamped_rows_counted_in_a_multi_project_workspace(state_home: Path, tmp_path: Path):
+    from agentscaffold.doctor import DoctorContext, check_unstamped_rows
+    from agentscaffold.paths import resolve_db_path
+
+    workspace = _shared_workspace(tmp_path)
+    _register(workspace, projects=[("alpha", "alpha"), ("beta", "beta")])
+    _graph_with_session_rows(resolve_db_path(None, workspace / "alpha"), ["", "", "alpha"])
+
+    result = check_unstamped_rows(
+        DoctorContext(project_root=workspace / "alpha", mcp_config_path=tmp_path / "mcp.json")
+    )
+
+    assert result.status == "warn"
+    assert any("Session: 2" in detail for detail in result.details)
+
+
+def test_unstamped_rows_silent_in_a_single_project_repo(state_home: Path, tmp_path: Path):
+    """An empty project is the designed value in a single-project repo."""
+    from agentscaffold.doctor import DoctorContext, check_unstamped_rows
+    from agentscaffold.paths import resolve_db_path
+
+    project = _project(tmp_path)
+    _register(project)
+    _graph_with_session_rows(resolve_db_path(None, project), ["", ""])
+
+    result = check_unstamped_rows(
+        DoctorContext(project_root=project, mcp_config_path=tmp_path / "mcp.json")
+    )
+
+    assert result.status == "skip"
+
+
 # ---------------------------------------------------------------------------
 # Workspace id agreement (added at Step B8, from the Step B5 defect)
 # ---------------------------------------------------------------------------

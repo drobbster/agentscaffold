@@ -177,6 +177,10 @@ class AgentsConfig(BaseModel):
     #: Pre-edit hooks refuse agent edits to
     #: ``semi_autonomous.safety.read_only_paths`` (Plan 277 Step D3).
     protect_read_only_paths: bool = True
+    #: ``import`` writes CLAUDE.md as a single ``@AGENTS.md`` import so Claude
+    #: Code reads the same routing as everyone else. Ignored where AGENTS.md is
+    #: a shared-workspace stub, which does not carry the routing (Plan 279).
+    claude_md: Literal["full", "import"] = "full"
 
 
 # ---------------------------------------------------------------------------

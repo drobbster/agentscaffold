@@ -102,6 +102,7 @@ def index(
     audit: bool = False,
     force_rebuild: bool = False,
     quiet: bool = False,
+    force_root: bool = False,
 ) -> dict:
     """Build or rebuild the knowledge graph.
 
@@ -109,12 +110,19 @@ def index(
 
     Pass ``quiet=True`` when indexing inside an MCP stdio process so Rich
     progress cannot corrupt the JSON-RPC stdout channel.
+
+    Raises :class:`~agentscaffold.graph.scoping.IndexRootError` when *path* only
+    contains projects (a monorepo or workspace root), unless ``force_root``.
     """
     from agentscaffold.active_root import default_start
-    from agentscaffold.graph.pipeline import run_pipeline
+    from agentscaffold.graph import pipeline
+    from agentscaffold.graph.scoping import check_index_root
 
-    return run_pipeline(
-        root=path or default_start(),
+    root = path or default_start()
+    if not force_root:
+        check_index_root(root)
+    return pipeline.run_pipeline(
+        root=root,
         config=config,
         incremental=incremental,
         embeddings=embeddings,

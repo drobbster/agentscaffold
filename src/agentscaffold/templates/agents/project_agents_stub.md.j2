@@ -11,7 +11,9 @@ NOT a copy of the standards, prompts, or collaboration protocol bodies.
 - Templates: {{ shared.templates_dir }}
 - Collaboration protocol: {{ shared.collaboration_protocol_file }}
 - Commands: {{ shared.commands_file }}
+{% if shared.security_dir %}
 - Security templates: {{ shared.security_dir }}
+{% endif %}
 
 ## Project System of Record (this project root)
 

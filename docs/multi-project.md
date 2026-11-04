@@ -226,6 +226,12 @@ A single-project repository has no canonical file and nothing to drift from.
 Personalize with `*.local` overlays (`AGENTS.local.md`,
 `.cursor/rules/local.*.mdc`) rather than by gitignoring the team `AGENTS.md`.
 
+The workspace-root `AGENTS.md` router is written only where AgentScaffold
+already manages that file. A root `AGENTS.md` your team owns is left
+byte-for-byte alone, and a missing one is not created; `generate-all` and
+`workspace migrate-layout` both report the skip. Pass
+`scaffold agents generate-all --include-workspace` to append the router to it.
+
 ### When the rule files are not yours
 
 In a monorepo or a team repository you often cannot add AgentScaffold rules to
@@ -303,8 +309,9 @@ scaffold doctor --strict   # exit non-zero if anything is not clean
 | Guidance reaches the editor | Project-level rules and hooks in a project below its repository root, and whether a user-scope install covers it |
 | MCP registration | Legacy per-project entries, directory binding, hardcoded interpreters |
 | Version skew | Whether the MCP server runs the same AgentScaffold as your CLI |
-| Graph state location | Where the graph resolves, and in-tree databases being ignored |
+| Graph state location | Where the graph resolves, and in-tree databases being ignored at the workspace root or in any project folder |
 | Edit hook activity | An installed edit hook that has never run, and two hooks with different locks |
+| Graph rows without a project | In a multi-project workspace, graph rows with an empty `project`, which scoped reads skip (counted per table) |
 
 A `skip` means the check did not apply, and is never a fault.
 
@@ -398,9 +405,18 @@ registered a project and now see an unexpectedly empty graph, run
 
 ### `doctor` reports an in-tree graph is being ignored
 
-You have both a state-directory graph and a leftover `<repo>/.scaffold/`. The
-state one is in use. Delete the leftover, or run
-`scaffold workspace migrate-state --restore --apply` if it is the one you wanted.
+You have both a state-directory graph and a leftover `.scaffold/` at the
+workspace root or in a project folder (a team folder indexed before its
+workspace was registered keeps its own). The state one is in use. Delete the
+leftover, or run `scaffold workspace migrate-state --restore --apply` if the
+workspace-root one is the one you wanted.
+
+### `scaffold index` refuses with "is not a project"
+
+You ran it at a directory that contains registered projects but is not one: a
+monorepo root above a team folder, or a multi-project workspace root. Indexing
+there would build one graph over every project at once. Run it from each
+project's folder, or pass `--force-root` if one combined graph is what you want.
 
 ### The workspace is recorded under two different ids
 

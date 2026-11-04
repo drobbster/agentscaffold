@@ -759,7 +759,6 @@ def check_state_location(context: DoctorContext) -> CheckResult:
     first question every other diagnosis depends on.
     """
     from agentscaffold.paths import (
-        _DEFAULT_DB_PATH,
         resolve_db_path,
         resolve_workspace_root,
         resolve_workspace_state_id,
@@ -782,18 +781,51 @@ def check_state_location(context: DoctorContext) -> CheckResult:
     else:
         details.append("workspace id: none (unregistered repo, graph stays in-tree)")
 
-    in_tree = workspace_root / _DEFAULT_DB_PATH
-    if in_tree.exists() and in_tree != resolved:
+    orphans = [
+        candidate
+        for candidate in _in_tree_graph_candidates(context.project_root, workspace_root)
+        if candidate.exists() and candidate.resolve() != resolved.resolve()
+    ]
+    if orphans:
         return CheckResult(
             status="warn",
             summary="An in-tree graph is being ignored.",
-            details=details + [f"orphaned: {in_tree}"],
+            details=details + [f"orphaned: {orphan}" for orphan in orphans],
             remediation=(
-                "It is not the database in use. Remove it, or run "
-                "`scaffold workspace migrate-state --restore` to go back to it."
+                "None of these is the database in use. Remove them, or run "
+                "`scaffold workspace migrate-state --restore` to go back to the "
+                "workspace-root one."
             ),
         )
     return CheckResult(status="ok", summary="Graph resolves as expected.", details=details)
+
+
+def _in_tree_graph_candidates(project_root: Path, workspace_root: Path) -> list[Path]:
+    """Every in-tree graph location a project here may have used (Plan 279).
+
+    The workspace root and each project folder: a team folder that indexed
+    before its workspace was registered keeps its own ``.scaffold/`` behind.
+    """
+    from agentscaffold.paths import _DEFAULT_DB_PATH, load_workspace
+
+    roots = [workspace_root, project_root]
+    try:
+        workspace = load_workspace(project_root)
+    except Exception:
+        workspace = None
+    if workspace is not None:
+        for entry in workspace.projects:
+            entry_path = Path(entry.path)
+            roots.append(entry_path if entry_path.is_absolute() else workspace_root / entry_path)
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        candidate = root / _DEFAULT_DB_PATH
+        key = candidate.resolve()
+        if key not in seen:
+            seen.add(key)
+            candidates.append(candidate)
+    return candidates
 
 
 # ---------------------------------------------------------------------------
@@ -905,6 +937,68 @@ def check_graph_schema(context: DoctorContext) -> CheckResult:
     )
 
 
+def check_unstamped_rows(context: DoctorContext) -> CheckResult:
+    """Rows with no project in a multi-project workspace's graph (Plan 279).
+
+    A single-project repo keeps ``project = ''`` by design, so the check only
+    runs where scoping filters on the column: there, an empty project is a row
+    every scoped read silently skips. Read-only; a missing or locked graph is
+    skip.
+    """
+    from agentscaffold.graph.duckpgq_schema import NODE_TABLE_NAMES
+    from agentscaffold.paths import load_workspace, resolve_db_path
+
+    try:
+        multi = load_workspace(context.project_root).is_multi_project
+        resolved = resolve_db_path(None, context.project_root)
+    except Exception:
+        return CheckResult(status="skip", summary="No workspace to inspect.")
+    if not multi:
+        return CheckResult(status="skip", summary="One project here; rows need no project stamp.")
+    if not resolved.is_file():
+        return CheckResult(status="skip", summary="No graph to inspect.")
+
+    counts: dict[str, int] = {}
+    try:
+        import duckdb
+
+        conn = duckdb.connect(str(resolved), read_only=True)
+        try:
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT table_name FROM information_schema.columns "
+                    "WHERE column_name = 'project'"
+                ).fetchall()
+            }
+            for table in NODE_TABLE_NAMES:
+                if table not in tables:
+                    continue
+                row = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE project = ''").fetchone()
+                if row and row[0]:
+                    counts[table] = int(row[0])
+        finally:
+            conn.close()
+    except Exception as exc:
+        return CheckResult(
+            status="skip" if "lock" in str(exc).lower() else "warn",
+            summary="Could not inspect graph rows.",
+            details=[str(exc)],
+        )
+
+    if not counts:
+        return CheckResult(status="ok", summary="Every graph row carries a project.")
+    return CheckResult(
+        status="warn",
+        summary=f"{sum(counts.values())} graph row(s) carry no project; scoped reads skip them.",
+        details=[f"{table}: {count}" for table, count in sorted(counts.items())],
+        remediation=(
+            "Usually left over from before the workspace had more than one project. "
+            "Nothing backfills them yet; report the counts if they matter to you."
+        ),
+    )
+
+
 def check_governance_mapping(context: DoctorContext) -> CheckResult:
     """Manual sections the MCP server is configured to deliver but cannot find (Plan 280).
 
@@ -1001,6 +1095,7 @@ CHECKS: list[Check] = [
     Check("state_location", "Graph state location", check_state_location),
     Check("hooks_ran", "Edit hook activity", check_hooks_ran),
     Check("graph_schema", "Graph schema", check_graph_schema),
+    Check("unstamped_rows", "Graph rows without a project", check_unstamped_rows),
 ]
 
 

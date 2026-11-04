@@ -20,7 +20,9 @@ every registered project:
 - Templates: {{ shared.templates_dir }}
 - Collaboration protocol: {{ shared.collaboration_protocol_file }}
 - Commands: {{ shared.commands_file }}
+{% if shared.security_dir %}
 - Security templates: {{ shared.security_dir }}
+{% endif %}
 
 ## Registered Projects
 

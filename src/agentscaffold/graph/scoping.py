@@ -112,6 +112,59 @@ def current_project_name(start: Path | None = None) -> str:
     )
 
 
+class IndexRootError(ScopingError):
+    """``scaffold index`` was pointed at a directory that only contains projects."""
+
+
+def check_index_root(root: Path) -> None:
+    """Refuse to index a directory that is not, and is not inside, a project (Plan 279).
+
+    Two shapes refuse: a multi-project workspace root that is not itself a
+    project, and an unregistered directory with registered projects beneath it
+    (a monorepo root). Indexing either builds one graph over every project in
+    it. Every directory that is, or sits inside, a project passes.
+    """
+    from agentscaffold.config import ConfigError
+    from agentscaffold.path_flavour import normalise_for_match, path_contains
+    from agentscaffold.workspace_registry import (
+        RegistryError,
+        load_registry,
+        resolve_project_for_path,
+    )
+
+    contained: list[str] = []
+    try:
+        workspace = load_workspace(root)
+    except ConfigError:
+        workspace = None
+    if workspace is not None and workspace.is_multi_project:
+        try:
+            current_project_name(root)
+        except ScopingError:
+            contained = workspace.project_names()
+
+    if not contained:
+        try:
+            registry = load_registry()
+        except RegistryError:
+            return
+        if resolve_project_for_path(root, registry) is not None:
+            return
+        target = normalise_for_match(root)
+        for registered in registry.workspaces:
+            for project in registered.projects:
+                match_root = registered.project_match_root(project)
+                if match_root != target and path_contains(target, match_root):
+                    contained.append(project.name)
+
+    if contained:
+        raise IndexRootError(
+            f"{root} is not a project; it contains the projects {sorted(contained)}. "
+            "Index each project from its own folder, or pass --force-root to index "
+            "this whole directory as one project."
+        )
+
+
 def resolve_scope(
     project: str | None = None,
     all_projects: bool = False,

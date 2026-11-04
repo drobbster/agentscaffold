@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -18,6 +19,9 @@ class RepairReport:
     dropped: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    #: Unmarked copies kept under ``prefer_managed`` because the governance
+    #: mapping reads them (Plan 279).
+    protected: list[str] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
@@ -59,8 +63,23 @@ def _managed_body(managed: str) -> str:
     return body
 
 
-def plan_repair(text: str) -> tuple[str, RepairReport]:
-    """Drop exact duplicate `## ` sections. Refuse when copies differ."""
+def plan_repair(
+    text: str,
+    *,
+    prefer_managed: bool = False,
+    managed_body: str | None = None,
+    protected_headings: Collection[str] = (),
+) -> tuple[str, RepairReport]:
+    """Drop exact duplicate `## ` sections. Refuse when copies differ.
+
+    With *prefer_managed* the managed block wins instead: every unmarked section
+    whose heading is in the block is dropped, whatever its body (Plan 279). A
+    marker-less file (routing written before 0.12) takes its block from
+    *managed_body*. Headings in *protected_headings* (normalized, see
+    :func:`governance_protected_headings`) are kept and reported.
+    """
+    if prefer_managed:
+        return _prefer_managed(text, managed_body, set(protected_headings))
     report = RepairReport()
     prefix, managed, suffix = split_managed(text)
     new_prefix, prefix_report = _dedupe_region(prefix)
@@ -122,6 +141,62 @@ def plan_repair(text: str) -> tuple[str, RepairReport]:
     return combined, report
 
 
+def _prefer_managed(
+    text: str, managed_body: str | None, protected: set[str]
+) -> tuple[str, RepairReport]:
+    from agentscaffold.agents.governance_manual import normalize_heading
+    from agentscaffold.rendering import render_managed_block
+
+    prefix, managed, suffix = split_managed(text)
+    if managed:
+        body = _managed_body(managed)
+    elif managed_body is not None:
+        body = managed_body
+        managed = render_managed_block(managed_body)
+    else:
+        raise ManualRepairConflictError(
+            "--prefer-managed needs a managed block to prefer; run "
+            "`scaffold agents generate-all` first"
+        )
+    managed_headings = {section.heading for section in parse_h2_sections(body) if section.heading}
+
+    report = RepairReport()
+    deduped, dedupe = _dedupe_region(prefix)
+    if dedupe.conflicts:
+        raise ManualRepairConflictError(
+            "repair refuses to guess where copies differ: " + ", ".join(dedupe.conflicts)
+        )
+    if dedupe.dropped:
+        prefix = deduped
+        report.dropped.extend(dedupe.dropped)
+
+    def drops(heading: str) -> bool:
+        if heading not in managed_headings:
+            return False
+        if normalize_heading(heading.removeprefix("## ")) in protected:
+            report.protected.append(heading)
+            return False
+        report.dropped.append(heading)
+        return True
+
+    def keep(region: str) -> str:
+        kept: list[str] = []
+        dropping = False
+        for line in region.splitlines(keepends=True):
+            if line.startswith("## "):
+                dropping = drops(line.rstrip())
+            if not dropping:
+                kept.append(line)
+        return "".join(kept)
+
+    new_prefix = keep(prefix).strip()
+    new_suffix = keep(suffix).strip() if suffix.strip() else ""
+    parts = [part for part in (new_prefix, managed.strip(), new_suffix) if part]
+    if not report.dropped:
+        report.notes.append("No unmarked copies of managed headings.")
+    return "\n\n".join(parts) + "\n", report
+
+
 def _dedupe_region(text: str) -> tuple[str, RepairReport]:
     report = RepairReport()
     sections = parse_h2_sections(text)
@@ -162,10 +237,28 @@ def _norm(text: str) -> str:
     return "\n".join(line.rstrip() for line in text.strip().splitlines())
 
 
-def run_repair(path: Path, *, apply: bool = False) -> RepairReport:
-    """De-duplicate *path*. Dry run by default; ``--apply`` writes."""
+def run_repair(
+    path: Path,
+    *,
+    apply: bool = False,
+    prefer_managed: bool = False,
+    managed_body: str | None = None,
+    protected_headings: Collection[str] = (),
+) -> RepairReport:
+    """De-duplicate *path*. Dry run by default; ``--apply`` writes.
+
+    ``prefer_managed`` drops whole sections that differ from the managed copy,
+    so it saves ``<name>.bak`` before writing.
+    """
     text = path.read_text()
-    updated, report = plan_repair(text)
+    updated, report = plan_repair(
+        text,
+        prefer_managed=prefer_managed,
+        managed_body=managed_body,
+        protected_headings=protected_headings,
+    )
     if apply and updated != text:
+        if prefer_managed:
+            path.with_suffix(path.suffix + ".bak").write_text(text)
         path.write_text(updated)
     return report

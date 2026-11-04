@@ -734,7 +734,9 @@ def agents_install(
         if uninstall or project or client:
             console.print("[red]--uninstall, --project and --client need --scope user.[/red]")
             raise typer.Exit(code=2)
-        agents_generate_all(dry_run=dry_run, force=False, allow_append=False)
+        agents_generate_all(
+            dry_run=dry_run, force=False, allow_append=False, include_workspace=False
+        )
         return
     if scope != "user":
         console.print(f"[red]Unknown scope: {scope} (use 'project' or 'user').[/red]")
@@ -894,6 +896,14 @@ def agents_generate_all(
         "--allow-append",
         help="Append a managed block to a marker-less file that already looks generated.",
     ),
+    include_workspace: bool = typer.Option(
+        False,
+        "--include-workspace",
+        help=(
+            "Also write the workspace-root AGENTS.md router when that file is not "
+            "already managed by AgentScaffold."
+        ),
+    ),
 ) -> None:
     """Generate all platform artifacts (AGENTS.md, CLAUDE.md, Cursor rules, Windsurf, hooks).
 
@@ -902,7 +912,8 @@ def agents_generate_all(
     so existing content is preserved. --force rewrites them whole. --allow-append
     appends once when the heading-overlap guard would otherwise refuse. Machine-owned
     files (.cursor/rules/agentscaffold.mdc, reviewer rules, enforcement hooks) are
-    always regenerated.
+    always regenerated. In a shared workspace the root AGENTS.md router is refreshed
+    only where AgentScaffold already manages it, unless --include-workspace.
     """
     from agentscaffold.agents.generate import run_agents_generate_all_platforms
     from agentscaffold.config import load_config
@@ -911,7 +922,12 @@ def agents_generate_all(
     config = load_config()
     try:
         run_agents_generate_all_platforms(
-            config, Path.cwd(), dry_run=dry_run, force=force, allow_append=allow_append
+            config,
+            Path.cwd(),
+            dry_run=dry_run,
+            force=force,
+            allow_append=allow_append,
+            include_workspace=include_workspace,
         )
     except ManagedBlockAppendRefusedError as exc:
         console.print(f"[red]{exc}[/red]")
@@ -926,6 +942,14 @@ def agents_repair(
         "--path",
         help="File to de-duplicate (default: AGENTS.md).",
     ),
+    prefer_managed: bool = typer.Option(
+        False,
+        "--prefer-managed",
+        help=(
+            "Treat the managed block as authoritative: drop unmarked copies of its "
+            "headings even when they differ (pre-0.12 routing). Saves a .bak."
+        ),
+    ),
 ) -> None:
     """Remove exact-duplicate headings from AGENTS.md. Dry run by default."""
     from agentscaffold.agents.repair import ManualRepairConflictError, run_repair
@@ -934,8 +958,31 @@ def agents_repair(
     if not target.is_file():
         console.print(f"[red]No file at {target}[/red]")
         raise typer.Exit(1)
+    managed_body: str | None = None
+    protected: set[str] = set()
+    if prefer_managed:
+        from agentscaffold.agents.governance_manual import governance_protected_headings
+        from agentscaffold.config import find_config, load_config
+
+        config_path = find_config(target.parent)
+        config = load_config(config_path) if config_path else load_config()
+        protected = governance_protected_headings(config)
+        if target.name == "AGENTS.md":
+            from agentscaffold.agents.generate import _render_project_agents_md
+            from agentscaffold.rendering import get_default_context
+
+            project_root = config_path.parent if config_path else target.parent
+            managed_body = _render_project_agents_md(
+                config, project_root, get_default_context(config)
+            )
     try:
-        report = run_repair(target, apply=apply)
+        report = run_repair(
+            target,
+            apply=apply,
+            prefer_managed=prefer_managed,
+            managed_body=managed_body,
+            protected_headings=protected,
+        )
     except ManualRepairConflictError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc
@@ -946,6 +993,13 @@ def agents_repair(
             console.print(f"  {heading}")
     else:
         console.print("[dim]No duplicate headings.[/dim]")
+    for heading in report.protected:
+        console.print(
+            f"[yellow]Kept[/yellow] {heading} [dim](agents.governance reads it; "
+            "merge it with the managed copy by hand)[/dim]"
+        )
+    if apply and prefer_managed and report.dropped:
+        console.print(f"[dim]Saved {target.name}.bak[/dim]")
     if not apply and report.dropped:
         console.print("[dim]Re-run with --apply to write.[/dim]")
 
@@ -1073,10 +1127,17 @@ def index_cmd(
         help="On a schema-version rebuild, proceed even if preserving existing "
         "findings/sessions/backlog fails. WARNING: discards that data permanently.",
     ),
+    force_root: bool = typer.Option(
+        False,
+        "--force-root",
+        help="Index a directory that only contains projects (a monorepo or "
+        "workspace root) as one project.",
+    ),
 ) -> None:
     """Build or rebuild the knowledge graph."""
     from agentscaffold.config import load_config
     from agentscaffold.graph import index
+    from agentscaffold.graph.scoping import IndexRootError
 
     config = load_config()
     # Honor the config default (graph.embeddings) when the flag is not passed,
@@ -1091,14 +1152,19 @@ def index_cmd(
         from agentscaffold.graph.embeddings import configure_embeddings
 
         configure_embeddings(config.search.embedding_model, config.search.cache_dir)
-    summary = index(
-        path=path,
-        config=config,
-        incremental=incremental,
-        embeddings=embeddings,
-        audit=audit,
-        force_rebuild=force_rebuild,
-    )
+    try:
+        summary = index(
+            path=path,
+            config=config,
+            incremental=incremental,
+            embeddings=embeddings,
+            audit=audit,
+            force_rebuild=force_rebuild,
+            force_root=force_root,
+        )
+    except IndexRootError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
     if incremental:
         from agentscaffold.graph.pipeline import write_index_last_result
         from agentscaffold.paths import resolve_db_path

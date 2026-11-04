@@ -680,22 +680,26 @@ class DuckPGQBackend:
         like = f"{prefix}%"
         counts = {"nodes": 0, "edges": 0, "embeddings": 0}
 
-        # Pre-count the rows that will actually be rewritten (project='' and not
-        # already prefixed), so the return value is meaningful and idempotent.
+        # Pre-count the rows that will actually be rewritten, so the return value
+        # is meaningful and idempotent. A row qualifies when it is unprefixed and
+        # either unstamped or already stamped for *project*: Plan 276 stamps
+        # sessions with the project name on bare ids even in a lone repo, and
+        # those must be re-keyed too (Plan 279).
         for table in NODE_TABLE_NAMES:
             if table in _NO_PROJECT_COLUMN:
                 continue
             counts["nodes"] += int(
                 self.query_scalar(
-                    f"SELECT COUNT(*) FROM {table} WHERE project = '' AND id NOT LIKE ?",
-                    {"like": like},
+                    f"SELECT COUNT(*) FROM {table} WHERE project IN ('', ?) AND id NOT LIKE ?",
+                    {"project": project, "like": like},
                 )
                 or 0
             )
         counts["embeddings"] = int(
             self.query_scalar(
-                "SELECT COUNT(*) FROM EmbeddingStore WHERE project = '' AND node_id NOT LIKE ?",
-                {"like": like},
+                "SELECT COUNT(*) FROM EmbeddingStore"
+                " WHERE project IN ('', ?) AND node_id NOT LIKE ?",
+                {"project": project, "like": like},
             )
             or 0
         )
@@ -720,8 +724,8 @@ class DuckPGQBackend:
                     continue
                 self._conn.execute(
                     f"UPDATE {table} SET id = ? || id, project = ?"
-                    " WHERE project = '' AND id NOT LIKE ?",
-                    [prefix, project, like],
+                    " WHERE project IN ('', ?) AND id NOT LIKE ?",
+                    [prefix, project, project, like],
                 )
             for edge_table in EDGE_TABLE_NAMES:
                 self._conn.execute(
@@ -734,8 +738,8 @@ class DuckPGQBackend:
                 )
             self._conn.execute(
                 "UPDATE EmbeddingStore SET node_id = ? || node_id, project = ?"
-                " WHERE project = '' AND node_id NOT LIKE ?",
-                [prefix, project, like],
+                " WHERE project IN ('', ?) AND node_id NOT LIKE ?",
+                [prefix, project, project, like],
             )
             self._conn.execute("COMMIT")
         except Exception:
