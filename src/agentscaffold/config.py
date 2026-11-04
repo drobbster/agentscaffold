@@ -533,6 +533,19 @@ class FreshnessConfig(BaseModel):
     background_queue_enabled: bool = True
 
 
+class SessionsConfig(BaseModel):
+    """Working-session lifecycle (Plan 276).
+
+    ``idle_hours``: a session with no activity for this long is closed by the
+    next session start or recorded decision, and reads treat it as not open.
+    ``warn_after_hours``: orient warns when the open session started longer ago
+    than this, however active. ``0`` disables either.
+    """
+
+    idle_hours: float = Field(default=12, ge=0)
+    warn_after_hours: float = Field(default=24, ge=0)
+
+
 # ---------------------------------------------------------------------------
 # Semantic search / embedding configuration (Plan 227)
 # ---------------------------------------------------------------------------
@@ -603,6 +616,7 @@ class ScaffoldConfig(BaseModel):
     ci: CIConfig = Field(default_factory=CIConfig)
     graph: GraphConfig = Field(default_factory=GraphConfig)
     freshness: FreshnessConfig = Field(default_factory=FreshnessConfig)
+    sessions: SessionsConfig = Field(default_factory=SessionsConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     import_config: ImportConfig = Field(default_factory=ImportConfig, alias="import")
     collab: CollabConfig = Field(default_factory=CollabConfig)

@@ -1868,6 +1868,22 @@ def review_history(
 # ---------------------------------------------------------------------------
 
 
+def _cli_session_project() -> str | None:
+    """The project CLI sessions are stamped with, matching the MCP server (Plan 276).
+
+    Resolved from the working directory the same way a tool call resolves its
+    ``working_path``. ``None`` (an unstamped legacy session) only when no
+    project can be resolved at all.
+    """
+    from agentscaffold.mcp.project_resolution import resolve_project
+
+    cwd = Path.cwd()
+    try:
+        return resolve_project(working_path=cwd, anchor=cwd).project.name or None
+    except Exception:  # noqa: BLE001 - unresolvable cwd keeps the unstamped behavior
+        return None
+
+
 @session_app.command("start")
 def session_start(
     summary_arg: str = typer.Argument("", help="Session description (positional shorthand)."),
@@ -1887,7 +1903,13 @@ def session_start(
         raise SystemExit(1)
 
     store = open_graph(config)
-    session_id = start_session(store, plan_numbers=plan, summary=summary or summary_arg)
+    session_id = start_session(
+        store,
+        plan_numbers=plan,
+        summary=summary or summary_arg,
+        project=_cli_session_project(),
+        idle_hours=config.sessions.idle_hours,
+    )
     store.close()
     console.print(f"[green]Session started:[/green] {session_id}")
     console.print(f"  To end this session: [bold]scaffold session end {session_id}[/bold]")
@@ -1931,8 +1953,9 @@ def session_end(
         raise SystemExit(1)
 
     store = open_graph(config)
+    project = _cli_session_project()
     if not session_id:
-        open_session = find_open_session(store)
+        open_session = find_open_session(store, project=project, exact_project=True)
         if not open_session or not open_session.get("id"):
             console.print("[red]No open session.[/red]")
             store.close()
@@ -1944,6 +1967,7 @@ def session_end(
         summary=summary,
         decisions=decisions_payload,
         files=list(file) if file else None,
+        project=project,
     )
     store.close()
     console.print(json.dumps(result, indent=2, default=str))

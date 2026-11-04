@@ -80,6 +80,7 @@ ADDITIVE_COLUMNS: tuple[AdditiveColumn, ...] = (
     AdditiveColumn("EXTENDS", "baseName", "VARCHAR DEFAULT ''"),
     AdditiveColumn("Session", "decisions", "VARCHAR DEFAULT '[]'"),
     AdditiveColumn("Session", "endedAt", "VARCHAR DEFAULT ''"),
+    AdditiveColumn("Session", "lastActivity", "VARCHAR DEFAULT ''"),
     AdditiveColumn("ReviewFinding", "evidenceKind", "VARCHAR DEFAULT 'unspecified'"),
     AdditiveColumn("ReviewFinding", "evidence", "VARCHAR DEFAULT ''"),
     AdditiveColumn("Learning", "evidenceKind", "VARCHAR DEFAULT 'unspecified'"),
@@ -269,7 +270,8 @@ _AUTHORED_NODE_TABLES: list[str] = [
         filesModified VARCHAR,
         summary       VARCHAR,
         decisions     VARCHAR,
-        endedAt       VARCHAR
+        endedAt       VARCHAR,
+        lastActivity  VARCHAR DEFAULT ''
     )
     """,
     """

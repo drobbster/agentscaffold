@@ -33,15 +33,22 @@ def procedure_delivery_enabled(environ: Mapping[str, str] | None = None) -> bool
     return env.get(PROCEDURE_DELIVERY_ENV, "").strip().lower() not in _DISABLED_VALUES
 
 
-def session_meta(store: Any, project: str | None, *, with_hint: bool) -> dict[str, Any]:
+def session_meta(
+    store: Any, project: str | None, *, with_hint: bool, idle_hours: float = 0
+) -> dict[str, Any]:
     """``session_open`` (and, when asked and closed, ``procedure_hint``) for *project*.
 
-    *project* must be the key the session writer uses, or a session that is
-    open will read as closed. The lookup only reads; it never starts a session.
+    *project* must be the key the session writer stamps, matched exactly, or a
+    session that is open will read as closed. A session idle beyond
+    *idle_hours* reads as closed (Plan 276) so the hint sends the agent to
+    start a new one. The lookup only reads; it never starts or closes a session.
     Any failure yields ``{}`` so a hint can never break the tool it rides on.
     """
     try:
-        is_open = find_open_session(store, project=project) is not None
+        session = find_open_session(
+            store, project=project, exact_project=True, idle_hours=idle_hours
+        )
+        is_open = session is not None
     except Exception:
         logger.debug("Open-session lookup failed; omitting session meta", exc_info=True)
         return {}

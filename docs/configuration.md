@@ -580,6 +580,37 @@ metadata and schedule eligible refreshes asynchronously.
 
 ---
 
+## sessions
+
+Controls how long a working session stays open without activity.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| idle_hours | float | 12 | Close an open session after this many hours with no session or governance write activity. `0` keeps sessions open until they are ended. |
+| warn_after_hours | float | 24 | `scaffold_orient` adds `session_warning` when the open session started more than this many hours ago. `0` turns the warning off. |
+
+Each session belongs to the project resolved for the call (the MCP tool's
+`working_path`, or the working directory for `scaffold session` commands), and
+sessions in one project never reuse, close or receive decisions for another
+project's session. Activity is recorded by the session tools and by the
+governance write tools (findings, backlog items, plan transitions); reads do not
+count and never close anything.
+
+An idle session is closed the next time a session is started or a decision is
+recorded, with ` [closed: idle]` appended to its summary. Sessions written before
+projects were stamped (an empty project) are closed by the same sweep once they
+go idle. To start fresh in a new chat while an old session is still active, call
+`scaffold_session_start` with `force_new: true`; the old session is closed with
+` [closed: force_new]`.
+
+```yaml
+sessions:
+  idle_hours: 12
+  warn_after_hours: 24
+```
+
+---
+
 ## MCP server environment
 
 ### AGENTSCAFFOLD_MCP_INSTRUCTIONS

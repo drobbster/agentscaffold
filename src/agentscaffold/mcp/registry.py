@@ -1031,6 +1031,15 @@ def _tool_specs() -> list[ToolSpec]:
                         "type": "string",
                         "description": "Optional opening summary",
                     },
+                    "force_new": {
+                        "type": "boolean",
+                        "description": (
+                            "Close this project's open session and start a new one, "
+                            "even if it is still active. Use when a new chat finds an "
+                            "old session open."
+                        ),
+                        "default": False,
+                    },
                 },
             },
         ),
