@@ -383,3 +383,47 @@ def test_precedent_sources_must_be_project_names():
 
     with pytest.raises(ValidationError):
         ScaffoldConfig.model_validate({"precedent": {"sources": ["../gov"]}})
+
+
+def test_brief_markdown_names_precedent_without_graph_prefixes() -> None:
+    from agentscaffold.review.brief import format_brief_markdown
+
+    def item(kind: str, item_id: str) -> dict:
+        return {
+            "id": item_id,
+            "kind": kind,
+            "match": "linked",
+            "path": "a.py",
+            "plan": 7,
+            "project": "",
+            "text": "note",
+        }
+
+    brief = {
+        "plan": {"number": 9, "title": "T"},
+        "summary": {
+            "files_impacted": 1,
+            "total_direct_importers": 0,
+            "total_transitive_consumers": 0,
+            "total_external_callers": 0,
+            "layers_touched": [],
+            "frequency_signal": "",
+        },
+        "file_profiles": [],
+        "prior_plans": [],
+        "learnings": [],
+        "precedent": {
+            "total": 3,
+            "items": [
+                item("learning", "learning::L055-2"),
+                item("adr", "adr::29::adr-029-inventory"),
+                item("finding", "rf::abc123"),
+            ],
+        },
+    }
+    md = format_brief_markdown(brief)
+    assert "- L055-2 (Plan 7" in md
+    assert "- ADR 29 (Plan 7" in md
+    assert "- rf::abc123 (Plan 7" in md
+    assert "learning::" not in md
+    assert "adr::" not in md

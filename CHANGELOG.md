@@ -8,6 +8,16 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-05
+
+**Upgrade action required.** Run `scaffold agents hooks` in each project so
+existing hook scripts are regenerated as one-line shims, before any
+`scaffold agents install --scope user`. The next `scaffold index` rebuilds the
+graph (schema 13), exporting and re-importing preserved findings, sessions,
+backlog items and review stamps; restart the MCP server afterwards. The `mcp`
+extra now requires `mcp>=1.3.0`. The system inventory stays off until
+`scaffold.yaml` enables it, so existing projects see no new lint findings.
+
 ### Added
 - **System inventory and component lifecycle.** `docs/ai/system_inventory.yaml`
   lists every runtime component (scheduled and manual jobs, services, apps,

@@ -379,7 +379,7 @@ class TestScaffoldOrient:
         patches = _patch_mcp(config, store, root=root)
         stack = _enter_patches(patches)
         try:
-            data = _dispatch_tool("scaffold_orient", {})
+            data = _dispatch_tool("scaffold_orient", {"detail": "full"})
         finally:
             stack.__exit__(None, None, None)
 
