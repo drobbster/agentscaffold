@@ -778,7 +778,7 @@ def _run_tool(
         return {"results": rows, "count": len(rows), "meta": meta}
 
     elif name == "scaffold_context":
-        return _tool_context(store, arguments, meta, root)
+        return _tool_context(store, arguments, meta, root, config)
 
     elif name == "scaffold_impact":
         return _tool_impact(store, arguments, meta, root, config)
@@ -1117,6 +1117,7 @@ def _tool_context(
     arguments: dict[str, Any],
     meta: dict[str, Any],
     root: Path | None = None,
+    config: Any = None,
 ) -> dict[str, Any]:
     """Handle scaffold_context tool call."""
     from agentscaffold.graph.query_compat import ql
@@ -1304,6 +1305,16 @@ def _tool_context(
         payload["methods"] = methods
         payload["method_count"] = len(methods)
         payload["construction_sites"] = []
+    components = _components_touching(
+        store, [file_path] if file_path else [], root, config, (scope_sql, scope_params)
+    )
+    if components:
+        from agentscaffold.mcp.render import format_component_lines
+
+        payload["components"] = components
+        payload["markdown"] += "\n\n### Components\n" + "\n".join(
+            format_component_lines(components)
+        )
     return payload
 
 
@@ -1548,7 +1559,7 @@ def _tool_impact(
             target=target,
         )
     if root is not None and arguments.get("include_precedent", True) is not False:
-        governance = _governance_impact(store, target, root, config)
+        governance = _governance_impact(store, target, root, config, scope=_scope_sql(arguments))
         if governance is not None:
             from agentscaffold.mcp.render import format_governance_impact_markdown
 
@@ -1557,36 +1568,47 @@ def _tool_impact(
     return payload
 
 
-def _governance_impact(store: Any, target: str, root: Path, config: Any) -> dict[str, Any] | None:
-    """Every finding, learning, ADR and contract about *target* (Plan 281).
+def _governance_impact(
+    store: Any,
+    target: str,
+    root: Path,
+    config: Any,
+    scope: tuple[str, dict[str, Any]] = ("", {}),
+) -> dict[str, Any] | None:
+    """Every finding, learning, ADR, contract and component about *target*.
 
-    Facts about the file only: no semantic matches and nothing that merely
-    shares an earlier plan with it. Uncapped, like the dependency results.
+    Facts about the file only (Plan 281): no semantic matches and nothing that
+    merely shares an earlier plan with it. Uncapped, like the dependency
+    results. ``components`` (Plan 282) lists the inventory components whose
+    ``reads`` or entrypoint the target touches.
     """
     from agentscaffold.review.precedent import STRUCTURAL_MATCHES, precedent_for_paths
     from agentscaffold.review.queries import get_contracts_for_file
 
+    components = _components_touching(store, [target], root, config, scope)
     try:
         result = precedent_for_paths(
             store, [target], root=root, config=config, budget=None, match_kinds=STRUCTURAL_MATCHES
         )
     except Exception as exc:  # noqa: BLE001 - governance facts must not break impact
         logger.debug("governance_impact skipped: %s", exc)
-        return None
-    if result is None:
+        result = None
+    if result is None and not components:
         return None
     by_kind: dict[str, list[dict[str, Any]]] = {"finding": [], "learning": [], "adr": []}
-    for item in result.items:
-        by_kind[item.kind].append(item.to_dict())
-    contracts = [
-        {
-            "name": c.get("c.name", ""),
-            "version": c.get("c.version", ""),
-            "path": c.get("c.filePath"),
-        }
-        for c in get_contracts_for_file(store, target)
-    ]
-    return {
+    contracts: list[dict[str, Any]] = []
+    if result is not None:
+        for item in result.items:
+            by_kind[item.kind].append(item.to_dict())
+        contracts = [
+            {
+                "name": c.get("c.name", ""),
+                "version": c.get("c.version", ""),
+                "path": c.get("c.filePath"),
+            }
+            for c in get_contracts_for_file(store, target)
+        ]
+    payload: dict[str, Any] = {
         "findings": by_kind["finding"],
         "learnings": by_kind["learning"],
         "adrs": by_kind["adr"],
@@ -1597,8 +1619,32 @@ def _governance_impact(store: Any, target: str, root: Path, config: Any) -> dict
             "adrs": len(by_kind["adr"]),
             "contracts": len(contracts),
         },
-        "sources_unavailable": result.sources_unavailable,
+        "sources_unavailable": result.sources_unavailable if result is not None else [],
     }
+    if components:
+        payload["components"] = components
+        payload["counts"]["components"] = len(components)
+    return payload
+
+
+def _components_touching(
+    store: Any,
+    paths: list[str],
+    root: Path | None,
+    config: Any,
+    scope: tuple[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Inventory components whose ``reads`` or entrypoint *paths* touch (Plan 282)."""
+    inventory = getattr(config, "inventory", None)
+    if root is None or inventory is None or not inventory.enabled:
+        return []
+    from agentscaffold.graph.inventory import components_for_paths
+
+    try:
+        return components_for_paths(store, paths, root=root, scope=scope)
+    except Exception as exc:  # noqa: BLE001 - component facts must not break the tool
+        logger.debug("component lookup skipped: %s", exc)
+        return []
 
 
 def _tool_search(
@@ -2652,6 +2698,7 @@ def _tool_orient(
         project=project,
         plan_number=arguments.get("plan_number"),
         open_session=open_session,
+        config=config,
     )
     actions_payload = next_actions(
         store,
@@ -3482,11 +3529,14 @@ def _select_findings_to_persist(
     """Filter review findings down to the set worth persisting to the graph.
 
     Keeps only findings at or above ``min_severity`` (default ``high``), plus
-    every ``PRECEDENT`` finding, which the disposition rule always asks about,
-    and drops any that duplicate an already-open finding for the plan (matched on
-    category + normalized finding text). This makes ``scaffold_begin_plan``
-    idempotent: a re-run does not multiply findings.
+    every finding in ``ALWAYS_SHOWN_CATEGORIES`` (PRECEDENT, COMPONENT), which
+    the disposition rule always asks about, and drops any that duplicate an
+    already-open finding for the plan (matched on category + normalized finding
+    text). This makes ``scaffold_begin_plan`` idempotent: a re-run does not
+    multiply findings.
     """
+    from agentscaffold.review.filters import is_always_shown
+
     order = {"low": 0, "medium": 1, "high": 2}
     threshold = order.get(min_severity, 2)
 
@@ -3501,8 +3551,9 @@ def _select_findings_to_persist(
     selected: list[dict[str, Any]] = []
     batch_keys: set[tuple[str, str]] = set()
     for f in candidates:
-        precedent = str(f.get("category", "")).upper() == "PRECEDENT"
-        if not precedent and order.get(f.get("severity", "medium"), 1) < threshold:
+        if not is_always_shown(f.get("category")) and (
+            order.get(f.get("severity", "medium"), 1) < threshold
+        ):
             continue
         key = (str(f.get("category", "")).lower(), _norm(f.get("finding", "")))
         if key in existing_keys or key in batch_keys:

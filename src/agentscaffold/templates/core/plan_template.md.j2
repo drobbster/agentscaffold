@@ -8,6 +8,12 @@
 - Reviewers: TBD (for critical changes)
 - Approval Required: No | Yes (see Approval Gates)
 - Approved: Pending
+- Status: Draft
+- Created: {{ date if plan_number is defined else 'YYYY-MM-DD' }}
+{% if config.inventory.enabled %}- Roadmap Stage: TBD (the roadmap stage this plan delivers)
+- Components: none
+<!-- Components: comma-separated inventory ids (<kind-prefix>:<name>) whose entrypoint or reads this plan touches, or none. -->
+{% endif %}
 {% if config.gates.review_to_ready.security_review %}- Security Review: None | Partial | Full (see Security Review criteria below)
 {% endif %}- Architecture Layer(s): TBD ({{ architecture_layers | default('Define layers in scaffold.yaml') }})
 - Dependencies: TBD | Plan XXX
@@ -84,6 +90,7 @@ Description of desired behavior after changes.
 | File | Change Type | Notes |
 |-----|------------|-------|
 | TBD | TBD | TBD |
+{% include "core/_component_lifecycle.md.j2" %}
 {% if graph_hot_files or graph_volatile_modules %}
 
 ### GRAPH CONTEXT (Codebase Context, Graph-Generated)

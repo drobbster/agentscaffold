@@ -1,0 +1,13 @@
+framework_version: "1.0"
+
+project:
+  name: inventory-fixture
+
+inventory:
+  enabled: true
+  path: docs/ai/system_inventory.yaml
+  collectors:
+    - name: prefect
+    - name: compose
+  enforcement: warn
+  health_snapshot: outputs/governance/inventory_health.json

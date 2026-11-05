@@ -219,3 +219,67 @@ def test_init_creates_new_directory(tmp_path: Path, cli_runner: CliRunner) -> No
     assert result.exit_code == 0
     assert new_dir.is_dir()
     assert (new_dir / "scaffold.yaml").is_file()
+
+
+def test_init_writes_the_system_inventory_once(tmp_path: Path, cli_runner: CliRunner) -> None:
+    """Plan 282: inventory from the collectors, config block, prompt; idempotent."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "compose.yaml").write_text("services:\n  api:\n    image: x\n")
+    assert cli_runner.invoke(app, ["init", str(project), "-y"]).exit_code == 0
+
+    inventory = yaml.safe_load((project / "docs/ai/system_inventory.yaml").read_text())
+    assert inventory["schema_version"] == 1
+    assert [c["id"] for c in inventory["components"]] == ["compose:api"]
+    config = yaml.safe_load((project / "scaffold.yaml").read_text())["inventory"]
+    assert config["enabled"] is True
+    assert config["enforcement"] == "warn"
+    assert config["collectors"] == ["compose", "github_workflows", "pyproject_scripts"]
+    assert len(config["plan_adoption_date"]) == 10
+    assert (project / "docs/ai/prompts/architecture_review.md").is_file()
+    assert "## Component Lifecycle" in (project / "AGENTS.md").read_text()
+    template = (project / "docs/ai/templates/plan_template.md").read_text()
+    assert "- Components: none" in template
+    assert "- Created: YYYY-MM-DD" in template
+
+    (project / "docs/ai/system_inventory.yaml").write_text("schema_version: 1\ncomponents: []\n")
+    assert cli_runner.invoke(app, ["init", str(project), "-y"]).exit_code == 0
+    assert (project / "docs/ai/system_inventory.yaml").read_text().startswith("schema_version")
+
+
+def test_init_with_no_sources_writes_a_skeleton(tmp_path: Path, cli_runner: CliRunner) -> None:
+    assert cli_runner.invoke(app, ["init", str(tmp_path), "-y"]).exit_code == 0
+    inventory = yaml.safe_load((tmp_path / "docs/ai/system_inventory.yaml").read_text())
+    assert inventory["components"] == []
+
+
+def test_domain_packs_enable_the_prefect_collector(tmp_path: Path) -> None:
+    from agentscaffold.domain_packs.loader import _update_scaffold_yaml, domain_inventory_collectors
+    from agentscaffold.init_cmd import InitWriter, _write_scaffold_yaml
+
+    assert domain_inventory_collectors(["trading", "mlops", "webapp"]) == ["prefect"]
+    assert domain_inventory_collectors(["webapp", "no-such-pack"]) == []
+
+    options = {
+        "project_name": "p",
+        "architecture_layers": 6,
+        "domains": ["data_engineering"],
+        "profile": "interactive",
+        "rigor": "standard",
+    }
+    _write_scaffold_yaml(tmp_path, options, InitWriter(dry_run=False))
+    raw = yaml.safe_load((tmp_path / "scaffold.yaml").read_text())
+    assert raw["inventory"]["collectors"][-1] == "prefect"
+
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "scaffold.yaml").write_text("inventory:\n  enabled: true\n")
+    _update_scaffold_yaml("trading", {"inventory_collectors": ["prefect"]}, other)
+    _update_scaffold_yaml("mlops", {"inventory_collectors": ["prefect"]}, other)
+    raw = yaml.safe_load((other / "scaffold.yaml").read_text())
+    assert raw["inventory"]["collectors"] == [
+        "compose",
+        "github_workflows",
+        "pyproject_scripts",
+        "prefect",
+    ]

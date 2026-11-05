@@ -16,3 +16,5 @@ file_patterns:
   - "pipelines/**"
   - "ingestion/**"
   - "schemas/**"
+inventory_collectors:
+  - prefect

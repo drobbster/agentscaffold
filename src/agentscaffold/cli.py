@@ -85,6 +85,9 @@ app.add_typer(workspace_app, name="workspace")
 project_app = typer.Typer(help="User-level project registration.")
 app.add_typer(project_app, name="project")
 
+inventory_app = typer.Typer(help="System inventory: components, owners and lifecycle.")
+app.add_typer(inventory_app, name="inventory")
+
 app.add_typer(benchmark_app, name="benchmark")
 
 
@@ -275,6 +278,119 @@ def plan_status() -> None:
     from agentscaffold.plan.status import run_plan_status
 
     run_plan_status()
+
+
+@plan_app.command("normalize-status")
+def plan_normalize_status(
+    plan: str | None = typer.Option(None, "--plan", "-p", help="Specific plan number or filename."),
+    apply: bool = typer.Option(
+        False, "--apply", help="Write the proposed Status lines (default: dry run)."
+    ),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text or json."),
+) -> None:
+    """Propose (and with --apply, write) Status lines for plans that lack one."""
+    from agentscaffold.config import load_config
+    from agentscaffold.paths import ResolvedPaths, resolve_root
+    from agentscaffold.plan.normalize import run_normalize_status
+
+    if output not in ("text", "json"):
+        console.print(f"[red]--format must be text or json, got {output!r}[/red]")
+        raise typer.Exit(code=2)
+    plans_dir = ResolvedPaths(load_config(), resolve_root()).plans_dir
+    code = run_normalize_status(plans_dir, plan=plan, write=apply, output=output, console=console)
+    if code:
+        raise typer.Exit(code=code)
+
+
+def _inventory_today(today: str | None) -> Any:
+    import datetime as dt
+
+    if not today:
+        return dt.date.today()
+    try:
+        return dt.date.fromisoformat(today)
+    except ValueError as exc:
+        console.print(f"[red]--today must be YYYY-MM-DD, got {today!r}[/red]")
+        raise typer.Exit(code=2) from exc
+
+
+_INVENTORY_TODAY = typer.Option(None, "--today", hidden=True, help="Pin today (YYYY-MM-DD).")
+
+
+@inventory_app.command("init")
+def inventory_init(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the inventory; write nothing."),
+    today: str | None = _INVENTORY_TODAY,
+) -> None:
+    """Write a first system inventory from the collectors."""
+    from agentscaffold.config import load_config
+    from agentscaffold.inventory.commands import run_init
+    from agentscaffold.paths import resolve_root
+
+    code = run_init(
+        resolve_root(),
+        load_config(),
+        dry_run=dry_run,
+        today=_inventory_today(today),
+        console=console,
+    )
+    raise typer.Exit(code=code)
+
+
+@inventory_app.command("refresh")
+def inventory_refresh(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report changes; write nothing."),
+    today: str | None = _INVENTORY_TODAY,
+) -> None:
+    """Add newly collected components and update collector-owned fields."""
+    from agentscaffold.config import load_config
+    from agentscaffold.inventory.commands import run_refresh
+    from agentscaffold.paths import resolve_root
+
+    code = run_refresh(
+        resolve_root(),
+        load_config(),
+        dry_run=dry_run,
+        today=_inventory_today(today),
+        console=console,
+    )
+    raise typer.Exit(code=code)
+
+
+@inventory_app.command("check")
+def inventory_check(
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text or json."),
+    changed_files: str | None = typer.Option(
+        None,
+        "--changed-files",
+        help="File of changed paths, one per line ('-' for stdin); enables INV-008.",
+    ),
+    today: str | None = _INVENTORY_TODAY,
+) -> None:
+    """Check the inventory against its collectors and contract (INV-001 to INV-010)."""
+    from agentscaffold.config import load_config
+    from agentscaffold.inventory.commands import read_changed_files, run_check
+    from agentscaffold.paths import resolve_root
+
+    if output not in ("text", "json"):
+        console.print(f"[red]--format must be text or json, got {output!r}[/red]")
+        raise typer.Exit(code=2)
+    changed = None
+    if changed_files is not None:
+        try:
+            changed = read_changed_files(changed_files)
+        except OSError as exc:
+            console.print(f"[red]cannot read --changed-files: {exc}[/red]")
+            raise typer.Exit(code=2) from exc
+    code = run_check(
+        resolve_root(),
+        load_config(),
+        output=output,
+        changed_files=changed,
+        today=_inventory_today(today),
+        console=console,
+    )
+    raise typer.Exit(code=code)
 
 
 @plan_app.command("claim")

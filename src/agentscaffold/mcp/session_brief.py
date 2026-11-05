@@ -42,11 +42,13 @@ def build_session_brief(
     project: str | None = None,
     plan_number: int | None = None,
     open_session: dict[str, Any] | None | object = ...,
+    config: Any = None,
 ) -> dict[str, Any]:
     """Return the locked ``session_brief`` object.
 
     *open_session* is the session orient already looked up (stamped project,
-    idle-aware; Plan 276). When omitted, the brief looks it up itself.
+    idle-aware; Plan 276). When omitted, the brief looks it up itself. With an
+    enabled inventory in *config*, the brief carries ``lifecycle_debt``.
     """
     from agentscaffold.graph.sessions import find_open_session
 
@@ -133,7 +135,7 @@ def build_session_brief(
                 open_backlog_ids.append(str(bid))
         session_decisions = session_decisions_for_plan(store, related_pn, project=project, limit=5)
 
-    return {
+    brief: dict[str, Any] = {
         "current_work": current_work,
         "blockers_for_work": blockers_for_work,
         "related": {
@@ -147,6 +149,122 @@ def build_session_brief(
             current_work["plan_number"] if current_work["kind"] == "in_flight" else related_pn
         ),
     }
+    debt = lifecycle_debt(store, root, config, project=project)
+    if debt is not None:
+        brief["lifecycle_debt"] = debt
+    return brief
+
+
+#: Items shown per lifecycle-debt category; ``count`` still reports the total.
+DEBT_CAP = 10
+_PLAN_DATE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+
+
+def lifecycle_debt(
+    store: Any,
+    root: Path,
+    config: Any,
+    *,
+    project: str | None = None,
+    today: Any = None,
+) -> dict[str, Any] | None:
+    """Lifecycle debt from the system inventory (Plan 282); None when it is disabled.
+
+    Categories: expired reviews, overdue deprecations, failing active jobs and
+    zombie candidates (from the optional health snapshot), drafts older than
+    ``inventory.draft_stale_days``, and an overdue architecture review. Each
+    category is ``{"count", "items"}`` with at most ``DEBT_CAP`` items, and is
+    omitted when empty; an empty dict means no debt.
+    """
+    import datetime as dt  # noqa: PLC0415
+
+    from agentscaffold.inventory import health  # noqa: PLC0415
+    from agentscaffold.inventory.project import maybe_inventory  # noqa: PLC0415
+
+    inv_cfg = getattr(config, "inventory", None)
+    if inv_cfg is None or not inv_cfg.enabled:
+        return None
+    today = today or dt.date.today()
+    inventory = maybe_inventory(root, config)
+    if inventory is None:
+        return {"error": "the inventory cannot be read; run `scaffold inventory check`"}
+
+    categories: dict[str, list[str]] = {
+        "expired_reviews": [],
+        "overdue_deprecations": [],
+        "failing": [],
+        "zombies": [],
+        "stale_drafts": [],
+    }
+    for comp in inventory.components:
+        review_by = comp.review_by_date
+        if comp.id and review_by is not None and review_by < today:
+            key = "overdue_deprecations" if comp.lifecycle == "deprecated" else "expired_reviews"
+            categories[key].append(f"{comp.id} (review by {review_by})")
+
+    debt: dict[str, Any] = {}
+    snapshot = health.read_snapshot(
+        Path(root) / inv_cfg.health_snapshot,
+        today=today,
+        max_bytes=inv_cfg.health_max_bytes,
+        stale_days=inv_cfg.failing_days,
+    )
+    if snapshot.status in ("stale", "malformed"):
+        debt["health_snapshot"] = {"status": snapshot.status, "reason": snapshot.reason}
+    for row in health.failing(inventory, snapshot, days=inv_cfg.failing_days):
+        categories["failing"].append(_days_label(row))
+    for row in health.zombies(inventory, snapshot, days=inv_cfg.zombie_days):
+        categories["zombies"].append(_days_label(row))
+    categories["stale_drafts"] = _stale_drafts(store, today, inv_cfg.draft_stale_days, project)
+
+    for key, items in categories.items():
+        if items:
+            debt[key] = {"count": len(items), "items": items[:DEBT_CAP]}
+
+    last = inventory.last_review_date
+    limit = inventory.review_cadence_days + 5
+    if last is None:
+        debt["architecture_review"] = "last_architecture_review is not recorded"
+    elif (today - last).days > limit:
+        debt["architecture_review"] = (
+            f"last review {last} is {(today - last).days} days old (cadence "
+            f"{inventory.review_cadence_days} days)"
+        )
+    return debt
+
+
+def _days_label(row: dict[str, Any]) -> str:
+    days = row.get("days_without_success")
+    return f"{row['component']} ({'never succeeded' if days is None else f'{days} days'})"
+
+
+def _stale_drafts(store: Any, today: Any, days: int, project: str | None) -> list[str]:
+    import datetime as dt  # noqa: PLC0415
+
+    sql = "SELECT number, status, createdDate FROM Plan"
+    params: dict[str, Any] | None = None
+    if project:
+        sql += " WHERE COALESCE(project, '') IN ('', ?)"
+        params = {"project": project}
+    try:
+        rows = store.query(sql + " ORDER BY number", params)
+    except Exception:  # noqa: BLE001 - an empty or older graph has no answer
+        return []
+    out: list[str] = []
+    for row in rows:
+        if normalize_plan_status(row.get("status") or "") != "Draft":
+            continue
+        match = _PLAN_DATE.search(str(row.get("createdDate") or ""))
+        if not match:
+            continue
+        try:
+            created = dt.date.fromisoformat(match.group(1))
+        except ValueError:
+            continue
+        age = (today - created).days
+        if age > days:
+            out.append(f"Plan {row.get('number')} ({age} days)")
+    return out
 
 
 def compact_session_context(session: dict[str, Any] | None) -> dict[str, Any]:

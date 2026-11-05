@@ -38,7 +38,17 @@ ALLOWANCES: dict[str, tuple[int, str]] = {
         "bounded by agents.governance.orient_budget (2,800) plus its key; measured 2,630 "
         "with the shipped template's manual",
     ),
+    "282": (
+        0,
+        "session_brief.lifecycle_debt is omitted while the inventory is disabled (the default "
+        "for a project without an inventory: block); the enabled block is bounded by "
+        "test_lifecycle_debt_is_bounded_when_enabled",
+    ),
 }
+
+#: Plan 282: five capped categories, a snapshot status and the review line, at the cap
+#: with 60-character items. Measured 3,548 characters.
+LIFECYCLE_DEBT_CEILING = 3700
 
 #: Freshness and retrieval states change a few characters between runs.
 SLACK = 64
@@ -99,3 +109,55 @@ def test_baseline_still_describes_orient_without_plan_additions(tmp_path, monkey
     measured = orient_measure(payload, repo)
     allowance_276 = ALLOWANCES.get("276", (0, ""))[0]
     assert measured <= BASELINE_0_12_0 + allowance_276 + SLACK
+
+
+def test_lifecycle_debt_is_bounded_when_enabled(tmp_path) -> None:
+    """Every category past the cap, with long ids: the block stays under its ceiling."""
+    import datetime as dt
+
+    import yaml
+
+    from agentscaffold.config import ScaffoldConfig
+    from agentscaffold.mcp.session_brief import lifecycle_debt
+
+    def entry(n: int, lifecycle: str) -> dict[str, Any]:
+        return {
+            "id": f"prefect:a-long-component-name-for-the-bound-{lifecycle}-{n:03d}",
+            "kind": "scheduled_job",
+            "name": f"job-{n}",
+            "source": "prefect.yaml",
+            "entrypoint": f"flows/job_{n}.py:run",
+            "owner_plan": "001",
+            "lifecycle": lifecycle,
+            "since": "2025-01-01",
+            "reason": "r",
+            "review_by": "2026-01-01",
+        }
+
+    components = [entry(n, "active") for n in range(30)]
+    components += [entry(n, "deprecated") for n in range(30)]
+    inventory = {"schema_version": 1, "review_cadence_days": 30, "components": components}
+    (tmp_path / "docs" / "ai").mkdir(parents=True)
+    (tmp_path / "docs" / "ai" / "system_inventory.yaml").write_text(yaml.safe_dump(inventory))
+    snapshot = {
+        "generated_at": "2026-11-04T00:00:00Z",
+        "components": {c["id"]: {"last_success": "2025-02-01"} for c in components},
+    }
+    (tmp_path / "outputs" / "governance").mkdir(parents=True)
+    (tmp_path / "outputs" / "governance" / "inventory_health.json").write_text(json.dumps(snapshot))
+
+    class Store:
+        def query(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return [
+                {"number": n, "status": "Draft", "createdDate": "2025-01-01"} for n in range(30)
+            ]
+
+    config = ScaffoldConfig()
+    config.inventory.enabled = True
+    debt = lifecycle_debt(Store(), tmp_path, config, today=dt.date(2026, 11, 5))
+    assert debt is not None
+    full = {"expired_reviews", "overdue_deprecations", "failing", "zombies", "stale_drafts"}
+    assert full <= set(debt)
+    assert all(debt[k]["count"] == 30 for k in full)
+    size = len(json.dumps({"lifecycle_debt": debt}, sort_keys=True))
+    assert size <= LIFECYCLE_DEBT_CEILING, f"lifecycle_debt is {size} characters"

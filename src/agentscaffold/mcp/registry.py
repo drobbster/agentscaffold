@@ -216,8 +216,8 @@ def _tool_specs() -> list[ToolSpec]:
                     "include_precedent": {
                         "type": "boolean",
                         "description": (
-                            "Include governance_impact: every finding, learning, ADR and "
-                            "contract about the file (default true)"
+                            "Include governance_impact: every finding, learning, ADR, "
+                            "contract and inventory component about the file (default true)"
                         ),
                         "default": True,
                     },
@@ -518,7 +518,8 @@ def _tool_specs() -> list[ToolSpec]:
                 "scaffold_session_start. "
                 "Answer four questions: what are we working on, what is blocked "
                 "for that work, what is related to it, and if nothing is in "
-                "flight what is next. Returns session_brief plus "
+                "flight what is next. Returns session_brief (with lifecycle_debt "
+                "when the system inventory is enabled) plus "
                 "recommended_actions, plan_progress, and next_action_focus. "
                 "Do not call this again as the next action. Prefer embedded "
                 "recommended_actions over a separate scaffold_next_action call."

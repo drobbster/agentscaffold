@@ -1,0 +1,36 @@
+# Synthetic Prefect project file for the system inventory conformance fixtures.
+name: fixture-pipelines
+prefect-version: 3.0.0
+
+deployments:
+  - name: weekly-training
+    entrypoint: flows/weekly.py:weekly_training
+    parameters:
+      mode: full
+    schedules:
+      - cron: "0 6 * * 1"
+        timezone: UTC
+        active: false
+
+  # The same flow and parameters on a second weekly schedule (INV-006).
+  - name: weekly-training-copy
+    entrypoint: flows/weekly.py:weekly_training
+    parameters:
+      mode: full
+    schedules:
+      - cron: "0 7 * * 1"
+        timezone: UTC
+
+  # Singular schedule form, still accepted by older Prefect projects.
+  - name: nightly-ingest
+    entrypoint: flows/ingest.py:nightly_ingest
+    schedule:
+      cron: "0 2 * * *"
+
+  - name: backfill
+    entrypoint: flows/backfill.py:backfill
+
+  - name: unlisted-report
+    entrypoint: flows/report.py:report
+    schedules:
+      - interval: 3600

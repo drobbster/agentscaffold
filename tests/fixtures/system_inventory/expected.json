@@ -1,0 +1,32 @@
+{
+  "today": "2026-11-05",
+  "project": "project",
+  "summary": {"components": 10, "errors": 9, "warnings": 2},
+  "findings": [
+    {"id": "INV-001", "severity": "error", "component": "prefect:unlisted-report"},
+    {"id": "INV-002", "severity": "error", "component": "prefect:retired-sync"},
+    {"id": "INV-003", "severity": "error", "component": "compose:worker"},
+    {"id": "INV-003", "severity": "error", "component": "model:ranker"},
+    {"id": "INV-004", "severity": "error", "component": "prefect:weekly-training"},
+    {"id": "INV-005", "severity": "error", "component": "prefect:backfill"},
+    {"id": "INV-006", "severity": "error", "component": "prefect:weekly-training"},
+    {"id": "INV-007", "severity": "warning", "component": "compose:api"},
+    {"id": "INV-009", "severity": "warning", "component": null},
+    {"id": "INV-010", "severity": "error", "component": "config:risk-limits"},
+    {"id": "INV-010", "severity": "error", "component": "model:ranker"}
+  ],
+  "changed_files": [
+    "configs/training/lr.yaml",
+    "flows/weekly.py",
+    "scripts/sync/run.py",
+    "README.md"
+  ],
+  "changed_file_findings": [
+    {"id": "INV-008", "severity": "warning", "component": "prefect:weekly-training"},
+    {"id": "INV-008", "severity": "warning", "component": "prefect:retired-sync"}
+  ],
+  "health": {
+    "failing": ["prefect:nightly-ingest"],
+    "zombies": ["prefect:weekly-training"]
+  }
+}

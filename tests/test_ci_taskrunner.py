@@ -120,3 +120,23 @@ def test_taskrunner_invalid_format(tmp_project: Path, cli_runner: CliRunner) -> 
         assert result.exit_code == 1
     finally:
         os.chdir(orig_cwd)
+
+
+def test_ci_template_runs_the_inventory_check_when_enabled() -> None:
+    """Plan 282: inventory check, and INV-008 over a pull request's changed files."""
+    import yaml
+
+    from agentscaffold.config import ScaffoldConfig
+    from agentscaffold.rendering import get_default_context, render_template
+
+    config = ScaffoldConfig()
+    assert "inventory" not in render_template("ci/github_ci.yml.j2", get_default_context(config))
+
+    config.inventory.enabled = True
+    text = render_template("ci/github_ci.yml.j2", get_default_context(config))
+    steps = {s["name"]: s for s in yaml.safe_load(text)["jobs"]["test"]["steps"] if "name" in s}
+    assert steps["System inventory"]["run"] == "scaffold inventory check"
+    changed = steps["Paused or deprecated components changed (INV-008)"]
+    assert changed["if"] == "github.event_name == 'pull_request'"
+    assert "origin/${{ github.base_ref }}" in changed["run"]
+    assert "scaffold inventory check --changed-files -" in changed["run"]

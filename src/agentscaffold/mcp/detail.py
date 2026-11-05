@@ -92,9 +92,11 @@ def _sev_key(item: Any) -> int:
     return _SEVERITY_RANK.get(sev, 5)
 
 
-def _is_precedent(item: Any) -> bool:
-    """PRECEDENT challenges are capped by ``precedent.max_challenges`` upstream."""
-    return isinstance(item, dict) and str(item.get("category") or "").upper() == "PRECEDENT"
+def _is_uncapped(item: Any) -> bool:
+    """PRECEDENT and COMPONENT challenges are bounded upstream, not here."""
+    from agentscaffold.review.filters import is_always_shown
+
+    return isinstance(item, dict) and is_always_shown(item.get("category"))
 
 
 def _trim(obj: Any) -> Any:
@@ -115,8 +117,8 @@ def _trim(obj: Any) -> Any:
                 items = list(v)
                 uncapped: list[Any] = []
                 if k == "challenges":
-                    uncapped = [x for x in items if _is_precedent(x)]
-                    items = [x for x in items if not _is_precedent(x)]
+                    uncapped = [x for x in items if _is_uncapped(x)]
+                    items = [x for x in items if not _is_uncapped(x)]
                 if k in {"challenges", "gaps", "open_findings"}:
                     items = sorted(items, key=_sev_key)
                 out[k] = [_trim(x) for x in items[:cap] + uncapped]
