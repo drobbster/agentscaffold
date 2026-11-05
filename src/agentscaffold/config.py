@@ -592,6 +592,9 @@ class GraphConfig(BaseModel):
     # maps further prefixes to directories relative to the project root.
     infer_module_prefix: bool = True
     module_prefixes: dict[str, str] = Field(default_factory=dict)
+    # Plan 283: globs, relative to the VCS root, of files that belong to this
+    # project but live outside its folder. Indexed as ``@repo/<path>``.
+    extra_paths: list[str] = Field(default_factory=list)
 
     @field_validator("module_prefixes")
     @classmethod

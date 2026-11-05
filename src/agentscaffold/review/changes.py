@@ -17,6 +17,9 @@ Sources, first that applies:
 
 Git runs with an argument list and a timeout, never a shell. Refs and commit ids
 are validated before they reach git.
+
+With ``graph.extra_paths`` (Plan 283), changed files outside the project folder
+that match one of its globs are listed as well, as ``@repo/<path>``.
 """
 
 from __future__ import annotations
@@ -24,9 +27,11 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+from agentscaffold.repo_paths import compile_extra_glob, extra_glob_problem, repo_node_path
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +73,7 @@ def plan_changes(
     base_branch: str | None = None,
     reviewed_commit: str | None = None,
     impact_paths: Iterable[str] = (),
+    extra_paths: Sequence[str] = (),
 ) -> ChangeSet:
     """Files changed for *plan_number* under *root*; see the module docstring.
 
@@ -75,6 +81,7 @@ def plan_changes(
     git does not know.
     """
     root = Path(root)
+    extra = _ExtraPaths.for_root(root, extra_paths)
     if base_ref is not None:
         validate_ref(base_ref)
     if base_branch:
@@ -90,15 +97,16 @@ def plan_changes(
         return _impact_map(root, impact_paths, "not a git work tree")
 
     if base_ref is not None:
-        files = _diff_to_worktree(root, base_ref)
+        files = _diff_to_worktree(root, base_ref, extra)
         if files is None:
             raise ValueError(f"git does not know base_ref {base_ref!r}")
         return ChangeSet(root, _sorted(files), "base_ref", f"diff from {base_ref}")
 
     current = _git(root, "symbolic-ref", "--quiet", "--short", "HEAD") or ""
     base = _base_branch(root, current, base_branch)
-    merged = _merged_branches(root, plan_number, _history_refs(root, current, base_branch))
-    unmerged = _unmerged_branch(root, plan_number, current, base)
+    history = _history_refs(root, current, base_branch)
+    merged = _merged_branches(root, plan_number, history, extra)
+    unmerged = _unmerged_branch(root, plan_number, current, base, extra)
     if merged and unmerged:
         return ChangeSet(
             root,
@@ -112,7 +120,7 @@ def plan_changes(
         return ChangeSet(root, _sorted(unmerged[0]), "unmerged_branch", unmerged[1])
 
     if reviewed_commit:
-        files = _diff_to_worktree(root, reviewed_commit)
+        files = _diff_to_worktree(root, reviewed_commit, extra)
         if files is not None:
             return ChangeSet(
                 root,
@@ -151,7 +159,7 @@ def squash_names_plan(subject: str, plan_number: int) -> bool:
 
 
 def _merged_branches(
-    root: Path, plan_number: int, starts: list[str]
+    root: Path, plan_number: int, starts: list[str], extra: _ExtraPaths | None = None
 ) -> tuple[list[str], str] | None:
     log = _git(
         root,
@@ -180,7 +188,7 @@ def _merged_branches(
             label = commit[:12]
         else:
             continue
-        diff = _git_lines(root, "diff", "--name-only", "--relative", f"{commit}^1", commit)
+        diff = _diff_names(root, extra, f"{commit}^1", commit)
         if diff is None:
             continue
         files.extend(diff)
@@ -205,14 +213,18 @@ def _merged_branch_name(subject: str) -> str | None:
 
 
 def _unmerged_branch(
-    root: Path, plan_number: int, current: str, base: str | None
+    root: Path,
+    plan_number: int,
+    current: str,
+    base: str | None,
+    extra: _ExtraPaths | None = None,
 ) -> tuple[list[str], str] | None:
     if not current or base is None or not plan_branch_pattern(plan_number).search(current):
         return None
     merge_base = _git(root, "merge-base", "HEAD", base)
     if not merge_base:
         return None
-    files = _diff_to_worktree(root, merge_base)
+    files = _diff_to_worktree(root, merge_base, extra)
     if files is None:
         return None
     return files, f"branch {current} since its merge-base with {base}, plus uncommitted files"
@@ -257,11 +269,50 @@ def _impact_map(root: Path, impact_paths: Iterable[str], why: str) -> ChangeSet:
 # ---------------------------------------------------------------------------
 
 
-def _diff_to_worktree(root: Path, ref: str) -> list[str] | None:
-    changed = _git_lines(root, "diff", "--name-only", "--relative", ref)
+@dataclass(frozen=True)
+class _ExtraPaths:
+    """Which repository-relative paths outside the project are extra-path files."""
+
+    project_prefix: str
+    patterns: tuple[re.Pattern[str], ...]
+
+    @classmethod
+    def for_root(cls, root: Path, globs: Sequence[str]) -> _ExtraPaths | None:
+        valid = [g for g in globs if extra_glob_problem(g) is None]
+        if not valid:
+            return None
+        prefix = _git(root, "rev-parse", "--show-prefix", allow_empty=True)
+        if prefix is None:
+            return None
+        return cls(prefix, tuple(compile_extra_glob(g) for g in valid))
+
+    def node_paths(self, repo_relative: Iterable[str]) -> list[str]:
+        return [
+            repo_node_path(p)
+            for p in repo_relative
+            if not p.startswith(self.project_prefix) and any(m.fullmatch(p) for m in self.patterns)
+        ]
+
+
+def _diff_names(root: Path, extra: _ExtraPaths | None, *revs: str) -> list[str] | None:
+    """Changed files: project-relative, then matching extra-path files as ``@repo/``."""
+    changed = _git_lines(root, "diff", "--name-only", "--relative", *revs)
+    if changed is None or extra is None:
+        return changed
+    whole = _git_lines(root, "diff", "--name-only", "--no-relative", *revs) or []
+    return changed + extra.node_paths(whole)
+
+
+def _diff_to_worktree(root: Path, ref: str, extra: _ExtraPaths | None = None) -> list[str] | None:
+    changed = _diff_names(root, extra, ref)
     if changed is None:
         return None
     untracked = _git_lines(root, "ls-files", "--others", "--exclude-standard") or []
+    if extra is not None:
+        everywhere = _git_lines(
+            root, "ls-files", "--others", "--exclude-standard", "--full-name", ":/"
+        )
+        untracked += extra.node_paths(everywhere or [])
     return changed + untracked
 
 

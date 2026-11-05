@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from agentscaffold.graph.query_compat import ql
 from agentscaffold.graph.symbol_table import SymbolTable
+from agentscaffold.paths import resolve_node_path
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
@@ -71,7 +72,9 @@ def process_calls(
         if scope is not None and file_path not in scope:
             continue
 
-        full_path = root / file_path
+        full_path = resolve_node_path(root, file_path)
+        if full_path is None:
+            continue
 
         try:
             source = full_path.read_text(errors="replace")

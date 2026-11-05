@@ -52,7 +52,12 @@ def _get_modified_files() -> list[str] | None:
 
 
 def matches_read_only(filepath: str, read_only_paths: list[str]) -> bool:
-    """Check if a project-relative POSIX path matches any read-only path pattern."""
+    """Check if a project-relative POSIX path matches any read-only path pattern.
+
+    A file outside the project folder listed by ``graph.extra_paths`` is passed
+    as its ``@repo/<path>`` File path, so patterns such as ``@repo/airflow/``
+    protect it (Plan 283).
+    """
     for pattern in read_only_paths:
         if pattern.endswith("/"):
             if filepath.startswith(pattern) or filepath.startswith(pattern.rstrip("/")):

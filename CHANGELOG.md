@@ -9,6 +9,14 @@ introduce additive features and small behavior changes).
 ## [Unreleased]
 
 ### Added
+- **Monorepo projects can own files outside their folder.** The new
+  `graph.extra_paths` setting lists globs, relative to the git root, such as
+  `airflow/dags/team_x/**/*.py`. Matching files are indexed with the project
+  as `@repo/<path>` and take part in imports, callers, impact, search, grep,
+  plan change lists, precedent and File Impact checks. Edit hooks route edits
+  to those files to the owning project. Files inside another registered
+  project, or claimed by two projects, are left out with a warning. Projects
+  that do not set `extra_paths` index exactly as before.
 - **Monorepo-absolute Python imports resolve.** A project at
   `<repo>/company/team_x/` that imports its own code as
   `company.team_x.foo` now gets IMPORTS edges for those imports. The prefix is

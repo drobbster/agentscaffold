@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agentscaffold.graph.query_compat import ql, sql_escape
+from agentscaffold.paths import resolve_node_path
 from agentscaffold.review.changes import ChangeSet, plan_changes, validate_ref
 from agentscaffold.review.file_impact_resolve import (
     ImplementationProjectError,
@@ -212,13 +213,14 @@ def _change_roots(
     roots: list[_Root] = []
     for name, path, rcfg in candidates:
         if len(candidates) > 1:
-            here = [p for p in impact if (path / p).exists()]
+            here = [p for p in impact if _exists(path, p)]
         else:
             here = impact
         kwargs: dict[str, Any] = {
             "base_branch": rcfg.compliance.base_branch,
             "reviewed_commit": commits.get(name),
             "impact_paths": here,
+            "extra_paths": rcfg.graph.extra_paths,
         }
         try:
             changes = plan_changes(path, plan_number, base_ref=base_ref, **kwargs)
@@ -227,6 +229,11 @@ def _change_roots(
             changes = plan_changes(path, plan_number, **kwargs)
         roots.append(_Root(name, path, rcfg, changes))
     return roots
+
+
+def _exists(root: Path, node_path: str) -> bool:
+    disk = resolve_node_path(root, node_path)
+    return disk is not None and disk.exists()
 
 
 def _implementation_root(cfg: ScaffoldConfig) -> tuple[str, Path, ScaffoldConfig] | None:
@@ -526,8 +533,7 @@ def _check_plan_compliance(
             continue
         frow = row_by_path.get(fpath, {})
         if frow.get("resolution") == "sibling":
-            disk = query_root(frow, Path(".")) / fpath
-            if not disk.is_file():
+            if not _exists(query_root(frow, Path(".")), fpath):
                 missing.append(fpath)
             continue
         file_id = f"file::{fpath}"

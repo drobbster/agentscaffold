@@ -466,10 +466,13 @@ def _enrich_text(root: Any, table: str, row: dict[str, Any]) -> str:
     rel = row.get("n.filePath") or row.get("n.path") or ""
     if not rel:
         return ""
+    from agentscaffold.paths import resolve_node_path
+
     try:
-        path = Path(rel)
-        if not path.is_absolute():
-            path = Path(root) / rel
+        given = Path(rel)
+        path = given if given.is_absolute() else resolve_node_path(Path(root), rel)
+        if path is None:
+            return ""
         lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
     except Exception:
         return ""

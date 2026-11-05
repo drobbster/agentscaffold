@@ -36,6 +36,7 @@ from agentscaffold.config import (
     load_config,
     load_workspace_manifest,
 )
+from agentscaffold.repo_paths import is_repo_path, vcs_relative
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,26 @@ def vcs_root(path: Path) -> Path | None:
     resolve to their own checkout.
     """
     return _git_root(path)
+
+
+def resolve_node_path(root: Path, path: str) -> Path | None:
+    """The file a graph ``File.path`` names, for a project rooted at *root*.
+
+    A project-relative path joins *root* as before. An ``@repo/`` path (Plan
+    283) names a file below the VCS root; it resolves to None when there is
+    no VCS root or the file lies outside it after resolving ``..`` and symlinks.
+    """
+    if not is_repo_path(path):
+        return Path(root) / path
+    repo = vcs_root(Path(root))
+    if repo is None:
+        return None
+    candidate = repo / vcs_relative(path)
+    try:
+        candidate.resolve().relative_to(repo.resolve())
+    except (OSError, ValueError):
+        return None
+    return candidate
 
 
 _DEFAULT_DB_PATH = ".scaffold/graph.duckdb"

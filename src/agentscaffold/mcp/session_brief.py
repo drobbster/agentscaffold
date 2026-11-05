@@ -254,11 +254,12 @@ def _read_plan_text(root: Path, plan_row: dict[str, Any]) -> str:
     path = plan_row.get("p.filePath") or plan_row.get("filePath") or ""
     if not path:
         return ""
-    full = Path(path)
-    if not full.is_absolute():
-        full = root / path
+    from agentscaffold.paths import resolve_node_path
+
+    given = Path(path)
+    full = given if given.is_absolute() else resolve_node_path(root, path)
     try:
-        if full.is_file():
+        if full is not None and full.is_file():
             return full.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
