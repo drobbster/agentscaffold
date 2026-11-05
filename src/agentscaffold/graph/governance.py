@@ -216,7 +216,8 @@ _PLAN_METADATA_RE = re.compile(
 )
 _PLAN_NUMBER_RE = re.compile(r"^(?:plan[_\-]?)?0*(\d+)", re.IGNORECASE)
 _FILE_IMPACT_ROW_RE = re.compile(
-    r"^\|\s*(?!File\s|---)[`]?(?P<path>[^|`]+?)[`]?\s*\|" r"\s*(?P<change_type>[^|]+?)\s*\|",
+    r"^\|\s*(?!File\s|---)[`]?(?P<path>[^|`]+?)[`]?(?:\s*\([^|)]*\))?\s*\|"
+    r"\s*(?P<change_type>[^|]+?)\s*\|",
     re.MULTILINE,
 )
 _HEADER_VALUES = {"File", "Change Type", "Description", "---"}

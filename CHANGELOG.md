@@ -158,6 +158,9 @@ introduce additive features and small behavior changes).
   The stamp now lives in a preserved `PlanReview` table (schema 12), which also
   records each repository's HEAD at review; stamps on older graphs carry over
   when they are upgraded.
+- **File Impact Map rows with a note after the path are read.** A row such as
+  ``| `docs/x.md` (governance repo) | MODIFY |`` was skipped, so those files
+  were missing from plan impact, verification and the rule checks.
 - **`scaffold_prepare_retro` verifies with the project root and config.** It
   ignored `implementation_project` before.
 - **Single-to-multi-project migration re-keys session rows already stamped
