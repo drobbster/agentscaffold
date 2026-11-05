@@ -163,6 +163,13 @@ introduce additive features and small behavior changes).
   edit hook and background refresh refuse too. `--force-root` overrides it.
 
 ### Fixed
+- **The test-coverage rows find tests that are not named after the file.** A
+  source file now counts as tested when a test module imports it, through the
+  graph's import edges or, when `tests/` is not indexed, by reading the imports
+  of the test modules on disk. Before, only `test_<stem>.py` counted. The
+  post-implementation `test_delta` row also skips documents and config, as the
+  pre-implementation finding already did, and reports `skip` when the change
+  has no source files.
 - **The pre-implementation review stamp survives reindexing.** It was stored
   on the `Plan` row, which every governance reindex rebuilds, so a reviewed
   plan read as unreviewed after any plan edit and the strict gate refused it.
