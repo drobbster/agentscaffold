@@ -96,9 +96,10 @@ introduce additive features and small behavior changes).
   and `read_only_paths` rows, judged on the files the plan changed in git
   (its merged or open branches, else the commit recorded at the
   pre-implementation review, else the File Impact Map). Configure them under
-  `compliance`; `gates.in_progress_to_complete.compliance: block` makes a
-  failing row stop `scaffold_complete_plan` before anything is written
-  (default `warn`). `scaffold review verify` takes `--plan` and `--base-ref`,
+  `compliance`. The rows are off by default: set
+  `gates.in_progress_to_complete.compliance` to `warn` to report them, or to
+  `block` to make a failing row stop `scaffold_complete_plan` before anything
+  is written. `scaffold review verify` takes `--plan` and `--base-ref`,
   as do the MCP retro and completion tools (`base_ref`).
 
 ### Changed

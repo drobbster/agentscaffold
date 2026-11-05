@@ -120,7 +120,7 @@ def verify_implementation(
 def _gate_level(config: Any) -> str:
     gates = getattr(config, "gates", None)
     if gates is None:
-        return "warn"
+        return "off"
     return str(gates.in_progress_to_complete.compliance)
 
 

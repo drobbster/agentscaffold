@@ -57,7 +57,9 @@ class InProgressToCompleteGates(BaseModel):
     domain_implementation_review: bool = False
     #: Rule rows in the post-implementation review (Plan 281). ``block`` stops
     #: ``scaffold_complete_plan`` on a failing row; ``off`` omits the rows.
-    compliance: RuleLevel = "warn"
+    #: Off by default: replayed over plans completed without a recorded review
+    #: commit, most rows were false alarms.
+    compliance: RuleLevel = "off"
 
     @field_validator("compliance", mode="before")
     @classmethod

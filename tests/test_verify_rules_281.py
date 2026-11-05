@@ -464,6 +464,20 @@ def test_gate_warn_reports_and_continues(tmp_path: Path, monkeypatch: pytest.Mon
     assert _checks(result)["read_only_paths"] == "fail"
 
 
+def test_gate_defaults_to_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from agentscaffold.config import ScaffoldConfig
+    from agentscaffold.review.verify import _gate_level
+
+    assert ScaffoldConfig().gates.in_progress_to_complete.compliance == "off"
+    assert _gate_level(None) == "off"
+
+    repo = _project(tmp_path, monkeypatch)
+    _branch(repo, "feature/93-tweak", {ROUTER: "x = 2\n"})
+    checks = _checks(_dispatch(repo, monkeypatch, "scaffold_complete_plan", plan_number=93))
+    assert "plan_compliance" in checks
+    assert not {"read_only_paths", "workflow_state_updated", "pre_review_disposition"} & set(checks)
+
+
 def test_gate_off_omits_the_rule_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     repo = _project(tmp_path, monkeypatch, GATE.format(level="'off'"))
     _branch(repo, "feature/93-tweak", {ROUTER: "x = 2\n"})
@@ -496,7 +510,7 @@ def test_cli_verify_takes_a_plan_option(tmp_path: Path, monkeypatch: pytest.Monk
 
     from agentscaffold.cli import app
 
-    repo = _project(tmp_path, monkeypatch)
+    repo = _project(tmp_path, monkeypatch, GATE.format(level="warn"))
     _branch(repo, "feature/93-tweak", {ROUTER: "x = 2\n"})
     monkeypatch.chdir(repo)
     result = CliRunner().invoke(app, ["review", "verify", "--plan", "93"])

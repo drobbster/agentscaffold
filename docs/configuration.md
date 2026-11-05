@@ -120,7 +120,7 @@ Gates control transitions between plan lifecycle states: Draft -> Review -> Read
 | tests_pass | bool | true | Tests must pass |
 | retrospective | bool | true | Retrospective must be completed |
 | domain_implementation_review | bool | false | Domain-specific post-implementation review (e.g. quant_architect_implementation) |
-| compliance | `off` / `warn` / `block` | warn | Rule checks in the post-implementation review (see [compliance](#compliance)). `block` stops `scaffold_complete_plan` before anything is written when a rule row fails; `off` omits the rows. Quote `'off'` in YAML |
+| compliance | `off` / `warn` / `block` | off | Rule checks in the post-implementation review (see [compliance](#compliance)). `off` omits the rows; `warn` reports them; `block` stops `scaffold_complete_plan` before anything is written when a rule row fails. Quote `'off'` in YAML |
 
 ---
 
@@ -758,8 +758,13 @@ are found the same way. Each row names the source it used.
 | disposition_exempt_categories | list[str] | `DEPENDENCY`, `CONSUMER_AUDIT`, `TEST_COVERAGE` | Finding categories the disposition rule ignores |
 | rules | map | {} | Per rule: `off`, `warn` or `block`. `read_only_paths` defaults to `block` and the rest to `warn`. A violation is `fail` at `block` and `warn` at `warn`; `off` omits the row |
 
-Only `gates.in_progress_to_complete.compliance: block` makes a `fail` row stop
-completion.
+The rules are off until `gates.in_progress_to_complete.compliance` is set to
+`warn` or `block`, including for `scaffold review verify`. They default to off
+because, replayed over plans completed before a commit was recorded at review,
+most rows were false alarms: with no plan branch or recorded commit to follow,
+the change list falls back to the File Impact Map. Turn them on once plans are
+reviewed with this version, so the reviewed commit is recorded. Only `block`
+makes a `fail` row stop completion.
 
 ```yaml
 compliance:

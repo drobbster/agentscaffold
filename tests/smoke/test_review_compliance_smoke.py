@@ -78,7 +78,10 @@ def repos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
         gov,
         {
             ".gitignore": IGNORE,
-            "scaffold.yaml": "framework:\n  project_name: gov\nimplementation_project: pkg\n",
+            "scaffold.yaml": (
+                "framework:\n  project_name: gov\nimplementation_project: pkg\n"
+                "gates:\n  in_progress_to_complete:\n    compliance: warn\n"
+            ),
             f"docs/ai/plans/{PLAN}-faster-foo.md": PLAN_TEXT,
             "docs/ai/state/workflow_state.md": "# Workflow State\n",
         },
