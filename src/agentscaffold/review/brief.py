@@ -279,6 +279,16 @@ def _brief_from_rows(
     }
 
 
+def _precedent_label(item: dict[str, Any]) -> str:
+    """How a reader names a precedent item; finding ids stay whole for the resolve tools."""
+    item_id = str(item.get("id", ""))
+    if item.get("kind") == "learning":
+        return item_id.rsplit("learning::", 1)[-1]
+    if item.get("kind") == "adr" and "adr::" in item_id:
+        return "ADR " + item_id.rsplit("adr::", 1)[-1].split("::", 1)[0]
+    return item_id
+
+
 def format_brief_markdown(brief: dict[str, Any]) -> str:
     """Render a brief dict as human-readable markdown."""
     if "error" in brief:
@@ -386,7 +396,7 @@ def format_brief_markdown(brief: dict[str, Any]) -> str:
         for item in precedent["items"]:
             plan_label = f"Plan {item['plan']}" if item.get("plan") is not None else "no plan"
             lines.append(
-                f"- {item['id']} ({plan_label}, {item['match']} {item['path']}"
+                f"- {_precedent_label(item)} ({plan_label}, {item['match']} {item['path']}"
                 f"{', project ' + item['project'] if item.get('project') else ''}): {item['text']}"
             )
         lines.append("")

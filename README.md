@@ -52,6 +52,8 @@ A DuckDB + DuckPGQ-backed graph that indexes your codebase once and serves it to
 - **Incremental indexing**: SHA-256 content hashing means only changed files are re-processed
 - **Contract drift detection**: Automatically surfaces methods declared in contracts but missing from code
 - **Review finding write-back**: Findings recorded during plan reviews are persisted as graph nodes and surfaced in every future review of the same plan
+- **Precedent**: Reviews and impact queries bring up earlier findings, learnings, plans and ADRs about the same files, so a lesson recorded once is raised the next time anyone touches that code
+- **Monorepo extra paths**: A project in a monorepo can own files outside its folder (`graph.extra_paths`), indexed as `@repo/<path>` and included in impact, search and reviews
 
 The graph is exposed via **MCP tools** that any compatible agent can call, or through the CLI for direct use.
 
@@ -64,7 +66,9 @@ A structured development workflow that teaches your AI agent to follow a plan li
 - **Interface contracts**: Formal declarations of module boundaries, versioned and tracked
 - **Retrospectives**: Post-execution learning that feeds back into the process
 - **Session tracking**: State files that persist context across chat sessions
-- **Lifecycle hooks**: Pre-edit validation and post-edit incremental re-indexing enforced at the platform level
+- **Lifecycle hooks**: Pre-edit validation, read-only path protection and post-edit incremental re-indexing enforced at the platform level; `scaffold agents install --scope user` delivers them from your home directory to repositories you cannot add files to
+- **Approval gates over MCP**: The server hands agents the working procedure and the governance manual sections for each step, and `scaffold_prepare_implementation` will not start a plan that needs approval until one is recorded
+- **System inventory** (opt-in): `docs/ai/system_inventory.yaml` lists what the project runs (scheduled jobs, services, workflows, scripts) with an owner plan and a lifecycle. Collectors generate it, checks keep it honest, reviews challenge plans that touch paused or deprecated components, and orientation reports lifecycle debt
 
 **Think of it as a virtual sprint team.** Most AI agents work alone. AgentScaffold puts your agent on a team. Before it writes a single line of code, the plan faces a devil's advocate who asks "what if this breaks?", an expansion reviewer who asks "what did you miss?", and a domain expert — a quant architect, a UX designer, a security engineer — who pressure-tests the approach through the lens of your specific domain.
 
@@ -74,29 +78,29 @@ After implementation, a post-implementation review verifies what was built again
 
 These numbers are downstream of governance and memory — not the lead story, but real.
 
-**From the eval harness (125 scenarios, revalidated 2026-09-05):**
+**From the eval harness (125 scenarios, revalidated 2026-11-05 for 0.13.0):**
 
 | Task | Without AgentScaffold | With AgentScaffold | Savings |
 |------|----------------------|-------------------|---------|
-| Understand a module and its dependents | 12 reads + 2 greps | 1 tool call | 84% fewer tokens, 93% fewer calls |
-| Codebase orientation | 38 file reads | 2 tool calls | 64% fewer tokens, 95% fewer calls |
-| Impact analysis (blast radius) | 12 file reads | 1 tool call | 43% fewer tokens, 92% fewer calls |
-| Find all code matching a concept | 8 file reads | 1 tool call | 29% fewer tokens, 88% fewer calls |
-| Full plan review with evidence | 10 file reads | 1 tool call | 5% fewer tokens, 90% fewer calls |
-| Review with prior finding history | 3 re-reviews | 1 tool call | 58% fewer tokens, 67% fewer calls |
-| Empty search diagnosis (call compression) | search + why_empty + grep | 1 fused search | 19% fewer tokens, 67% fewer calls |
+| Understand a module and its dependents | 12 reads + 2 greps | 1 tool call | 67% fewer tokens, 93% fewer calls |
+| Codebase orientation | 38 file reads | 2 tool calls | 54% fewer tokens, 95% fewer calls |
+| Impact analysis (blast radius) | 12 file reads | 1 tool call | 21% fewer tokens, 92% fewer calls |
+| Find all code matching a concept | 8 file reads | 1 tool call | 27% fewer tokens, 88% fewer calls |
+| Full plan review with evidence | 10 file reads | 1 tool call | 19% fewer tokens, 90% fewer calls |
+| Review with prior finding history | 3 re-reviews | 1 tool call | 67% fewer tokens, 67% fewer calls |
+| Empty search diagnosis (call compression) | search + why_empty + grep | 1 fused search | 15% fewer tokens, 67% fewer calls |
 
-**Capability aggregate (raw): ~84% average call reduction, ~43% average token reduction.**
+**Capability aggregate (raw): ~84% average call reduction, ~39% average token reduction.**
 
-Full plan review remains the densest composite: one call replaces ten file reads and stays near token-neutral (5%) because summary trimming prioritizes high-severity signals. The win there is still calls and completeness. Empty-search call compression collapses a three-hop diagnosis into one response with inline `why_empty` + `grep_fallback`. Review with prior finding history returns a known issue instead of paying ~2,000 tokens to re-derive it each session.
+Token savings are lower than in the 2026-09-05 run because responses now carry more: every response has a guidance stamp in `meta`, and impact analysis adds earlier findings, learnings and ADRs about the file (`governance_impact`; pass `include_precedent=false` to leave them out). Those are things the file-reading baseline would not find at all. Full plan review is the densest composite: one call replaces ten file reads at 19% fewer tokens, because summary trimming prioritizes high-severity signals; the win there is calls and completeness. Empty-search call compression collapses a three-hop diagnosis into one response with inline `why_empty` + `grep_fallback`. Review with prior finding history returns a known issue instead of paying ~2,000 tokens to re-derive it each session.
 
 We report three views so the headline is not the optimistic one:
 
 | View | Token Reduction | Call Reduction |
 |------|-----------------|----------------|
-| Raw capability (tool routes correctly) | ~43% | ~84% |
-| Behavioral (replay-adjusted) | ~35% | ~68% |
-| Quality-adjusted behavioral | ~31% | ~61% |
+| Raw capability (tool routes correctly) | ~39% | ~84% |
+| Behavioral (replay-adjusted) | ~31% | ~68% |
+| Quality-adjusted behavioral | ~28% | ~61% |
 
 Behavioral and quality-adjusted values come from replay traces (observed tool-call sequences + quality parity checks), not phrase-level intent matching. They are lower because agents do not always route to the tool — the graph does not help if the agent reads files directly instead. Intent-map adoption for exact/paraphrase/negative suites is 100% in the latest harness run; replay-observed tool-first adherence remains the stricter behavioral proxy.
 
@@ -469,6 +473,10 @@ that misreading from costing a round trip, or worse, going unnoticed.
 scaffold plan create my-feature            # Create a plan from template
 scaffold plan lint --plan 001              # Validate plan structure
 scaffold plan status                       # Dashboard of all plans
+scaffold plan normalize-status             # Propose a Status line for plans without one
+scaffold inventory init --dry-run          # Preview the system inventory from collectors
+scaffold inventory check                   # Inventory checks INV-001 to INV-010
+scaffold review precedent src/api/auth.py  # Earlier findings and ADRs about a file
 scaffold validate                          # Run all enforcement checks
 scaffold retro                             # Find plans missing retrospectives
 scaffold agents generate-all   # Refresh routing / platform rule files
@@ -498,6 +506,7 @@ scaffold session start --plan 42           # Start a tracked coding session
 scaffold project register ~/dev/my-workspace  # Record a root the MCP server may resolve
 scaffold project list                         # Show registered roots
 scaffold mcp install                          # Install the MCP server entry into your client
+scaffold agents install --scope user          # Guidance and edit hooks from your home directory
 scaffold doctor                               # Diagnose the installation (read-only)
 scaffold doctor --strict                      # Same, but exits non-zero — the CI gate
 scaffold doctor --tools                       # Call every MCP tool and report which respond
