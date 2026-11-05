@@ -16,6 +16,7 @@ Artifacts follow AgentScaffold template conventions:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -215,7 +216,8 @@ _PLAN_METADATA_RE = re.compile(
 )
 _PLAN_NUMBER_RE = re.compile(r"^(?:plan[_\-]?)?0*(\d+)", re.IGNORECASE)
 _FILE_IMPACT_ROW_RE = re.compile(
-    r"^\|\s*(?!File\s|---)[`]?(?P<path>[^|`]+?)[`]?\s*\|" r"\s*(?P<change_type>[^|]+?)\s*\|",
+    r"^\|\s*(?!File\s|---)[`]?(?P<path>[^|`]+?)[`]?(?:\s*\([^|)]*\))?\s*\|"
+    r"\s*(?P<change_type>[^|]+?)\s*\|",
     re.MULTILINE,
 )
 _HEADER_VALUES = {"File", "Change Type", "Description", "---"}
@@ -615,7 +617,9 @@ def _parse_review_findings(text: str, plan_number: int, review_type: str) -> lis
 _PLAN_APPENDIX_REVIEW_TYPE = "plan_appendix"
 
 
-def _ingest_plan_findings(store: GraphBackend, plan_number: int, text: str) -> int:
+def _ingest_plan_findings(
+    store: GraphBackend, plan_number: int, text: str, root: Path | None = None
+) -> int:
     """Create ReviewFinding nodes from [CATEGORY] markers in a plan's text.
 
     Returns the number of findings parsed. Nodes use deterministic ids and
@@ -623,6 +627,7 @@ def _ingest_plan_findings(store: GraphBackend, plan_number: int, text: str) -> i
     across re-indexing and never clobbers a finding already marked resolved.
     """
     from agentscaffold.graph.findings import _finding_id, is_malformed_finding
+    from agentscaffold.review.path_mentions import collect_paths
 
     raw = [
         f
@@ -644,6 +649,7 @@ def _ingest_plan_findings(store: GraphBackend, plan_number: int, text: str) -> i
                 "finding": f["finding"],
                 "resolution": "",
                 "status": "open",
+                "paths": json.dumps(collect_paths(None, [f["finding"]], project_root=root)),
             },
         )
     return len(raw)
@@ -1127,6 +1133,8 @@ def process_governance(
     plan_dependencies: list[tuple[str, list[int]]] = []
     step_dependencies: list[tuple[str, list[dict[str, Any]]]] = []
     if plans_dir.is_dir():
+        from agentscaffold.review.path_mentions import collect_paths  # noqa: PLC0415
+
         seen_plan_ids: set[str] = set()
         for plan_file in sorted(plans_dir.glob("*.md")):
             data = _parse_plan(plan_file)
@@ -1151,6 +1159,11 @@ def process_governance(
                     "filePath": data["filepath"],
                     "createdDate": data["created"],
                     "lastUpdated": data["last_updated"],
+                    "impactPaths": json.dumps(
+                        collect_paths(
+                            None, [i["path"] for i in data["file_impacts"]], project_root=root
+                        )
+                    ),
                 },
             )
             plan_count += 1
@@ -1201,7 +1214,7 @@ def process_governance(
             # ids are deterministic and create_node is ON CONFLICT DO NOTHING, so
             # re-indexing re-affirms findings and preserves any 'resolved' status
             # set later via the runtime resolve_finding path.
-            finding_count += _ingest_plan_findings(store, data["number"], data["text"])
+            finding_count += _ingest_plan_findings(store, data["number"], data["text"], root)
 
     # --- Plan dependency edges (second pass, all plan nodes exist) ---
     dep_edge_count = 0
@@ -1321,8 +1334,11 @@ def process_governance(
     if learnings_file.is_file():
         parsed_learnings = _parse_learnings(learnings_file)
         _maybe_warn_whole_file(store, "learnings", learnings_file, len(parsed_learnings))
+        from agentscaffold.review.path_mentions import collect_paths  # noqa: PLC0415
+
         for lr in parsed_learnings:
             lr_id = f"learning::{lr['learning_id']}"
+            lr_paths = collect_paths(None, [lr["description"], lr["target"]], project_root=root)
             store.create_node(
                 "Learning",
                 {
@@ -1334,6 +1350,7 @@ def process_governance(
                     "status": lr["status"],
                     "evidenceKind": "unspecified",
                     "evidence": "",
+                    "paths": json.dumps(lr_paths),
                 },
             )
             learning_count += 1

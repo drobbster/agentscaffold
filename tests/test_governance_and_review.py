@@ -166,6 +166,23 @@ class TestGovernanceParsing:
         assert impacts[0]["path"] == "src/foo.py"
         assert impacts[1]["change_type"] == "add"
 
+    def test_extract_file_impact_drops_a_repo_annotation(self):
+        from agentscaffold.graph.governance import _extract_file_impact
+
+        text = """## File Impact Map
+
+| File | Change Type | Description |
+|------|-------------|-------------|
+| `docs/ai/contracts/x.md` (governance repo) | MODIFY | Minor bump |
+| src/y.py (code repo) | ADD | New |
+| `src/z.py` | MODIFY | Plain |
+"""
+        assert [(i["path"], i["change_type"]) for i in _extract_file_impact(text)] == [
+            ("docs/ai/contracts/x.md", "MODIFY"),
+            ("src/y.py", "ADD"),
+            ("src/z.py", "MODIFY"),
+        ]
+
     def test_parse_learnings(self):
         from agentscaffold.graph.governance import _parse_learnings
 

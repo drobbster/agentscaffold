@@ -1839,18 +1839,73 @@ def review_gaps(
 
 @review_app.command("verify")
 def review_verify_impl(
-    plan: int = typer.Argument(..., help="Plan number to verify implementation for."),
+    plan: int | None = typer.Argument(None, help="Plan number to verify implementation for."),
+    plan_option: int | None = typer.Option(None, "--plan", help="Plan number (same as PLAN)."),
+    base_ref: str | None = typer.Option(
+        None, "--base-ref", help="Git ref the rule checks diff from (default: detected)."
+    ),
 ) -> None:
-    """Verify post-implementation compliance against a plan."""
+    """Verify post-implementation compliance against a plan, with the rule checks."""
+    from agentscaffold.config import find_config
     from agentscaffold.review.verify import (
         format_verification_markdown,
         verify_implementation,
     )
 
-    _config, store = _require_graph()
-    items = verify_implementation(store, plan)
-    store.close()
+    number = plan_option if plan_option is not None else plan
+    if number is None:
+        console.print("[red]Give a plan number: scaffold review verify --plan N[/red]")
+        raise typer.Exit(code=2)
+    config, store = _require_graph()
+    found = find_config()
+    root = found.parent if found is not None else Path.cwd()
+    try:
+        items = verify_implementation(store, number, root=root, config=config, base_ref=base_ref)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+    finally:
+        store.close()
     console.print(format_verification_markdown(items))
+
+
+@review_app.command("precedent")
+def review_precedent(
+    paths: list[str] = typer.Argument(..., help="Project-relative file paths."),
+    plan: int | None = typer.Option(None, "--plan", help="Exclude this plan's own items."),
+    limit: int | None = typer.Option(None, "--limit", help="Most items to show (default: all)."),
+    as_json: bool = typer.Option(False, "--json", help="Print JSON for CI."),
+) -> None:
+    """Earlier findings, learnings and ADRs about these files (Plan 281)."""
+    import json as _json
+
+    from agentscaffold.config import find_config
+    from agentscaffold.review.precedent import precedent_for_paths
+
+    config, store = _require_graph()
+    found = find_config()
+    root = found.parent if found is not None else Path.cwd()
+    try:
+        result = precedent_for_paths(
+            store, paths, root=root, config=config, plan_number=plan, budget=limit
+        )
+    finally:
+        store.close()
+    if result is None:
+        console.print("Precedent is disabled (precedent.enabled: false).")
+        return
+    if as_json:
+        print(_json.dumps(result.to_dict(), indent=2))
+        return
+    console.print(f"{len(result.items)} of {result.total} precedent items")
+    for item in result.items:
+        plan_label = f"Plan {item.plan_number}" if item.plan_number is not None else "no plan"
+        console.print(
+            f"- {item.id} ({plan_label}, {item.match} {item.path}, {item.project}): {item.text}",
+            markup=False,
+        )
+    for gone in result.sources_unavailable:
+        console.print(f"- source {gone['project']} unavailable: {gone['reason']}", markup=False)
 
 
 @review_app.command("retro")

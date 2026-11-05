@@ -781,7 +781,7 @@ def _run_tool(
         return _tool_context(store, arguments, meta, root)
 
     elif name == "scaffold_impact":
-        return _tool_impact(store, arguments, meta, root)
+        return _tool_impact(store, arguments, meta, root, config)
 
     elif name == "scaffold_search":
         if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
@@ -819,7 +819,7 @@ def _run_tool(
         return _tool_prepare_rewrite(store, arguments, meta, config)
 
     elif name == "scaffold_prepare_retro":
-        return _tool_prepare_retro(store, arguments, meta)
+        return _tool_prepare_retro(store, arguments, meta, root, config)
 
     elif name == "scaffold_orient":
         return _tool_orient(store, meta, root, config, arguments, session_project=session_project)
@@ -852,13 +852,13 @@ def _run_tool(
         return _tool_decision_context(store, arguments, meta)
 
     elif name == "scaffold_record_finding":
-        return _tool_record_finding(store, arguments, meta)
+        return _tool_record_finding(store, arguments, meta, root)
 
     elif name == "scaffold_resolve_finding":
         return _tool_resolve_finding(store, arguments, meta)
 
     elif name == "scaffold_record_findings_batch":
-        return _tool_record_findings_batch(store, arguments, meta)
+        return _tool_record_findings_batch(store, arguments, meta, root)
 
     elif name == "scaffold_record_backlog_item":
         return _tool_record_backlog_item(store, arguments, meta)
@@ -870,7 +870,7 @@ def _run_tool(
         return _tool_begin_plan(store, arguments, meta, root, config)
 
     elif name == "scaffold_complete_plan":
-        return _tool_complete_plan(store, arguments, meta)
+        return _tool_complete_plan(store, arguments, meta, root, config)
 
     elif name == "scaffold_session_start":
         return _tool_session_start(store, arguments, meta, session_project, config)
@@ -1424,6 +1424,7 @@ def _tool_impact(
     arguments: dict[str, Any],
     meta: dict[str, Any],
     root: Path | None = None,
+    config: Any = None,
 ) -> dict[str, Any]:
     """Handle scaffold_impact tool call."""
     from agentscaffold.graph.query_compat import ql
@@ -1546,7 +1547,58 @@ def _tool_impact(
             kind="impact",
             target=target,
         )
+    if root is not None and arguments.get("include_precedent", True) is not False:
+        governance = _governance_impact(store, target, root, config)
+        if governance is not None:
+            from agentscaffold.mcp.render import format_governance_impact_markdown
+
+            payload["governance_impact"] = governance
+            payload["markdown"] += format_governance_impact_markdown(governance)
     return payload
+
+
+def _governance_impact(store: Any, target: str, root: Path, config: Any) -> dict[str, Any] | None:
+    """Every finding, learning, ADR and contract about *target* (Plan 281).
+
+    Facts about the file only: no semantic matches and nothing that merely
+    shares an earlier plan with it. Uncapped, like the dependency results.
+    """
+    from agentscaffold.review.precedent import STRUCTURAL_MATCHES, precedent_for_paths
+    from agentscaffold.review.queries import get_contracts_for_file
+
+    try:
+        result = precedent_for_paths(
+            store, [target], root=root, config=config, budget=None, match_kinds=STRUCTURAL_MATCHES
+        )
+    except Exception as exc:  # noqa: BLE001 - governance facts must not break impact
+        logger.debug("governance_impact skipped: %s", exc)
+        return None
+    if result is None:
+        return None
+    by_kind: dict[str, list[dict[str, Any]]] = {"finding": [], "learning": [], "adr": []}
+    for item in result.items:
+        by_kind[item.kind].append(item.to_dict())
+    contracts = [
+        {
+            "name": c.get("c.name", ""),
+            "version": c.get("c.version", ""),
+            "path": c.get("c.filePath"),
+        }
+        for c in get_contracts_for_file(store, target)
+    ]
+    return {
+        "findings": by_kind["finding"],
+        "learnings": by_kind["learning"],
+        "adrs": by_kind["adr"],
+        "contracts": contracts,
+        "counts": {
+            "findings": len(by_kind["finding"]),
+            "learnings": len(by_kind["learning"]),
+            "adrs": len(by_kind["adr"]),
+            "contracts": len(contracts),
+        },
+        "sources_unavailable": result.sources_unavailable,
+    }
 
 
 def _tool_search(
@@ -1713,10 +1765,13 @@ def _tool_review_context(
             verify_implementation,
         )
 
-        items = verify_implementation(store, plan_number, root=root, config=config)
-        result["verification"] = [
-            {"check": i.check, "status": i.status, "detail": i.detail} for i in items
-        ]
+        try:
+            items = verify_implementation(
+                store, plan_number, root=root, config=config, base_ref=arguments.get("base_ref")
+            )
+        except ValueError as exc:
+            return {"error": str(exc), "meta": meta}
+        result["verification"] = _verification_rows(items)
         result["verification_markdown"] = format_verification_markdown(items)
 
     if review_type in ("retro", "all"):
@@ -2059,17 +2114,17 @@ def _tool_prepare_implementation(
     if pn is None:
         return {"error": "plan_number is required.", "meta": meta}
 
-    # --- Strict gate: check Plan.reviewedAt when gate_strict is enabled ---
+    # --- Strict gate: the pre-implementation review must have stamped the plan ---
     try:
-        cfg = _load_config()
+        cfg = config if config is not None else _load_config()
         if cfg.freshness.gate_strict and bool(arguments.get("gate_transition")):
             reviewed_at = get_plan_reviewed_at(store, pn)
             if reviewed_at is None:
                 return {
                     "error": (
                         f"scaffold_begin_plan must be called before implementation of Plan {pn}. "
-                        "The pre-review chain has not been completed (Plan.reviewedAt is NULL). "
-                        "Run 'begin plan {pn}' first."
+                        "The pre-review chain has not been completed (no review stamp). "
+                        f"Run 'begin plan {pn}' first."
                     ),
                     "gate_deferred": True,
                     "meta": meta,
@@ -2118,7 +2173,24 @@ def _tool_prepare_implementation(
     }
     if approval is not None:
         payload["approval"] = approval
+    _attach_compact_precedent(payload, brief, config)
     return apply_detail(payload, arguments.get("detail"))
+
+
+def _attach_compact_precedent(payload: dict[str, Any], brief: dict[str, Any], config: Any) -> None:
+    """Short precedent reminder while coding (Plan 281), taken from the brief."""
+    section = brief.get("precedent") if isinstance(brief, dict) else None
+    if not isinstance(section, dict):
+        return
+    from agentscaffold.config import PrecedentConfig  # noqa: PLC0415
+
+    limit = getattr(config, "precedent", None) or PrecedentConfig()
+    keys = ("id", "kind", "match", "plan", "project", "text")
+    payload["precedent"] = [
+        {key: item.get(key) for key in keys} for item in section.get("items", [])
+    ][: limit.max_compact]
+    if section.get("sources_unavailable"):
+        payload["precedent_sources_unavailable"] = section["sources_unavailable"]
 
 
 def _approval_check(
@@ -2377,8 +2449,22 @@ def _tool_prepare_rewrite(
     return staleness
 
 
+def _verification_rows(items: list[Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        row: dict[str, Any] = {"check": item.check, "status": item.status, "detail": item.detail}
+        if item.evidence:
+            row["evidence"] = item.evidence
+        rows.append(row)
+    return rows
+
+
 def _tool_prepare_retro(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    root: Path | None = None,
+    config: Any = None,
 ) -> dict[str, Any]:
     """Composite: retrospective context for a completed plan."""
     from agentscaffold.review.feedback import format_retro_markdown, generate_retro_enrichment
@@ -2393,14 +2479,19 @@ def _tool_prepare_retro(
     if not plan:
         return {"error": f"Plan {pn} not found.", "meta": meta}
 
-    items = verify_implementation(store, pn)
+    try:
+        items = verify_implementation(
+            store, pn, root=root, config=config, base_ref=arguments.get("base_ref")
+        )
+    except ValueError as exc:
+        return {"error": str(exc), "meta": meta}
     insights = generate_retro_enrichment(store, pn)
     studies = get_studies_for_plan(store, pn)
 
     return {
         "plan_number": pn,
         "plan_title": plan.get("p.title"),
-        "verification": [{"check": i.check, "status": i.status, "detail": i.detail} for i in items],
+        "verification": _verification_rows(items),
         "verification_markdown": format_verification_markdown(items),
         "retro_insights": [{"category": i.category, "text": i.text} for i in insights],
         "retro_markdown": format_retro_markdown(insights),
@@ -2860,7 +2951,7 @@ def _dry_run_write(meta: dict[str, Any], **preview: Any) -> dict[str, Any]:
 
 
 def _tool_record_finding(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any], root: Path | None = None
 ) -> dict[str, Any]:
     """Record a review finding in the knowledge graph."""
     from agentscaffold.graph.findings import record_finding  # noqa: PLC0415
@@ -2891,6 +2982,7 @@ def _tool_record_finding(
         evidence_kind=arguments.get("evidence_kind"),
         evidence=arguments.get("evidence"),
         project=_current_project_or_none(),
+        project_root=root,
     )
     result["meta"] = meta
     return result
@@ -2899,7 +2991,7 @@ def _tool_record_finding(
 def _tool_resolve_finding(
     store: Any, arguments: dict[str, Any], meta: dict[str, Any]
 ) -> dict[str, Any]:
-    """Mark a ReviewFinding as resolved."""
+    """Dispose of a ReviewFinding: resolved, deferred or not_applicable."""
     from agentscaffold.graph.findings import resolve_finding  # noqa: PLC0415
 
     finding_id = arguments.get("finding_id", "")
@@ -2917,7 +3009,11 @@ def _tool_resolve_finding(
         resolution=resolution,
         resolved_by_plan=arguments.get("resolved_by_plan"),
         project=_current_project_or_none(),
+        disposition=arguments.get("disposition") or "resolved",
+        backlog_id=arguments.get("backlog_id") or None,
     )
+    if result.get("status") == "refused":
+        return {"error": result["error"], "id": result.get("id"), "meta": meta}
     return _wrap_resolve_result(
         result,
         meta,
@@ -2974,7 +3070,7 @@ def _wrap_resolve_result(
 
 
 def _tool_record_findings_batch(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any], root: Path | None = None
 ) -> dict[str, Any]:
     """Record multiple ReviewFindings in one transaction."""
     from agentscaffold.graph.findings import record_findings_batch  # noqa: PLC0415
@@ -2998,6 +3094,7 @@ def _tool_record_findings_batch(
         review_type=review_type,
         findings=findings,
         project=_current_project_or_none(),
+        project_root=root,
     )
     result["meta"] = meta
     return result
@@ -3301,10 +3398,13 @@ def _tool_begin_plan(
             review_type="pre_review",
             findings=findings_to_write,
             project=_current_project_or_none(),
+            project_root=root,
         )
 
-    # --- Stamp Plan.reviewedAt ---
-    reviewed_at = None if dry_run else stamp_plan_reviewed(store, pn)
+    # --- Stamp the review, with each root's HEAD for the change range ---
+    reviewed_at = (
+        None if dry_run else stamp_plan_reviewed(store, pn, commits=_review_commits(root, config))
+    )
 
     # --- Build proceed_prompt ---
     n_findings = findings_written["count"]
@@ -3354,6 +3454,25 @@ def _tool_begin_plan(
     return payload
 
 
+def _review_commits(root: Path | None, config: Any) -> dict[str, str] | None:
+    """HEAD per project root and implementation root, keyed by project name (Plan 281)."""
+    from agentscaffold.config import ScaffoldConfig
+    from agentscaffold.review.changes import head_commit
+    from agentscaffold.review.file_impact_resolve import current_project_name
+    from agentscaffold.workspace_registry import find_registered_project_by_name
+
+    if root is None:
+        return None
+    cfg = config if isinstance(config, ScaffoldConfig) else ScaffoldConfig()
+    roots = [(current_project_name(root, cfg), Path(root))]
+    if cfg.implementation_project:
+        hit = find_registered_project_by_name(cfg.implementation_project)
+        if hit is not None:
+            roots.append((cfg.implementation_project, Path(hit.project_root)))
+    commits = {name: head for name, path in roots if (head := head_commit(path))}
+    return commits or None
+
+
 def _select_findings_to_persist(
     candidates: list[dict[str, Any]],
     existing_open: list[dict[str, Any]],
@@ -3392,12 +3511,18 @@ def _select_findings_to_persist(
 
 
 def _tool_complete_plan(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    root: Path | None = None,
+    config: Any = None,
 ) -> dict[str, Any]:
     """Composite: full post-implementation chain.
 
     1. Graph-health pre-check
     2. Prepare retro (verification + enrichment)
+    2a. With ``gates.in_progress_to_complete.compliance: block``, stop on a
+        failing rule row before anything is written (Plan 281)
     3. Auto-write retro insights as ReviewFindings (review_type='post_retro')
     4. Write backlog items if provided
     5. Return structured output with structured_learnings + completion_checklist
@@ -3416,12 +3541,33 @@ def _tool_complete_plan(
         graph_warning = "Graph appears empty (0 files, 0 plans). Retro output may be incomplete."
 
     # --- Run prepare_retro internally ---
-    retro_args = {"plan_number": pn}
-    retro_result = _tool_prepare_retro(store, retro_args, meta)
+    retro_args = {"plan_number": pn, "base_ref": arguments.get("base_ref")}
+    retro_result = _tool_prepare_retro(store, retro_args, meta, root, config)
     if "error" in retro_result:
         return {
             "error": f"prepare_retro failed: {retro_result['error']}",
             "graph_warning": graph_warning,
+            "meta": meta,
+        }
+    blocked = _compliance_gate(retro_result, config)
+    if blocked:
+        return {
+            "plan_number": pn,
+            "gate_blocked": True,
+            "failing": blocked,
+            "message": (
+                f"Plan {pn} cannot complete: {len(blocked)} rule check(s) fail and "
+                "gates.in_progress_to_complete.compliance is block. Fix them, or record "
+                "the approval, then run the post-implementation review again. Nothing "
+                "was written."
+            ),
+            "graph_warning": graph_warning,
+            "retro": {
+                "verification": retro_result.get("verification"),
+                "verification_markdown": retro_result.get("verification_markdown"),
+            },
+            "findings_written": {"ids": [], "count": 0, "would_write_count": 0},
+            "backlog_items_written": {"ids": [], "count": 0},
             "meta": meta,
         }
 
@@ -3447,6 +3593,7 @@ def _tool_complete_plan(
             review_type="post_retro",
             findings=retro_findings,
             project=_current_project_or_none(),
+            project_root=root,
         )
 
     # --- Write backlog items if provided ---
@@ -3507,6 +3654,20 @@ def _tool_complete_plan(
         "meta": meta,
     }
     return payload
+
+
+def _compliance_gate(retro_result: dict[str, Any], config: Any) -> list[dict[str, Any]]:
+    """Failing rule rows when the completion gate is ``block``; else empty (Plan 281)."""
+    from agentscaffold.review.verify import COMPLIANCE_CHECKS
+
+    gates = getattr(config, "gates", None)
+    if gates is None or gates.in_progress_to_complete.compliance != "block":
+        return []
+    return [
+        row
+        for row in retro_result.get("verification") or []
+        if row.get("check") in COMPLIANCE_CHECKS and row.get("status") == "fail"
+    ]
 
 
 def _session_idle_hours(config: Any) -> float:

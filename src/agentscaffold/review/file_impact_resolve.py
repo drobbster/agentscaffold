@@ -154,6 +154,11 @@ def _project_root_from_plan_file(plan_path: Path) -> Path | None:
     return None
 
 
+def plan_impact_paths(store: Any, plan_number: int, root: Path) -> list[str]:
+    """Paths in the plan's File Impact Map, as written."""
+    return [p["path"] for p in _planned_paths(store, plan_number, root) if p.get("path")]
+
+
 def _planned_paths(store: Any, plan_number: int, root: Path) -> list[dict[str, str]]:
     from agentscaffold.graph.governance import _extract_file_impact
 
@@ -284,6 +289,28 @@ def _require_registered_project(name: str) -> Any:
             f"implementation_project {name!r} is not a registered project name"
         )
     return hit
+
+
+def current_project_name(root: Path, config: ScaffoldConfig) -> str:
+    """Registered name of the project at *root*, else its configured or folder name."""
+    return _current_project_name(root, config)
+
+
+def open_registered_project_graph(name: str) -> tuple[Any | None, str | None]:
+    """Open a registered project's graph read-only; return ``(store, reason)``.
+
+    *reason* is ``not_registered`` or ``graph_unavailable`` when *store* is None.
+    Only registered names resolve, so no filesystem path can be read this way.
+    """
+    from agentscaffold.workspace_registry import find_registered_project_by_name
+
+    hit = find_registered_project_by_name(name)
+    if hit is None:
+        return None, "not_registered"
+    store = _open_project_graph(Path(hit.project_root))
+    if store is None:
+        return None, "graph_unavailable"
+    return store, None
 
 
 def _open_project_graph(project_root: Path) -> Any | None:

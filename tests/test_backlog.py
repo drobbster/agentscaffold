@@ -24,7 +24,9 @@ def store(tmp_path):
 def store_with_plan(store):
     """Store with a Plan node pre-inserted so BACKLOG_ITEM_OF edges can form."""
     store.execute(
-        "INSERT INTO Plan VALUES ('plan::151', 151, 'Graph Write Completeness',"
+        "INSERT INTO Plan (id, number, title, status, planType, filePath,"
+        " createdDate, lastUpdated, reviewedAt, project)"
+        " VALUES ('plan::151', 151, 'Graph Write Completeness',"
         " 'in_progress', 'feature', '', '2026-03-01', '2026-03-01', NULL, '')"
     )
     return store

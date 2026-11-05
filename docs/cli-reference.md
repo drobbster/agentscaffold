@@ -364,13 +364,16 @@ equivalent your agent calls directly.
 | `scaffold review rewrite` | Staleness check plus rewrite context |
 | `scaffold review compare` | Compare two plans for overlap and conflicts |
 | `scaffold review retro` | Retrospective context |
-| `scaffold review verify` | Post-implementation compliance against a plan |
+| `scaffold review verify` | Post-implementation verification against a plan, with the rule checks (`--plan N` or `N`; `--base-ref REF` to diff from a given ref) |
+| `scaffold review precedent` | Earlier findings, learnings and ADRs about the given files (`--plan N` excludes that plan's own items; `--json`) |
 | `scaffold review history` | Review findings and plan history for a file or module |
 
 ```bash
 scaffold review prepare 42
 scaffold review compare 42 43
 scaffold review history src/api/auth.py
+scaffold review verify --plan 42 --base-ref main
+scaffold review precedent src/api/auth.py --plan 42
 ```
 
 ---

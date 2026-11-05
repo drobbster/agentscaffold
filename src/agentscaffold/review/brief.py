@@ -7,6 +7,7 @@ layer analysis, and contract status for every file in the plan's impact map.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +36,9 @@ if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
 
 
+logger = logging.getLogger(__name__)
+
+
 def generate_brief(
     store: GraphBackend,
     plan_number: int,
@@ -52,12 +56,46 @@ def generate_brief(
 
     try:
         with resolved_impacts(store, plan_number, root=root, config=config) as impacted_files:
-            return _brief_from_rows(store, plan, plan_number, impacted_files)
+            brief = _brief_from_rows(store, plan, plan_number, impacted_files)
+            try:
+                precedent = _brief_precedent(store, plan_number, impacted_files, root, config)
+            except Exception as exc:  # noqa: BLE001 - precedent must not break the brief
+                logger.warning("precedent skipped for plan %s: %s", plan_number, exc)
+                precedent = None
     except ImplementationProjectError as exc:
         return {
             "error": str(exc),
             "error_code": "implementation_project_unregistered",
         }
+    if precedent is not None:
+        brief["precedent"] = precedent
+    return brief
+
+
+def _brief_precedent(
+    store: GraphBackend,
+    plan_number: int,
+    impacted_files: list[dict[str, Any]],
+    root: Path | None,
+    config: Any,
+) -> dict[str, Any] | None:
+    """Plan-level precedent for the expansion review (Plan 281); None when disabled."""
+    from agentscaffold.config import find_config, load_config  # noqa: PLC0415
+    from agentscaffold.review.file_impact_resolve import _resolve_base  # noqa: PLC0415
+    from agentscaffold.review.precedent import precedent_for_paths  # noqa: PLC0415
+
+    base = _resolve_base(store, plan_number, root)
+    cfg = config if config is not None else load_config(find_config(start=base))
+    paths = [str(f.get("f.path")) for f in impacted_files if f.get("f.path")]
+    result = precedent_for_paths(
+        store,
+        paths,
+        root=base,
+        config=cfg,
+        plan_number=plan_number,
+        budget=cfg.precedent.max_brief,
+    )
+    return None if result is None else result.to_dict()
 
 
 def _brief_from_rows(
@@ -326,5 +364,24 @@ def format_brief_markdown(brief: dict[str, Any]) -> str:
         for lr in brief["learnings"]:
             lines.append(f"- {lr['id']}: {lr['description']} [{lr['status']}]")
         lines.append("")
+
+    precedent = brief.get("precedent") or {}
+    if precedent.get("items"):
+        n_shown, n_total = len(precedent["items"]), precedent.get("total", 0)
+        lines.append("## Precedent")
+        lines.append("")
+        lines.append(
+            f"Earlier findings, learnings and ADRs about these files ({n_shown} of {n_total}):"
+        )
+        lines.append("")
+        for item in precedent["items"]:
+            plan_label = f"Plan {item['plan']}" if item.get("plan") is not None else "no plan"
+            lines.append(
+                f"- {item['id']} ({plan_label}, {item['match']} {item['path']}"
+                f"{', project ' + item['project'] if item.get('project') else ''}): {item['text']}"
+            )
+        lines.append("")
+    for gone in precedent.get("sources_unavailable") or []:
+        lines.append(f"- Precedent source {gone['project']} unavailable: {gone['reason']}")
 
     return "\n".join(lines)

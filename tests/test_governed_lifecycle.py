@@ -28,7 +28,9 @@ def store(tmp_path):
 def store_with_plan(store):
     """Store with a Plan node pre-inserted."""
     store.execute(
-        "INSERT INTO Plan VALUES ('plan::152', 152, 'Governed Plan Lifecycle',"
+        "INSERT INTO Plan (id, number, title, status, planType, filePath,"
+        " createdDate, lastUpdated, reviewedAt, project)"
+        " VALUES ('plan::152', 152, 'Governed Plan Lifecycle',"
         " 'in_progress', 'feature', '', '2026-03-17', '2026-03-17', NULL, '')"
     )
     return store

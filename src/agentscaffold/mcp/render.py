@@ -210,3 +210,26 @@ def format_impact_markdown(
     lines.extend(_caveat_note(caveat))
 
     return "\n".join(lines)
+
+
+def format_governance_impact_markdown(governance: dict[str, Any]) -> str:
+    """Render the ``governance_impact`` section appended to impact markdown (Plan 281)."""
+    counts = governance.get("counts", {})
+    lines: list[str] = [
+        "\n\n### Governance impact",
+        (
+            f"{counts.get('findings', 0)} findings, {counts.get('learnings', 0)} learnings, "
+            f"{counts.get('adrs', 0)} ADRs, {counts.get('contracts', 0)} contracts"
+        ),
+    ]
+    for key in ("findings", "learnings", "adrs"):
+        for item in governance.get(key, []):
+            plan = f"Plan {item['plan']}" if item.get("plan") is not None else "no plan"
+            sev = f", {item['severity']}" if item.get("severity") else ""
+            proj = f", {item['project']}" if item.get("project") else ""
+            lines.append(f"- {item['id']} ({plan}{sev}{proj}, {item['match']}): {item['text']}")
+    for contract in governance.get("contracts", []):
+        lines.append(f"- contract {contract['name']} v{contract['version']}")
+    for gone in governance.get("sources_unavailable", []):
+        lines.append(f"- source {gone['project']} unavailable: {gone['reason']}")
+    return "\n".join(lines)
