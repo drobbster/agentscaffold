@@ -235,6 +235,23 @@ def test_semantic_matches_rank_last_and_carry_a_score(graph, monkeypatch: pytest
     assert [i.match for i in on.items].count("semantic") == 1
 
 
+def test_semantic_hits_rank_by_similarity_not_severity(graph, monkeypatch: pytest.MonkeyPatch):
+    from agentscaffold.graph import search
+
+    _finding(graph, "rf::close", 201, text="Core boundaries leak.", severity="low")
+    _finding(graph, "rf::far", 230, text="Something about core.", severity="critical")
+    hits = [
+        search.SearchResult("rf::far", "", "", "ReviewFinding", 0.4, "semantic"),
+        search.SearchResult("rf::close", "", "", "ReviewFinding", 0.9, "semantic"),
+    ]
+    monkeypatch.setattr(search, "hybrid_search", lambda *_a, **_k: hits)
+    result = precedent_for(
+        [PrecedentSource("here", graph)], [CORE], plan_number=PLAN, budget=None,
+        query_text="core boundaries", semantic=True, match_kinds=("semantic",),
+    )  # fmt: skip
+    assert _ids(result) == ["rf::close", "rf::far"]
+
+
 def test_rerank_is_passed_to_the_semantic_search(graph, monkeypatch: pytest.MonkeyPatch):
     from agentscaffold.graph import search
 

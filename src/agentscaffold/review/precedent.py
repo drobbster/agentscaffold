@@ -180,8 +180,11 @@ def precedent_for(
 def _rank_key(item: PrecedentItem) -> tuple[Any, ...]:
     automated = 1 if item.review_type in AUTOMATED_REVIEW_TYPES else 0
     severity = _SEVERITY_RANK.get(item.severity.lower(), _SEVERITY_RANK["medium"])
+    # Semantic hits order by similarity first; structural matches carry no score.
+    similarity = -(item.score or 0.0) if item.match == "semantic" else 0.0
     return (
         MATCH_ORDER.index(item.match),
+        similarity,
         automated,
         severity,
         -(item.plan_number or 0),
