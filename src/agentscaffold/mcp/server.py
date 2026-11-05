@@ -514,9 +514,9 @@ def _effective_mcp_root(start: Path | None = None) -> Path:
         current = resolve_mcp_start(start)
         workspace_root = resolve_workspace_root(current)
 
-        # Cursor can launch user-level MCP servers from the broad IDE workspace
-        # (for this devbox, /home/drobb) while the AgentScaffold workspace is a
-        # child folder. If there is exactly one child workspace manifest, use it
+        # Cursor can launch user-level MCP servers from a broad IDE workspace
+        # while the AgentScaffold workspace is a child folder. If there is
+        # exactly one child workspace manifest, use it
         # as the MCP workspace root so no-arg tools still resolve project state.
         #
         # The glob looks exactly one level down, so a registered workspace nested
