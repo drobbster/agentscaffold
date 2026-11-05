@@ -68,7 +68,7 @@ def test_single_entries_are_unchanged() -> None:
         "`tests/fixtures/system_inventory/`",
         "`docs/ai/templates/*.md`",
         "`@repo/airflow/dags/nightly.py`",
-        "`docs/ai/contracts/x.md` (governance repo)",
+        "`docs/ai/contracts/x.md` (shared docs)",
         "src/y.py (code repo)",
     ) == [
         "Makefile",

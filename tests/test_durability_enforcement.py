@@ -1,4 +1,4 @@
-"""Plan 251: gitignore detection, including the parent-directory case."""
+"""Gitignore detection, including the parent-directory case."""
 
 from __future__ import annotations
 

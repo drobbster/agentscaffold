@@ -1,4 +1,4 @@
-"""Path-flavour-correct comparison for registry roots (Plan 249, Step A9b).
+"""Path-flavour-correct comparison for registry roots.
 
 The registry records absolute roots as strings and later has to answer "does this
 working path lie under that root?". Doing so with the *host's* path flavour is

@@ -1,4 +1,4 @@
-"""Tests for unified project-root and governance-path resolution (Plan 221)."""
+"""Tests for unified project-root and governance-path resolution."""
 
 from __future__ import annotations
 

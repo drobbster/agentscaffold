@@ -222,7 +222,7 @@ def test_init_creates_new_directory(tmp_path: Path, cli_runner: CliRunner) -> No
 
 
 def test_init_writes_the_system_inventory_once(tmp_path: Path, cli_runner: CliRunner) -> None:
-    """Plan 282: inventory from the collectors, config block, prompt; idempotent."""
+    """Inventory from the collectors, config block, prompt; idempotent."""
     project = tmp_path / "proj"
     project.mkdir()
     (project / "compose.yaml").write_text("services:\n  api:\n    image: x\n")

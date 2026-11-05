@@ -171,12 +171,12 @@ def _embedding_worker(
             state.last_reason = reason
 
         try:
-            # ``index(... incremental=True, embeddings=True)`` uses Plan 231's
+            # ``index(... incremental=True, embeddings=True)`` uses the
             # scoped embedding path when structure changed; when nothing changed
             # it performs a content-hash reconcile for missing/stale embeddings.
             _ = file_paths  # reserved for a future direct scoped embed request API
             # quiet=True: this runs inside the MCP stdio process; Rich progress
-            # on stdout would break Cursor's JSON-RPC transport (Plan 242).
+            # on stdout would break Cursor's JSON-RPC transport.
             index(
                 path=root,
                 config=config,

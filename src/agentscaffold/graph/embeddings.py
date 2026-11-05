@@ -40,7 +40,7 @@ EMBEDDING_DIM = 384
 # collide with the default Hugging Face cache.
 _model_cache: dict[tuple[str, str | None], Any] = {}
 
-# Upper bound on resident models (Plan 249, Step A7c). Step A7c removed the
+# Upper bound on resident models. An earlier change removed the
 # reason this grew with project count -- the default cache dir is now shared, so
 # N projects produce one key rather than N. This bound is defence in depth for
 # genuinely distinct models, and it is safe in a way the graph handle pool's
@@ -58,7 +58,7 @@ def _remember_model(key: tuple[str, str | None], model: Any) -> Any:
     return model
 
 
-# Process-wide embedding configuration (Plan 227, Tier 2a). Set once from
+# Process-wide embedding configuration. Set once from
 # ``scaffold.yaml`` via ``configure_embeddings`` at a CLI/MCP entrypoint; all
 # embedding/search code then loads the same model from the same pinned cache,
 # so indexing and querying agree and provisioning is deterministic/offline.
@@ -70,7 +70,7 @@ def _resolve_cache_dir(cache_dir: str | None) -> str | None:
     """Resolve a weights cache dir, sharing the shipped default across projects.
 
     Delegates to :func:`agentscaffold.paths.resolve_model_cache_dir` so there is
-    one rule rather than two. Before Plan 249 Step A7c this resolved relative
+    one rule rather than two. Previously this resolved relative
     paths against the project root unconditionally, which meant the default
     ``.scaffold/models`` gave every project its own copy of identical weights.
     """
@@ -91,7 +91,7 @@ def _resolve_cache_dir(cache_dir: str | None) -> str | None:
 
 
 def configure_embeddings(model_name: str | None = None, cache_dir: str | None = None) -> None:
-    """Set the process-wide embedding model + pinned weights cache (Plan 227).
+    """Set the process-wide embedding model + pinned weights cache.
 
     Call once from a CLI/MCP entrypoint after loading ``scaffold.yaml``. Passing
     ``None`` leaves the current value unchanged for ``model_name`` and clears the
@@ -338,7 +338,7 @@ CODE_TABLES = ["Function", "Class", "Method", "File"]
 # SQL SELECT queries — return dot-qualified column names so
 # _build_text_for_* functions work without modification. startLine/endLine are
 # selected so the embed step can read the definition's source slice and enrich
-# the text with its docstring/leading comment (Plan 227).
+# the text with its docstring/leading comment.
 _NODE_SELECT: dict[str, str] = {
     "Function": (
         'SELECT id AS "n.id", name AS "n.name",'
@@ -405,7 +405,7 @@ _MAX_DOC_CHARS = 400
 
 
 def _normalize(vec: list[float]) -> list[float]:
-    """L2-normalize a vector to unit length (store-time, Plan 227).
+    """L2-normalize a vector to unit length (store-time).
 
     Unit vectors make cosine similarity equal to the dot product and let an L2
     ANN index (HNSW via ``vss``) rank-order identically to cosine. A zero vector
@@ -495,7 +495,7 @@ def _enrich_text(root: Any, table: str, row: dict[str, Any]) -> str:
 
 # Node-property SELECT columns per searchable table (aliased f.*). The full
 # search SQL is assembled by _build_search_sql so a project predicate and
-# per-hit provenance can be injected for multi-project workspaces (Plan 225).
+# per-hit provenance can be injected for multi-project workspaces.
 _NODE_SEARCH_COLS: dict[str, str] = {
     "Function": (
         'f.id AS "n.id", f.name AS "n.name",'
@@ -544,7 +544,7 @@ _NODE_SEARCH_COLS: dict[str, str] = {
 def _build_search_sql(
     table: str, scope: Any, model_name: str = DEFAULT_MODEL
 ) -> tuple[str, list[Any]]:
-    """Assemble similarity-search SQL for *table* under *scope* (Plan 225).
+    """Assemble similarity-search SQL for *table* under *scope*.
 
     JOINs EmbeddingStore to the node table and computes list_cosine_similarity
     in-database. In multi-project mode the owning project is selected for
@@ -577,7 +577,7 @@ def _hash_text(text: str) -> str:
 
 
 def _build_enriched_text(root: Any, table: str, row: dict[str, Any]) -> str:
-    """Compose the shallow NL text with a source-derived docstring hint (Plan 227)."""
+    """Compose the shallow NL text with a source-derived docstring hint."""
     builder_fn, _fields = _TEXT_BUILDERS[table]
     base = builder_fn(row)
     doc = _enrich_text(root, table, row)
@@ -596,7 +596,7 @@ def generate_embeddings(
 ) -> dict[str, int]:
     """Generate embeddings for code definitions in the graph.
 
-    Plan 227: embedded text is enriched with each definition's docstring/leading
+    Embedded text is enriched with each definition's docstring/leading
     comment (read from the source slice under *root*; defaults to the resolved
     project root) and vectors are L2-normalized at store time. Both are additive
     -- with no source available the text falls back to today's name+signature.
@@ -722,7 +722,7 @@ def search_similar(
 ) -> list[dict[str, Any]]:
     """Find nodes most similar to a natural-language query.
 
-    Scope (Plan 225): in a multi-project workspace the search defaults to the
+    Scope: in a multi-project workspace the search defaults to the
     current project. Pass ``project=`` to target another project, or
     ``all_projects=True`` to search federated across the workspace (each hit is
     then labelled with its owning project under ``n.project``). Single-project
@@ -781,7 +781,7 @@ def find_duplicates(
     result has ``id_a``/``project_a``/``id_b``/``project_b``/``similarity``.
 
     Note: similarity quality is bounded by today's shallow embedding text;
-    Plan 227 (enriched text + better models) materially improves precision.
+    enriched text and better models materially improve precision.
     A min-size gate to cut boilerplate false positives is a documented follow-up.
     """
     from agentscaffold.graph.scoping import resolve_scope

@@ -6,7 +6,7 @@ resolves those dispatch points heuristically, so editing such a class shows no c
 consumer. This processor extracts fully-qualified dotted references from config files and
 creates ``CONFIG_REFERENCES`` edges (config ``File`` -> target ``File``).
 
-Precision discipline (validated by SPIKE-2026-06-12-config-reference-resolution):
+Precision discipline (validated empirically on real config files):
 references are extracted ONLY when they appear under an allowlisted key (``class``,
 ``_target_``, ...). Arbitrary scalars are ignored -- they drop precision to ~85% and
 introduce false positives. We resolve against ``File`` nodes already in the graph, so the
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 CONFIG_LANGUAGES: frozenset[str] = frozenset({"yaml", "json", "toml"})
 
 # Keys whose string value is treated as a code reference. Lower-cased for matching.
-# Sourced from the P3 spike; deliberately narrow to keep precision high.
+# Sourced from that validation; deliberately narrow to keep precision high.
 ALLOWLIST_KEYS: frozenset[str] = frozenset(
     {
         "class",

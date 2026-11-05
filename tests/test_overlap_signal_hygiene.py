@@ -1,4 +1,4 @@
-"""Plan 245: overlap signal hygiene for staleness / compare / prior experiments."""
+"""Overlap signal hygiene for staleness / compare / prior experiments."""
 
 from __future__ import annotations
 

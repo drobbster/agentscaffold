@@ -1,4 +1,4 @@
-"""Registry-owned trigger phrases (Plan 251 C1). Empty list is an explicit waiver."""
+"""Registry-owned trigger phrases. Empty list is an explicit waiver."""
 
 from __future__ import annotations
 

@@ -1,9 +1,9 @@
-"""C4 conformance for the governance-reading tools.
+"""Project-scoping conformance for the governance-reading tools.
 
-Plan 249 proved project scoping for four tools and left twenty-five untested,
-which is the largest gap it closed nothing of: C4 is the guarantee the whole
-multi-project effort exists to deliver, and both bugs found at Phase F were in
-the four tools that happened to be checked.
+The shared-server release proved project scoping for four tools and left
+twenty-five untested. Scoping is the guarantee the whole multi-project effort
+exists to deliver, and both bugs found by the conformance sweep were in the four
+tools that happened to be checked.
 
 **The probe.** For a tool keyed on a plan number, the sharpest possible question
 is to ask one project for the *other* project's plan. Alpha owns plans 101 and
@@ -19,7 +19,7 @@ turns scoping into a question with a knowably correct answer.
 
 **On vacuity.** A tool that errors, or returns nothing, passes any
 "must not contain the other project" assertion for free -- the failure mode that
-made the Plan 249 smoke tests pass against a silent no-op. Every case here
+made the earlier smoke tests pass against a silent no-op. Every case here
 therefore pairs the negative with a positive: the same tool asked for its *own*
 plan must find it. A tool that cannot satisfy the positive is reported as
 undiscriminating rather than passing.

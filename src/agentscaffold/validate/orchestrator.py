@@ -15,7 +15,7 @@ console = Console()
 
 
 def _inventory_issues(config: ScaffoldConfig) -> list[str]:
-    """``scaffold inventory check`` as a validate row (Plan 282).
+    """``scaffold inventory check`` as a validate row.
 
     Findings fail the row only in ``fail`` mode, as they fail the check's exit
     code; in ``warn`` mode they print and the row passes.

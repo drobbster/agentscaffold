@@ -1,7 +1,6 @@
-"""Tests for source-database liveness detection before migration (Plan 249, A9).
+"""Tests for source-database liveness detection before migration.
 
-Written before the probe exists. It closes review finding ``rf::2a657859c475`` and
-implements the outstanding control in threat model Vector 5: *detect a live process
+These tests pin a migration-safety control: *detect a live process
 holding the source database and refuse rather than racing it*.
 
 The mechanism was chosen empirically rather than designed on paper, and the
@@ -15,7 +14,7 @@ sufficient. DuckDB takes a lock on the database file with these properties:
 
 So an attempted **read/write** open is a complete liveness probe: it fails if any
 other process holds the database at all, whether that holder is an indexer writing
-or an idle MCP server with a read-preferring handle (Plan 244). No heartbeat file,
+or an idle MCP server with a read-preferring handle. No heartbeat file,
 no pid table, no ``lsof`` -- and nothing to go stale.
 
 The one thing it does not see is a handle held by the *calling* process, because
@@ -143,7 +142,7 @@ def test_a_writer_in_another_process_is_detected(tmp_path, holder_script):
 def test_a_read_only_holder_in_another_process_is_also_detected(tmp_path, holder_script):
     """The case a naive "is anyone writing?" check would miss.
 
-    An idle MCP server holds a read-preferring handle (Plan 244) and is not
+    An idle MCP server holds a read-preferring handle and is not
     writing anything. Migrating out from under it is still wrong: on POSIX the
     old file unlinks while that process keeps its descriptor, so it goes on
     serving stale content from a database nobody can see any more. That is

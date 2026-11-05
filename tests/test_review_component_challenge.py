@@ -1,4 +1,4 @@
-"""COMPONENT challenges in the pre-implementation review (Plan 282).
+"""COMPONENT challenges in the pre-implementation review.
 
 One challenge per paused or deprecated component whose ``reads`` or entrypoint
 the plan's File Impact Map touches. Not capped, always shown and always

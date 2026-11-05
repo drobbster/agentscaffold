@@ -1,4 +1,4 @@
-"""``scaffold plan normalize-status``: propose and apply plan Status lines (Plan 282).
+"""``scaffold plan normalize-status``: propose and apply plan Status lines.
 
 A plan with one valid Status line (any line ``normalize_plan_status`` maps to a
 known status, qualified lines included) is left alone. A plan with no Status

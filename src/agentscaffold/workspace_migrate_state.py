@@ -1,17 +1,17 @@
-"""Relocate graph state out of the source tree (Plan 249, Step B4).
+"""Relocate graph state out of the source tree.
 
-Sibling of :mod:`agentscaffold.workspace_migrate`, which owns Plan 234's asset
+Sibling of :mod:`agentscaffold.workspace_migrate`, which owns the asset
 layout migration. This one moves the graph database and the files that live
 beside it from the in-tree ``.scaffold/`` directory to the platform state
 directory keyed by workspace id.
 
 **Copy, verify, then remove -- never move in place.** The graph is derived data,
-so the worst case is a re-index, but Section 3 still forbids leaving two
+so the worst case is a re-index, but the design still forbids leaving two
 divergent live databases behind. Every ordering here follows from that: nothing
 is deleted that was not first confirmed to have arrived intact, a failed copy
 cleans up after itself rather than leaving a plausible-looking partial file, and
 the whole operation refuses to start while another process holds the source
-(Step A9's liveness probe, threat model Vector 5).
+(see :mod:`agentscaffold.graph.liveness`).
 
 Dry run is the default. ``--apply`` is the deliberate act.
 """

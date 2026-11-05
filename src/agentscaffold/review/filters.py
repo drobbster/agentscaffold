@@ -152,7 +152,7 @@ def recover_plan_date(date_field: str | None, status: str | None = None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Plan file-overlap noise denylist (Plan 245)
+# Plan file-overlap noise denylist
 # ---------------------------------------------------------------------------
 
 # Ubiquitous governance docs that nearly every plan touches. Counting them as
@@ -216,7 +216,7 @@ def meaningful_plan_file_overlap(
 
     When ``path_frequency`` is provided (path -> number of completed plans that
     touch it), paths at or above ``frequency_demote_threshold`` are treated as
-    noise unless they are the only shared meaningful path (Plan 247).
+    noise unless they are the only shared meaningful path.
     """
     noise = noise_paths if noise_paths is not None else DEFAULT_OVERLAP_NOISE_PATHS
     shared = {normalize_plan_file_path(f) for f in files_a if f} & {
@@ -251,7 +251,7 @@ def meaningful_plan_file_overlap(
 
 
 # Soft-noise: governance/docs paths that are not on the hard denylist but are
-# usually weak conflict signals compared to code/config (Plan 247).
+# usually weak conflict signals compared to code/config.
 _SOFT_NOISE_PREFIXES: tuple[str, ...] = (
     "docs/ai/templates/",
     "docs/ai/standards/",
@@ -282,7 +282,7 @@ def overlap_signal_weight(path: str) -> int:
 
 
 def rank_lead_overlap(paths: list[str], *, limit: int = 5) -> list[str]:
-    """Return the most agent-useful shared paths first (Plan 247 lead signal)."""
+    """Return the most agent-useful shared paths first (lead signal)."""
     ranked = sorted(
         {normalize_plan_file_path(p) for p in paths if p},
         key=lambda p: (overlap_signal_weight(p), p),

@@ -1,4 +1,4 @@
-"""Tests for Plan 239: correct, consistent SQL string-literal escaping.
+"""Tests for correct, consistent SQL string-literal escaping.
 
 Covers the ``sql_escape`` helper (DuckDB quote-doubling, backslash-literal) and a
 round-trip proving that identifiers containing an apostrophe no longer break the
@@ -48,7 +48,7 @@ def _store():
 def test_apostrophe_path_query_round_trips():
     """A File path with an apostrophe must be queryable without a SQL error.
 
-    Before Plan 239 the backslash-escaping variant left the quote unescaped, so
+    Previously the backslash-escaping variant left the quote unescaped, so
     the generated SQL was malformed for such a path.
     """
     from agentscaffold.review.queries import get_contracts_for_file, get_file_layer

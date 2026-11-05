@@ -1,4 +1,4 @@
-"""Plan 246: workspace grep sandbox."""
+"""Workspace grep sandbox."""
 
 from __future__ import annotations
 

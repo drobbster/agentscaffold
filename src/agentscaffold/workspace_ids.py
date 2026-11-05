@@ -1,7 +1,7 @@
-"""Stable workspace identifiers (Plan 249).
+"""Stable workspace identifiers.
 
-A workspace id keys the workspace's entry in the user-level registry and, from
-Phase B, the directory holding its relocated graph state.
+A workspace id keys the workspace's entry in the user-level registry and the
+directory holding its relocated graph state.
 
 The id is random rather than derived from the workspace path. That is deliberate
 twice over: a path-derived id would orphan a workspace's state the moment the

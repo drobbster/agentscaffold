@@ -7,7 +7,7 @@ module provides a small filesystem lock that coordinates those AgentScaffold
 writers before they contend on DuckDB itself.
 
 Abandoned locks (holder crashed without cleanup) are reaped by reading the
-``pid`` recorded in ``owner.json`` when present (Plan 254). That probe is
+``pid`` recorded in ``owner.json`` when present. That probe is
 same-host by construction -- the lock lives beside the database -- and does not
 replace the DuckDB-open liveness check in :mod:`agentscaffold.graph.liveness`,
 which rejects pid-based probes for cross-host migration safety. Pid reuse is
@@ -78,7 +78,7 @@ def graph_write_lock_held(
 ) -> bool:
     """Return True if an AgentScaffold graph write lock is currently held.
 
-    Used by read-preferring open paths (Plan 244) to label responses without
+    Used by read-preferring open paths to label responses without
     blocking on the exclusive writer.
     """
     lock_path = graph_write_lock_path(db_path)

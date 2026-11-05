@@ -1,4 +1,4 @@
-"""Tests for MCP server dispatch robustness (Plan 218)."""
+"""Tests for MCP server dispatch robustness."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ pytest.importorskip("duckdb", reason="duckdb not installed")
 
 
 def test_effective_mcp_root_honors_configured_project(tmp_path, monkeypatch) -> None:
-    """A configured --workspace/--project anchor beats the launch cwd (Plan 234)."""
+    """A configured --workspace/--project anchor beats the launch cwd."""
     from agentscaffold.mcp.server import _effective_mcp_root
     from agentscaffold.paths import configure_mcp_start
 

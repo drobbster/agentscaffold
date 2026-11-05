@@ -24,7 +24,7 @@ _SESSION_SELECT = (
     'decisions AS "s.decisions", endedAt AS "s.endedAt", project AS "s.project"'
 )
 
-#: Appended to the summary of a session closed for inactivity (Plan 276).
+#: Appended to the summary of a session closed for inactivity.
 AUTO_CLOSE_SUFFIX = " [closed: idle]"
 #: Appended to the summary of a session closed by ``force_new``.
 FORCE_NEW_SUFFIX = " [closed: force_new]"
@@ -62,7 +62,7 @@ def _exact_project_clause(project: str | None) -> str:
 def _has_last_activity(store: GraphBackend) -> bool:
     """Whether the Session table has ``lastActivity`` yet.
 
-    A read-only open of a graph from before Plan 276 cannot add the column, so
+    A read-only open of a graph that predates the column cannot add it, so
     age falls back to ``date`` until the next writable open heals it.
     """
     try:

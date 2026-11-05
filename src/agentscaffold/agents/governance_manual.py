@@ -1,7 +1,7 @@
-"""The project's governance manual, parsed into sections addressed by heading (Plan 280).
+"""The project's governance manual, parsed into sections addressed by heading.
 
 The manual is the project-owned part of ``AGENTS.md`` (everything outside the
-managed block, ADR-027). This module only reads it. Sections are addressed by
+managed block). This module only reads it. Sections are addressed by
 heading path, ``"Plan Lifecycle / Gate: Ready -> In Progress"``, and lookup is
 tolerant of case, spacing, a leading ``Gate:`` and a trailing qualifier such as
 ``(Mandatory)``, so a mapping written against the shipped template keeps
@@ -44,7 +44,7 @@ def _split_path(name: str) -> tuple[str, ...]:
 
 
 def governance_protected_headings(config: Any) -> set[str]:
-    """Normalized `##` headings the governance mapping reads from (Plan 279).
+    """Normalized `##` headings the governance mapping reads from.
 
     ``scaffold agents repair --prefer-managed`` must never drop these, even when
     one shares a heading with the managed routing block.

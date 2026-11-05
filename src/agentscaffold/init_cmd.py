@@ -24,7 +24,7 @@ console = Console()
 
 @dataclass
 class InitWriter:
-    """Every mutation init performs, routed through one object (Plan 249, B6).
+    """Every mutation init performs, routed through one object.
 
     A dry run has to be indistinguishable from not running the command, and an
     idempotent re-run has to be able to say truthfully that it wrote nothing.
@@ -154,7 +154,7 @@ _EMPTY_DIRS: list[str] = [
 ]
 
 # Output prefixes that are reusable *process* assets. Under a shared_workspace
-# layout (Plan 234) these are written once at the workspace root instead of being
+# layout these are written once at the workspace root instead of being
 # duplicated into every project.
 _SHARED_OUTPUT_PREFIXES: tuple[str, ...] = (
     "docs/ai/prompts/",
@@ -175,7 +175,7 @@ def _is_shared_output(out_rel: str) -> bool:
 
 @dataclass
 class EnclosingWorkspace:
-    """The workspace *directory* sits inside, if any (Plan 249, Step B6)."""
+    """The workspace *directory* sits inside, if any."""
 
     root: Path
     manifest_path: Path
@@ -200,8 +200,8 @@ def _detect_workspace(directory: Path, name: str | None = None) -> EnclosingWork
     Broader than :func:`_detect_shared_workspace`, which only answers for the
     shared asset layout. Membership governs *registration*; the layout governs
     where reusable assets are written. They are separate questions: a workspace
-    on the legacy project-local layout still has members (ADR-024 keeps its asset
-    placement untouched).
+    on the legacy project-local layout still has members (its asset
+    placement is left untouched).
     """
     from agentscaffold.config import derive_project_name, find_workspace_config
 
@@ -398,7 +398,7 @@ def _write_templated_files(
 ) -> tuple[int, int]:  # type: ignore[type-arg]  # noqa: E501
     """Render all templates and write them. Returns (written, skipped) counts.
 
-    When *shared_root* is provided (shared_workspace layout, Plan 234), reusable
+    When *shared_root* is provided (shared_workspace layout), reusable
     process assets are written once at the workspace root instead of the project.
     """
     written = 0
@@ -423,7 +423,7 @@ def _write_templated_files(
 
 
 def _write_inventory(directory: Path, config: ScaffoldConfig, writer: InitWriter) -> bool:
-    """Write the system inventory once, generated from the collectors (Plan 282).
+    """Write the system inventory once, generated from the collectors.
 
     With no collector sources yet it is a skeleton with no components.
     """

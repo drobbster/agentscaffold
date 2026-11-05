@@ -92,7 +92,7 @@ def component_hits(
     root: Path | None,
     config: Any,
 ) -> list[dict[str, Any]]:
-    """Paused or deprecated components the plan's File Impact Map touches (Plan 282).
+    """Paused or deprecated components the plan's File Impact Map touches.
 
     The INV-008 rule over the plan's files instead of a change's. One entry per
     component, with the touched paths; empty when the inventory is disabled or
@@ -350,7 +350,7 @@ def _check_learnings(
 def _check_ranked_learnings(
     precedent: PrecedentResult, file_path: str, out: list[Challenge], *, max_per_file: int = 5
 ) -> None:
-    """LEARNING challenges for *file_path*, in precedent order (Plan 281).
+    """LEARNING challenges for *file_path*, in precedent order.
 
     Only learnings linked to the file or naming it count here; those that
     merely share an earlier plan with it are too loose to ask about.
@@ -571,7 +571,7 @@ _MATCH_PHRASE = {
 
 
 def _check_precedent(precedent: PrecedentResult, out: list[Challenge], *, limit: int) -> None:
-    """PRECEDENT challenges: earlier findings and ADRs about the plan's files (Plan 281).
+    """PRECEDENT challenges: earlier findings and ADRs about the plan's files.
 
     Learnings are raised as LEARNING challenges instead. Ranking and the cap
     are plan-wide, so an item matched through several files appears once.
@@ -613,7 +613,7 @@ def component_state(hit: dict[str, Any]) -> str:
 def _check_components(hits: list[dict[str, Any]], out: list[Challenge]) -> None:
     """COMPONENT challenges: one per paused or deprecated component the plan touches.
 
-    Not capped (Plan 282, 5.2): each is a declared fact, and the plan answers
+    Not capped: each is a declared fact, and the plan answers
     each with a row in its Component Lifecycle Changes table.
     """
     for hit in hits:

@@ -1,9 +1,9 @@
-"""Tests for the explicit active-root context (Plan 249, Step A7b).
+"""Tests for the explicit active-root context.
 
 Dispatch used to reach the resolved project by ``os.chdir``. That works only
 because tool calls are serialised: the working directory is process-global, so
 two calls for different projects cannot be in flight at once. It is also why the
-multi-workspace handle pool built at Step A6 was correct, tested, and unreachable
+multi-workspace handle pool built earlier was correct, tested, and unreachable
 -- there was no way to have two projects active simultaneously for it to pool.
 
 Replacing it with a context variable makes the active project a property of the
@@ -164,7 +164,7 @@ def test_dispatch_does_not_change_the_working_directory(
     """A tool call must not mutate process-global state on the caller's behalf.
 
     This is what made concurrent dispatch unsafe, and what leaked a deleted cwd
-    into unrelated suites when a test's tmp_path was cleaned up (see A6b).
+    into unrelated suites when a test's tmp_path was cleaned up.
     """
     import agentscaffold.config as config_mod
     import agentscaffold.graph as graph_mod
@@ -189,7 +189,7 @@ def test_dispatch_does_not_change_the_working_directory(
 def test_concurrent_dispatches_each_read_their_own_project(
     home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The test that could not exist under chdir, and the reason A7b exists.
+    """The test that could not exist under chdir, and why the context variable exists.
 
     Both calls are held open at the same instant. Under the previous design the
     second chdir would have retargeted the first call's reads.

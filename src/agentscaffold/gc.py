@@ -1,4 +1,4 @@
-"""Reclaim state left behind by workspaces that are gone (Plan 249, Step B8).
+"""Reclaim state left behind by workspaces that are gone.
 
 Two things accumulate once state lives outside the working tree. Registry
 entries outlive the repositories they point at, and state directories outlive

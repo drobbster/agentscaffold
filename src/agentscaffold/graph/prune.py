@@ -47,7 +47,7 @@ def _esc(value: str) -> str:
 
 
 def _scope_and(project: str | None, all_projects: bool) -> str:
-    """Inline `` AND project = '<name>'`` for the current scope, or '' (Plan 225).
+    """Inline `` AND project = '<name>'`` for the current scope, or ''.
 
     Pruning is destructive, so it must default to the current project: a prune in
     one project must never select (and then delete) a sibling project's resolved
@@ -89,7 +89,7 @@ def select_prunable(
     scope = _scope_and(project, all_projects)
 
     if malformed_findings:
-        # Plan 250: rows the unanchored extractor manufactured out of prose. The
+        # Rows the unanchored extractor manufactured out of prose. The
         # parser fix stops new ones, but nothing removes what is already stored:
         # create_node uses ON CONFLICT DO NOTHING, so re-indexing never deletes,
         # and purging the serialized export just gets overwritten from the store
@@ -139,7 +139,7 @@ def apply_prune(store: GraphBackend, selection: dict[str, list[dict[str, Any]]])
     the system of record: ``index`` restores the graph from it, so a prune that
     only touched the derived store would be undone by the next index. Every other
     governance mutation already syncs; the delete helpers did not, which made
-    pruning silently non-durable for all categories (Plan 250).
+    pruning silently non-durable for all categories.
     """
     from agentscaffold.graph.backlog import delete_backlog_item
     from agentscaffold.graph.findings import delete_finding

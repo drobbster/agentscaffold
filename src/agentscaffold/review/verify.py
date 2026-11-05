@@ -6,7 +6,7 @@ Verifies what was actually implemented versus what the plan specified:
   3. Layer conformance -- check for layer violations
   4. Wiring check -- verify all callers of modified functions still work
   5. Test delta -- count tests added/modified
-  6. Rule rows (Plan 281) -- finding dispositions, workflow state, changelogs,
+  6. Rule rows -- finding dispositions, workflow state, changelogs,
      contracts and read-only paths, over the files the plan changed in git
 """
 
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Rule rows (Plan 281; ``inventory_lifecycle`` from Plan 282), in output order.
+#: Rule rows, in output order.
 COMPLIANCE_CHECKS = (
     "pre_review_disposition",
     "workflow_state_updated",
@@ -84,7 +84,7 @@ def verify_implementation(
     """Verify a plan's implementation against the graph.
 
     Should be run AFTER re-indexing the codebase post-implementation.
-    Returns a list of verification items. With *root*, the Plan 281 rule rows
+    Returns a list of verification items. With *root*, the compliance rule rows
     follow unless ``gates.in_progress_to_complete.compliance`` is ``off``.
     Raises ValueError for an unsafe *base_ref*.
     """
@@ -126,7 +126,7 @@ def _gate_level(config: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Rule rows (Plan 281)
+# Rule rows
 # ---------------------------------------------------------------------------
 
 

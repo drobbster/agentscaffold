@@ -1,4 +1,4 @@
-"""Collaboration ergonomics: file sharding + advisory plan claims (Plan 226).
+"""Collaboration ergonomics: file sharding + advisory plan claims.
 
 High-contention governance files (``workflow_state.md``, ``backlog.md``) are
 append-heavy single files, so concurrent agents/users collide on them
@@ -15,7 +15,7 @@ makes in-flight ownership visible (surfaced by ``scaffold plan status``).
 Design rules:
 - **Stable, exact round-trip.** :func:`split_file` writes ordered fragments whose
   concatenation reproduces the source byte-for-byte, and :func:`render_fragments`
-  is its inverse. This mirrors the Plan 222 governance-artifact stability rule:
+  is its inverse. This mirrors the governance-artifact stability rule:
   rendering twice yields identical bytes, so diffs stay minimal.
 - **Format-agnostic.** Splitting is purely textual (boundary regex), so the same
   machinery shards both ``workflow_state.md`` (``###`` headings) and
@@ -140,7 +140,7 @@ def render_to_file(fragments_dir: Path, target: Path) -> bool:
 
     Returns True if *target* was written (content differed or did not exist),
     False if it was already up to date. Writing only on change keeps git diffs
-    and mtimes quiet, matching the Plan 222 stability rule.
+    and mtimes quiet, matching the artifact stability rule.
     """
     rendered = render_fragments(fragments_dir)
     if target.is_file() and target.read_text(encoding="utf-8") == rendered:

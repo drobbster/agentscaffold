@@ -1,7 +1,7 @@
 """Inventory paths (contract v1, Paths section).
 
 A path is relative to the project root, or to the version-control root when it
-starts with ``@repo/`` (Plan 283). Absolute paths, ``..`` and a leading ``//``
+starts with ``@repo/``. Absolute paths, ``..`` and a leading ``//``
 are invalid. Resolution goes through :func:`agentscaffold.paths.resolve_node_path`,
 which fails closed outside the version-control root; this module adds no second
 resolver.

@@ -1,4 +1,4 @@
-"""Internal hook dispatch engine for AgentScaffold — Step B.5.
+"""Internal hook dispatch engine for AgentScaffold.
 
 Dispatches lifecycle events to registered handlers.  Used by the CLI to
 trigger side-effects such as incremental indexing and auto-orient.

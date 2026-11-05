@@ -1,4 +1,4 @@
-"""Tests for Phase 4: CLI wiring with graph context.
+"""Tests for CLI wiring with graph context.
 
 Verifies that plan create, agents generate, and review --template
 commands properly inject graph context into their outputs.
@@ -89,7 +89,7 @@ class TestPlanCreateWithGraph:
 
 
 class TestAgentsGenerateWithGraph:
-    """Generate writes routing, not the graph-stats section (Plan 260)."""
+    """Generate writes routing, not the graph-stats section."""
 
     def test_agents_md_is_routing_only(self, indexed_project, monkeypatch):
         monkeypatch.chdir(indexed_project)

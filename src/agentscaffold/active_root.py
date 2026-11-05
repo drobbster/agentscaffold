@@ -1,4 +1,4 @@
-"""The active project root for the current call (Plan 249, Step A7b).
+"""The active project root for the current call.
 
 Path resolution in AgentScaffold starts from "wherever we are" -- ``find_config``
 and friends walk up from the current working directory when no explicit start is
@@ -9,7 +9,7 @@ projects, so it used to make the question true by calling ``os.chdir`` to the
 resolved project before each call. That works only because dispatch is
 serialised -- the working directory is process-global, so two calls about
 different projects cannot be in flight at once. It also meant the multi-workspace
-handle pool built at Step A6 was unreachable: correct, tested, and with no way to
+handle pool was unreachable: correct, tested, and with no way to
 have two projects active for it to pool.
 
 This module makes the active root a property of the *call* instead of the

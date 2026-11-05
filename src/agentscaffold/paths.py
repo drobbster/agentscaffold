@@ -1,4 +1,4 @@
-"""Unified project-root and governance-path resolution (Plan 221).
+"""Unified project-root and governance-path resolution.
 
 AgentScaffold historically resolved paths three different ways: the walk-up
 ``find_config()`` in :mod:`agentscaffold.config`, bare ``Path.cwd()``, and a
@@ -44,17 +44,17 @@ logger = logging.getLogger(__name__)
 #: the referenced environment variable is not set.
 _UNRESOLVED_ENV_RE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")
 
-#: Environment variable that overrides ``graph.db_path`` entirely (Plan 223).
+#: Environment variable that overrides ``graph.db_path`` entirely.
 #: Lets the same committed ``scaffold.yaml`` point the cache at a durable mounted
 #: volume on a persistent box and a scratch path on an ephemeral devbox.
 DB_PATH_ENV_VAR = "AGENTSCAFFOLD_DB_PATH"
 
-#: Environment variable that overrides the embedding weights cache entirely
-#: (Plan 249, Step A7c). Mirrors ``DB_PATH_ENV_VAR``: one machine-level escape
-#: hatch for images and air-gapped builds that provision weights elsewhere.
+#: Environment variable that overrides the embedding weights cache entirely.
+#: Mirrors ``DB_PATH_ENV_VAR``: one machine-level escape hatch for images and
+#: air-gapped builds that provision weights elsewhere.
 MODEL_CACHE_ENV_VAR = "AGENTSCAFFOLD_MODEL_CACHE"
 
-#: Environment variables that configure the MCP resolution anchor (Plan 234) when
+#: Environment variables that configure the MCP resolution anchor when
 #: the IDE launches the MCP server from a directory that is not the active
 #: project (e.g. Cursor opening a parent monorepo folder). They mirror the
 #: ``scaffold mcp --workspace`` / ``--project`` flags for user-level MCP installs.
@@ -69,7 +69,7 @@ _MCP_PROJECT_OVERRIDE: str | None = None
 
 
 def configure_mcp_start(*, workspace: str | None = None, project: str | None = None) -> None:
-    """Set the process-wide MCP resolution anchor from CLI flags (Plan 234).
+    """Set the process-wide MCP resolution anchor from CLI flags.
 
     ``scaffold mcp --workspace <root> --project <name>`` calls this once before
     :func:`agentscaffold.mcp.server.run_mcp_server` so every no-argument tool
@@ -101,7 +101,7 @@ def _resolve_project_in_workspace(workspace_root: Path, project: str) -> Path | 
 
 
 def resolve_mcp_start(start: Path | None = None) -> Path:
-    """Resolve the effective start anchor for MCP tool resolution (Plan 234).
+    """Resolve the effective start anchor for MCP tool resolution.
 
     Precedence:
     1. An explicit *start* passed by a caller that already resolved flags.
@@ -159,9 +159,9 @@ def vcs_root(path: Path) -> Path | None:
 def resolve_node_path(root: Path, path: str) -> Path | None:
     """The file a graph ``File.path`` names, for a project rooted at *root*.
 
-    A project-relative path joins *root* as before. An ``@repo/`` path (Plan
-    283) names a file below the VCS root; it resolves to None when there is
-    no VCS root or the file lies outside it after resolving ``..`` and symlinks.
+    A project-relative path joins *root* as before. An ``@repo/`` path names a
+    file below the VCS root; it resolves to None when there is no VCS root or
+    the file lies outside it after resolving ``..`` and symlinks.
     """
     if not is_repo_path(path):
         return Path(root) / path
@@ -188,7 +188,7 @@ FRESHNESS_WATERMARK_FILE = "freshness_watermark.json"
 #: Fingerprint of the governance sources last ingested, written beside the database.
 GOVERNANCE_FINGERPRINT_FILE = "governance.fingerprint"
 
-#: Last incremental outcome for the edit hook coalesce loop (Plan 267).
+#: Last incremental outcome for the edit hook coalesce loop.
 INDEX_LAST_RESULT_FILE = "index.last_result"
 
 #: Every durable file the graph writes beside its database, and therefore
@@ -210,10 +210,9 @@ def resolve_workspace_state_id(start: Path | None = None) -> str | None:
     registry so a workspace cannot key its state two ways depending on which
     source resolution happened to consult first.
 
-    None means there is no stable id -- an unregistered lone repo -- and per the
-    approved Step B4 scope such a repo keeps the in-tree default rather than
-    having its state keyed by a path (rejected in ADR-025, since moving the root
-    would orphan it).
+    None means there is no stable id -- an unregistered lone repo -- and by
+    design such a repo keeps the in-tree default rather than having its state
+    keyed by a path (rejected, since moving the root would orphan it).
     """
     try:
         workspace = load_workspace(start)
@@ -250,9 +249,10 @@ def _platform_db_path(start: Path | None = None) -> Path:
     Flipping a default is not a migration: without this, upgrading would point
     resolution at nothing, silently re-index from scratch, and leave the
     populated database orphaned in the tree -- the two-divergent-databases
-    outcome Section 3 forbids, reached without any migration having run. The
-    user moves it deliberately with ``scaffold workspace migrate-state``. This
-    mirrors the warm-local fallback Step A7c established for model weights.
+    outcome state relocation must never produce, reached without any migration
+    having run. The user moves it deliberately with
+    ``scaffold workspace migrate-state``. This mirrors the warm-local fallback
+    used for model weights.
     """
     in_tree = resolve_workspace_root(start) / _DEFAULT_DB_PATH
 
@@ -269,7 +269,7 @@ def _platform_db_path(start: Path | None = None) -> Path:
 def resolve_db_path(config: ScaffoldConfig | None, start: Path | None = None) -> Path:
     """Resolve the graph database path for durable/ephemeral environments.
 
-    Resolution order (Plan 221 + 223, extended by Plan 249 Step B4):
+    Resolution order:
     1. The ``AGENTSCAFFOLD_DB_PATH`` environment variable, if set, overrides
        everything (durable-volume vs scratch-path selection per machine).
     2. Otherwise an explicit ``config.graph.db_path``, so a config pinning
@@ -313,12 +313,12 @@ def resolve_db_path(config: ScaffoldConfig | None, start: Path | None = None) ->
 
 
 def resolve_user_cache_dir() -> Path:
-    """Return the user-level cache root for AgentScaffold (Plan 249, Step A7c).
+    """Return the user-level cache root for AgentScaffold.
 
     ``$XDG_CACHE_HOME/agentscaffold`` when set, else ``~/.cache/agentscaffold``.
     Native Windows has no XDG convention; ``%LOCALAPPDATA%`` is the equivalent.
 
-    Note for Step B4, which adds the *state* default: state and cache are
+    Note on the *state* default: state and cache are
     deliberately different XDG roots. Graph state is per-workspace and worth
     keeping, so it belongs under ``XDG_STATE_HOME`` keyed by workspace id. Model
     weights are byte-identical everywhere and re-downloadable, so they belong
@@ -348,7 +348,7 @@ def _running_on_windows() -> bool:
 
 
 def resolve_user_state_dir() -> Path:
-    """Return the user-level *state* root for AgentScaffold (Plan 249, Step B4).
+    """Return the user-level *state* root for AgentScaffold.
 
     ``$XDG_STATE_HOME/agentscaffold`` when set, else ``~/.local/state/agentscaffold``.
     Native Windows has no XDG convention; ``%LOCALAPPDATA%`` is the equivalent,
@@ -376,7 +376,7 @@ def resolve_user_state_dir() -> Path:
 def _ensure_private_dir(path: Path) -> Path:
     """Create *path* readable and writable only by its owner.
 
-    Threat model Vector 4: the state directory aggregates indexed content from
+    The state directory aggregates indexed content from
     every registered workspace into one place, which is a concentration the
     per-repo layout never had. It is created 0o700 rather than inheriting
     whatever the ambient umask happens to allow, and an existing directory is
@@ -507,7 +507,7 @@ def _has_cached_weights(path: Path) -> bool:
 def resolve_model_cache_dir(
     config: ScaffoldConfig | None, start: Path | None = None
 ) -> Path | None:
-    """Resolve where embedding model weights are cached (Plan 249, Step A7c).
+    """Resolve where embedding model weights are cached.
 
     Returns ``None`` to mean "use the default Hugging Face cache", preserving the
     existing meaning of an empty ``search.cache_dir``.
@@ -581,7 +581,7 @@ def resolve_root(start: Path | None = None) -> Path:
 
 
 def resolve_workspace_root(start: Path | None = None) -> Path:
-    """Resolve the outer workspace root (Plan 225).
+    """Resolve the outer workspace root.
 
     Precedence:
     1. The directory containing the nearest ``workspace.yaml`` (walk-up).
@@ -708,7 +708,7 @@ class ResolvedPaths:
     def security_dir(self) -> Path:
         return self._shared_asset("security_dir", self._layout.shared.security_dir)
 
-    # -- Shared process files (Plan 234) ------------------------------------
+    # -- Shared process files ------------------------------------
     @cached_property
     def collaboration_protocol_file(self) -> Path:
         if self._shared_active and self._workspace_root is not None:
@@ -746,14 +746,14 @@ class ResolvedPaths:
     def db_path(self) -> Path:
         """The *configured* graph database path, joined to this root.
 
-        A view of the config value, not the live location: since Step B4 the
+        A view of the config value, not the live location: since state relocation the
         authoritative resolver is :func:`resolve_db_path`, which also consults
         the environment override and the platform state directory. An unset
         ``db_path`` reads as the historical in-tree path here.
         """
         return self._join(self._graph.db_path or _DEFAULT_DB_PATH)
 
-    # -- Collaboration ergonomics (Plan 226) --------------------------------
+    # -- Collaboration ergonomics --------------------------------
     @cached_property
     def workflow_fragments_dir(self) -> Path:
         return self._join(self._config.collab.workflow_fragments_dir)

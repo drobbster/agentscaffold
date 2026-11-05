@@ -1,8 +1,8 @@
-"""Plan 249 Step B7: pruning that cannot delete a live graph.
+"""Pruning that cannot delete a live graph.
 
 `scaffold gc` reclaims state directories left behind by workspaces that are gone
 and registry entries pointing at roots that no longer exist. The graph is
-expensive to rebuild and lives outside the tree since Step B4, so a wrong
+expensive to rebuild and lives outside the tree, so a wrong
 deletion is not recoverable by `git checkout` -- which makes the interesting
 tests here the ones about what gc *refuses* to touch.
 

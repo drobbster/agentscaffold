@@ -1,4 +1,4 @@
-"""System inventory and component lifecycle (Plan 282, ADR-029).
+"""System inventory and component lifecycle.
 
 Implements ``docs/ai/contracts/system_inventory_interface.md`` v1: the declared
 list of what a project runs, collectors that list what its repository files

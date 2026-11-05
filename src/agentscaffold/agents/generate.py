@@ -45,7 +45,7 @@ console = Console()
 def _shared_workspace_context(
     project_root: Path,
 ) -> tuple[bool, WorkspaceConfig | None, Path | None]:
-    """Return (is_shared, workspace, workspace_root) for a project (Plan 234).
+    """Return (is_shared, workspace, workspace_root) for a project.
 
     Detects whether the project belongs to a workspace whose ``asset_layout``
     opts into ``shared_workspace``. Returns ``(False, None, None)`` for a lone or
@@ -80,7 +80,7 @@ def render_agents_routing(config: ScaffoldConfig) -> str:
 def _render_project_agents_md(config: ScaffoldConfig, project_root: Path, context: dict) -> str:  # type: ignore[type-arg]
     """Render the AGENTS.md managed body.
 
-    Shared-workspace projects stay stub-first (Plan 234). A lone project gets
+    Shared-workspace projects stay stub-first. A lone project gets
     routing only; the governance manual is scaffolded once by init.
     """
     is_shared, workspace, _ = _shared_workspace_context(project_root)
@@ -147,7 +147,7 @@ def _drop_exact_routing_sections(lifted: str, routing_body: str) -> str:
 
 
 def _lift_legacy_agents_block(path: Path, routing_body: str) -> bool:
-    """Move a pre-260 governance block out of the markers. Keeps a ``.bak``."""
+    """Move an old-format governance block out of the markers. Keeps a ``.bak``."""
     if not path.exists():
         return False
     text = path.read_text()
@@ -181,7 +181,7 @@ def write_workspace_agents_router(
     force: bool = False,
     allow_append: bool = False,
 ) -> str:
-    """Write the thin workspace-root AGENTS.md router (Plan 234).
+    """Write the thin workspace-root AGENTS.md router.
 
     Written into a managed block so a hand-authored workspace AGENTS.md is never
     clobbered. Returns the write status.
@@ -201,7 +201,7 @@ def write_workspace_agents_router(
 
 
 def workspace_router_is_managed(workspace_root: Path) -> bool:
-    """True when the workspace-root AGENTS.md already holds our managed block (Plan 279).
+    """True when the workspace-root AGENTS.md already holds our managed block.
 
     In a company monorepo the root AGENTS.md belongs to whoever owns the
     repository, so the router is refreshed only where AgentScaffold put it.
@@ -224,7 +224,7 @@ def _guidance_stamper(config: ScaffoldConfig, project_root: Path) -> Callable[[s
     """Return a function that stamps rule content with provenance.
 
     Shared workspaces cite the canonical file. Lone / ``project_local`` repos
-    still get an ``@generated`` banner (Plan 251) hashed from the body itself,
+    still get an ``@generated`` banner hashed from the body itself,
     with a workspace-relative source -- never an absolute home path.
     """
     canonical = canonical_guidance_path(project_root)
@@ -349,8 +349,7 @@ def run_agents_generate_all_platforms(
     skip-if-exists.
 
     The workspace-root AGENTS.md router of a shared workspace is refreshed only
-    when that file already holds our managed block, or with *include_workspace*
-    (Plan 279).
+    when that file already holds our managed block, or with *include_workspace*.
 
     Returns a dict mapping platform -> list of written paths.
     """
@@ -416,7 +415,7 @@ def run_agents_generate_all_platforms(
     # AGENTS.md (project-owned -- managed block, never clobbered unless force).
     # Under shared_workspace the project AGENTS.md is stub-first (pointers to the
     # workspace shared process assets), and a thin workspace-root router AGENTS.md
-    # is generated too (Plan 234).
+    # is generated too.
     context = get_default_context(config)
     agents_md_path = project_root / "AGENTS.md"
     is_shared, ws, ws_root = _shared_workspace_context(project_root)

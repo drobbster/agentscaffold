@@ -1,4 +1,4 @@
-"""Plan 246: plan vs code diff."""
+"""Plan vs code diff."""
 
 from __future__ import annotations
 

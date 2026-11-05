@@ -258,7 +258,7 @@ def quiet_pipeline_output() -> Iterator[None]:
 
 
 def _module_prefixes(root: Path, graph_config: Any) -> dict[str, str]:
-    """Monorepo module prefixes for import resolution (Plan 278)."""
+    """Monorepo module prefixes for import resolution."""
     from agentscaffold.config import GraphConfig
     from agentscaffold.graph.source_roots import effective_module_prefixes
 
@@ -298,7 +298,7 @@ def run_pipeline(
     root = root.resolve()
     graph_config = config.graph if config else None
 
-    # Resolve the DB path against the project root (Plan 221) so the index-time
+    # Resolve the DB path against the project root so the index-time
     # location matches what open_graph uses at query time. A relative db_path
     # anchors to the nearest scaffold.yaml/.git (falling back to the scan root)
     # rather than the bare working directory; an absolute db_path is honored.
@@ -306,7 +306,7 @@ def run_pipeline(
 
     db_path = resolve_db_path(config, start=root)
 
-    # Plan 223: note whether the cache exists before we build. On an ephemeral
+    # Note whether the cache exists before we build. On an ephemeral
     # box (no cache) the governance phase restores findings/sessions/backlog from
     # the committed artifact; we surface that so the operator sees the rebuild
     # reconstructed durable knowledge from git rather than starting empty.
@@ -332,7 +332,7 @@ def run_pipeline(
     phases_completed: list[str] = []
     summary: dict[str, Any] = {}
 
-    # Plan 225: in a multi-project workspace, tag every write with this project
+    # In a multi-project workspace, tag every write with this project
     # and scope clears to it so re-indexing one project never touches siblings.
     # Single-project repos resolve to None -- the choke point is a no-op.
     from agentscaffold.paths import load_workspace as _load_workspace
@@ -593,7 +593,7 @@ def run_pipeline(
     summary["elapsed_seconds"] = round(elapsed, 1)
     summary["phases_completed"] = phases_completed
 
-    # Plan 223: report governance restored from the committed artifact on a fresh
+    # Report governance restored from the committed artifact on a fresh
     # build (e.g. ephemeral devbox or after a deleted cache).
     restored = summary.get("governance", {}).get("governance_restored", 0)
     summary["restored_from_artifact"] = (not cache_existed) and restored > 0
@@ -644,7 +644,7 @@ def _write_governance_fingerprint(
 def _run_inventory(
     store: GraphBackend, root: Path, config: ScaffoldConfig | None, summary: dict[str, Any]
 ) -> None:
-    """Replace Component nodes from the system inventory (Plan 282); never fatal."""
+    """Replace Component nodes from the system inventory; never fatal."""
     try:
         from agentscaffold.graph.inventory import process_inventory
 

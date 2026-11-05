@@ -1,4 +1,4 @@
-"""Plugin manifest schema — Step D.4.
+"""Plugin manifest schema.
 
 Defines the Pydantic model for ``plugin.json``, the descriptor file for
 distributable AgentScaffold domain pack plugins.

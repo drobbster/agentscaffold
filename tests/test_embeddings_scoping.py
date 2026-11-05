@@ -1,4 +1,4 @@
-"""Embedding generation scoping tests for Plan 231."""
+"""Embedding generation scoping tests."""
 
 from __future__ import annotations
 

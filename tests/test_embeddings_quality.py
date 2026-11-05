@@ -1,4 +1,4 @@
-"""Search-quality unit tests for embedding text enrichment (Plan 227, Tier 1).
+"""Search-quality unit tests for embedding text enrichment.
 
 These exercise the pure, dependency-light helpers -- L2 normalization, docstring
 / leading-comment extraction, and source-slice enrichment -- without invoking

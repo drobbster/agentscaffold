@@ -1,4 +1,4 @@
-"""Project scoping for the shared knowledge graph (Plan 225, Step 4).
+"""Project scoping for the shared knowledge graph.
 
 A single graph cache can hold many projects (a multi-project workspace). This
 module is the one place that decides *which* project a read or write belongs to
@@ -117,7 +117,7 @@ class IndexRootError(ScopingError):
 
 
 def check_index_root(root: Path) -> None:
-    """Refuse to index a directory that is not, and is not inside, a project (Plan 279).
+    """Refuse to index a directory that is not, and is not inside, a project.
 
     Two shapes refuse: a multi-project workspace root that is not itself a
     project, and an unregistered directory with registered projects beneath it

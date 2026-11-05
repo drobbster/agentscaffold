@@ -1,4 +1,4 @@
-"""CLI tests for ``scaffold project`` (Plan 249, Step A8).
+"""CLI tests for ``scaffold project``.
 
 Written before the commands exist. They pin the surface in
 ``docs/ai/contracts/workspace_registry_interface.md`` v1.3 and two properties the
@@ -218,7 +218,7 @@ def test_registry_is_written_user_private(tmp_path, home, cli_runner):
 
 
 # --------------------------------------------------------------------------
-# workspace onboard mirrors into the registry (Plan 249, Step A8)
+# workspace onboard mirrors into the registry
 # --------------------------------------------------------------------------
 
 

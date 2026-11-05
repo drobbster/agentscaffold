@@ -1,4 +1,4 @@
-"""Install the single AgentScaffold entry into a client's MCP config (Plan 249, A8).
+"""Install the single AgentScaffold entry into a client's MCP config.
 
 Before this, onboarding added one MCP server per project to the shared global
 ``mcp.json``, each hard-bound to a directory with ``cd`` and often to an absolute
@@ -212,7 +212,7 @@ def is_registered_root(path: Path) -> bool:
     """True when *path* is a workspace root or project root in the registry.
 
     Used to decide whether the shared server already covers a directory, so a
-    per-project config need not be generated for it (Plan 253).
+    per-project config need not be generated for it.
     """
     key = _comparison_key(path)
     return any(_comparison_key(root) == key for root in registered_roots())

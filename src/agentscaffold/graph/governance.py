@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Artifact registry (Plan 261)
+# Artifact registry
 # ---------------------------------------------------------------------------
 # Zero rows means three different things. The declaration lives in one table so
 # a future parser cannot inherit silence by being forgotten.
@@ -112,7 +112,7 @@ ARTIFACT_REGISTRY: dict[str, ArtifactSpec] = {
         name="findings",
         shape="opportunistic",
         zero_policy="legitimate",
-        expected_format="[CATEGORY] markers anchored at line start (Plan 250)",
+        expected_format="[CATEGORY] markers anchored at line start",
     ),
 }
 
@@ -529,7 +529,7 @@ _LEARNING_RE_LIST = re.compile(
     re.MULTILINE,
 )
 
-# Bold-bullet prose: - **L249-17 (2026-08-06, Plan 249 Step F6): title**
+# Bold-bullet prose: - **L042-3 (2026-01-15, Plan 042 Step 2): title**
 _LEARNING_RE_BOLD = re.compile(
     r"^-\s+\*\*(?P<id>L(?P<plan>\d+)-\d+)\s*\([^)]*\):\s*(?P<desc>.+?)\*\*",
     re.MULTILINE | re.DOTALL,
@@ -546,7 +546,7 @@ def _status_from_section_heading(heading: str) -> str:
 
 
 def _parse_learnings_bold(text: str) -> list[dict[str, Any]]:
-    """Parse the bold-bullet prose format used by agentscaffold-governance."""
+    """Parse the bold-bullet prose format (one ``- **L<plan>-<n> (...): title**`` per entry)."""
     learnings: list[dict[str, Any]] = []
     chunks = re.split(r"^##\s+", text, flags=re.MULTILINE)
     for index, chunk in enumerate(chunks):
@@ -583,7 +583,7 @@ def _parse_learnings(filepath: Path) -> list[dict[str, Any]]:
     - 4-column table: ``| ID | Learning | Target | Status |`` (plan in ID)
     - 3-column table: ``| ID | Learning | Target |``
     - YAML-like list:  ``### L042-1`` with ``- Plan:`` / ``- Description:`` fields
-    - Bold-bullet prose: ``- **L249-17 (date, Plan N ...): title**``
+    - Bold-bullet prose: ``- **L042-3 (date, Plan N ...): title**``
     """
     try:
         text = filepath.read_text(errors="replace")
@@ -636,7 +636,7 @@ def _parse_learnings(filepath: Path) -> list[dict[str, Any]]:
 # The optional (?P<severity>!{1,2}) consumes the "!"/"!!" severity markers the
 # formatters append (e.g. "[DEPENDENCY]!! ..."), keeping them out of the text.
 #
-# Anchored to line start (Plan 250). Unanchored, the pattern also fired on
+# Anchored to line start. Unanchored, the pattern also fired on
 # category names mentioned in ordinary prose -- including inside inline code
 # spans -- and captured the rest of the sentence as the finding body. Over the
 # 44-plan governance corpus that was a 100 per cent false-positive rate, because
@@ -848,7 +848,7 @@ def _parse_adr(filepath: Path) -> dict[str, Any] | None:
     date_text = _extract_section_text(text, "Date")
     date_line = date_text.split("\n")[0].strip() if date_text else ""
 
-    # House format (ADR-025): **Status**: Accepted / **Date**: YYYY-MM-DD
+    # House format: **Status**: Accepted / **Date**: YYYY-MM-DD
     for bold in _ADR_BOLD_META_RE.finditer(text[:4000]):
         key = bold.group("key").lower()
         value = bold.group("value").strip()
@@ -1168,7 +1168,7 @@ def process_governance(
         spikes_dir = root / "docs" / "ai" / "spikes"
         architecture_doc = root / "docs" / "ai" / "system_architecture.md"
 
-    # Restore git-backed governance (Plan 222): findings, sessions, and backlog
+    # Restore git-backed governance: findings, sessions, and backlog
     # items recorded at runtime live in a committed artifact, not in code. On a
     # fresh build the graph has none of them, so ingest the artifact (idempotent)
     # before parsing code-derived governance. A missing artifact is a no-op; a
@@ -1204,7 +1204,7 @@ def process_governance(
     ):
         file_id_map[row["f.path"]] = row["f.id"]
 
-    # --- Architecture layers (Plan 237) ---
+    # --- Architecture layers ---
     # Parse the human-owned architecture baseline into ArchitectureLayer nodes and
     # link each file to its most-specific layer. A missing/placeholder doc yields
     # no layers (clean no-op); a parse failure is logged and skipped so indexing
@@ -1367,7 +1367,7 @@ def process_governance(
             contract_count += 1
 
             # Files that contain a declared symbol -> direct CONTRACT_ABOUT_FILE
-            # edge (Plan 237). This makes contract coverage a first-class,
+            # edge. This makes contract coverage a first-class,
             # queryable relationship instead of only an implicit declares-join.
             contract_files: set[str] = set()
 

@@ -1,4 +1,4 @@
-"""Tests for record_findings_batch (Plan 151)."""
+"""Tests for record_findings_batch."""
 
 from __future__ import annotations
 

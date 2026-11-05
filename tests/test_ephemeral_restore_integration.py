@@ -1,4 +1,4 @@
-"""Integration tests for durable/ephemeral storage (Plan 223).
+"""Integration tests for durable/ephemeral storage.
 
 Verifies that on a fresh/ephemeral cache, ``scaffold index`` rebuilds the graph
 and restores governance from the committed artifact, and that the

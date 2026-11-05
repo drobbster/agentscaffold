@@ -1,6 +1,6 @@
-"""What a response says about how it was scoped (Plan 257, Group B).
+"""What a response says about how it was scoped.
 
-The field report behind ADR-026 could only be diagnosed by instrumenting
+The field report behind explicit project resolution could only be diagnosed by instrumenting
 resolution, because a response answered from the wrong project was byte-for-byte
 as convincing as a correct one: ``scaffold_projects`` was the sole tool that
 disclosed any provenance, and nothing disclosed that a ``working_path`` had been

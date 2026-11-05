@@ -1,4 +1,4 @@
-"""Plugin packaging tool — Step D.5.
+"""Plugin packaging tool.
 
 Generates pip-installable packages from AgentScaffold domain packs.
 

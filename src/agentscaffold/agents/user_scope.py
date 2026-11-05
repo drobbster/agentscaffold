@@ -1,4 +1,4 @@
-"""User-scope guidance and hooks (Plan 277, ADR-028 Decisions 3 and 4).
+"""User-scope guidance and hooks.
 
 ``scaffold agents install --scope user`` makes guidance and hooks reach a
 registered project that is not the editor's workspace root, without writing
@@ -8,7 +8,7 @@ anything into the repository. Everything it writes is in the user's home:
   one shared routing plugin plus one small pointer plugin per project. A
   user-level ``workspaceOpen`` hook (``scaffold-hook cursor-workspace-open``)
   returns the plugins for the projects in the opened workspace, so the rules
-  apply only there (Step A0 spike, alternative E). Plugins ship no
+  apply only there. Plugins ship no
   ``mcp.json``: the shared server is registered once by ``scaffold mcp install``.
 - **Cursor hooks** are entries in ``~/.cursor/hooks.json`` for ``workspaceOpen``,
   ``afterFileEdit`` and ``preToolUse`` (matcher ``Write``).

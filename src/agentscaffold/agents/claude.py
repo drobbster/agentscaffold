@@ -13,7 +13,7 @@ from agentscaffold.rendering import render_template
 console = Console()
 
 
-#: CLAUDE.md managed body under ``agents.claude_md: import`` (Plan 279).
+#: CLAUDE.md managed body under ``agents.claude_md: import``.
 CLAUDE_MD_IMPORT = "@AGENTS.md"
 
 

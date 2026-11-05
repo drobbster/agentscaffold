@@ -18,7 +18,7 @@ def test_mcp_extra_refuses_sdk_2() -> None:
 
 
 def test_mcp_extra_requires_server_instructions() -> None:
-    """Plan 275: the low-level ``Server`` takes ``instructions`` from 1.3.0 on."""
+    """The low-level ``Server`` takes ``instructions`` from 1.3.0 on."""
     text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
     assert '"mcp>=1.0.0' not in text
 

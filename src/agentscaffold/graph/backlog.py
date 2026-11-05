@@ -5,7 +5,7 @@ BacklogItem nodes in the DuckPGQ knowledge graph.
 
 BacklogItem IDs are content hashes ``bi::`` + SHA1 of
 ``{project?}backlog::{plan_number}::{title[:64]}``, not the human IDs in
-``backlog.md``. ``resolve_backlog_item`` accepts the hash, a Plan 225
+``backlog.md``. ``resolve_backlog_item`` accepts the hash, a
 project-qualified form, or a unique human-id / title prefix.
 
 The markdown files (backlog.md, backlog_archive.md, plan appendices) remain the
@@ -215,7 +215,7 @@ def _returning_id(rows: list[dict[str, Any]]) -> str | None:
 
 
 def _id_candidates(raw_id: str, project: str | None) -> list[str]:
-    """Exact-id forms to try: as given, plus Plan 225 qualified/unqualified."""
+    """Exact-id forms to try: as given, plus project-qualified/unqualified."""
     raw_id = raw_id.strip()
     if not raw_id:
         return []
@@ -298,7 +298,7 @@ def resolve_backlog_item(
     resolution note. The item remains in the graph for retrospective queries.
 
     ``item_id`` may be the canonical ``bi::`` hash (or its project-qualified
-    form), or a unique human id / title prefix (``DQ-043``, ``B-249-1``).
+    form), or a unique human id / title prefix (``DQ-043``, ``B-001-1``).
 
     A miss returns ``status="not_found"`` and does not fabricate success. Two
     or more title matches return ``status="ambiguous"``.

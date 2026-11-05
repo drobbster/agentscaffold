@@ -1,4 +1,4 @@
-"""Incremental-index scoping tests for Plan 231."""
+"""Incremental-index scoping tests."""
 
 from __future__ import annotations
 

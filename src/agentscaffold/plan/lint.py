@@ -49,7 +49,7 @@ def _lint_plan(
 ) -> list[str]:
     """Return a list of issue strings for a single plan file.
 
-    With *config* and an enabled inventory, the Plan 282 field checks run too.
+    With *config* and an enabled inventory, the inventory field checks run too.
     """
     issues: list[str] = []
     text = path.read_text()
@@ -85,7 +85,7 @@ _CLOSED = frozenset({"Complete", "Superseded"})
 
 
 def _lint_inventory_fields(text: str, config: ScaffoldConfig, root: Path) -> list[str]:
-    """Plan 282: Status vocabulary, adoption-date fields and component ids.
+    """Status vocabulary, adoption-date fields and component ids.
 
     Applies only with the inventory enabled, so projects that upgrade without
     opting in see no new lint failures.

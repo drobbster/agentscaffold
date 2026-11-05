@@ -1,4 +1,4 @@
-"""Plan lint: Status vocabulary, adoption-date fields and component ids (Plan 282)."""
+"""Plan lint: Status vocabulary, adoption-date fields and component ids."""
 
 from __future__ import annotations
 

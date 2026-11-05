@@ -1,4 +1,4 @@
-"""B-283-1: a source file is tested when a test module imports it.
+"""A source file is tested when a test module imports it.
 
 The review rows used to look only for ``test_<stem>.py`` and counted documents
 as untested source, so most of a plan's test-coverage row was noise.

@@ -1,11 +1,8 @@
-"""Plan 261: governance ingestion must not parse a populated source to zero rows in silence.
+"""Governance ingestion must not parse a populated source to zero rows in silence.
 
 The durable half is a declared artifact registry plus a zero-row wrapper. The
 convenient half (bold-bullet learnings, prose-layout layers) is covered here
 and in ``test_layer_ingestion.py``.
-
-Evidence and working environment:
-``docs/ai/graph_population_evidence_261-265.md`` in the governance repo.
 """
 
 from __future__ import annotations
@@ -60,7 +57,7 @@ def test_nonempty_learnings_file_that_parses_to_zero_rows_warns(tmp_path: Path):
     tracker.write_text(
         "# Learnings\n\n"
         "The tracker drifted to prose.\n\n"
-        "- **L249-17 (2026-08-06, Plan 249 Step F6): a real learning id is here.**\n"
+        "- **L901-17 (2026-08-06, Plan 901 Step F6): a real learning id is here.**\n"
         "  Narrative that none of the original parsers can read.\n"
     )
 
@@ -75,7 +72,7 @@ def test_nonempty_learnings_file_that_parses_to_zero_rows_warns(tmp_path: Path):
         learnings = store.query("SELECT learningId FROM Learning")
         if learnings:
             assert warns == []
-            assert any(r["learningId"] == "L249-17" for r in learnings)
+            assert any(r["learningId"] == "L901-17" for r in learnings)
         else:
             assert len(warns) == 1
             assert warns[0]["filePath"] == str(tracker)
@@ -182,7 +179,7 @@ def test_all_parseable_plan_files_produce_no_warning(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Opportunistic shape (section 4.6 counter-example)
+# Opportunistic shape (counter-example)
 # ---------------------------------------------------------------------------
 
 

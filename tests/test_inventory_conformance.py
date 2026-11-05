@@ -1,4 +1,4 @@
-"""System inventory contract v1: the conformance fixtures (Plan 282).
+"""System inventory contract v1: the conformance fixtures.
 
 ``tests/fixtures/system_inventory/expected.json`` lists the findings each check
 must produce on the synthetic project beside it. A fixture change is a contract

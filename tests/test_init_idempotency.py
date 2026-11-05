@@ -1,4 +1,4 @@
-"""Plan 249 Step B5: idempotent, monorepo-aware init.
+"""Idempotent, monorepo-aware init.
 
 Three properties, in rising order of how easy they are to get wrong.
 
@@ -10,8 +10,8 @@ Three properties, in rising order of how easy they are to get wrong.
 * **Init inside a workspace joins it rather than cloning it.** The project gets
   registered and receives its own system-of-record; the reusable process assets
   stay at the workspace root, which is the whole point of the shared layout.
-* **The workspace id is never regenerated.** It keys the state directory since
-  Step B4, so minting a second one orphans the graph. That makes the id the one
+* **The workspace id is never regenerated.** It keys the state directory, so
+  minting a second one orphans the graph. That makes the id the one
   piece of init's output where "write it again" is actively destructive.
 
 ``--dry-run`` is tested as a hard guarantee: it must be indistinguishable from
@@ -172,8 +172,8 @@ def test_init_inside_a_workspace_still_writes_project_system_of_record(
 
 
 def test_a_lone_repo_is_not_registered_by_init(tmp_path: Path, cli_runner: CliRunner):
-    """Registration stays explicit (threat model Vector 1), and after Step B4 it
-    is also what moves the graph out of the tree."""
+    """Registration stays explicit, and it is also what moves the graph out of
+    the tree."""
     _init(cli_runner, tmp_path)
 
     assert _registry_workspaces() == []
@@ -196,7 +196,7 @@ def test_init_does_not_regenerate_the_workspace_id(tmp_path: Path, cli_runner: C
 def test_registering_a_manifested_workspace_adopts_the_manifest_id(tmp_path: Path):
     """The manifest is the source of truth, so the registry must follow it.
 
-    Found while probing Step B5: `workspace onboard` wrote a generated id into
+    Found while probing idempotent init: `workspace onboard` wrote a generated id into
     the manifest and `register_workspace` minted a second, unrelated one, so a
     freshly onboarded workspace carried two ids. Resolution prefers the manifest,
     so `scaffold project list` was reporting an id that keyed nothing.

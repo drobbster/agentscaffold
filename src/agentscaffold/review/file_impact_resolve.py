@@ -3,7 +3,7 @@
 Review tools used to read ``PLAN_IMPACTS`` edges. Ingest only creates those
 edges when the path is already a ``File`` in this project, so sibling
 ``src/...`` cells vanish and reviews vacuous-pass on the governance docs
-that remain (L249-17 / Plan 271).
+that remain.
 
 Resolution is markdown-first (``_extract_file_impact``), then local disk,
 then the named ``implementation_project`` only. It does not walk every
@@ -260,7 +260,7 @@ def _on_disk(root: Path, rel: str, extra_paths: Sequence[str]) -> str | None:
 
     A row written relative to the VCS root (``airflow/dags/team_x/dag.py``)
     resolves to its ``@repo/`` File path when the project's extra-path globs
-    match it (Plan 283).
+    match it.
     """
     disk = resolve_node_path(root, rel)
     if disk is not None and disk.is_file():

@@ -1,1 +1,1 @@
-"""Precedent retrieval study harness (Plan 281)."""
+"""Precedent retrieval study harness."""

@@ -1,11 +1,9 @@
-"""Tests for the call-time project resolution chain (Plan 249, Step A5).
+"""Tests for the call-time project resolution chain.
 
-Written before ``mcp/projects.py`` and ``mcp/errors.py`` exist (Step A6 implements
-them), so these define the surface described by
-``docs/ai/contracts/workspace_registry_interface.md`` v1.0.
+These define the public surface of ``mcp/projects.py`` and ``mcp/errors.py``.
 
 The precedence is: explicit ``project`` argument, then ``working_path`` matched
-against registered roots, then the startup anchor retained from Plan 234, then
+against registered roots, then the startup anchor, then
 the sole registered project. Anything else is a structured ``ambiguous_project``
 error.
 
@@ -161,7 +159,7 @@ def test_unmatched_working_path_falls_through_to_the_next_tier(home: Path, tmp_p
 def test_working_path_falls_back_to_on_disk_resolution(home: Path, tmp_path: Path) -> None:
     """An unregistered but real project root still resolves from working_path.
 
-    Plan 234 shipped multi-project routing via ``workspace.yaml`` walk-up, with no
+    Multi-project routing first shipped via ``workspace.yaml`` walk-up, with no
     registry involved. Making tier 2 registry-only would break every workspace
     already relying on that, so the registry is a cross-workspace index layered
     over on-disk resolution rather than a replacement for it.
@@ -359,7 +357,7 @@ def test_restrict_to_permits_a_listed_project(home: Path, tmp_path: Path) -> Non
 def test_restrict_to_blocks_an_unlisted_project(home: Path, tmp_path: Path) -> None:
     """The allowlist is the point: an unlisted project is refused.
 
-    Section 11 of Plan 249 counts this as one of the mitigations for the fact
+    The shared-server design counts this as one of the mitigations for the fact
     that one server process can now read every registered project, so it has to
     actually deny rather than warn.
     """

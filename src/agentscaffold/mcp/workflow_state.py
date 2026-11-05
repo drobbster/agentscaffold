@@ -1,4 +1,4 @@
-"""Live workflow_state.md parse for session routing (Plan 266).
+"""Live workflow_state.md parse for session routing.
 
 Heading extraction is unchanged from the 0.11.0 orient helper. Focus and
 blocker escalation no longer scan the whole diary for ``In Progress``.
@@ -26,7 +26,7 @@ _DROPPED_BLOCKER = re.compile(r"\b(UNBLOCKED|RESOLVED)\b", re.IGNORECASE)
 _BULLET = re.compile(r"^[-*]\s+")
 _LAST_UPDATED = re.compile(r"Last\s+Updated\**\s*:\s*\**\s*(\d{4}-\d{2}-\d{2})", re.IGNORECASE)
 
-#: A diary not updated for longer than this is reported as stale (Plan 276).
+#: A diary not updated for longer than this is reported as stale.
 STALE_AFTER_DAYS = 14
 #: Plan statuses that contradict a diary listing the plan as in progress.
 _FINISHED_STATUSES = frozenset({"Complete", "Superseded"})
@@ -173,7 +173,7 @@ def _is_empty_section(value: str) -> bool:
 def _non_struck_bullets(section: str) -> list[str]:
     """Return bullets including indented continuation lines.
 
-    Rebellion's live signal is often ``Next on Plan N`` on the line after
+    In large adopter repos the live signal is often ``Next on Plan N`` on the line after
     the ``- `` marker. First-line-only collection would miss it.
     """
     bullets: list[str] = []

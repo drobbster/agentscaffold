@@ -1,13 +1,11 @@
-"""Tests for the user-level workspace registry and path resolution (Plan 249, Step A3).
+"""Tests for the user-level workspace registry and path resolution.
 
-Written before ``workspace_registry.py`` exists (Step A4 implements it), so these
-tests define the surface described by
-``docs/ai/contracts/workspace_registry_interface.md`` v1.0.
+These tests define the registry's public surface.
 
 Scope here is registry CRUD and longest-prefix resolution only. The full
 precedence chain (explicit argument, then working_path, then startup anchor, then
-sole project) is Step A5, and Windows/UNC/WSL path flavours are Step A9b in
-``test_cross_platform_paths.py``.
+sole project) is tested in ``test_mcp_project_resolution.py``, and Windows/UNC/WSL
+path flavours in ``test_cross_platform_paths.py``.
 """
 
 from __future__ import annotations

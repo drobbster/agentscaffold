@@ -1,4 +1,4 @@
-"""Plan 251 C3: compact vs full guidance stamp."""
+"""Compact vs full guidance stamp."""
 
 from __future__ import annotations
 

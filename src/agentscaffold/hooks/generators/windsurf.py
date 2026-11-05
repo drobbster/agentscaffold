@@ -1,4 +1,4 @@
-"""Windsurf hook generator — Step B.4.
+"""Windsurf hook generator.
 
 Windsurf Cascade uses ``.windsurfrules`` (instructional enforcement, no
 native hook/script mechanism yet).  This generator appends enforcement rule

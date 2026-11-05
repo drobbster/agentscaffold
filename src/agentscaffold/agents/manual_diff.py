@@ -84,7 +84,7 @@ def project_owned_text(text: str) -> str:
     """Return *text* with every managed block removed, keeping text on both sides.
 
     Unlike :func:`unmanaged_region`, text after the end marker is kept: it is
-    outside the markers and therefore project-owned (ADR-027).
+    outside the markers and therefore project-owned.
     """
     parts: list[str] = []
     rest = text

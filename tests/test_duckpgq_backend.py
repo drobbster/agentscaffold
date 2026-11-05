@@ -1,4 +1,4 @@
-"""Protocol conformance + functional tests for DuckPGQBackend — Step A.6."""
+"""Protocol conformance + functional tests for DuckPGQBackend."""
 
 from __future__ import annotations
 
@@ -347,7 +347,7 @@ def test_open_graph_duckpgq_returns_graphbackend(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Connection robustness (Plan 218)
+# Connection robustness
 # ---------------------------------------------------------------------------
 
 

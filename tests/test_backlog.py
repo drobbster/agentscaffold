@@ -1,4 +1,4 @@
-"""Tests for BacklogItem CRUD and MCP tool integration (Plan 151)."""
+"""Tests for BacklogItem CRUD and MCP tool integration."""
 
 from __future__ import annotations
 
@@ -388,8 +388,8 @@ def test_resolve_backlog_item_human_id_colon_prefix(store):
 def test_resolve_backlog_item_hyphen_gated_space_prefix(store):
     from agentscaffold.graph.backlog import record_backlog_item, resolve_backlog_item
 
-    created = record_backlog_item(store, plan_number=151, title="B-249-1 Fix the lock")
-    result = resolve_backlog_item(store, "B-249-1")
+    created = record_backlog_item(store, plan_number=151, title="B-123-1 Fix the lock")
+    result = resolve_backlog_item(store, "B-123-1")
     assert result["status"] == "archived"
     assert result["id"] == created["id"]
 
@@ -474,7 +474,7 @@ def test_resolve_backlog_item_strips_whitespace(store):
     assert result["id"] == created["id"]
 
 
-def _pre255_backlog_table(conn) -> None:
+def _backlog_table_without_resolution(conn) -> None:
     """0.10.3 BacklogItem: project column present, resolution absent."""
     conn.execute(
         """
@@ -494,8 +494,8 @@ def _pre255_backlog_table(conn) -> None:
     )
 
 
-def test_resolve_backlog_item_on_pre_255_file_without_init_schema(tmp_path):
-    """Plan 256: writable open heals a graph that init_schema never saw."""
+def test_resolve_backlog_item_on_file_without_resolution_or_init_schema(tmp_path):
+    """Writable open heals a graph that init_schema never saw."""
     import duckdb
 
     from agentscaffold.graph.backlog import resolve_backlog_item
@@ -503,7 +503,7 @@ def test_resolve_backlog_item_on_pre_255_file_without_init_schema(tmp_path):
 
     db = tmp_path / "g.duckdb"
     conn = duckdb.connect(str(db))
-    _pre255_backlog_table(conn)
+    _backlog_table_without_resolution(conn)
     conn.execute(
         "INSERT INTO BacklogItem VALUES ("
         "'bi::cafe', 256, 'old row', 'P3', '', 'open', '', 't', '', '')"
@@ -521,7 +521,7 @@ def test_resolve_backlog_item_on_pre_255_file_without_init_schema(tmp_path):
         store.close()
 
 
-def test_read_only_open_does_not_alter_pre_255_schema(tmp_path):
+def test_read_only_open_does_not_alter_schema_without_resolution(tmp_path):
     import duckdb
 
     from agentscaffold.graph.duckpgq_backend import DuckPGQBackend
@@ -529,7 +529,7 @@ def test_read_only_open_does_not_alter_pre_255_schema(tmp_path):
 
     db = tmp_path / "g.duckdb"
     conn = duckdb.connect(str(db))
-    _pre255_backlog_table(conn)
+    _backlog_table_without_resolution(conn)
     conn.close()
 
     store = DuckPGQBackend(db, read_only=True)

@@ -1,4 +1,4 @@
-"""Background work behind the edit and commit hooks (Plan 277).
+"""Background work behind the edit and commit hooks.
 
 The router (:mod:`agentscaffold.hooks.router`) answers the editor in a few tens
 of milliseconds and starts ``scaffold hook-worker`` detached. The worker does

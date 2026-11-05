@@ -1,4 +1,4 @@
-"""Tests for Step C.3: open_findings and reviewer_hints in scaffold_prepare_review."""
+"""Tests for open_findings and reviewer_hints in scaffold_prepare_review."""
 
 from __future__ import annotations
 
@@ -401,7 +401,7 @@ def test_prepare_review_deduplicates_findings(tmp_path: Path):
         result = _tool_prepare_review(store, {"plan_number": 10}, {}, tmp_path, None)
 
     # shared_finding appeared in both plan and file queries → must appear only once.
-    # open_findings is cleaned of alias prefixes at the tool boundary (Plan 238).
+    # open_findings is cleaned of alias prefixes at the tool boundary.
     ids = [f["id"] for f in result["open_findings"]]
     assert ids.count("rf::shared") == 1
 

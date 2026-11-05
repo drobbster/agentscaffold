@@ -1,7 +1,7 @@
-"""Call-time project resolution for the single MCP server (Plan 249, Step A6).
+"""Call-time project resolution for the single MCP server.
 
-Named ``project_resolution`` rather than ``projects`` because Plan 249 reserves
-``mcp/projects.py`` for the ``scaffold_projects`` tool at Step A7.
+Named ``project_resolution`` rather than ``projects`` because
+``mcp/projects.py`` is reserved for the ``scaffold_projects`` tool.
 
 
 One server process serves every registered workspace, so each tool call has to
@@ -10,7 +10,7 @@ decide for itself which project it is about. The precedence is defined in
 
 1. an explicit ``project`` argument,
 2. ``working_path`` matched against registered roots by longest prefix,
-3. the startup anchor retained from Plan 234,
+3. the startup anchor (``scaffold mcp --workspace/--project``),
 4. the sole registered project.
 
 If none of those resolve, the call fails with :class:`AmbiguousProjectError`. It
@@ -75,7 +75,7 @@ def resolve_project(
     Args:
         project: Explicit project name from the tool arguments.
         working_path: The file or directory the agent is working on.
-        anchor: The startup anchor (Plan 234). Callers in the server pass
+        anchor: The startup anchor. Callers in the server pass
             ``resolve_mcp_start()``; tests inject a path directly.
         registry: Registry to resolve against. Loaded from disk when omitted.
         restrict_to: Optional ``--restrict-to`` allowlist of project names.
@@ -115,7 +115,7 @@ def _resolve(
         return ProjectResolution(resolved, ResolutionSource.EXPLICIT)
 
     if working_path:
-        # Registry first, then the on-disk walk-up. Plan 234 shipped
+        # Registry first, then the on-disk walk-up. An earlier release shipped
         # multi-project routing via workspace.yaml with no registry involved, so
         # a registry-only tier 2 would break every workspace already relying on
         # it. The registry is a cross-workspace index layered over on-disk
@@ -167,8 +167,8 @@ def _absolutise(working_path: str | Path, registry: Registry) -> str | Path:
     frame of reference the server actually has.
 
     One on-disk match is required. Several means the fragment names a real path in
-    more than one workspace, and choosing between them would be exactly the guess
-    ADR-026 removes; leaving it unresolved lets the call refuse, and the response
+    more than one workspace, and choosing between them would be exactly the silent
+    guess resolution must never make; leaving it unresolved lets the call refuse, and the response
     meta reports the path as unmatched either way.
     """
     path = Path(working_path).expanduser()
@@ -269,7 +269,7 @@ def _unregistered_root(
     no other project could possibly be meant and refusing would only convert a
     precise "no graph found here" into a misleading ambiguity error.
 
-    A marker is necessary but not sufficient (ADR-026). Given a *registry*, a
+    A marker is necessary but not sufficient. Given a *registry*, a
     directory with registered project roots beneath it is declined however much
     it looks like a repo, because it is a place that *contains* projects rather
     than being one -- a home directory holding a dotfiles ``.git``, or an

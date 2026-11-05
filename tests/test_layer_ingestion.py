@@ -1,4 +1,4 @@
-"""Tests for Plan 237: architecture-layer and contract-to-file graph ingestion.
+"""Tests for architecture-layer and contract-to-file graph ingestion.
 
 Covers the architecture-doc parser, the file->layer matcher, and the ingestion
 that creates ArchitectureLayer nodes + BELONGS_TO_LAYER / CONTRACT_ABOUT_FILE
@@ -83,7 +83,7 @@ def test_parse_extracts_path_globs():
 
 
 def test_parse_prose_layout_yields_nonempty_patterns():
-    """Plan 261: Components tables without a Paths column still extract paths."""
+    """Components tables without a Paths column still extract paths."""
     fixture = Path(__file__).parent / "fixtures" / "architecture_prose_layout.md"
     layers = parse_architecture_layers(
         fixture.read_text(),
@@ -198,7 +198,7 @@ def test_ingest_creates_layers_and_edges(tmp_path):
 
 
 def test_ingest_prose_layout_creates_nonzero_edges(tmp_path):
-    """Regression Plan 237 never made: layers defined => BELONGS_TO_LAYER > 0."""
+    """Regression: layers defined => BELONGS_TO_LAYER > 0."""
     from agentscaffold.graph.governance import _ingest_architecture_layers
 
     fixture = Path(__file__).parent / "fixtures" / "architecture_prose_layout.md"

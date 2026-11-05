@@ -1,4 +1,4 @@
-"""Tests for Phase 3: Template rendering with graph context.
+"""Tests for template rendering with graph context.
 
 Verifies that templates gracefully degrade without graph data
 and render enriched content when graph data is available.

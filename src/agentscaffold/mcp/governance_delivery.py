@@ -1,4 +1,4 @@
-"""Deliver the governance manual with the tool call it governs (Plan 280).
+"""Deliver the governance manual with the tool call it governs.
 
 Orient carries a short block (the `##` headings plus the sections named in
 ``agents.governance.orient``); each lifecycle tool carries the sections mapped
