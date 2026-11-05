@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agentscaffold.domain_packs.loader import domain_inventory_collectors
 from agentscaffold.inventory import checks
 from agentscaffold.inventory.collectors import CollectionResult, collect
 from agentscaffold.inventory.schema import Inventory, InventoryError, load_inventory
@@ -49,7 +50,16 @@ def inventory_path(root: Path, config: Any) -> Path:
 
 
 def collectors_of(config: Any) -> list[tuple[str, list[str]]]:
-    return [(c.name, list(c.sources)) for c in config.inventory.collectors]
+    """Configured collectors; without an explicit list, the defaults plus the domain packs'."""
+    out = [(c.name, list(c.sources)) for c in config.inventory.collectors]
+    if "collectors" in getattr(config.inventory, "model_fields_set", {"collectors"}):
+        return out
+    names = {name for name, _ in out}
+    for name in domain_inventory_collectors(list(getattr(config, "domains", []) or [])):
+        if name not in names:
+            out.append((name, []))
+            names.add(name)
+    return out
 
 
 def run_collectors(root: Path, config: Any) -> CollectionResult:

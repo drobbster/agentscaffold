@@ -22,7 +22,8 @@ introduce additive features and small behavior changes).
   `scaffold.yaml` has an `inventory:` block that enables it; `scaffold init`
   writes one (warn mode), the inventory, and
   `docs/ai/prompts/architecture_review.md`. The `data_engineering`, `mlops`
-  and `trading` domain packs enable the `prefect` collector.
+  and `trading` domain packs enable the `prefect` collector, including in
+  existing projects whose `inventory:` block lists no `collectors`.
 - **Components in the graph, reviews and orientation** (inventory enabled).
   `Component` nodes with `OWNED_BY`, `ENTRYPOINT` and `READS` edges;
   `scaffold_impact` lists the components that read or run a file in

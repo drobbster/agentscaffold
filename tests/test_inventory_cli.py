@@ -145,6 +145,34 @@ def test_init_dry_run_writes_nothing(runner: CliRunner, fresh: Path) -> None:
     assert not (fresh / "docs" / "ai" / "system_inventory.yaml").exists()
 
 
+def _domain_project(root: Path, inventory_block: str) -> None:
+    (root / "scaffold.yaml").write_text(
+        f"project:\n  name: fresh\ndomains:\n  - trading\n{inventory_block}", encoding="utf-8"
+    )
+    (root / "prefect.yaml").write_text(
+        "deployments:\n  - name: nightly-sync\n    entrypoint: flows/sync.py:sync\n",
+        encoding="utf-8",
+    )
+
+
+def test_init_without_a_collector_list_adds_the_domain_collectors(
+    runner: CliRunner, fresh: Path
+) -> None:
+    _domain_project(fresh, "")
+    result = runner.invoke(app, ["inventory", "init", "--dry-run", *TODAY])
+    assert result.exit_code == 0, result.output
+    assert "compose:db" in result.output
+    assert "prefect:nightly-sync" in result.output
+
+
+def test_an_explicit_collector_list_is_used_as_written(runner: CliRunner, fresh: Path) -> None:
+    _domain_project(fresh, "inventory:\n  collectors: [compose]\n")
+    result = runner.invoke(app, ["inventory", "init", "--dry-run", *TODAY])
+    assert result.exit_code == 0, result.output
+    assert "compose:db" in result.output
+    assert "prefect:nightly-sync" not in result.output
+
+
 def test_init_adds_the_manual_section_to_explicit_step_lists(
     runner: CliRunner, fresh: Path
 ) -> None:
