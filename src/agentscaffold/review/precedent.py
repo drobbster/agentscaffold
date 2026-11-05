@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agentscaffold.graph.query_compat import sql_escape
+from agentscaffold.repo_paths import path_spellings
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
@@ -155,9 +156,11 @@ def precedent_for(
 
     *rerank* applies a cross-encoder to the semantic layer only. Findings in
     *statistic_categories*, and automated findings in *automated_skip_categories*,
-    are never returned.
+    are never returned. An ``@repo/`` path also matches its VCS-relative
+    spelling, which is how review text names files outside the project folder.
     """
-    wanted = [p for p in dict.fromkeys(paths) if p]
+    wanted = [s for p in dict.fromkeys(paths) if p for s in path_spellings(p)]
+    wanted = list(dict.fromkeys(wanted))
     if not wanted:
         return PrecedentResult(items=[], total=0, sources=[s.name for s in sources])
     skip = _Skip(

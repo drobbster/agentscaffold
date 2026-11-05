@@ -384,6 +384,7 @@ Knowledge-graph backend, indexing, and governance paths.
 | async_embeddings | `"off" \| "idle" \| "interval" \| "commit"` | `off` | Controls whether AgentScaffold schedules background embedding refreshes. `off` preserves historical behavior and never loads the embedding model |
 | infer_module_prefix | bool | `true` | Treat the project's dotted path below its git root as a Python module prefix for the project root (see below) |
 | module_prefixes | map of str to str | `{}` | Extra Python module prefixes, each mapped to a directory relative to the project root |
+| extra_paths | list[str] | `[]` | Globs, relative to the git root, naming files outside the project folder that belong to this project (see below) |
 
 ### Monorepo module prefixes
 
@@ -418,6 +419,46 @@ the explicit entries.
 many imports each lookup resolved, with `prefix` for these. Edges indexed
 before this was recorded show as `unrecorded` until the next full
 `scaffold index`.
+
+### Files outside the project folder (`extra_paths`)
+
+Some monorepos keep part of a team's code outside the team folder, such as
+Airflow DAGs under `<repo>/airflow/dags/team_x/` for a project at
+`<repo>/company/team_x/`. `extra_paths` lists globs, relative to the git root,
+for files like these:
+
+```yaml
+graph:
+  extra_paths:
+    - airflow/dags/team_x/**/*.py
+```
+
+Matching files are indexed with the project and get ids of the form
+`@repo/<path from the git root>`, for example
+`file::@repo/airflow/dags/team_x/load.py`. They take part in imports, callers,
+impact, search, `scaffold_grep_graph`, plan change lists and precedent like
+any other project file. A File Impact row may name them either way
+(`@repo/airflow/...` or `airflow/...`).
+
+The glob rules:
+
+- `*` and `?` stay within one folder, `**` spans folders, and `[abc]` matches
+  one character from the set.
+- A glob must start with at least one literal folder (`airflow/**` is
+  accepted, `**/*.py` and `*/dags/*.py` are not), must not be absolute, and
+  must not contain `..`.
+- The repository's `.gitignore` rules and the project's language filter
+  apply. Symlinks that lead outside the repository are skipped.
+
+Files are left out, with a warning in the index output, when they sit inside
+another registered project, when two projects' `extra_paths` both match them,
+or when the project folder itself contains a directory named `@repo`.
+Without a git root, `extra_paths` is ignored.
+
+Edit hooks route an edit to one of these files to the project that claims it,
+so the incremental index and the read-only guard both apply. A
+`read_only_paths` pattern for such a file uses the `@repo/` form, for example
+`@repo/airflow/dags/team_x/**`.
 
 ### Incremental index policy
 

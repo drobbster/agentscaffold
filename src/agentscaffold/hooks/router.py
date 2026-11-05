@@ -9,8 +9,9 @@ the owning registered project from the edited path, and either does nothing
 Two properties are load-bearing, because a user-level hook runs on every agent
 edit in every workspace:
 
-**Fast exit.** Module scope imports only the standard library and two
-stdlib-only helpers (``config_home``, ``path_flavour``); ``yaml`` loads lazily.
+**Fast exit.** Module scope imports only the standard library and three
+stdlib-only helpers (``config_home``, ``path_flavour``, ``repo_paths``); ``yaml``
+loads lazily.
 Configuration, pydantic and the graph are imported only on paths that are
 inside a registered project, and indexing itself runs in the worker.
 
@@ -38,6 +39,12 @@ from agentscaffold.path_flavour import (
     normalise_for_match,
     parse_recorded_path,
     path_contains,
+)
+from agentscaffold.repo_paths import (
+    compile_extra_glob,
+    extra_glob_problem,
+    find_vcs_root,
+    repo_node_path,
 )
 
 #: Mirrors ``workspace_registry.REGISTRY_FILENAME`` / ``REGISTRY_VERSION``;
@@ -78,6 +85,9 @@ class RoutedProject:
 
     name: str | None
     root: Path
+    #: The ``@repo/`` File path when the edited file is one of the project's
+    #: ``graph.extra_paths`` files outside its folder (Plan 283).
+    node_path: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +150,50 @@ def resolve_registered(
             best_depth = depth
             best = RoutedProject(name=name, root=Path(str(root)))
     return best
+
+
+def _extra_globs(project_root: Path) -> list[str]:
+    """Valid ``graph.extra_paths`` entries from *project_root*'s ``scaffold.yaml``."""
+    path = project_root / "scaffold.yaml"
+    if not path.is_file():
+        return []
+    import yaml
+
+    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    try:
+        raw: Any = yaml.load(path.read_text(encoding="utf-8"), Loader=loader)  # noqa: S506
+    except (OSError, yaml.YAMLError):
+        return []
+    graph = raw.get("graph") if isinstance(raw, dict) else None
+    entries = graph.get("extra_paths") if isinstance(graph, dict) else None
+    if not isinstance(entries, list):
+        return []
+    return [e for e in entries if isinstance(e, str) and extra_glob_problem(e) is None]
+
+
+def resolve_extra_path_owner(
+    target: str, projects: Sequence[tuple[str | None, PurePath]]
+) -> RoutedProject | None:
+    """The one project whose ``graph.extra_paths`` match *target*, or None.
+
+    Only projects in the same git checkout as *target* are read. The edited
+    path is matched against the patterns, so a file created after the last
+    index routes too. A file two projects claim belongs to neither.
+    """
+    repo = find_vcs_root(Path(target).parent)
+    if repo is None:
+        return None
+    rel = Path(target).relative_to(repo).as_posix()
+    owners: list[RoutedProject] = []
+    for name, match_root in projects:
+        root = Path(str(match_root))
+        if not path_contains(normalise_for_match(repo), match_root):
+            continue
+        if find_vcs_root(root) != repo:
+            continue
+        if any(compile_extra_glob(g).fullmatch(rel) for g in _extra_globs(root)):
+            owners.append(RoutedProject(name=name, root=root, node_path=repo_node_path(rel)))
+    return owners[0] if len(owners) == 1 else None
 
 
 def projects_for_roots(roots: Sequence[str], projects: Sequence[tuple[str, PurePath]]) -> list[str]:
@@ -219,15 +273,18 @@ def resolve_edit_target(path: str, scope: str, home: Path | None = None) -> Rout
     ``scaffold.yaml`` and contains *path*. A user-level hook has no such
     fallback; its working directory is the editor's configuration directory.
     """
-    routed = resolve_registered(path, load_registered_projects(home))
-    if routed is not None or scope != "project":
+    projects = load_registered_projects(home)
+    routed = resolve_registered(path, projects)
+    if routed is not None:
         return routed
-    cwd = Path.cwd()
-    if (cwd / "scaffold.yaml").is_file() and path_contains(
-        normalise_for_match(os.path.realpath(cwd)), normalise_for_match(path)
-    ):
-        return RoutedProject(name=None, root=Path(os.path.realpath(cwd)))
-    return None
+    candidates: list[tuple[str | None, PurePath]] = list(projects)
+    if scope == "project":
+        cwd = Path(os.path.realpath(Path.cwd()))
+        if (cwd / "scaffold.yaml").is_file():
+            if path_contains(normalise_for_match(cwd), normalise_for_match(path)):
+                return RoutedProject(name=None, root=cwd)
+            candidates.append((None, normalise_for_match(cwd)))
+    return resolve_extra_path_owner(path, candidates) if candidates else None
 
 
 # ---------------------------------------------------------------------------
@@ -314,10 +371,13 @@ def protected_reason(payload: dict[str, Any], scope: str) -> str | None:
     config = load_config(config_path)
     if not config.agents.protect_read_only_paths:
         return None
-    try:
-        rel = Path(path).relative_to(project.root).as_posix()
-    except ValueError:
-        return None
+    if project.node_path is not None:
+        rel = project.node_path
+    else:
+        try:
+            rel = Path(path).relative_to(project.root).as_posix()
+        except ValueError:
+            return None
     if not matches_read_only(rel, config.semi_autonomous.safety.read_only_paths):
         return None
     label = project.name or project.root.name

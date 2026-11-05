@@ -12,6 +12,7 @@ from agentscaffold.mcp.plan_card import (
     count_execution_checkboxes,
     next_unchecked_step,
 )
+from agentscaffold.paths import resolve_node_path
 from agentscaffold.review.file_impact_resolve import (
     ImplementationProjectError,
     query_root,
@@ -117,7 +118,9 @@ def diff_plan_vs_code(
     resolved_by_path: dict[str, dict[str, Any]] = {}
     try:
         with resolved_impacts(store, plan_number, root=root) as resolved_rows:
-            resolved_by_path = {r["f.path"]: r for r in resolved_rows if r.get("f.path")}
+            resolved_by_path = {
+                r.get("written") or r["f.path"]: r for r in resolved_rows if r.get("f.path")
+            }
     except ImplementationProjectError as exc:
         return {
             "error": str(exc),
@@ -141,16 +144,16 @@ def diff_plan_vs_code(
             missing_on_disk.append(rel)
             not_in_graph.append(rel)
             continue
-        disk_root = query_root(frow, root)
-        disk = disk_root / rel
-        if disk.is_file():
+        node_path = frow.get("f.path") or rel
+        disk = resolve_node_path(query_root(frow, root), node_path)
+        if disk is not None and disk.is_file():
             existing_on_disk.append(rel)
             spot = _symbol_spot_check(disk, plan_text, notes_by_path.get(rel, ""), rel_path=rel)
             if spot:
                 symbol_spot_checks.append(spot)
         else:
             missing_on_disk.append(rel)
-        if rel in graph_set or _file_in_graph(store, rel):
+        if node_path in graph_set or _file_in_graph(store, node_path):
             in_graph.append(rel)
         else:
             not_in_graph.append(rel)

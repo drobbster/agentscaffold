@@ -84,6 +84,9 @@ def _probe_incremental_noop(
     disk_files = set(
         scan_indexable_files(root, ignore_patterns, allowed_languages=allowed_languages)
     )
+    from agentscaffold.graph.source_roots import extra_path_files
+
+    disk_files.update(extra_path_files(root, graph_config, allowed_languages))
 
     gov_files = governance_source_files(root, config)
     current_gov_fp = governance_fingerprint(gov_files)

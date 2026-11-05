@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agentscaffold.graph.query_compat import ql
+from agentscaffold.paths import resolve_node_path
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
@@ -99,8 +100,11 @@ def process_config_references(
     candidates = 0
     resolved = 0
     for file_id, file_path in config_files:
+        full_path = resolve_node_path(root, file_path)
+        if full_path is None:
+            continue
         try:
-            source = (root / file_path).read_text(errors="replace")
+            source = full_path.read_text(errors="replace")
         except (OSError, PermissionError):
             continue
 

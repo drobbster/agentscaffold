@@ -23,6 +23,8 @@ if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
 
 from agentscaffold.graph.query_compat import ql, ql_execute, ql_scalar
+from agentscaffold.paths import resolve_node_path
+from agentscaffold.repo_paths import is_repo_path
 
 logger = logging.getLogger(__name__)
 MTIME_TOLERANCE_SECONDS = 1e-6
@@ -75,6 +77,7 @@ def compute_changeset(
             "unchanged": int,
         }
     """
+    from agentscaffold.graph.source_roots import extra_path_files
     from agentscaffold.graph.structure import collect_ignore_patterns, scan_indexable_files
 
     ignore_patterns = collect_ignore_patterns(root, graph_config)
@@ -87,6 +90,7 @@ def compute_changeset(
     disk_files = set(
         scan_indexable_files(root, ignore_patterns, allowed_languages=allowed_languages)
     )
+    disk_files.update(extra_path_files(root, graph_config, allowed_languages))
     return diff_changeset(store, root, disk_files)
 
 
@@ -125,8 +129,10 @@ def diff_changeset(
             added.append(path)
             continue
 
-        full_path = root / path
+        full_path = resolve_node_path(root, path)
         try:
+            if full_path is None:
+                raise OSError(path)
             stat = full_path.stat()
         except (OSError, PermissionError):
             modified.append(path)
@@ -303,8 +309,8 @@ def update_file_node(
 
     Returns True if the file was updated successfully.
     """
-    full_path = root / rel_path
-    if not full_path.is_file():
+    full_path = resolve_node_path(root, rel_path)
+    if full_path is None or not full_path.is_file():
         return False
 
     from agentscaffold.graph.structure import _detect_language
@@ -343,8 +349,8 @@ def add_file_node(
     Also creates the Folder -> File edge.
     Returns True if created successfully.
     """
-    full_path = root / rel_path
-    if not full_path.is_file():
+    full_path = resolve_node_path(root, rel_path)
+    if full_path is None or not full_path.is_file():
         return False
 
     from agentscaffold.graph.structure import _detect_language
@@ -377,6 +383,10 @@ def add_file_node(
     if parent_rel == ".":
         parent_rel = ""
     parent_id = f"folder::{parent_rel}" if parent_rel else "folder::"
+    if is_repo_path(rel_path):
+        from agentscaffold.graph.structure import ensure_folder_chain
+
+        parent_id = ensure_folder_chain(store, parent_rel)
 
     # Check if parent folder exists; create if not
     existing = ql_scalar(

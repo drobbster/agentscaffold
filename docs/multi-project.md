@@ -429,6 +429,17 @@ name with a hyphen or a Python keyword disables inference; map the prefix
 yourself with `graph.module_prefixes`. See
 [Monorepo module prefixes](configuration.md#monorepo-module-prefixes).
 
+### Files outside the team folder are missing from the graph
+
+Code that a team owns but keeps elsewhere in the repository, such as
+`airflow/dags/team_x/`, is not under the project root, so it is not indexed
+by default. List it in `graph.extra_paths` with globs relative to the git
+root; the files are then indexed as `@repo/<path>`. If a listed file is still
+missing, check the warnings from `scaffold index`: a glob that starts with a
+wildcard is refused, and a file inside another registered project, or claimed
+by two projects, is left out. See
+[Files outside the project folder](configuration.md#files-outside-the-project-folder-extra_paths).
+
 ### The workspace is recorded under two different ids
 
 `workspace.yaml` and the registry disagree. Resolution prefers the manifest, so

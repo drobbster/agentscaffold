@@ -14,11 +14,18 @@ from typing import TYPE_CHECKING
 
 from agentscaffold.graph.query_compat import ql
 from agentscaffold.graph.symbol_table import SymbolTable
+from agentscaffold.paths import resolve_node_path
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
 
 logger = logging.getLogger(__name__)
+
+
+def _is_file(root: Path, rel: str) -> bool:
+    path = resolve_node_path(root, rel)
+    return path is not None and path.is_file()
+
 
 try:
     import tree_sitter as ts  # noqa: F401
@@ -84,7 +91,9 @@ def process_imports(
         if scope is not None and file_path not in scope:
             continue
 
-        full_path = root / file_path
+        full_path = resolve_node_path(root, file_path)
+        if full_path is None:
+            continue
 
         try:
             source = full_path.read_text(errors="replace")
@@ -224,12 +233,12 @@ def _resolve_python_module(
 
     # Strategy 1: direct file
     candidate = "/".join(parts) + ".py"
-    if (root / candidate).is_file():
+    if _is_file(root, candidate):
         return candidate, "direct"
 
     # Strategy 2: package __init__
     candidate = "/".join(parts) + "/__init__.py"
-    if (root / candidate).is_file():
+    if _is_file(root, candidate):
         return candidate, "package"
 
     # Strategy 2b: monorepo module prefix. After the exact-path strategies, so a
@@ -243,20 +252,20 @@ def _resolve_python_module(
     source_dir = str(Path(source_file).parent)
     if source_dir != ".":
         relative_candidate = source_dir + "/" + "/".join(parts) + ".py"
-        if (root / relative_candidate).is_file():
+        if _is_file(root, relative_candidate):
             return relative_candidate, "source_relative"
 
         relative_candidate = source_dir + "/" + "/".join(parts) + "/__init__.py"
-        if (root / relative_candidate).is_file():
+        if _is_file(root, relative_candidate):
             return relative_candidate, "source_relative"
 
     # Strategy 4: strip common prefixes (src/, lib/, libs/)
     for prefix in ("src/", "lib/", "libs/"):
         candidate = prefix + "/".join(parts) + ".py"
-        if (root / candidate).is_file():
+        if _is_file(root, candidate):
             return candidate, "src_prefix"
         candidate = prefix + "/".join(parts) + "/__init__.py"
-        if (root / candidate).is_file():
+        if _is_file(root, candidate):
             return candidate, "src_prefix"
 
     return None
@@ -285,7 +294,7 @@ def _prefixed_module_to_path(module: str, root: Path, prefixes: Mapping[str, str
             else ["/".join([*base, *rest]) + ".py", "/".join([*base, *rest, "__init__.py"])]
         )
         for candidate in candidates:
-            if (root / candidate).is_file():
+            if _is_file(root, candidate):
                 return candidate
     return None
 
@@ -330,11 +339,11 @@ def _relative_module_to_path(
     # on the package itself.
     if not parts:
         candidate = "/".join([*base_parts, "__init__.py"])
-        return candidate if (root / candidate).is_file() else None
+        return candidate if _is_file(root, candidate) else None
 
     stem = "/".join([*base_parts, *parts])
     for candidate in (f"{stem}.py", f"{stem}/__init__.py"):
-        if (root / candidate).is_file():
+        if _is_file(root, candidate):
             return candidate
 
     return None
@@ -394,11 +403,11 @@ def _ts_specifier_to_path(
     extensions = [".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.js"]
     for ext in extensions:
         candidate = base + ext
-        if (root / candidate).is_file():
+        if _is_file(root, candidate):
             return candidate
 
     # Already has extension
-    if (root / base).is_file():
+    if _is_file(root, base):
         return base
 
     return None

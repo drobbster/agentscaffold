@@ -9,7 +9,9 @@ a file even when no File node for it exists in the recording project's graph
 Normalization accepts the three forms paths arrive in: project-relative,
 relative to the version-control root (a project inside a monorepo), and
 absolute. A path that belongs to a sibling folder or lies outside the project
-is kept as given and reported as foreign.
+is kept as given and reported as foreign. A sibling-folder path is relative to
+the VCS root, so precedent matches it against the ``@repo/`` File path of an
+extra-path file (Plan 283, ``repo_paths.path_spellings``).
 """
 
 from __future__ import annotations
