@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from agentscaffold.review.changes import plan_changes, validate_ref
 
 pytest.importorskip("duckdb", reason="duckdb not installed")
@@ -103,6 +104,50 @@ def test_merged_branches_give_exactly_their_files(plain: Path):
     assert changes.source == "merged_branches"
     assert changes.files == ["a.py", "d.md"]
     assert "2 merge" in changes.detail
+
+
+def test_plan_prefixed_branch_names_count(plain: Path):
+    _branch(plain, "docs/plan-281-review", {"a.md": "a\n"})
+    _merge(plain, "docs/plan-281-review", "Merge pull request #7 from me/docs/plan-281-review")
+    _branch(plain, "feature/plan-2810-other", {"o.py": "o\n"})
+    _merge(plain, "feature/plan-2810-other")
+
+    assert plan_changes(plain, 281).files == ["a.md"]
+
+
+def test_squash_merges_naming_the_plan_count(plain: Path):
+    _commit(plain, {"a.py": "a\n"}, "Plans 280, 281: evaluation book (#348)")
+    _commit(plain, {"b.py": "b\n"}, "Plan 281 Steps 4-5: shadow run")
+    _commit(plain, {"c.py": "c\n"}, "Plan 2810: unrelated (#349)")
+    _commit(plain, {"d.py": "d\n"}, "Fix the 281 typo (#350)")
+
+    changes = plan_changes(plain, 281)
+    assert changes.source == "merged_branches"
+    assert changes.files == ["a.py"]
+    assert "squash" in changes.detail
+
+
+def test_merges_into_the_base_branch_count_from_another_checkout(plain: Path):
+    _branch(plain, "feature/281-impl", {"a.py": "a\n"})
+    _merge(plain, "feature/281-impl")
+    _git(plain, "checkout", "-q", "-b", "feature/other", "main~1")
+    _commit(plain, {"x.py": "x\n"})
+    _git(plain, "merge", "--no-ff", "-q", "-m", "Merge main into feature/other", "main")
+
+    assert plan_changes(plain, 281).files == ["a.py"]
+
+
+def test_merges_into_any_existing_base_branch_count(plain: Path):
+    _git(plain, "checkout", "-q", "-b", "staging", "main")
+    _git(plain, "checkout", "-q", "-b", "feature/281-impl", "staging")
+    _commit(plain, {"a.py": "a\n"})
+    _git(plain, "checkout", "-q", "staging")
+    _git(
+        plain, "merge", "--no-ff", "-q", "-m", "Merge branch 'feature/281-impl'", "feature/281-impl"
+    )
+    _git(plain, "checkout", "-q", "main")
+
+    assert plan_changes(plain, 281).files == ["a.py"]
 
 
 def test_an_unmerged_plan_branch_includes_uncommitted_and_untracked(plain: Path):

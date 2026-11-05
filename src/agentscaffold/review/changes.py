@@ -3,10 +3,12 @@
 Sources, first that applies:
 
 1. ``base_ref``: the diff from that ref to the working tree.
-2. The plan's merged branches: first-parent merge commits whose message names a
-   branch carrying the plan number (``feature/278-x``, ``docs/278-completion``);
-   the union of each merge's first-parent diff. When the current branch is also
-   a plan branch (a completion branch still open), its changes are added.
+2. The plan's merged branches: merge commits whose message names a branch
+   carrying the plan number (``feature/278-x``, ``docs/plan-278-completion``),
+   and squash merges whose subject starts with the plan number (``Plans 277,
+   278: ... (#104)``), on the first-parent history of HEAD and of each base
+   branch that exists; the union of each one's first-parent diff. When the current branch is
+   also a plan branch (a completion branch still open), its changes are added.
 3. The plan's unmerged branch: the diff from its merge-base with the base
    branch, plus uncommitted and untracked files.
 4. The commit recorded at the pre-implementation review: the diff from it to the
@@ -36,6 +38,8 @@ _MERGE_SUBJECTS = (
     re.compile(r"^Merge (?:remote-tracking )?branch '([^']+)'"),
     re.compile(r"^Merge pull request #\d+ from (\S+)"),
 )
+_SQUASH_SUFFIX = re.compile(r"\(#\d+\)\s*$")
+_PLAN_LIST = re.compile(r"^\s*Plans?\s+((?:\d+(?:\s*(?:,|&|/|and)\s*)?)+)", re.IGNORECASE)
 _DEFAULT_BASES = ("staging", "main", "master")
 
 
@@ -91,8 +95,10 @@ def plan_changes(
             raise ValueError(f"git does not know base_ref {base_ref!r}")
         return ChangeSet(root, _sorted(files), "base_ref", f"diff from {base_ref}")
 
-    merged = _merged_branches(root, plan_number)
-    unmerged = _unmerged_branch(root, plan_number, base_branch)
+    current = _git(root, "symbolic-ref", "--quiet", "--short", "HEAD") or ""
+    base = _base_branch(root, current, base_branch)
+    merged = _merged_branches(root, plan_number, _history_refs(root, current, base_branch))
+    unmerged = _unmerged_branch(root, plan_number, current, base)
     if merged and unmerged:
         return ChangeSet(
             root,
@@ -125,8 +131,18 @@ def head_commit(root: Path) -> str | None:
 
 
 def plan_branch_pattern(plan_number: int) -> re.Pattern[str]:
-    """Branch names carrying *plan_number* as a path segment prefix."""
-    return re.compile(rf"(?:^|/)0*{int(plan_number)}(?:[-/]|$)")
+    """Branch names carrying *plan_number* as a path segment prefix (``plan-`` allowed)."""
+    return re.compile(rf"(?:^|/)(?:plans?[-_]?)?0*{int(plan_number)}(?:[-/_]|$)", re.IGNORECASE)
+
+
+def squash_names_plan(subject: str, plan_number: int) -> bool:
+    """A GitHub squash merge (``... (#N)``) whose subject starts with the plan number."""
+    if not _SQUASH_SUFFIX.search(subject):
+        return False
+    match = _PLAN_LIST.match(subject)
+    if match is None:
+        return False
+    return int(plan_number) in {int(n) for n in re.findall(r"\d+", match.group(1))}
 
 
 # ---------------------------------------------------------------------------
@@ -134,35 +150,50 @@ def plan_branch_pattern(plan_number: int) -> re.Pattern[str]:
 # ---------------------------------------------------------------------------
 
 
-def _merged_branches(root: Path, plan_number: int) -> tuple[list[str], str] | None:
+def _merged_branches(
+    root: Path, plan_number: int, starts: list[str]
+) -> tuple[list[str], str] | None:
     log = _git(
         root,
         "log",
         "--first-parent",
-        "--merges",
         f"--max-count={MERGE_SCAN_LIMIT}",
-        "--format=%H%x00%s",
-        "HEAD",
+        "--format=%H%x00%P%x00%s",
+        *starts,
     )
     if not log:
         return None
     pattern = plan_branch_pattern(plan_number)
     files: list[str] = []
     branches: list[str] = []
+    squashes: list[str] = []
     for line in log.splitlines():
-        commit, _, subject = line.partition("\x00")
-        branch = _merged_branch_name(subject)
-        if branch is None or not pattern.search(branch):
+        commit, _, rest = line.partition("\x00")
+        parents, _, subject = rest.partition("\x00")
+        count = len(parents.split())
+        branch = _merged_branch_name(subject) if count > 1 else None
+        if branch is not None and pattern.search(branch):
+            found = branches
+            label = branch
+        elif count == 1 and squash_names_plan(subject, plan_number):
+            found = squashes
+            label = commit[:12]
+        else:
             continue
         diff = _git_lines(root, "diff", "--name-only", "--relative", f"{commit}^1", commit)
         if diff is None:
             continue
         files.extend(diff)
-        branches.append(branch)
-    if not branches:
+        found.append(label)
+    parts = []
+    if branches:
+        names = ", ".join(reversed(branches))
+        parts.append(f"{len(branches)} merge commit(s) of plan branches ({names})")
+    if squashes:
+        parts.append(f"{len(squashes)} squash merge(s) ({', '.join(reversed(squashes))})")
+    if not parts:
         return None
-    names = ", ".join(reversed(branches))
-    return files, f"{len(branches)} merge commit(s) of plan branches: {names}"
+    return files, "; ".join(parts)
 
 
 def _merged_branch_name(subject: str) -> str | None:
@@ -174,13 +205,9 @@ def _merged_branch_name(subject: str) -> str | None:
 
 
 def _unmerged_branch(
-    root: Path, plan_number: int, base_branch: str | None
+    root: Path, plan_number: int, current: str, base: str | None
 ) -> tuple[list[str], str] | None:
-    current = _git(root, "symbolic-ref", "--quiet", "--short", "HEAD")
-    if not current or not plan_branch_pattern(plan_number).search(current):
-        return None
-    base = _base_branch(root, current, base_branch)
-    if base is None:
+    if not current or base is None or not plan_branch_pattern(plan_number).search(current):
         return None
     merge_base = _git(root, "merge-base", "HEAD", base)
     if not merge_base:
@@ -192,17 +219,28 @@ def _unmerged_branch(
 
 
 def _base_branch(root: Path, current: str, configured: str | None) -> str | None:
+    bases = _base_candidates(root, current, configured)
+    return bases[0] if bases else None
+
+
+def _history_refs(root: Path, current: str, configured: str | None) -> list[str]:
+    """HEAD plus every base branch that exists: plans may land on any of them."""
+    return ["HEAD", *_base_candidates(root, current, configured)]
+
+
+def _base_candidates(root: Path, current: str, configured: str | None) -> list[str]:
     if configured:
-        return configured if _ref_exists(root, configured) else None
+        return [configured] if _ref_exists(root, configured) else []
     candidates: list[str] = []
     upstream = _git(root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
     if upstream:
         candidates.append(upstream)
     candidates.extend(_DEFAULT_BASES)
-    for name in candidates:
-        if name != current and _SAFE_REF.match(name) and _ref_exists(root, name):
-            return name
-    return None
+    return [
+        name
+        for name in dict.fromkeys(candidates)
+        if name != current and _SAFE_REF.match(name) and _ref_exists(root, name)
+    ]
 
 
 def _impact_map(root: Path, impact_paths: Iterable[str], why: str) -> ChangeSet:

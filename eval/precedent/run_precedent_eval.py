@@ -5,7 +5,10 @@ every arm of the shipped ``precedent_for`` for each plan, and writes the pooled
 top candidates to ``labels.yaml`` for a human to judge, plus the per-arm
 rankings to ``rankings.json``. ``score`` reads both back and reports recall and
 precision at 5 per arm and slice on the holdout plans, with the decision rule
-for the semantic default.
+for the semantic default. ``replay`` runs the post-implementation rule checks
+over each project's most recent completed plans and writes every ``warn`` and
+``fail`` row to ``rule_replay.yaml`` for a human to judge; ``replay-score``
+reports the false share and the completion-gate default it implies.
 
 Only items from plans numbered before the plan under study are candidates, so
 a plan is never shown precedent written after it. ADRs reached by semantic
@@ -17,6 +20,10 @@ Usage::
         --project agentscaffold-governance --project rebellion-trading-system \\
         --out <dir>
     python -m eval.precedent.run_precedent_eval score --out <dir>
+    python -m eval.precedent.run_precedent_eval replay \\
+        --project agentscaffold-governance --project rebellion-trading-system \\
+        --out <dir>
+    python -m eval.precedent.run_precedent_eval replay-score --out <dir>
 """
 
 from __future__ import annotations
@@ -45,6 +52,11 @@ from agentscaffold.review.precedent import (
 LABELS_FILE = "labels.yaml"
 RANKINGS_FILE = "rankings.json"
 RESULTS_FILE = "results.json"
+REPLAY_FILE = "rule_replay.yaml"
+REPLAY_RESULTS_FILE = "rule_replay_results.json"
+REPLAY_PLANS = 10
+#: More than this share of false rows sets the completion gate default to off.
+REPLAY_FALSE_SHARE = 1 / 3
 
 K = 5
 POOL_DEPTH = 10
@@ -483,6 +495,138 @@ def open_slices(projects: Sequence[str]) -> Iterator[list[Slice]]:
 
 
 # ---------------------------------------------------------------------------
+# Rule replay (Step S4)
+# ---------------------------------------------------------------------------
+
+
+def recent_completed(store: Any, *, scope_project: str | None, count: int) -> list[int]:
+    """The *count* highest-numbered completed plans, newest first."""
+    scope = f" AND project = '{sql_escape(scope_project)}'" if scope_project else ""
+    rows = _rows(
+        store,
+        f"SELECT number, status FROM Plan WHERE number IS NOT NULL{scope} ORDER BY number DESC",
+    )
+    numbers = [int(r["number"]) for r in rows if is_complete(r.get("status"))]
+    return list(dict.fromkeys(numbers))[:count]
+
+
+def replay_project(
+    store: Any, project: str, root: Path, config: Any, *, count: int = REPLAY_PLANS
+) -> dict[str, Any]:
+    """Rule rows for *project*'s recent completed plans; ``warn`` and ``fail`` to judge."""
+    from agentscaffold.active_root import active_root
+    from agentscaffold.review.verify import compliance_items
+
+    plans = recent_completed(store, scope_project=_scope_for(store, project), count=count)
+    counts: dict[str, dict[str, int]] = {}
+    rows: list[dict[str, Any]] = []
+    with active_root(root):
+        for number in plans:
+            for item in compliance_items(store, number, root=root, config=config):
+                by_status = counts.setdefault(item.check, {})
+                by_status[item.status] = by_status.get(item.status, 0) + 1
+                if item.status not in ("warn", "fail"):
+                    continue
+                rows.append(
+                    {
+                        "plan": number,
+                        "check": item.check,
+                        "status": item.status,
+                        "detail": item.detail,
+                        "evidence": item.evidence,
+                        "correct": None,
+                    }
+                )
+    return {"project": project, "plans": plans, "counts": counts, "rows": rows}
+
+
+@contextmanager
+def open_projects(projects: Sequence[str]) -> Iterator[list[tuple[str, Any, Path, Any]]]:
+    """``(name, store, root, config)`` per registered project, graph read-only."""
+    from agentscaffold.config import find_config, load_config
+    from agentscaffold.review.file_impact_resolve import open_registered_project_graph
+    from agentscaffold.workspace_registry import find_registered_project_by_name
+
+    with ExitStack() as stack:
+        opened: list[tuple[str, Any, Path, Any]] = []
+        for name in projects:
+            hit = find_registered_project_by_name(name)
+            store, reason = open_registered_project_graph(name)
+            if hit is None or store is None:
+                raise SystemExit(f"cannot open project {name!r}: {reason or 'not_registered'}")
+            stack.callback(store.close)
+            root = Path(hit.project_root)
+            opened.append((name, store, root, load_config(find_config(start=root))))
+        yield opened
+
+
+def write_replay(
+    out_dir: Path,
+    projects: Sequence[str],
+    *,
+    count: int = REPLAY_PLANS,
+    opener: Callable[[Sequence[str]], Any] = open_projects,
+) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / REPLAY_FILE
+    if path.exists():
+        raise SystemExit(f"{path} exists; refusing to overwrite labels")
+    with opener(projects) as opened:
+        sheet = {
+            "instructions": (
+                "For each row set correct: true when the rule found a real problem in "
+                "that plan, false when it is a false alarm."
+            ),
+            "projects": [
+                replay_project(store, name, root, cfg, count=count)
+                for name, store, root, cfg in opened
+            ],
+        }
+    path.write_text(yaml.safe_dump(sheet, sort_keys=False, width=100), encoding="utf-8")
+    return path
+
+
+def score_replay(sheet: dict[str, Any]) -> dict[str, Any]:
+    """False share of the judged rows and the gate default it implies."""
+    by_check: dict[str, dict[str, int]] = {}
+    labelled = false = unlabelled = 0
+    for project in sheet.get("projects") or []:
+        for row in project.get("rows") or []:
+            verdict = _judgement(row.get("correct"))
+            if verdict is None:
+                unlabelled += 1
+                continue
+            entry = by_check.setdefault(str(row.get("check")), {"labelled": 0, "false": 0})
+            entry["labelled"] += 1
+            labelled += 1
+            if not verdict:
+                entry["false"] += 1
+                false += 1
+    share = false / labelled if labelled else None
+    if unlabelled or share is None:
+        default = None
+    else:
+        default = "off" if share > REPLAY_FALSE_SHARE else "warn"
+    return {
+        "labelled": labelled,
+        "false": false,
+        "unlabelled": unlabelled,
+        "false_share": share,
+        "by_check": by_check,
+        "gate_default": default,
+    }
+
+
+def write_replay_scores(out_dir: Path) -> dict[str, Any]:
+    sheet = yaml.safe_load((out_dir / REPLAY_FILE).read_text(encoding="utf-8"))
+    result = score_replay(sheet)
+    (out_dir / REPLAY_RESULTS_FILE).write_text(
+        json.dumps(result, indent=2) + "\n", encoding="utf-8"
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -528,7 +672,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     sc = sub.add_parser("score", help="score labelled arms")
     sc.add_argument("--out", type=Path, required=True)
     sc.add_argument("--split", choices=("holdout", "tuning"), default="holdout")
+    rp = sub.add_parser("replay", help="write the rule replay sheet")
+    rp.add_argument("--project", action="append", required=True, help="registered project")
+    rp.add_argument("--out", type=Path, required=True)
+    rp.add_argument("--plans", type=int, default=REPLAY_PLANS)
+    rs = sub.add_parser("replay-score", help="score the labelled rule replay")
+    rs.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
+
+    if args.command == "replay":
+        print(f"wrote {write_replay(args.out, args.project, count=args.plans)}")
+        return 0
+    if args.command == "replay-score":
+        print(json.dumps(write_replay_scores(args.out), indent=2))
+        return 0
 
     if args.command == "sheet":
         path = write_sheet(

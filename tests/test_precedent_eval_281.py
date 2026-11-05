@@ -20,7 +20,9 @@ from eval.precedent.run_precedent_eval import (
     pool,
     require_current_schema,
     score,
+    score_replay,
     select_plans,
+    write_replay,
     write_scores,
     write_sheet,
 )
@@ -279,3 +281,51 @@ def test_blend_reserves_semantic_slots_and_refills():
     assert blend(structural, ["s1", "m1"]) == ["s1", "s2", "s3", "m1", "s4"]
     assert blend(structural, []) == structural
     assert blend(["s1"], ["m1", "m2", "m3"]) == ["s1", "m1", "m2"]
+
+
+# ---------------------------------------------------------------------------
+# Rule replay (Step S4)
+# ---------------------------------------------------------------------------
+
+
+def test_replay_lists_the_warn_and_fail_rows_of_recent_completed_plans(repo: Path, tmp_path: Path):
+    path = write_replay(tmp_path / "study", ["lone"], count=20)
+    sheet = yaml.safe_load(path.read_text())
+    lone = sheet["projects"][0]
+    assert lone["project"] == "lone"
+    assert {10, 20, 30} <= set(lone["plans"])
+    assert 35 not in lone["plans"]
+    assert lone["rows"]
+    assert {r["status"] for r in lone["rows"]} <= {"warn", "fail"}
+    assert all(r["correct"] is None for r in lone["rows"])
+    flagged = {(r["plan"], r["check"]) for r in lone["rows"]}
+    assert (10, "pre_review_disposition") in flagged
+    assert (30, "pre_review_disposition") not in flagged
+    assert sum(lone["counts"]["workflow_state_updated"].values()) == len(lone["plans"])
+
+
+def test_replay_takes_the_most_recent_plans_and_never_overwrites(repo: Path, tmp_path: Path):
+    out = tmp_path / "study"
+    path = write_replay(out, ["lone"], count=2)
+    plans = yaml.safe_load(path.read_text())["projects"][0]["plans"]
+    assert len(plans) == 2
+    assert plans == sorted(plans, reverse=True)
+    with pytest.raises(SystemExit, match="refusing to overwrite"):
+        write_replay(out, ["lone"], count=2)
+
+
+def _replay_sheet(*labels: object) -> dict:
+    rows = [{"plan": 1, "check": "read_only_paths", "correct": v} for v in labels]
+    return {"projects": [{"project": "a", "rows": rows}]}
+
+
+def test_replay_gate_default_is_off_only_when_over_a_third_is_false():
+    assert score_replay(_replay_sheet(True, True, False))["gate_default"] == "warn"
+    assert score_replay(_replay_sheet("yes", "no", "no"))["gate_default"] == "off"
+    result = score_replay(_replay_sheet(True, None))
+    assert result["gate_default"] is None
+    assert result["unlabelled"] == 1
+    assert score_replay(_replay_sheet(True, False))["by_check"]["read_only_paths"] == {
+        "labelled": 2,
+        "false": 1,
+    }
