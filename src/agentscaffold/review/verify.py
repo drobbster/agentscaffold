@@ -29,6 +29,7 @@ from agentscaffold.review.file_impact_resolve import (
     query_store,
     resolved_impacts,
 )
+from agentscaffold.review.filters import is_source_code_file
 from agentscaffold.review.queries import (
     get_adrs_for_plan,
     get_contracts_for_file,
@@ -654,11 +655,13 @@ def _check_test_delta(
     tested_count = 0
     untested: list[str] = []
 
-    for fpath in planned_paths:
+    for fpath in sorted(planned_paths):
         if not fpath or "/test" in fpath or fpath.startswith("tests/"):
             continue
 
         frow = row_by_path.get(fpath, {})
+        if not is_source_code_file(fpath, frow.get("f.language", "")):
+            continue
         qstore = query_store(frow, store)
         disk_root = query_root(frow, Path(".")) if frow else None
         if source_has_tests(qstore, fpath, root=disk_root):
@@ -667,7 +670,15 @@ def _check_test_delta(
             untested.append(fpath)
 
     total = tested_count + len(untested)
-    if untested:
+    if total == 0:
+        out.append(
+            VerificationItem(
+                check="test_delta",
+                status="skip",
+                detail="No source files in the change set; documents and config need no tests.",
+            )
+        )
+    elif untested:
         out.append(
             VerificationItem(
                 check="test_delta",
