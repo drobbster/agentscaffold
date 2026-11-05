@@ -154,6 +154,11 @@ def _project_root_from_plan_file(plan_path: Path) -> Path | None:
     return None
 
 
+def plan_impact_paths(store: Any, plan_number: int, root: Path) -> list[str]:
+    """Paths in the plan's File Impact Map, as written."""
+    return [p["path"] for p in _planned_paths(store, plan_number, root) if p.get("path")]
+
+
 def _planned_paths(store: Any, plan_number: int, root: Path) -> list[dict[str, str]]:
     from agentscaffold.graph.governance import _extract_file_impact
 

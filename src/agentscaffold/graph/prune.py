@@ -1,13 +1,14 @@
 """Selective pruning of governance knowledge from the graph.
 
 Powers ``scaffold graph prune``. Selection is read-only and status-aware: only
-resolved findings, archived backlog items, and sessions older than a cutoff are
-ever eligible. Deletion is performed by ``apply_prune`` and is only invoked when
-the caller explicitly opts in (the CLI defaults to a dry run).
+resolved and not-applicable findings, archived backlog items, and sessions older
+than a cutoff are ever eligible. Deletion is performed by ``apply_prune`` and is
+only invoked when the caller explicitly opts in (the CLI defaults to a dry run).
 
 Note on findings: the ``ReviewFinding`` table has no timestamp column, so the
-age cutoff cannot be applied to findings -- selection is by ``resolved`` status
-alone. Sessions and backlog items do carry timestamps and are filtered by age.
+age cutoff cannot be applied to findings -- selection is by status alone
+(``resolved`` or ``not_applicable``; ``deferred`` is still live work). Sessions
+and backlog items do carry timestamps and are filtered by age.
 """
 
 from __future__ import annotations
@@ -104,12 +105,13 @@ def select_prunable(
         ]
 
     if resolved_findings_before is not None:
-        # ReviewFinding has no timestamp; eligibility is by 'resolved' status only.
+        # ReviewFinding has no timestamp; eligibility is by status only. Deferred
+        # findings are still live work and are never pruned.
         # parse_age still validates the spec so the CLI surface stays consistent.
         parse_age(resolved_findings_before)
         selection["resolved_findings"] = store.query(
             "SELECT id, planNumber, severity, category FROM ReviewFinding"
-            f" WHERE status = 'resolved'{scope}"
+            f" WHERE status IN ('resolved', 'not_applicable'){scope}"
         )
 
     if sessions_before is not None:

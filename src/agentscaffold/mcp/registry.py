@@ -377,6 +377,14 @@ def _tool_specs() -> list[ToolSpec]:
                         "description": "Token control: summary (default) or full",
                         "default": "summary",
                     },
+                    "base_ref": {
+                        "type": "string",
+                        "description": (
+                            "Git ref the rule checks diff from. Default: the plan's "
+                            "merged or open branches, else the commit recorded at the "
+                            "pre-implementation review, else the File Impact Map."
+                        ),
+                    },
                 },
                 "required": ["plan_number", "review_type"],
             },
@@ -491,6 +499,14 @@ def _tool_specs() -> list[ToolSpec]:
                 "type": "object",
                 "properties": {
                     "plan_number": {"type": "integer", "description": "Plan number"},
+                    "base_ref": {
+                        "type": "string",
+                        "description": (
+                            "Git ref the rule checks diff from. Default: the plan's "
+                            "merged or open branches, else the commit recorded at the "
+                            "pre-implementation review, else the File Impact Map."
+                        ),
+                    },
                 },
                 "required": ["plan_number"],
             },
@@ -705,12 +721,15 @@ def _tool_specs() -> list[ToolSpec]:
         ToolSpec(
             name="scaffold_resolve_finding",
             description=(
-                "Mark a ReviewFinding as resolved. Use this when an issue identified "
-                "during a prior review has been addressed. The finding remains in the "
-                "graph with status='resolved' for audit trail purposes. finding_id must "
-                "be the rf:: id from scaffold_record_finding or from orient / "
-                "prepare_review. A miss returns status=not_found (error_code not_found) "
-                "rather than a fake resolve."
+                "Dispose of a ReviewFinding. Use this when an issue identified "
+                "during a prior review has been addressed (disposition resolved, the "
+                "default), deferred to later work (deferred), or does not apply "
+                "(not_applicable). deferred and not_applicable need the reason in "
+                "resolution. The finding remains in the graph with its disposition as "
+                "status for audit trail purposes. finding_id must be the rf:: id from "
+                "scaffold_record_finding or from orient / prepare_review. A miss "
+                "returns status=not_found (error_code not_found) rather than a fake "
+                "resolve."
             ),
             input_schema={
                 "type": "object",
@@ -732,6 +751,22 @@ def _tool_specs() -> list[ToolSpec]:
                         "description": (
                             "Plan number that addressed the finding. Creates "
                             "FINDING_ADDRESSED_BY only when that Plan vertex exists."
+                        ),
+                    },
+                    "disposition": {
+                        "type": "string",
+                        "enum": ["resolved", "deferred", "not_applicable"],
+                        "default": "resolved",
+                        "description": (
+                            "resolved (default), deferred (still live work, never "
+                            "pruned) or not_applicable. The last two need a reason "
+                            "in resolution."
+                        ),
+                    },
+                    "backlog_id": {
+                        "type": "string",
+                        "description": (
+                            "BacklogItem id that carries a deferred finding's work. Must exist."
                         ),
                     },
                 },
@@ -1020,6 +1055,14 @@ def _tool_specs() -> list[ToolSpec]:
                         "type": "boolean",
                         "description": "When true, return retro payload without graph writes",
                         "default": False,
+                    },
+                    "base_ref": {
+                        "type": "string",
+                        "description": (
+                            "Git ref the rule checks diff from. Default: the plan's "
+                            "merged or open branches, else the commit recorded at the "
+                            "pre-implementation review, else the File Impact Map."
+                        ),
                     },
                     "backlog_items": {
                         "type": "array",

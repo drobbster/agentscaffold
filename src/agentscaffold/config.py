@@ -37,12 +37,32 @@ class ReadyToInProgressGates(BaseModel):
     interactive_gate: bool = True
 
 
+RuleLevel = Literal["off", "warn", "block"]
+
+
+def _rule_level(value: Any) -> Any:
+    """YAML 1.1 reads an unquoted ``off`` as False; accept it as the level."""
+    if value is False:
+        return "off"
+    if value is True:
+        return "warn"
+    return value
+
+
 class InProgressToCompleteGates(BaseModel):
     all_steps_checked: bool = True
     validation_commands: bool = True
     tests_pass: bool = True
     retrospective: bool = True
     domain_implementation_review: bool = False
+    #: Rule rows in the post-implementation review (Plan 281). ``block`` stops
+    #: ``scaffold_complete_plan`` on a failing row; ``off`` omits the rows.
+    compliance: RuleLevel = "warn"
+
+    @field_validator("compliance", mode="before")
+    @classmethod
+    def _compliance_level(cls, value: Any) -> Any:
+        return _rule_level(value)
 
 
 class GatesConfig(BaseModel):
@@ -688,6 +708,34 @@ class PrecedentConfig(BaseModel):
             raise ValueError(str(exc)) from exc
 
 
+class ComplianceConfig(BaseModel):
+    """Rule rows in the post-implementation review (Plan 281).
+
+    ``base_branch``: the branch a plan's unmerged branch is compared with; by
+    default the upstream's default branch, else ``staging``, else ``main``.
+    ``package_changelog``: the changelog a source change should touch; unset
+    skips that row. ``rules`` sets a check to ``off``, ``warn`` or ``block``;
+    ``read_only_paths`` defaults to ``block`` and the rest to ``warn``.
+    """
+
+    base_branch: str | None = None
+    package_changelog: str | None = None
+    disposition_exempt_categories: list[str] = Field(
+        default_factory=lambda: ["DEPENDENCY", "CONSUMER_AUDIT", "TEST_COVERAGE"]
+    )
+    rules: dict[str, RuleLevel] = Field(default_factory=dict)
+
+    @field_validator("rules", mode="before")
+    @classmethod
+    def _rule_levels(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: _rule_level(level) for key, level in value.items()}
+        return value
+
+    def level(self, check: str) -> str:
+        return self.rules.get(check, "block" if check == "read_only_paths" else "warn")
+
+
 # ---------------------------------------------------------------------------
 # Framework (top-level) configuration
 # ---------------------------------------------------------------------------
@@ -733,6 +781,7 @@ class ScaffoldConfig(BaseModel):
     sessions: SessionsConfig = Field(default_factory=SessionsConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     precedent: PrecedentConfig = Field(default_factory=PrecedentConfig)
+    compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
     import_config: ImportConfig = Field(default_factory=ImportConfig, alias="import")
     collab: CollabConfig = Field(default_factory=CollabConfig)
     enforcement: EnforcementConfig = Field(default_factory=lambda: _get_enforcement_default())

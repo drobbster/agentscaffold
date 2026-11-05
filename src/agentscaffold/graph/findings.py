@@ -97,6 +97,9 @@ def _sync_governance(store: GraphBackend) -> None:
     sync_if_enabled(store)
 
 
+DISPOSITIONS: tuple[str, ...] = ("resolved", "deferred", "not_applicable")
+
+
 def _finding_id(
     plan_number: int,
     review_type: str,
@@ -286,27 +289,45 @@ def resolve_finding(
     resolution: str,
     resolved_by_plan: int | None = None,
     project: str | None = None,
+    disposition: str = "resolved",
+    backlog_id: str | None = None,
 ) -> dict[str, Any]:
-    """Mark a ReviewFinding as resolved.
+    """Dispose of a ReviewFinding: ``resolved``, ``deferred`` or ``not_applicable``.
 
     A miss returns ``status="not_found"`` and does not fabricate success.
     ``finding_id`` may be the canonical ``rf::`` hash or its project-qualified
     form. There is no human-id / title lookup (finding bodies are free text).
+    ``deferred`` and ``not_applicable`` need a non-empty *resolution* (the
+    reason); a refusal returns ``status="refused"`` and writes nothing.
 
     Args:
         store: Open GraphBackend instance.
-        finding_id: The ID of the finding to resolve.
-        resolution: Human-readable resolution description.
+        finding_id: The ID of the finding to dispose of.
+        resolution: Human-readable resolution, or the reason for the disposition.
         resolved_by_plan: Plan number that addressed the finding. Creates
             ``FINDING_ADDRESSED_BY`` only when that Plan vertex exists.
         project: When set, only resolves the finding if it belongs to this
             project (defense-in-depth against cross-project resolves).
+        disposition: One of ``DISPOSITIONS``; the finding's new status.
+        backlog_id: BacklogItem that carries deferred work; must exist.
 
     Returns:
-        Dict with ``id``, ``status``, and timing info.
+        Dict with ``id``, ``status``, ``disposition`` and timing info.
     """
     t0 = time.monotonic()
     caller_id = (finding_id or "").strip()
+    refusal = _disposition_refusal(disposition, resolution)
+    if refusal:
+        return {"id": caller_id, "status": "refused", "error": refusal}
+    backlog_ref = None
+    if backlog_id:
+        backlog_ref = _backlog_item_id(store, backlog_id, project)
+        if backlog_ref is None:
+            return {
+                "id": caller_id,
+                "status": "refused",
+                "error": f"backlog item {backlog_id!r} not found",
+            }
     candidates = _id_candidates(caller_id, project)
 
     from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
@@ -337,8 +358,13 @@ def resolve_finding(
             elapsed_ms = (time.monotonic() - t0) * 1000
             return {"id": caller_id, "status": "not_found", "elapsed_ms": elapsed_ms}
 
-        upd: dict[str, Any] = {"resolution": resolution, "id": canonical_id}
-        upd_sql = "UPDATE ReviewFinding SET status = 'resolved', resolution = ? WHERE id = ?"
+        upd: dict[str, Any] = {"status": disposition, "resolution": resolution}
+        assignments = "status = ?, resolution = ?"
+        if backlog_ref is not None:
+            assignments += ", backlogId = ?"
+            upd["backlogId"] = backlog_ref
+        upd["id"] = canonical_id
+        upd_sql = f"UPDATE ReviewFinding SET {assignments} WHERE id = ?"
         if project:
             upd_sql += " AND project = ?"
             upd["project"] = project
@@ -360,11 +386,32 @@ def resolve_finding(
     elapsed_ms = (time.monotonic() - t0) * 1000
     return {
         "id": matched,
-        "status": "resolved",
+        "status": disposition,
+        "disposition": disposition,
         "resolution": resolution,
+        "backlog_id": backlog_ref,
         "addressed_by_plan": resolved_by_plan if addressed_plan_id else None,
         "elapsed_ms": elapsed_ms,
     }
+
+
+def _disposition_refusal(disposition: str, reason: str) -> str | None:
+    if disposition not in DISPOSITIONS:
+        return f"disposition must be one of {', '.join(DISPOSITIONS)}, not {disposition!r}"
+    if disposition != "resolved" and not (reason or "").strip():
+        return f"a {disposition} finding needs a reason in resolution"
+    return None
+
+
+def _backlog_item_id(store: GraphBackend, backlog_id: str, project: str | None) -> str | None:
+    candidates = _id_candidates(backlog_id, project)
+    if not candidates:
+        return None
+    placeholders = ", ".join(["?"] * len(candidates))
+    params = {f"id{i}": v for i, v in enumerate(candidates)}
+    rows = store.query(f"SELECT id FROM BacklogItem WHERE id IN ({placeholders})", params)
+    ids = list(dict.fromkeys(str(r["id"]) for r in rows if r.get("id")))
+    return ids[0] if len(ids) == 1 else None
 
 
 def get_open_findings(
