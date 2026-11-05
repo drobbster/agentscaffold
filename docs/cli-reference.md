@@ -30,6 +30,7 @@ read or write the knowledge graph need it to exist — run `scaffold index` firs
 - [Agent integration files](#agent-integration-files)
 - [Sessions](#sessions)
 - [Governance state](#governance-state)
+- [System inventory](#system-inventory)
 - [Validation and CI](#validation-and-ci)
 - [Domain packs](#domain-packs)
 - [Benchmarking](#benchmarking)
@@ -331,6 +332,7 @@ across projects in a workspace as candidates for a shared library.
 | `scaffold plan create` | Create a plan from a template |
 | `scaffold plan status` | All plans with their lifecycle state |
 | `scaffold plan lint` | Validate plan structure and cohesion |
+| `scaffold plan normalize-status` | Propose, or with `--apply` write, a single `- Status:` line on plans that lack one |
 | `scaffold plan claim` | Record advisory, git-backed ownership of an in-flight plan |
 | `scaffold plan release` | Clear an advisory claim |
 | `scaffold metrics` | Plan metrics and analytics dashboard |
@@ -341,7 +343,16 @@ scaffold plan create "Add rate limiting"
 scaffold plan create "Fix token refresh" --type bugfix
 scaffold plan status
 scaffold plan lint
+scaffold plan normalize-status               # report proposals, write nothing
+scaffold plan normalize-status --apply       # write the unambiguous ones
+scaffold plan normalize-status -p 42 -f json
 ```
+
+`plan status` reads each plan's `- Status:` line (Draft, Review, Ready, In
+Progress, Complete, Superseded) and falls back to inferring from checked steps
+when there is none. `normalize-status` proposes Complete when every step is
+checked and In Progress when some are; plans with several Status lines or a
+status outside that list are reported as ambiguous and left for you.
 
 Claims are advisory and git-backed: they tell a teammate or another agent that a
 plan is in flight. They do not lock anything.
@@ -511,6 +522,55 @@ several people or agents write to them. It is reversible.
 
 ---
 
+## System inventory
+
+`docs/ai/system_inventory.yaml` lists what the project runs (scheduled and
+manual jobs, services, workflows, scripts) with an owner plan and a lifecycle
+(experimental, active, shadow, paused, deprecated). It is off unless
+`scaffold.yaml` has an `inventory:` block with `enabled: true`; `scaffold init`
+writes one for new projects.
+
+| Command | Does |
+|---|---|
+| `scaffold inventory init` | Write a first inventory from the collectors |
+| `scaffold inventory refresh` | Add newly collected components and update collector-owned fields |
+| `scaffold inventory check` | Run checks INV-001 to INV-010 |
+
+```bash
+scaffold inventory init --dry-run            # print the inventory, write nothing
+scaffold inventory init
+scaffold inventory refresh --dry-run
+scaffold inventory check
+scaffold inventory check --format json
+git diff --name-only origin/staging HEAD | scaffold inventory check --changed-files -
+```
+
+Collectors read `prefect.yaml` (`prefect`), docker compose files (`compose`),
+`.github/workflows/*` (`github_workflows`) and `[project.scripts]`
+(`pyproject_scripts`). Without a `collectors` list the last three run, plus any
+your domain packs enable (`data_engineering`, `mlops` and `trading` enable
+`prefect`). Set `sources` when files live elsewhere:
+
+```yaml
+inventory:
+  enabled: true
+  enforcement: warn            # fail: INV-001 to INV-006 and INV-010 exit non-zero
+  collectors:
+    - prefect
+    - name: compose
+      sources: ["infra/docker/docker-compose*.yml"]
+    - github_workflows
+```
+
+`refresh` never overwrites fields a person set (layer, owner plan, roadmap
+stage, lifecycle). `--changed-files` enables INV-008, which warns when a change
+edits a path a paused or deprecated component reads. With the inventory
+enabled, plan templates gain Roadmap Stage, Components and a Component
+Lifecycle Changes table, plan lint checks them on plans created on or after
+`plan_adoption_date`, and orient reports lifecycle debt.
+
+---
+
 ## Validation and CI
 
 | Command | Does |
@@ -621,6 +681,14 @@ check failed closed. Use `--dry-run` to inspect the intended change.
 Something holds the graph open, usually the MCP server started by your editor.
 Quit the editor and retry. The check is cross-process, so it also catches
 another terminal running `scaffold index`.
+
+### `scaffold inventory init` misses components
+
+Run `scaffold inventory init --dry-run` and compare with your files. The
+collectors read only their default paths (for example `docker-compose.yml` at
+the repository root); set `sources` for files elsewhere, as in
+[System inventory](#system-inventory). Listing `collectors` replaces the
+defaults, so include every collector you want.
 
 ### `scaffold init` seems to do nothing
 
