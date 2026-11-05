@@ -151,6 +151,21 @@ If "No": document required corrections and update plan before proceeding.
 | [ ] No circular imports in module design | | |
 | [ ] Test coverage target specified and achievable | | |
 
+{% if config.inventory.enabled %}
+## K. System Inventory and Roadmap Stage
+
+Components are listed in `{{ config.inventory.path }}`; run `scaffold inventory check`.
+
+| Check | Status | Notes |
+|-------|--------|-------|
+| [ ] `- Status:` line is one of Draft, Review, Ready, In Progress, Complete, Superseded | | |
+| [ ] `- Roadmap Stage:` names the stage this plan delivers, and it is not ahead of the inventory's `current_roadmap_stage` without a stated reason | | |
+| [ ] `- Components:` lists every inventory id whose entrypoint or reads the File Impact Map touches (or `none`) | | |
+| [ ] Every component challenge from the pre-implementation review has a row in Component Lifecycle Changes (After may equal Before) | | |
+| [ ] New runtime components (jobs, services, apps, workflows) are added to the inventory in this plan, with an owner plan | | |
+| [ ] Components this plan replaces are deprecated or removed in this plan, not left running | | |
+
+{% endif %}
 {% if config.plan.require_consumer_audit %}
 ## J. Consumer Audit (Mandatory for Interface/Config Changes)
 

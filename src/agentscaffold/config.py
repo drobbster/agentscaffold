@@ -164,6 +164,7 @@ class GovernanceStepsConfig(BaseModel):
             "Test Requirements",
             "Breaking Changes Protocol",
             "Linter Warning Protocol",
+            "Component Lifecycle",
         ]
     )
     completion: list[str] = Field(
@@ -172,6 +173,7 @@ class GovernanceStepsConfig(BaseModel):
             "Retrospective Requirements",
             "Runbook Rules",
             "Architecture Changelog Scope",
+            "Component Lifecycle",
         ]
     )
     backlog: list[str] = Field(default_factory=lambda: ["Backlog Rules"])
@@ -184,7 +186,9 @@ class GovernanceConfig(BaseModel):
     orient_budget: int = Field(default=2800, ge=0)
     step_budget: int = Field(default=6000, ge=0)
     steps: GovernanceStepsConfig = Field(default_factory=GovernanceStepsConfig)
-    optional: list[str] = Field(default_factory=list)
+    #: Sections a manual may lack without a doctor warning. Component Lifecycle
+    #: (Plan 282) reaches existing manuals only through ``agents diff-manual``.
+    optional: list[str] = Field(default_factory=lambda: ["Component Lifecycle"])
 
 
 class AgentsConfig(BaseModel):
@@ -706,7 +710,7 @@ class PrecedentConfig(BaseModel):
         default_factory=lambda: ["HISTORY", "VOLATILITY", "HOT_FILE", "COMPLEXITY"]
     )
     automated_skip_categories: list[str] = Field(
-        default_factory=lambda: ["DEPENDENCY", "CONSUMER_AUDIT", "TEST_COVERAGE"]
+        default_factory=lambda: ["DEPENDENCY", "CONSUMER_AUDIT", "TEST_COVERAGE", "COMPONENT"]
     )
 
     @field_validator("sources")
@@ -725,7 +729,8 @@ class ComplianceConfig(BaseModel):
     default the upstream's default branch, else ``staging``, else ``main``.
     ``package_changelog``: the changelog a source change should touch; unset
     skips that row. ``rules`` sets a check to ``off``, ``warn`` or ``block``;
-    ``read_only_paths`` defaults to ``block`` and the rest to ``warn``.
+    ``read_only_paths`` defaults to ``block`` and the rest (including Plan 282's
+    ``inventory_lifecycle``) to ``warn``.
     """
 
     base_branch: str | None = None
@@ -744,6 +749,69 @@ class ComplianceConfig(BaseModel):
 
     def level(self, check: str) -> str:
         return self.rules.get(check, "block" if check == "read_only_paths" else "warn")
+
+
+# ---------------------------------------------------------------------------
+# System inventory (Plan 282)
+# ---------------------------------------------------------------------------
+
+
+class InventoryCollectorConfig(BaseModel):
+    """One collector to run and the globs it reads (its defaults when empty)."""
+
+    name: str
+    sources: list[str] = Field(default_factory=list)
+
+
+def _default_collectors() -> list[InventoryCollectorConfig]:
+    return [
+        InventoryCollectorConfig(name=name)
+        for name in ("compose", "github_workflows", "pyproject_scripts")
+    ]
+
+
+class InventoryConfig(BaseModel):
+    """The system inventory check (contract ``system_inventory_interface`` v1).
+
+    Off unless ``scaffold.yaml`` has an ``inventory:`` block that enables it,
+    so an upgrade changes nothing. ``enforcement: warn`` reports and exits 0;
+    ``fail`` exits non-zero on INV-001 to INV-006 and INV-010. Once
+    ``warn_until`` has passed, ``warn`` behaves as ``fail``. Plan lint applies
+    the inventory plan fields to plans created on or after
+    ``plan_adoption_date``. ``broad_reads_share`` is the share of indexed files
+    above which a ``reads`` entry draws a warning.
+    """
+
+    enabled: bool = False
+    path: str = "docs/ai/system_inventory.yaml"
+    collectors: list[InventoryCollectorConfig] = Field(default_factory=_default_collectors)
+    enforcement: Literal["warn", "fail"] = "warn"
+    warn_until: str | None = None
+    health_snapshot: str = "outputs/governance/inventory_health.json"
+    health_max_bytes: int = Field(default=1_000_000, ge=1)
+    failing_days: int = Field(default=14, ge=1)
+    zombie_days: int = Field(default=90, ge=1)
+    draft_stale_days: int = Field(default=60, ge=1)
+    plan_adoption_date: str | None = None
+    broad_reads_share: float = Field(default=0.25, gt=0, le=1)
+
+    @field_validator("collectors", mode="before")
+    @classmethod
+    def _collector_names(cls, value: Any) -> Any:
+        """Accept a bare name for a collector that uses its default sources."""
+        if isinstance(value, list):
+            return [{"name": item} if isinstance(item, str) else item for item in value]
+        return value
+
+    @field_validator("warn_until", "plan_adoption_date", mode="before")
+    @classmethod
+    def _iso_date(cls, value: Any) -> Any:
+        if value is None or value == "":
+            return None
+        text = value.isoformat() if hasattr(value, "isoformat") else str(value)
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text[:10]):
+            raise ValueError(f"{value!r} is not a YYYY-MM-DD date")
+        return text[:10]
 
 
 # ---------------------------------------------------------------------------
@@ -792,6 +860,7 @@ class ScaffoldConfig(BaseModel):
     search: SearchConfig = Field(default_factory=SearchConfig)
     precedent: PrecedentConfig = Field(default_factory=PrecedentConfig)
     compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
+    inventory: InventoryConfig = Field(default_factory=InventoryConfig)
     import_config: ImportConfig = Field(default_factory=ImportConfig, alias="import")
     collab: CollabConfig = Field(default_factory=CollabConfig)
     enforcement: EnforcementConfig = Field(default_factory=lambda: _get_enforcement_default())

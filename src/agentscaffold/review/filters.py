@@ -61,6 +61,16 @@ _CODE_EXTENSIONS: frozenset[str] = frozenset(
     }
 )
 
+#: Challenge categories that are never capped in review output, are always
+#: recorded as findings, and always need a disposition at completion, whatever
+#: their severity: each names a specific fact about the plan's files (an
+#: earlier finding or ADR; a paused or deprecated component).
+ALWAYS_SHOWN_CATEGORIES: frozenset[str] = frozenset({"PRECEDENT", "COMPONENT"})
+
+
+def is_always_shown(category: object) -> bool:
+    return str(category or "").upper() in ALWAYS_SHOWN_CATEGORIES
+
 
 def is_source_code_file(path: str, language: str | None = None) -> bool:
     """Return True if ``path`` is a parsed source-code file.

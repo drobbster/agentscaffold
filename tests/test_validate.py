@@ -135,3 +135,38 @@ def test_secrets_ignores_placeholders(tmp_project: Path) -> None:
         assert issues == []
     finally:
         os.chdir(orig_cwd)
+
+
+def test_validate_inventory_row_fails_only_in_fail_mode(tmp_path: Path, monkeypatch) -> None:
+    """Plan 282: warn mode prints findings and passes; fail mode lists the errors."""
+    import shutil
+
+    from agentscaffold.config import load_config
+    from agentscaffold.validate.orchestrator import _inventory_issues
+
+    fixture = Path(__file__).parent / "fixtures" / "system_inventory" / "project"
+    root = tmp_path / "project"
+    shutil.copytree(fixture, root)
+    monkeypatch.chdir(root)
+    config = load_config(root / "scaffold.yaml")
+    assert config.inventory.enforcement == "warn"
+    assert _inventory_issues(config) == []
+
+    config.inventory.enforcement = "fail"
+    issues = _inventory_issues(config)
+    assert issues
+    assert all(" INV-007 " not in f" {line}" for line in issues)
+    assert any(line.startswith("INV-001 prefect:unlisted-report") for line in issues)
+
+
+def test_validate_inventory_row_reports_an_unreadable_inventory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from agentscaffold.validate.orchestrator import _inventory_issues
+
+    monkeypatch.chdir(tmp_path)
+    config = ScaffoldConfig()
+    config.inventory.enabled = True
+    issues = _inventory_issues(config)
+    assert len(issues) == 1
+    assert "no inventory at" in issues[0]

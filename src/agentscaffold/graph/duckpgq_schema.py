@@ -92,13 +92,14 @@ ADDITIVE_COLUMNS: tuple[AdditiveColumn, ...] = (
     AdditiveColumn("ReviewFinding", "backlogId", "VARCHAR DEFAULT ''"),
 )
 
-# Bumped to 12 by Plan 281: PlanReview node (preserved review stamp).
+# Bumped to 13 by Plan 282: Component node, OWNED_BY, ENTRYPOINT and READS.
+# Version 12 was Plan 281: PlanReview node (preserved review stamp).
 # Version 11 was Plan 265: PlanStep node, PLAN_HAS_STEP, and DEPENDS_ON_STEPS.
 # Version 10 was Plan 252 (relative-import IMPORTS edges, no DDL change).
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # ---------------------------------------------------------------------------
-# Node table DDL (23 tables)
+# Node table DDL (24 tables)
 # ---------------------------------------------------------------------------
 
 _AUTHORED_NODE_TABLES: list[str] = [
@@ -346,6 +347,29 @@ _AUTHORED_NODE_TABLES: list[str] = [
         resolution VARCHAR DEFAULT ''
     )
     """,
+    # A system inventory entry (Plan 282). Derived from the inventory file on
+    # every index, so it is not preserved. ``componentId`` is the inventory id
+    # (``prefect:nightly``); ``reads`` is a JSON list of inventory paths.
+    """
+    CREATE TABLE IF NOT EXISTS Component (
+        id           VARCHAR PRIMARY KEY,
+        componentId  VARCHAR,
+        kind         VARCHAR,
+        name         VARCHAR,
+        source       VARCHAR,
+        entrypoint   VARCHAR,
+        reads        VARCHAR DEFAULT '[]',
+        layer        VARCHAR,
+        ownerPlan    VARCHAR,
+        roadmapStage VARCHAR,
+        lifecycle    VARCHAR,
+        since        VARCHAR,
+        reason       VARCHAR,
+        reviewBy     VARCHAR,
+        exitCriteria VARCHAR,
+        replacedBy   VARCHAR
+    )
+    """,
     # --- Metadata nodes ---
     """
     CREATE TABLE IF NOT EXISTS GraphMeta (
@@ -491,6 +515,11 @@ EDGE_DEFS: list[EdgeDef] = [
     EdgeDef("ADR_CITES_SPIKE", "ADR", "Spike"),
     EdgeDef("SPIKE_FOR_PLAN", "Spike", "Plan"),
     EdgeDef("BACKLOG_ITEM_OF", "BacklogItem", "Plan"),
+    # System inventory (Plan 282): the owning plan, the entrypoint file, and
+    # each indexed file a ``reads`` entry covers.
+    EdgeDef("OWNED_BY", "Component", "Plan"),
+    EdgeDef("ENTRYPOINT", "Component", "File"),
+    EdgeDef("READS", "Component", "File"),
     # Config-driven wiring: a config File (YAML/JSON/TOML) references a code File
     # via a fully-qualified dotted path under an allowlisted key (e.g. ``class:
     # libs.strategies.momentum.MomentumStrategy``). ``symbol`` is the trailing

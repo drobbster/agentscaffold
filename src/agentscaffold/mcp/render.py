@@ -215,13 +215,14 @@ def format_impact_markdown(
 def format_governance_impact_markdown(governance: dict[str, Any]) -> str:
     """Render the ``governance_impact`` section appended to impact markdown (Plan 281)."""
     counts = governance.get("counts", {})
-    lines: list[str] = [
-        "\n\n### Governance impact",
-        (
-            f"{counts.get('findings', 0)} findings, {counts.get('learnings', 0)} learnings, "
-            f"{counts.get('adrs', 0)} ADRs, {counts.get('contracts', 0)} contracts"
-        ),
-    ]
+    summary = (
+        f"{counts.get('findings', 0)} findings, {counts.get('learnings', 0)} learnings, "
+        f"{counts.get('adrs', 0)} ADRs, {counts.get('contracts', 0)} contracts"
+    )
+    if "components" in counts:
+        summary += f", {counts['components']} components"
+    lines: list[str] = ["\n\n### Governance impact", summary]
+    lines.extend(format_component_lines(governance.get("components", [])))
     for key in ("findings", "learnings", "adrs"):
         for item in governance.get(key, []):
             plan = f"Plan {item['plan']}" if item.get("plan") is not None else "no plan"
@@ -233,3 +234,14 @@ def format_governance_impact_markdown(governance: dict[str, Any]) -> str:
     for gone in governance.get("sources_unavailable", []):
         lines.append(f"- source {gone['project']} unavailable: {gone['reason']}")
     return "\n".join(lines)
+
+
+def format_component_lines(components: list[dict[str, Any]]) -> list[str]:
+    """One bullet per inventory component (Plan 282)."""
+    lines: list[str] = []
+    for comp in components:
+        lifecycle = comp.get("lifecycle") or "unknown"
+        owner = f"Plan {comp['owner_plan']}" if comp.get("owner_plan") else "no owner plan"
+        via = f", via {'/'.join(comp['via'])}" if comp.get("via") else ""
+        lines.append(f"- component {comp['component']} ({lifecycle}, {owner}{via})")
+    return lines

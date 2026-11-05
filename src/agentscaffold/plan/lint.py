@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 import sys
 from pathlib import Path
@@ -9,7 +10,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from agentscaffold.config import load_config
+from agentscaffold.config import ScaffoldConfig, load_config
 from agentscaffold.paths import ResolvedPaths, resolve_root
 
 console = Console()
@@ -43,8 +44,13 @@ def _has_section(headings: list[str], aliases: tuple[str, ...]) -> bool:
     return any(alias.lower() in lowered for alias in aliases)
 
 
-def _lint_plan(path: Path) -> list[str]:
-    """Return a list of issue strings for a single plan file."""
+def _lint_plan(
+    path: Path, config: ScaffoldConfig | None = None, root: Path | None = None
+) -> list[str]:
+    """Return a list of issue strings for a single plan file.
+
+    With *config* and an enabled inventory, the Plan 282 field checks run too.
+    """
     issues: list[str] = []
     text = path.read_text()
     headings = _extract_headings(text)
@@ -67,13 +73,95 @@ def _lint_plan(path: Path) -> list[str]:
     if not TEST_FILE_RE.search(text):
         issues.append("Tests section should reference at least one test file")
 
+    if config is not None and config.inventory.enabled:
+        issues.extend(_lint_inventory_fields(text, config, root or resolve_root()))
+
     return issues
+
+
+COMPONENT_ID_RE = re.compile(r"^[a-z][a-z0-9_]*:[A-Za-z0-9_.\-/]+$")
+_NEW = frozenset({"new", "(new)", "none", "-", ""})
+_CLOSED = frozenset({"Complete", "Superseded"})
+
+
+def _lint_inventory_fields(text: str, config: ScaffoldConfig, root: Path) -> list[str]:
+    """Plan 282: Status vocabulary, adoption-date fields and component ids.
+
+    Applies only with the inventory enabled, so projects that upgrade without
+    opting in see no new lint failures.
+    """
+    from agentscaffold.graph.governance import _extract_metadata
+    from agentscaffold.inventory.plan_table import (
+        has_components_line,
+        lifecycle_rows,
+        plan_components,
+    )
+    from agentscaffold.inventory.project import maybe_inventory
+    from agentscaffold.plan.status import status_lines
+    from agentscaffold.review.filters import normalize_plan_status
+
+    issues: list[str] = []
+    statuses = status_lines(text)
+    if len(statuses) > 1:
+        issues.append(f"Plan has {len(statuses)} Status lines; keep one")
+    for raw in statuses:
+        if normalize_plan_status(raw) == "Unknown":
+            issues.append(
+                f"Status '{raw}' is not one of Draft, Review, Ready, In Progress, Complete, "
+                "Superseded (run `scaffold plan normalize-status`)"
+            )
+
+    meta = _extract_metadata(text)
+    adoption = _date(str(config.inventory.plan_adoption_date or ""))
+    created = _date(meta.get("created", meta.get("date", "")))
+    if adoption is not None and created is not None and created >= adoption:
+        if not statuses:
+            issues.append("Missing '- Status:' line (required from the inventory adoption date)")
+        if "roadmap_stage" not in meta:
+            issues.append("Missing '- Roadmap Stage:' line (required from the adoption date)")
+        if not has_components_line(text):
+            issues.append("Missing '- Components:' line (required from the adoption date)")
+        if lifecycle_rows(text) is None:
+            issues.append(
+                "Missing 'Component Lifecycle Changes' table (required from the adoption date)"
+            )
+
+    rows = lifecycle_rows(text) or []
+    named = plan_components(text) + [r.component for r in rows]
+    malformed = sorted({c for c in named if not COMPONENT_ID_RE.match(c)})
+    issues.extend(f"Component id '{c}' is not <kind-prefix>:<name>" for c in malformed)
+
+    status = normalize_plan_status(statuses[0]) if statuses else "Unknown"
+    inventory = maybe_inventory(root, config) if status not in _CLOSED else None
+    if inventory is not None:
+        declared = set(inventory.by_id())
+        introduced = {r.component for r in rows if r.before in _NEW}
+        unknown = sorted(
+            {c for c in named if c not in declared and c not in introduced} - set(malformed)
+        )
+        issues.extend(
+            f"Component '{c}' is not in {config.inventory.path} (a new one needs a "
+            "Component Lifecycle Changes row with Before 'new')"
+            for c in unknown
+        )
+    return issues
+
+
+def _date(value: str) -> dt.date | None:
+    match = re.search(r"\d{4}-\d{2}-\d{2}", value or "")
+    if not match:
+        return None
+    try:
+        return dt.date.fromisoformat(match.group(0))
+    except ValueError:
+        return None
 
 
 def run_plan_lint(plan: str | None) -> None:
     """Lint a plan file for cohesion and template compliance."""
     config = load_config()
-    plans_dir = ResolvedPaths(config, resolve_root()).plans_dir
+    root = resolve_root()
+    plans_dir = ResolvedPaths(config, root).plans_dir
 
     if not plans_dir.is_dir():
         console.print(f"[yellow]Warning: {plans_dir} does not exist. Nothing to lint.[/yellow]")
@@ -99,7 +187,7 @@ def run_plan_lint(plan: str | None) -> None:
 
     any_failure = False
     for pf in plan_files:
-        issues = _lint_plan(pf)
+        issues = _lint_plan(pf, config, root)
         if issues:
             any_failure = True
             table.add_row(pf.name, "[red]FAIL[/red]", "\n".join(issues))

@@ -29,7 +29,7 @@ from agentscaffold.review.file_impact_resolve import (
     query_store,
     resolved_impacts,
 )
-from agentscaffold.review.filters import is_source_code_file
+from agentscaffold.review.filters import is_always_shown, is_source_code_file
 from agentscaffold.review.queries import (
     get_adrs_for_plan,
     get_contracts_for_file,
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Rule rows added by Plan 281, in output order.
+#: Rule rows (Plan 281; ``inventory_lifecycle`` from Plan 282), in output order.
 COMPLIANCE_CHECKS = (
     "pre_review_disposition",
     "workflow_state_updated",
@@ -55,12 +55,11 @@ COMPLIANCE_CHECKS = (
     "package_changelog",
     "contract_with_interface",
     "read_only_paths",
+    "inventory_lifecycle",
 )
 ARCHITECTURE_CHANGELOG = "docs/ai/architectural_design_changelog.md"
 #: Review types written by the tools, not by an agent or human.
 _AUTOMATED_REVIEW_TYPES = frozenset({"pre_review", "post_retro", "retro"})
-#: Automated categories that still need an answer.
-_ALWAYS_ASK_CATEGORIES = frozenset({"PRECEDENT", "COMPONENT"})
 _BREAKING = re.compile(r"^\s*-?\s*\**Breaking change\**:\s*\**\s*yes", re.IGNORECASE | re.MULTILINE)
 
 
@@ -167,7 +166,7 @@ def compliance_items(
     level = cfg.compliance.level
 
     checks = {
-        "pre_review_disposition": lambda: _check_disposition(store, plan, cfg),
+        "pre_review_disposition": lambda: _check_disposition(store, plan, cfg, text),
         "workflow_state_updated": lambda: _check_workflow_state(roots, cfg),
         "architecture_changelog": lambda: _check_architecture_changelog(
             store, plan_number, plan, text, roots, cfg
@@ -175,6 +174,7 @@ def compliance_items(
         "package_changelog": lambda: _check_package_changelog(roots),
         "contract_with_interface": lambda: _check_contracts(store, plan_number, roots, cfg),
         "read_only_paths": lambda: _check_read_only(plan_number, text, roots, cfg),
+        "inventory_lifecycle": lambda: _check_inventory_lifecycle(text, roots, cfg),
     }
     items: list[VerificationItem] = []
     for check in COMPLIANCE_CHECKS:
@@ -288,27 +288,34 @@ def _plan_project(store: GraphBackend, plan: dict[str, Any]) -> str:
     return str((rows[0].get("project") if rows else "") or "")
 
 
-def _check_disposition(store: GraphBackend, plan: dict[str, Any], cfg: ScaffoldConfig) -> Outcome:
+def _check_disposition(
+    store: GraphBackend, plan: dict[str, Any], cfg: ScaffoldConfig, text: str = ""
+) -> Outcome:
     from agentscaffold.graph.findings import DISPOSITIONS  # noqa: PLC0415
+    from agentscaffold.inventory.plan_table import lifecycle_rows  # noqa: PLC0415
 
     project = _plan_project(store, plan)
     scope = f" AND COALESCE(project, '') IN ('', '{sql_escape(project)}')" if project else ""
     rows = store.query(
-        "SELECT id, reviewType, category, status FROM ReviewFinding"
+        "SELECT id, reviewType, category, status, finding FROM ReviewFinding"
         f" WHERE planNumber = {int(plan['p.number'])}{scope} ORDER BY id"
     )
     skipped = {c.upper() for c in cfg.precedent.statistic_categories}
     skipped |= {c.upper() for c in cfg.compliance.disposition_exempt_categories}
+    table = [r.component for r in lifecycle_rows(text) or []]
     in_scope: list[str] = []
     undisposed: list[str] = []
     for row in rows:
         category = str(row.get("category") or "").upper()
         automated = str(row.get("reviewType") or "").lower() in _AUTOMATED_REVIEW_TYPES
-        if category in skipped or (automated and category not in _ALWAYS_ASK_CATEGORIES):
+        if category in skipped or (automated and not is_always_shown(category)):
             continue
         in_scope.append(str(row["id"]))
-        if row.get("status") not in DISPOSITIONS:
-            undisposed.append(str(row["id"]))
+        if row.get("status") in DISPOSITIONS:
+            continue
+        if category == "COMPONENT" and _names_component(str(row.get("finding") or ""), table):
+            continue
+        undisposed.append(str(row["id"]))
     if undisposed:
         return (
             "violation",
@@ -319,6 +326,73 @@ def _check_disposition(store: GraphBackend, plan: dict[str, Any], cfg: ScaffoldC
     if not in_scope:
         return "pass", "No pre-implementation findings need an answer.", {}
     return "pass", f"All {len(in_scope)} pre-implementation finding(s) have a disposition.", {}
+
+
+_COMPONENT_ID = re.compile(r"[a-z][a-z0-9_]*:[^\s`'\",;()]+")
+
+
+def _names_component(finding: str, table: list[str]) -> bool:
+    """True when a COMPONENT finding's component has a lifecycle table row."""
+    named = {m.rstrip(".:") for m in _COMPONENT_ID.findall(finding)}
+    return bool(named & set(table))
+
+
+def _check_inventory_lifecycle(text: str, roots: list[_Root], cfg: ScaffoldConfig) -> Outcome:
+    """The plan's lifecycle table is reflected, and INV-008 is clean over its changes."""
+    from agentscaffold.inventory.checks import changed_file_findings  # noqa: PLC0415
+    from agentscaffold.inventory.plan_table import lifecycle_rows  # noqa: PLC0415
+    from agentscaffold.inventory.project import load_project_inventory  # noqa: PLC0415
+    from agentscaffold.inventory.schema import InventoryError  # noqa: PLC0415
+
+    if not cfg.inventory.enabled:
+        return "skip", "The system inventory is not enabled.", {}
+    root = roots[0]
+    try:
+        inventory = load_project_inventory(root.path, cfg)
+    except InventoryError as exc:
+        return "violation", f"The system inventory cannot be read: {exc}", {}
+    rows = lifecycle_rows(text)
+    inv008 = changed_file_findings(inventory, root.changes.files, root=root.path)
+    if rows is None and not inv008:
+        return (
+            "skip",
+            "No Component Lifecycle Changes table, and the change touches no paused or "
+            "deprecated component.",
+            {},
+        )
+    declared = inventory.by_id()
+    unreflected: list[str] = []
+    for row in rows or []:
+        entry = declared.get(row.component)
+        if row.after == "removed":
+            if entry is not None:
+                unreflected.append(f"{row.component}: still listed, but After is removed")
+        elif entry is None:
+            unreflected.append(f"{row.component}: not in the inventory")
+        elif (entry.lifecycle or "") != row.after:
+            unreflected.append(
+                f"{row.component}: inventory says {entry.lifecycle}, table says {row.after}"
+            )
+    tabled = {r.component for r in rows or []}
+    untabled = [f.to_dict() for f in inv008 if f.component not in tabled]
+    evidence: dict[str, Any] = {}
+    if unreflected:
+        evidence["unreflected"] = unreflected
+    if untabled:
+        evidence["inv_008"] = untabled
+    if evidence:
+        parts = []
+        if unreflected:
+            parts.append(
+                f"{len(unreflected)} lifecycle table row(s) not reflected in the inventory"
+            )
+        if untabled:
+            parts.append(
+                f"{len(untabled)} paused or deprecated component(s) changed without a table row"
+            )
+        return "violation", "; ".join(parts) + ".", evidence
+    count = len(rows or [])
+    return "pass", f"All {count} lifecycle table row(s) are reflected in the inventory.", {}
 
 
 def _check_workflow_state(roots: list[_Root], cfg: ScaffoldConfig) -> Outcome:

@@ -1,0 +1,8 @@
+# Synthetic compose file for the system inventory conformance fixtures.
+services:
+  api:
+    image: fixture/api:latest
+    command: ["uvicorn", "app.main:app"]
+  worker:
+    image: fixture/worker:latest
+    command: python -m worker

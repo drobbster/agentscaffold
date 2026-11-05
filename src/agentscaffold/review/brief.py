@@ -62,6 +62,13 @@ def generate_brief(
             except Exception as exc:  # noqa: BLE001 - precedent must not break the brief
                 logger.warning("precedent skipped for plan %s: %s", plan_number, exc)
                 precedent = None
+            try:
+                from agentscaffold.review.challenges import component_hits  # noqa: PLC0415
+
+                components = component_hits(store, plan_number, impacted_files, root, config)
+            except Exception as exc:  # noqa: BLE001 - components must not break the brief
+                logger.warning("components skipped for plan %s: %s", plan_number, exc)
+                components = []
     except ImplementationProjectError as exc:
         return {
             "error": str(exc),
@@ -69,6 +76,8 @@ def generate_brief(
         }
     if precedent is not None:
         brief["precedent"] = precedent
+    if components:
+        brief["components"] = components
     return brief
 
 
@@ -383,5 +392,22 @@ def format_brief_markdown(brief: dict[str, Any]) -> str:
         lines.append("")
     for gone in precedent.get("sources_unavailable") or []:
         lines.append(f"- Precedent source {gone['project']} unavailable: {gone['reason']}")
+
+    if brief.get("components"):
+        from agentscaffold.review.challenges import component_state  # noqa: PLC0415
+
+        lines.append("## Component lifecycle")
+        lines.append("")
+        lines.append(
+            "Paused or deprecated components this plan touches; each needs a row in the "
+            "Component Lifecycle Changes table:"
+        )
+        lines.append("")
+        for hit in brief["components"]:
+            lines.append(
+                f"- {hit['component']}: {component_state(hit)}; touches "
+                f"{', '.join(hit['touched'][:5])}"
+            )
+        lines.append("")
 
     return "\n".join(lines)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agentscaffold.config import CONFIG_FILENAME, load_config
+from agentscaffold.config import CONFIG_FILENAME, ScaffoldConfig, load_config
 from agentscaffold.rendering import (
     get_default_context,
     render_template,
@@ -118,6 +119,7 @@ _TEMPLATE_MAP: dict[str, str] = {
     "prompts/plan_critique.md.j2": "docs/ai/prompts/plan_critique.md",
     "prompts/plan_expansion.md.j2": "docs/ai/prompts/plan_expansion.md",
     "prompts/retrospective.md.j2": "docs/ai/prompts/retrospective.md",
+    "prompts/architecture_review.md.j2": "docs/ai/prompts/architecture_review.md",
     # Standards -> docs/ai/standards/
     "standards/errors.md.j2": "docs/ai/standards/errors.md",
     "standards/logging.md.j2": "docs/ai/standards/logging.md",
@@ -379,7 +381,15 @@ def _gather_options(directory: Path, non_interactive: bool) -> dict[str, object]
 
 def _write_scaffold_yaml(directory: Path, options: dict[str, object], writer: InitWriter) -> bool:
     """Render and write scaffold.yaml. Returns True if written."""
-    content = render_template("scaffold_yaml.yaml.j2", options)
+    from agentscaffold.domain_packs.loader import domain_inventory_collectors
+
+    domains = [str(d) for d in options.get("domains") or []]  # type: ignore[attr-defined]
+    context = {
+        "date": dt.date.today().isoformat(),
+        **options,
+        "inventory_collectors": domain_inventory_collectors(domains),
+    }
+    content = render_template("scaffold_yaml.yaml.j2", context)
     return writer.write_if_missing(directory / CONFIG_FILENAME, content)
 
 
@@ -410,6 +420,23 @@ def _write_templated_files(
         else:
             skipped += 1
     return written, skipped
+
+
+def _write_inventory(directory: Path, config: ScaffoldConfig, writer: InitWriter) -> bool:
+    """Write the system inventory once, generated from the collectors (Plan 282).
+
+    With no collector sources yet it is a skeleton with no components.
+    """
+    if not config.inventory.enabled:
+        return False
+    from agentscaffold.inventory.generate import init_text
+    from agentscaffold.inventory.project import inventory_path, run_collectors
+
+    collected = run_collectors(directory, config)
+    for problem in collected.problems:
+        console.print(f"[yellow]  inventory: {problem}[/yellow]")
+    content = init_text(collected, dt.date.today())
+    return writer.write_if_missing(inventory_path(directory, config), content)
 
 
 def _create_empty_dirs(directory: Path, writer: InitWriter) -> int:
@@ -543,6 +570,9 @@ def run_init(directory: Path, non_interactive: bool = False, dry_run: bool = Fal
         )
     written, skipped = _write_templated_files(directory, context, writer, shared_root=shared_root)
     dirs_created = _create_empty_dirs(directory, writer)
+
+    if _write_inventory(directory, config, writer):
+        written += 1
 
     if _write_agents_md(directory, context, writer):
         written += 1

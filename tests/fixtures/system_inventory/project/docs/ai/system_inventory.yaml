@@ -1,0 +1,139 @@
+# Synthetic system inventory for the conformance fixtures (contract v1).
+# Each entry is shaped to trigger, or to stay clear of, specific checks;
+# expected.json lists the findings. Today is fixed at 2026-11-05.
+schema_version: 1
+current_roadmap_stage: "3"
+last_architecture_review: 2026-09-01 # 65 days before today: INV-009
+review_cadence_days: 30
+components:
+  # Paused, review date passed (INV-004), shares a flow with the copy (INV-006).
+  - id: prefect:weekly-training
+    kind: scheduled_job
+    name: weekly-training
+    source: prefect.yaml
+    entrypoint: flows/weekly.py:weekly_training
+    reads:
+      - configs/training/
+    layer: "4"
+    owner_plan: "080"
+    roadmap_stage: "5"
+    lifecycle: paused
+    since: 2026-06-16
+    reason: Paused until the training environment is hardened
+    review_by: 2026-10-31
+    exit_criteria: Training environment backlog item closed
+    replaced_by: null
+
+  - id: prefect:weekly-training-copy
+    kind: scheduled_job
+    name: weekly-training-copy
+    source: prefect.yaml
+    entrypoint: flows/weekly.py:weekly_training
+    layer: "4"
+    owner_plan: "080"
+    roadmap_stage: "3"
+    lifecycle: active
+    since: 2026-07-01
+
+  - id: prefect:nightly-ingest
+    kind: scheduled_job
+    name: nightly-ingest
+    source: prefect.yaml
+    entrypoint: flows/ingest.py:nightly_ingest
+    reads:
+      - configs/ingest/
+    layer: "2"
+    owner_plan: "101"
+    roadmap_stage: "2"
+    lifecycle: active
+    since: 2026-03-02
+
+  # owner_plan names no plan file (INV-005).
+  - id: prefect:backfill
+    kind: manual_job
+    name: backfill
+    source: prefect.yaml
+    entrypoint: flows/backfill.py:backfill
+    layer: "2"
+    owner_plan: "999"
+    roadmap_stage: "2"
+    lifecycle: active
+    since: 2026-03-02
+
+  # No deployment declares it any more (INV-002).
+  - id: prefect:retired-sync
+    kind: scheduled_job
+    name: retired-sync
+    source: prefect.yaml
+    entrypoint: flows/sync.py:sync
+    reads:
+      - scripts/sync/
+    layer: "2"
+    owner_plan: "101"
+    roadmap_stage: "2"
+    lifecycle: deprecated
+    since: 2026-09-15
+    reason: Replaced by the nightly ingest
+    review_by: 2026-12-31
+    replaced_by: prefect:nightly-ingest
+
+  # Needed only from a later roadmap stage but already active (INV-007).
+  - id: compose:api
+    kind: service
+    name: api
+    source: compose.yaml
+    entrypoint: uvicorn app.main:app
+    layer: "5"
+    owner_plan: "150"
+    roadmap_stage: "4"
+    lifecycle: active
+    since: 2026-08-10
+
+  # Experimental without exit criteria (INV-003).
+  - id: compose:worker
+    kind: service
+    name: worker
+    source: compose.yaml
+    entrypoint: python -m worker
+    layer: "5"
+    owner_plan: "150"
+    roadmap_stage: "3"
+    lifecycle: experimental
+    since: 2026-10-01
+    reason: Trying a queue-based worker
+    review_by: 2026-12-01
+
+  # Listed twice (INV-010).
+  - id: config:risk-limits
+    kind: config_family
+    name: risk-limits
+    reads:
+      - configs/risk/
+    layer: "3"
+    owner_plan: "150"
+    roadmap_stage: "3"
+    lifecycle: active
+    since: 2026-05-01
+
+  - id: config:risk-limits
+    kind: config_family
+    name: risk-limits
+    reads:
+      - configs/risk/
+    layer: "3"
+    owner_plan: "150"
+    roadmap_stage: "3"
+    lifecycle: active
+    since: 2026-05-01
+
+  # Id does not end with the name (INV-010); reads leaves the project (INV-003).
+  - id: model:ranker
+    kind: model
+    name: ranker-v2
+    reads:
+      - ../shared/models/
+    layer: "4"
+    owner_plan: "101"
+    roadmap_stage: "3"
+    lifecycle: active
+    since: 2026-04-20

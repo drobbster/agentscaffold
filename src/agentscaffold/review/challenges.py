@@ -5,7 +5,7 @@ Each challenge is tagged with a category and grounded in graph facts,
 not LLM speculation. The LLM then reasons over these challenges.
 
 Categories: DEPENDENCY, HISTORY, LEARNING, LAYER, CONTRACT, PATTERN,
-CONSUMER, PERFORMANCE, PRECEDENT
+CONSUMER, PERFORMANCE, PRECEDENT, COMPONENT
 """
 
 from __future__ import annotations
@@ -73,9 +73,75 @@ def generate_challenges(
             except Exception as exc:  # noqa: BLE001 - precedent must not break the review
                 logger.warning("precedent skipped for plan %s: %s", plan_number, exc)
                 precedent = None
-            return _challenges_from_rows(store, plan_number, impacted_files, precedent)
+            challenges = _challenges_from_rows(store, plan_number, impacted_files, precedent)
+            try:
+                hits = component_hits(store, plan_number, impacted_files, root, config)
+            except Exception as exc:  # noqa: BLE001 - components must not break the review
+                logger.warning("component challenge skipped for plan %s: %s", plan_number, exc)
+                hits = []
+            _check_components(hits, challenges)
+            return challenges
     except ImplementationProjectError:
         return []
+
+
+def component_hits(
+    store: GraphBackend,
+    plan_number: int,
+    impacted_files: list[dict[str, Any]],
+    root: Path | None,
+    config: Any,
+) -> list[dict[str, Any]]:
+    """Paused or deprecated components the plan's File Impact Map touches (Plan 282).
+
+    The INV-008 rule over the plan's files instead of a change's. One entry per
+    component, with the touched paths; empty when the inventory is disabled or
+    unreadable. ``broad_reads`` names any of the component's ``reads`` that
+    cover the project root or more than ``inventory.broad_reads_share`` of the
+    indexed files, the usual cause of a noisy challenge.
+    """
+    from agentscaffold.config import find_config, load_config  # noqa: PLC0415
+    from agentscaffold.inventory.checks import broad_reads, dormant_hits  # noqa: PLC0415
+    from agentscaffold.inventory.project import indexed_files, maybe_inventory  # noqa: PLC0415
+    from agentscaffold.review.file_impact_resolve import (  # noqa: PLC0415
+        _resolve_base,
+        plan_impact_paths,
+    )
+
+    base = _resolve_base(store, plan_number, root)
+    cfg = config if config is not None else load_config(find_config(start=base))
+    inventory = maybe_inventory(base, cfg)
+    if inventory is None:
+        return []
+    paths = [str(f.get("f.path")) for f in impacted_files if f.get("f.path")]
+    paths += [p for p in plan_impact_paths(store, plan_number, base) if p not in paths]
+    hits = dormant_hits(inventory, paths, root=base)
+    if not hits:
+        return []
+    from agentscaffold.inventory.schema import Inventory  # noqa: PLC0415
+
+    hit_only = Inventory(components=[comp for comp, _ in hits])
+    broad: dict[str, list[str]] = {}
+    for notice in broad_reads(
+        hit_only, indexed_files(base, cfg), root=base, share=cfg.inventory.broad_reads_share
+    ):
+        broad.setdefault(notice["component"], []).append(notice["read"])
+    return [
+        {
+            "component": comp.id,
+            "kind": comp.kind,
+            "lifecycle": comp.lifecycle,
+            "since": comp.since,
+            "reason": comp.reason,
+            "review_by": comp.review_by,
+            "exit_criteria": comp.exit_criteria,
+            "replaced_by": comp.replaced_by,
+            "owner_plan": comp.owner_plan,
+            "touched": touched,
+            "broad_reads": broad.get(comp.id or "", []),
+        }
+        for comp, touched in hits
+    ]
 
 
 def _plan_precedent(
@@ -523,6 +589,59 @@ def _check_precedent(precedent: PrecedentResult, out: list[Challenge], *, limit:
                     "match": item.match,
                     "plan_number": item.plan_number,
                     "project": item.project,
+                },
+            )
+        )
+
+
+def component_state(hit: dict[str, Any]) -> str:
+    """``paused since 2026-06-16 (reason); review by ...; exit: ...`` for one component."""
+    parts = [str(hit.get("lifecycle") or "unknown")]
+    if hit.get("since"):
+        parts[0] += f" since {hit['since']}"
+    if hit.get("reason"):
+        parts[0] += f" ({hit['reason']})"
+    if hit.get("review_by"):
+        parts.append(f"review by {hit['review_by']}")
+    if hit.get("exit_criteria"):
+        parts.append(f"exit: {hit['exit_criteria']}")
+    if hit.get("lifecycle") == "deprecated":
+        parts.append(f"replaced by {hit.get('replaced_by') or 'nothing'}")
+    return "; ".join(parts)
+
+
+def _check_components(hits: list[dict[str, Any]], out: list[Challenge]) -> None:
+    """COMPONENT challenges: one per paused or deprecated component the plan touches.
+
+    Not capped (Plan 282, 5.2): each is a declared fact, and the plan answers
+    each with a row in its Component Lifecycle Changes table.
+    """
+    for hit in hits:
+        touched = hit["touched"]
+        shown = ", ".join(touched[:5]) + (
+            f" and {len(touched) - 5} more" if len(touched) > 5 else ""
+        )
+        text = (
+            f"Component {hit['component']} is {component_state(hit)}. This plan touches "
+            f"{shown}. Does it change this component's lifecycle? Answer with a row in the "
+            "plan's Component Lifecycle Changes table (After may equal Before)."
+        )
+        if hit.get("broad_reads"):
+            text += (
+                f" Note: its reads {', '.join(hit['broad_reads'])} cover much of the "
+                "repository; narrowing them keeps this challenge specific."
+            )
+        out.append(
+            Challenge(
+                category="COMPONENT",
+                severity="medium",
+                text=text,
+                evidence={
+                    "component": hit["component"],
+                    "lifecycle": hit.get("lifecycle"),
+                    "touched": touched,
+                    "review_by": hit.get("review_by"),
+                    "broad_reads": hit.get("broad_reads", []),
                 },
             )
         )

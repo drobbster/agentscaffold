@@ -43,6 +43,12 @@ def test_default_mapping_fits_the_shipped_template() -> None:
     mapped = list(governance.orient)
     for step in ("review", "implementation", "completion", "backlog"):
         mapped += getattr(governance.steps, step)
+    required = [name for name in mapped if name not in governance.optional]
+    assert [name for name in required if manual.resolve(name) is None] == []
+
+    # Optional sections (Plan 282's Component Lifecycle) render once their feature is on.
+    config.inventory.enabled = True
+    manual = parse_manual(render_governance_manual(config))
     assert [name for name in mapped if manual.resolve(name) is None] == []
 
 

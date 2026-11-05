@@ -533,6 +533,7 @@ def run_pipeline(
                 "pw::pipeline::governance", "", "governance", str(exc), "error"
             )
             # Governance failure is non-fatal; code graph is still usable
+        _run_inventory(store, root, config, summary)
 
     # Phase 5 (optional): Community detection
     if "communities" not in phases_completed:
@@ -638,6 +639,28 @@ def _write_governance_fingerprint(
         fp_path.write_text(governance_fingerprint(governance_source_files(root, config)))
     except OSError as exc:
         logger.warning("Could not write governance fingerprint: %s", exc)
+
+
+def _run_inventory(
+    store: GraphBackend, root: Path, config: ScaffoldConfig | None, summary: dict[str, Any]
+) -> None:
+    """Replace Component nodes from the system inventory (Plan 282); never fatal."""
+    try:
+        from agentscaffold.graph.inventory import process_inventory
+
+        result = process_inventory(store, root, config)
+    except Exception as exc:  # noqa: BLE001 - the code graph stays usable
+        logger.error("Inventory ingestion failed: %s", exc)
+        store.add_parsing_warning("pw::pipeline::inventory", "", "inventory", str(exc), "warning")
+        return
+    if result.get("enabled"):
+        summary["inventory"] = result
+        if result.get("error"):
+            console.print(f"  [yellow]Inventory not indexed: {result['error']}[/yellow]")
+        else:
+            console.print(
+                f"  Inventory: {result['components']} components, {result['reads']} reads edges"
+            )
 
 
 def _run_incremental(
@@ -817,6 +840,10 @@ def _run_incremental(
             )
     else:
         console.print("  Governance unchanged; skipping refresh")
+
+    # Components link to Plans and Files that a governance refresh or a file
+    # re-add just recreated, so the (cheap) inventory pass runs on every change.
+    _run_inventory(store, root, config, summary)
 
     # Re-run communities only when the incremental policy says the coarse
     # orientation clusters need refreshing.

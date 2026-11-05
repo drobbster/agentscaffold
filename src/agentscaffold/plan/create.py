@@ -80,7 +80,7 @@ def run_plan_create(name: str, plan_type: str) -> None:
     # Auto-lint the new plan and report issues
     from agentscaffold.plan.lint import _lint_plan
 
-    issues = _lint_plan(dest)
+    issues = _lint_plan(dest, config)
     if issues:
         console.print(f"\n[yellow]Plan lint found {len(issues)} issue(s):[/yellow]")
         for issue in issues:

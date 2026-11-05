@@ -9,6 +9,36 @@ introduce additive features and small behavior changes).
 ## [Unreleased]
 
 ### Added
+- **System inventory and component lifecycle.** `docs/ai/system_inventory.yaml`
+  lists every runtime component (scheduled and manual jobs, services, apps,
+  config families, models, workflows, scripts) with an owner plan and a
+  lifecycle (experimental, active, shadow, paused, deprecated). New commands:
+  `scaffold inventory init` and `refresh` generate it from collectors
+  (`prefect`, `compose`, `github_workflows`, `pyproject_scripts`) without
+  overwriting fields a human set, and `scaffold inventory check` runs checks
+  INV-001 to INV-010 (`--format json`, `--changed-files` for paused or
+  deprecated components a change touches). `enforcement: warn` exits 0;
+  `warn_until` switches to `fail` after an adoption window. Off unless
+  `scaffold.yaml` has an `inventory:` block that enables it; `scaffold init`
+  writes one (warn mode), the inventory, and
+  `docs/ai/prompts/architecture_review.md`. The `data_engineering`, `mlops`
+  and `trading` domain packs enable the `prefect` collector.
+- **Components in the graph, reviews and orientation** (inventory enabled).
+  `Component` nodes with `OWNED_BY`, `ENTRYPOINT` and `READS` edges;
+  `scaffold_impact` lists the components that read or run a file in
+  `governance_impact.components`, and `scaffold_context` lists them for the
+  symbol's file. The pre-implementation review raises one `COMPONENT`
+  challenge per paused or deprecated component the plan's File Impact Map
+  touches; these are not capped, always shown and always recorded, and a
+  row in the plan's Component Lifecycle Changes table answers each. The
+  post-implementation review gains an `inventory_lifecycle` row (warn by
+  default). `scaffold_orient` adds `session_brief.lifecycle_debt`: expired
+  reviews, overdue deprecations, failing jobs and zombie candidates (from an
+  optional health snapshot), stale drafts and an overdue architecture review,
+  ten items per category. `scaffold validate` runs the inventory check.
+- **`scaffold plan normalize-status`** proposes a Status line for plans that
+  lack one from their checked steps, lists the ambiguous ones for a human,
+  and writes only with `--apply`.
 - **Monorepo projects can own files outside their folder.** The new
   `graph.extra_paths` setting lists globs, relative to the git root, such as
   `airflow/dags/team_x/**/*.py`. Matching files are indexed with the project
@@ -114,6 +144,22 @@ introduce additive features and small behavior changes).
   as do the MCP retro and completion tools (`base_ref`).
 
 ### Changed
+- **Graph schema 13** adds the `Component` table and its three edge types.
+  The next `scaffold index` rebuilds the graph, exporting and re-importing
+  preserved findings, sessions, backlog items and review stamps as for
+  earlier schema changes.
+- **`scaffold plan status` reads the plan's Status line** (through the same
+  vocabulary as the orient plan cards) and falls back to checkbox inference
+  only when there is none, so a plan marked Complete with unchecked steps
+  reports Complete. Plan templates gain `- Status:` and `- Created:` lines;
+  with the inventory enabled they also gain `- Roadmap Stage:`,
+  `- Components:` and a Component Lifecycle Changes table, and
+  `scaffold plan lint` checks the Status vocabulary, the fields on plans
+  created on or after `inventory.plan_adoption_date`, and component ids.
+  Projects without the inventory see no new lint findings.
+- **Always-shown review categories are one shared set** (`PRECEDENT`,
+  `COMPONENT`) read by the recording filter, the summary's challenge trim and
+  the pre-implementation disposition row.
 - **Generated hook scripts are one-line shims into a Python router.** The
   project-level `.cursor/hooks/scaffold-index.sh` and git post-commit and
   post-merge hooks no longer contain shell logic. Single-flight locking and
