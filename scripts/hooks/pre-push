@@ -1,0 +1,56 @@
+#!/bin/sh
+# AGENTSCAFFOLD PUBLIC CONTENT HOOK
+# Scan each commit being pushed: the tree at its tip, and the messages and
+# identities in the pushed range. An existing hook is run afterwards as
+# pre-push.local.
+
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+if [ -x "$root/.venv/bin/python" ]; then
+  PY="$root/.venv/bin/python"
+else
+  PY="python3"
+fi
+
+if [ -z "${PUBLIC_CONTENT_DENYLIST_FILE:-}" ] && [ -z "${PUBLIC_CONTENT_DENYLIST:-}" ]; then
+  config="${HOME:-}/.config/agentscaffold/public-content-denylist.txt"
+  if [ -n "${HOME:-}" ] && [ -f "$config" ]; then
+    PUBLIC_CONTENT_DENYLIST_FILE=$config
+    export PUBLIC_CONTENT_DENYLIST_FILE
+  fi
+fi
+
+input=$(mktemp)
+trap 'rm -f "$input"' EXIT
+cat > "$input"
+
+status=0
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ -n "${local_sha:-}" ] || continue
+  case "$local_sha" in
+    0000000000000000000000000000000000000000) continue ;;
+  esac
+  if ! "$PY" "$root/scripts/check_public_content.py" --rev "$local_sha" --repo "$root"; then
+    status=1
+  fi
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    if ! "$PY" "$root/scripts/check_public_content.py" --messages "$local_sha" --not-remotes --repo "$root"; then
+      status=1
+    fi
+  else
+    if ! "$PY" "$root/scripts/check_public_content.py" --messages "${remote_sha}..${local_sha}" --repo "$root"; then
+      status=1
+    fi
+  fi
+done < "$input"
+
+if [ "$status" -ne 0 ]; then
+  exit "$status"
+fi
+
+if [ -x "$root/.git/hooks/pre-push.local" ]; then
+  "$root/.git/hooks/pre-push.local" < "$input"
+fi

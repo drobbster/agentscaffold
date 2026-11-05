@@ -155,6 +155,18 @@ uv venv /tmp/verify && VIRTUAL_ENV=/tmp/verify uv pip install dist/agentscaffold
 # then: import and call the things this release changed
 ```
 
+Scan the built archives before uploading. A hit means a home path, a
+machine-local email address, or a term from the private denylist is inside
+the wheel or the sdist. Do not upload.
+
+```bash
+PUBLIC_CONTENT_DENYLIST_FILE=~/.config/agentscaffold/public-content-denylist.txt \
+  python scripts/check_public_content.py --dist dist/agentscaffold-X.Y.Z*
+```
+
+The same check runs locally after `scripts/install_hooks.sh` (see
+`CONTRIBUTING.md`).
+
 ### 10. Publish
 
 `uv publish` expects trusted publishing or configured credentials and currently has

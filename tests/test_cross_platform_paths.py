@@ -79,7 +79,7 @@ def test_windows_shaped_paths_parse_as_windows(recorded):
     [
         "/repo",
         "/mnt/c/repo",
-        "/Users/dave/repo",
+        "/Users/alice/repo",
         "/mnt/c",
     ],
 )
