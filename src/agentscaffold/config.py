@@ -689,6 +689,8 @@ class PrecedentConfig(BaseModel):
     embedding matches after the structural ones; the precedent study sets its
     default. ``statistic_categories`` are finding categories that are counts,
     not judgments, and are never returned as precedent.
+    ``automated_skip_categories`` are categories never returned when the review
+    engine wrote the finding: each review recomputes those notices for itself.
     """
 
     enabled: bool = True
@@ -699,6 +701,9 @@ class PrecedentConfig(BaseModel):
     max_compact: int = Field(default=5, ge=0)
     statistic_categories: list[str] = Field(
         default_factory=lambda: ["HISTORY", "VOLATILITY", "HOT_FILE", "COMPLEXITY"]
+    )
+    automated_skip_categories: list[str] = Field(
+        default_factory=lambda: ["DEPENDENCY", "CONSUMER_AUDIT", "TEST_COVERAGE"]
     )
 
     @field_validator("sources")
