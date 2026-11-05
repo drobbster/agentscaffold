@@ -329,3 +329,12 @@ def test_replay_gate_default_is_off_only_when_over_a_third_is_false():
         "labelled": 2,
         "false": 1,
     }
+
+
+def test_replay_scores_by_change_source():
+    sheet = _replay_sheet(True, False)
+    sheet["projects"][0]["rows"][0]["evidence"] = {"change_source": "merged_branches"}
+    sheet["projects"][0]["rows"][1]["evidence"] = {"change_source": "file_impact_map"}
+    by_source = score_replay(sheet)["by_source"]
+    assert by_source["merged_branches"] == {"labelled": 1, "false": 0}
+    assert by_source["file_impact_map"] == {"labelled": 1, "false": 1}

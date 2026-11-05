@@ -589,6 +589,7 @@ def write_replay(
 def score_replay(sheet: dict[str, Any]) -> dict[str, Any]:
     """False share of the judged rows and the gate default it implies."""
     by_check: dict[str, dict[str, int]] = {}
+    by_source: dict[str, dict[str, int]] = {}
     labelled = false = unlabelled = 0
     for project in sheet.get("projects") or []:
         for row in project.get("rows") or []:
@@ -596,12 +597,16 @@ def score_replay(sheet: dict[str, Any]) -> dict[str, Any]:
             if verdict is None:
                 unlabelled += 1
                 continue
-            entry = by_check.setdefault(str(row.get("check")), {"labelled": 0, "false": 0})
-            entry["labelled"] += 1
+            source = str((row.get("evidence") or {}).get("change_source") or "none")
+            entries = (
+                by_check.setdefault(str(row.get("check")), {"labelled": 0, "false": 0}),
+                by_source.setdefault(source, {"labelled": 0, "false": 0}),
+            )
             labelled += 1
-            if not verdict:
-                entry["false"] += 1
-                false += 1
+            false += 0 if verdict else 1
+            for entry in entries:
+                entry["labelled"] += 1
+                entry["false"] += 0 if verdict else 1
     share = false / labelled if labelled else None
     if unlabelled or share is None:
         default = None
@@ -613,6 +618,7 @@ def score_replay(sheet: dict[str, Any]) -> dict[str, Any]:
         "unlabelled": unlabelled,
         "false_share": share,
         "by_check": by_check,
+        "by_source": by_source,
         "gate_default": default,
     }
 
