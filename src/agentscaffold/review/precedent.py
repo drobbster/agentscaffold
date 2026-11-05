@@ -50,6 +50,9 @@ DEFAULT_STATISTIC_CATEGORIES: frozenset[str] = frozenset(
 )
 #: Review types written by the review engine rather than an agent or human.
 AUTOMATED_REVIEW_TYPES: frozenset[str] = frozenset({"pre_review", "plan_appendix"})
+DEFAULT_AUTOMATED_SKIP_CATEGORIES: frozenset[str] = frozenset(
+    {"DEPENDENCY", "CONSUMER_AUDIT", "TEST_COVERAGE"}
+)
 
 _KIND_ORDER = {"finding": 0, "learning": 1, "adr": 2}
 _SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -146,15 +149,21 @@ def precedent_for(
     rerank: bool = False,
     match_kinds: Collection[str] = MATCH_ORDER,
     statistic_categories: Collection[str] = DEFAULT_STATISTIC_CATEGORIES,
+    automated_skip_categories: Collection[str] = DEFAULT_AUTOMATED_SKIP_CATEGORIES,
 ) -> PrecedentResult:
     """Rank earlier items about *paths* across *sources*; at most *budget* (None: all).
 
-    *rerank* applies a cross-encoder to the semantic layer only.
+    *rerank* applies a cross-encoder to the semantic layer only. Findings in
+    *statistic_categories*, and automated findings in *automated_skip_categories*,
+    are never returned.
     """
     wanted = [p for p in dict.fromkeys(paths) if p]
     if not wanted:
         return PrecedentResult(items=[], total=0, sources=[s.name for s in sources])
-    stats = {c.upper() for c in statistic_categories}
+    skip = _Skip(
+        stats=frozenset(c.upper() for c in statistic_categories),
+        automated=frozenset(c.upper() for c in automated_skip_categories),
+    )
     kinds = set(match_kinds)
     if not semantic:
         kinds.discard("semantic")
@@ -162,7 +171,7 @@ def precedent_for(
     candidates: list[PrecedentItem] = []
     for source in sources:
         candidates.extend(
-            _from_source(source, wanted, plan_number, kinds, stats, query_text, rerank)
+            _from_source(source, wanted, plan_number, kinds, skip, query_text, rerank)
         )
 
     ranked = sorted(candidates, key=_rank_key)
@@ -194,19 +203,32 @@ def _rank_key(item: PrecedentItem) -> tuple[Any, ...]:
     )
 
 
+@dataclass(frozen=True)
+class _Skip:
+    stats: frozenset[str]
+    automated: frozenset[str]
+
+    def excludes(self, row: dict[str, Any]) -> bool:
+        category = str(row.get("category") or "").upper()
+        if category in self.stats:
+            return True
+        automated = str(row.get("reviewType") or "").lower() in AUTOMATED_REVIEW_TYPES
+        return automated and category in self.automated
+
+
 def _from_source(
     source: PrecedentSource,
     paths: list[str],
     plan_number: int | None,
     kinds: set[str],
-    stats: set[str],
+    skip: _Skip,
     query_text: str,
     rerank: bool = False,
 ) -> list[PrecedentItem]:
     out: list[PrecedentItem] = []
 
     def keep_finding(row: dict[str, Any]) -> bool:
-        if str(row.get("category") or "").upper() in stats:
+        if skip.excludes(row):
             return False
         return plan_number is None or _as_int(row.get("planNumber")) != plan_number
 
@@ -256,7 +278,7 @@ def _from_source(
                 )
 
     if "semantic" in kinds and query_text.strip():
-        out.extend(_semantic(source, query_text, paths, plan_number, stats, rerank))
+        out.extend(_semantic(source, query_text, paths, plan_number, skip, rerank))
     return out
 
 
@@ -423,7 +445,7 @@ def _semantic(
     query_text: str,
     paths: list[str],
     plan_number: int | None,
-    stats: set[str],
+    skip: _Skip,
     rerank: bool = False,
 ) -> list[PrecedentItem]:
     from agentscaffold.graph.search import hybrid_search  # noqa: PLC0415
@@ -448,7 +470,7 @@ def _semantic(
         if row is None:
             continue
         if hit.node_type == "ReviewFinding":
-            if str(row.get("category") or "").upper() in stats:
+            if skip.excludes(row):
                 continue
             if plan_number is not None and _as_int(row.get("planNumber")) == plan_number:
                 continue
@@ -622,6 +644,7 @@ def precedent_for_paths(
             semantic=settings.semantic,
             match_kinds=match_kinds,
             statistic_categories=settings.statistic_categories,
+            automated_skip_categories=settings.automated_skip_categories,
         )
         result.sources_unavailable = list(opened.unavailable)
     return result

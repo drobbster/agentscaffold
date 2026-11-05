@@ -84,8 +84,11 @@ introduce additive features and small behavior changes).
   `include_precedent`). Matches come from graph links, the paths stored on
   findings and learnings (new), earlier plans that changed the same file, and
   ADRs governing them, read from this project, `implementation_project` and
-  `precedent.sources`. `scaffold review precedent <path>` shows the same from
-  the CLI. Semantic matching is behind `precedent.semantic` (off).
+  `precedent.sources`. Automated dependency, consumer and test-coverage
+  notices from earlier reviews are left out (`precedent.automated_skip_categories`).
+  `PRECEDENT` challenges are kept beside the summary's challenge cap and
+  recorded at any severity. `scaffold review precedent <path>` shows the same
+  from the CLI. Semantic matching is behind `precedent.semantic` (off).
 - **Findings take a disposition.** `scaffold_resolve_finding` accepts
   `disposition` (`resolved`, the default; `deferred`; `not_applicable`, the
   last two needing a reason) and `backlog_id` for the item that carries

@@ -103,7 +103,7 @@ def _seed(store: DuckPGQBackend) -> None:
     _finding(store, "rf::path260", 260, review_type="expansion", severity="high", paths=[CORE])
     _finding(
         store, "rf::auto270", 270, review_type="pre_review", severity="critical",
-        category="DEPENDENCY", paths=[CORE],
+        category="LAYER", paths=[CORE],
     )  # fmt: skip
     _finding(store, "rf::legacy240", 240, severity="low", text=f"`{CORE}:12` leaks a handle")
     _learning(store, "L230-1", 230, [CORE])
@@ -168,6 +168,31 @@ def test_statistic_categories_and_the_plans_own_findings_are_excluded(graph):
     result = precedent_for([PrecedentSource("here", graph)], [CORE], plan_number=PLAN, budget=None)
     assert "rf::stat265" not in _ids(result)
     assert "rf::own300" not in _ids(result)
+
+
+def test_automated_structural_findings_are_excluded(graph):
+    for fid, review_type, category in (
+        ("rf::autodep271", "pre_review", "DEPENDENCY"),
+        ("rf::autocons272", "plan_appendix", "CONSUMER_AUDIT"),
+        ("rf::autotest273", "pre_review", "test_coverage"),
+        ("rf::agentdep274", "devils_advocate", "DEPENDENCY"),
+    ):
+        _finding(
+            graph, fid, 271, review_type=review_type, category=category, paths=[CORE], linked=True
+        )
+    result = precedent_for([PrecedentSource("here", graph)], [CORE], plan_number=PLAN, budget=None)
+    ids = _ids(result)
+    assert not {"rf::autodep271", "rf::autocons272", "rf::autotest273"} & set(ids)
+    assert {"rf::agentdep274", "rf::auto270"} <= set(ids)
+
+    kept = precedent_for(
+        [PrecedentSource("here", graph)],
+        [CORE],
+        plan_number=PLAN,
+        budget=None,
+        automated_skip_categories=(),
+    )
+    assert "rf::autodep271" in _ids(kept)
 
 
 def test_status_does_not_affect_ranking(graph):

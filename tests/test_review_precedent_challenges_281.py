@@ -199,6 +199,50 @@ def _dispatch(name: str, repo: Path, monkeypatch: pytest.MonkeyPatch, **args) ->
     return _dispatch_tool(name, {"working_path": str(repo), **args})
 
 
+def test_summary_keeps_precedent_challenges_outside_the_cap():
+    from agentscaffold.mcp.detail import apply_detail
+
+    structural = [
+        {"category": "DEPENDENCY", "text": f"fan-in {i}", "severity": "high"} for i in range(6)
+    ]
+    precedent = [
+        {"category": "PRECEDENT", "text": f"earlier {i}", "severity": "medium"} for i in range(2)
+    ]
+    summary = apply_detail({"challenges": structural + precedent}, "summary")
+    categories = [c["category"] for c in summary["challenges"]]
+    assert categories.count("DEPENDENCY") == 5
+    assert categories.count("PRECEDENT") == 2
+    assert summary["challenges_truncated"] == 1
+
+
+def test_precedent_findings_are_recorded_at_any_severity():
+    from agentscaffold.mcp.server import _select_findings_to_persist
+
+    candidates = [
+        {"category": "PRECEDENT", "finding": "earlier low", "severity": "low"},
+        {"category": "PRECEDENT", "finding": "earlier medium", "severity": "medium"},
+        {"category": "RISK", "finding": "medium risk", "severity": "medium"},
+    ]
+    selected = _select_findings_to_persist(candidates, [])
+    assert [f["finding"] for f in selected] == ["earlier low", "earlier medium"]
+
+
+def test_begin_plan_records_every_precedent_challenge(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _dispatch("scaffold_begin_plan", repo, monkeypatch, plan_number=PLAN)
+    store = _store(tmp_path)
+    try:
+        rows = store.query(
+            "SELECT severity FROM ReviewFinding"
+            f" WHERE planNumber = {PLAN} AND category = 'PRECEDENT'"
+        )
+    finally:
+        store.close()
+    assert len(rows) == 5
+    assert {r["severity"] for r in rows} == {"high", "medium"}
+
+
 def test_prepare_implementation_returns_a_short_precedent_list(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ):

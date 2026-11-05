@@ -3481,10 +3481,11 @@ def _select_findings_to_persist(
 ) -> list[dict[str, Any]]:
     """Filter review findings down to the set worth persisting to the graph.
 
-    Keeps only findings at or above ``min_severity`` (default ``high``) and drops
-    any that duplicate an already-open finding for the plan (matched on category +
-    normalized finding text). This makes ``scaffold_begin_plan`` idempotent: a
-    re-run does not multiply findings.
+    Keeps only findings at or above ``min_severity`` (default ``high``), plus
+    every ``PRECEDENT`` finding, which the disposition rule always asks about,
+    and drops any that duplicate an already-open finding for the plan (matched on
+    category + normalized finding text). This makes ``scaffold_begin_plan``
+    idempotent: a re-run does not multiply findings.
     """
     order = {"low": 0, "medium": 1, "high": 2}
     threshold = order.get(min_severity, 2)
@@ -3500,7 +3501,8 @@ def _select_findings_to_persist(
     selected: list[dict[str, Any]] = []
     batch_keys: set[tuple[str, str]] = set()
     for f in candidates:
-        if order.get(f.get("severity", "medium"), 1) < threshold:
+        precedent = str(f.get("category", "")).upper() == "PRECEDENT"
+        if not precedent and order.get(f.get("severity", "medium"), 1) < threshold:
             continue
         key = (str(f.get("category", "")).lower(), _norm(f.get("finding", "")))
         if key in existing_keys or key in batch_keys:

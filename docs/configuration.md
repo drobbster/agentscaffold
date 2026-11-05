@@ -710,10 +710,11 @@ the pre-implementation review (`PRECEDENT` challenges and the brief's
 | enabled | bool | true | `false` omits precedent everywhere |
 | semantic | bool | false | Add embedding matches after the structural ones. Needs the `search` extra and embeddings |
 | sources | list[str] | [] | Other registered project names to read precedent from, besides this project and `implementation_project`. Opened read-only; one that cannot be opened is reported, never an error |
-| max_challenges | int | 5 | Most `PRECEDENT` challenges in the pre-implementation review |
+| max_challenges | int | 5 | Most `PRECEDENT` challenges in the pre-implementation review. They are listed in addition to the five other challenges a summary response keeps, and each is recorded as a finding whatever its severity |
 | max_brief | int | 10 | Most items in the brief's `precedent` section |
 | max_compact | int | 5 | Most items on `scaffold_prepare_implementation` |
 | statistic_categories | list[str] | `HISTORY`, `VOLATILITY`, `HOT_FILE`, `COMPLEXITY` | Finding categories that are counts, not judgments; never returned as precedent |
+| automated_skip_categories | list[str] | `DEPENDENCY`, `CONSUMER_AUDIT`, `TEST_COVERAGE` | Categories never returned when the review engine wrote the finding (review type `pre_review` or `plan_appendix`); each review recomputes those notices. The same categories recorded by an agent or a human are returned |
 
 Items match, in rank order, through a graph link to the file, the stored
 paths of a finding or learning, an earlier plan that changed the same file, an

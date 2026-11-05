@@ -92,6 +92,11 @@ def _sev_key(item: Any) -> int:
     return _SEVERITY_RANK.get(sev, 5)
 
 
+def _is_precedent(item: Any) -> bool:
+    """PRECEDENT challenges are capped by ``precedent.max_challenges`` upstream."""
+    return isinstance(item, dict) and str(item.get("category") or "").upper() == "PRECEDENT"
+
+
 def _trim(obj: Any) -> Any:
     if isinstance(obj, dict):
         out: dict[str, Any] = {}
@@ -108,9 +113,13 @@ def _trim(obj: Any) -> Any:
             if k in _SUMMARY_LIST_CAPS and isinstance(v, list):
                 cap = _SUMMARY_LIST_CAPS[k]
                 items = list(v)
+                uncapped: list[Any] = []
+                if k == "challenges":
+                    uncapped = [x for x in items if _is_precedent(x)]
+                    items = [x for x in items if not _is_precedent(x)]
                 if k in {"challenges", "gaps", "open_findings"}:
                     items = sorted(items, key=_sev_key)
-                out[k] = [_trim(x) for x in items[:cap]]
+                out[k] = [_trim(x) for x in items[:cap] + uncapped]
                 if len(items) > cap:
                     out[f"{k}_truncated"] = len(items) - cap
             else:
