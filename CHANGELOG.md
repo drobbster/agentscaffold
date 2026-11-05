@@ -163,6 +163,14 @@ introduce additive features and small behavior changes).
   edit hook and background refresh refuse too. `--force-root` overrides it.
 
 ### Fixed
+- **File Impact Map cells that list several files are read as several files.**
+  A cell such as `` `src/a.py`, `src/b.py` `` was dropped, and an unquoted
+  `a.py, b.py` was read as one path. Cells are now split on commas,
+  semicolons, and on `+`, `/`, `and` and `or` with spaces around them, and
+  `{a,b}` lists expand. A bare file name after a path takes that path's
+  folder. Parenthetical notes and code names that are not paths are ignored.
+  Plan impact edges, precedent, the review rows and `diff_plan_vs_code` all
+  see the extra files after the next governance reindex.
 - **The test-coverage rows find tests that are not named after the file.** A
   source file now counts as tested when a test module imports it, through the
   graph's import edges or, when `tests/` is not indexed, by reading the imports

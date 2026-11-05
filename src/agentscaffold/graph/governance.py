@@ -216,11 +216,79 @@ _PLAN_METADATA_RE = re.compile(
 )
 _PLAN_NUMBER_RE = re.compile(r"^(?:plan[_\-]?)?0*(\d+)", re.IGNORECASE)
 _FILE_IMPACT_ROW_RE = re.compile(
-    r"^\|\s*(?!File\s|---)[`]?(?P<path>[^|`]+?)[`]?(?:\s*\([^|)]*\))?\s*\|"
-    r"\s*(?P<change_type>[^|]+?)\s*\|",
+    r"^\|\s*(?!File\s|---)(?P<cell>[^|\n]+?)\s*\|\s*(?P<change_type>[^|\n]+?)\s*\|",
     re.MULTILINE,
 )
 _HEADER_VALUES = {"File", "Change Type", "Description", "---"}
+_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+_PAREN_NOTE_RE = re.compile(r"\([^)]*\)")
+_CELL_SEPARATOR_RE = re.compile(r"\s*[,;]\s*|\s+(?:\+|/|and|or)\s+")
+_BRACE_RE = re.compile(r"\{([^{}]*,[^{}]*)\}")
+_FILE_EXTENSION_RE = re.compile(r"\.[A-Za-z][A-Za-z0-9]*$")
+
+
+def _looks_like_path(token: str) -> bool:
+    if not token or any(ch.isspace() for ch in token):
+        return False
+    return "/" in token or bool(_FILE_EXTENSION_RE.search(token))
+
+
+def _expand_braces(token: str) -> list[str]:
+    m = _BRACE_RE.search(token)
+    if m is None:
+        return [token]
+    head, tail = token[: m.start()], token[m.end() :]
+    out: list[str] = []
+    for part in m.group(1).split(","):
+        out.extend(_expand_braces(f"{head}{part.strip()}{tail}"))
+    return out
+
+
+def _split_path_cell(cell: str) -> list[str]:
+    """Paths named in one File Impact Map cell.
+
+    Parenthetical notes are ignored. Code spans win when present; otherwise the
+    cell is split on ``,`` ``;`` and on `` + `` `` / `` `` and `` `` or `` with
+    spaces around them. An entry with spaces keeps only its path-like words
+    (``governance: docs/x.md``). ``{a,b}`` lists expand. A single entry is kept when it
+    is path-like or is the whole cell without spaces (``justfile``). With
+    several, only path-like entries count, and a bare file name takes the
+    folder of the path before it (`` `docs/t/a.md`, `b.md` `` lists
+    ``docs/t/b.md``).
+    """
+    note_free = _PAREN_NOTE_RE.sub("", cell)
+    spans = [s.strip() for s in _CODE_SPAN_RE.findall(note_free)]
+    bare = note_free.replace("`", "").strip()
+    if spans:
+        raw = spans
+    else:
+        guarded = _BRACE_RE.sub(lambda b: b.group(0).replace(",", "\0"), bare)
+        raw = [t.strip().replace("\0", ",") for t in _CELL_SEPARATOR_RE.split(guarded)]
+    tokens: list[str] = []
+    for t in raw:
+        if not t:
+            continue
+        words = [w for w in t.split() if _looks_like_path(w)] if " " in t else []
+        for entry in words or [t]:
+            tokens.extend(_expand_braces(entry))
+
+    if len(tokens) == 1:
+        token = tokens[0]
+        whole = token == bare and not any(ch.isspace() for ch in token)
+        return [token] if _looks_like_path(token) or whole else []
+
+    paths: list[str] = []
+    folder = ""
+    for token in tokens:
+        if not _looks_like_path(token):
+            continue
+        if "/" in token:
+            folder = token.rstrip("/") if token.endswith("/") else token.rsplit("/", 1)[0]
+        elif folder:
+            token = f"{folder}/{token}"
+        if token not in paths:
+            paths.append(token)
+    return paths
 
 
 def _extract_plan_number(filename: str) -> int | None:
@@ -285,15 +353,17 @@ def _extract_file_impact(text: str) -> list[dict[str, str]]:
     section = text[section_start:next_section] if next_section != -1 else text[section_start:]
 
     for m in _FILE_IMPACT_ROW_RE.finditer(section):
-        path = m.group("path").strip()
+        cell = m.group("cell").strip()
         change_type = m.group("change_type").strip()
         if (
-            path
-            and path not in _HEADER_VALUES
-            and not path.startswith("---")
-            and change_type
-            and change_type not in _HEADER_VALUES
+            not cell
+            or cell in _HEADER_VALUES
+            or cell.startswith("---")
+            or not change_type
+            or change_type in _HEADER_VALUES
         ):
+            continue
+        for path in _split_path_cell(cell):
             impacts.append({"path": path, "change_type": change_type})
     return impacts
 
