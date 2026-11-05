@@ -200,7 +200,7 @@ def metrics() -> None:
 def config_show() -> None:
     """Show the effective merged config and its inheritance provenance.
 
-    Surfaces the resolution order from `extends:` (Plan 224): which files
+    Surfaces the resolution order from `extends:`: which files
     contributed, base-first, and the final merged values after inheritance and
     the rigor preset are applied.
     """
@@ -844,7 +844,7 @@ def agents_install(
 
     With --scope user, guidance and hooks reach a registered project even when
     it is not the editor's workspace root, and nothing is written into the
-    repository (ADR-028).
+    repository.
     """
     if scope == "project":
         if uninstall or project or client:
@@ -1259,12 +1259,12 @@ def index_cmd(
     # Honor the config default (graph.embeddings) when the flag is not passed,
     # so embeddings can be enabled repo-wide via scaffold.yaml without requiring
     # --embeddings on every index invocation (including the PostToolUse hook).
-    # Footgun (Plan 267 / rf::c17e46127d50): that OR makes a no-structure hook
+    # Footgun: that OR makes a no-structure hook
     # run take the write lock for embedding reconcile. Leave the OR unchanged.
     embeddings = with_embeddings or bool(getattr(config.graph, "embeddings", False))
     if embeddings:
         # Pin the embedding model + weights cache before indexing so the model
-        # loads from the deterministic, offline-capable location (Plan 227).
+        # loads from the deterministic, offline-capable location.
         from agentscaffold.graph.embeddings import configure_embeddings
 
         configure_embeddings(config.search.embedding_model, config.search.cache_dir)
@@ -1290,7 +1290,7 @@ def index_cmd(
             "noop" if summary.get("noop") else "changed",
         )
 
-    # Plan 223: on a fresh/ephemeral cache, governance is rebuilt from the
+    # On a fresh/ephemeral cache, governance is rebuilt from the
     # committed artifact. Point the operator at where the durable record lives.
     if summary.get("restored_from_artifact"):
         from agentscaffold.graph.governance_store import resolve_governance_artifact
@@ -1432,7 +1432,7 @@ def graph_search(
 
     if (mode or "hybrid").lower() in ("semantic", "hybrid"):
         # Pin model + cache before any semantic load so query-time and index-time
-        # use the same weights location (Plan 227).
+        # use the same weights location.
         from agentscaffold.graph.embeddings import configure_embeddings
 
         configure_embeddings(config.search.embedding_model, config.search.cache_dir)
@@ -1573,7 +1573,7 @@ def graph_duplicates(
     Only meaningful in a multi-project workspace; a single-project repo has no
     cross-project pairs and reports nothing. Requires embeddings
     ('scaffold index --embeddings'). Quality is bounded by embedding text;
-    Plan 227 improves precision.
+    docstring-enriched text improves precision.
     """
     from agentscaffold.config import load_config
     from agentscaffold.graph import graph_available, open_graph
@@ -1992,7 +1992,7 @@ def review_precedent(
     limit: int | None = typer.Option(None, "--limit", help="Most items to show (default: all)."),
     as_json: bool = typer.Option(False, "--json", help="Print JSON for CI."),
 ) -> None:
-    """Earlier findings, learnings and ADRs about these files (Plan 281)."""
+    """Earlier findings, learnings and ADRs about these files."""
     import json as _json
 
     from agentscaffold.config import find_config
@@ -2207,7 +2207,7 @@ def review_history(
 
 
 def _cli_session_project() -> str | None:
-    """The project CLI sessions are stamped with, matching the MCP server (Plan 276).
+    """The project CLI sessions are stamped with, matching the MCP server.
 
     Resolved from the working directory the same way a tool call resolves its
     ``working_path``. ``None`` (an unstamped legacy session) only when no
@@ -2545,7 +2545,7 @@ def mcp_install(
     # A per-project config becomes redundant the moment the shared entry lands,
     # so say so here rather than leaving `scaffold doctor` to report it later as
     # a problem the user did not know they had created. Reported, never deleted:
-    # these files are per-repo and often committed (Plan 253).
+    # these files are per-repo and often committed.
     from agentscaffold.mcp.install import find_legacy_project_configs
 
     superseded = find_legacy_project_configs([Path.cwd()])
@@ -2560,7 +2560,7 @@ def mcp_install(
 
 
 # ---------------------------------------------------------------------------
-# Health checks and reclamation (Plan 249, Step B8)
+# Health checks and reclamation
 # ---------------------------------------------------------------------------
 
 
@@ -2717,7 +2717,7 @@ def gc(
 
 
 # ---------------------------------------------------------------------------
-# Project registration commands (Plan 249)
+# Project registration commands
 # ---------------------------------------------------------------------------
 
 
@@ -2733,7 +2733,7 @@ def project_register(
     This writes the registry and nothing else. In particular it does not touch
     any client's ``mcp.json``: installing the server entry is a separate command
     so that widening what a server can read is never a side effect of onboarding
-    a project (threat model, Vector 1).
+    a project.
     """
     from agentscaffold.workspace_registry import RegistryError, register_workspace
 
@@ -2782,7 +2782,7 @@ def project_list() -> None:
     """List every registered project and the root it resolves to.
 
     This is the server's entire read surface, so it is worth being able to see
-    at a glance (threat model, Vector 1).
+    at a glance.
     """
     from rich.table import Table
 
@@ -2813,7 +2813,7 @@ def project_list() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Workspace commands (Plan 225)
+# Workspace commands
 # ---------------------------------------------------------------------------
 
 
@@ -2917,7 +2917,7 @@ def workspace_onboard(
 
     # Generate the workspace id on first write and never regenerate it: it keys
     # this workspace's state directory, so a new id would orphan the graph
-    # (ADR-025, which is also why it is opaque rather than derived from the path).
+    # (which is also why it is opaque rather than derived from the path).
     # An already-registered root adopts the id the registry gave it, because that
     # is the id its existing state is keyed to -- minting a fresh one here is the
     # dangerous direction, and the reason the id is adopted rather than assigned.
@@ -2949,9 +2949,9 @@ def workspace_onboard(
     manifest_path.write_text(yaml.safe_dump(manifest_out, sort_keys=False))
 
     # Mirror the manifest into the user-level registry so the single project-aware
-    # MCP server can resolve these projects (Plan 249). Onboarding is an explicit
+    # MCP server can resolve these projects. Onboarding is an explicit
     # user action, which is the only context in which registration may happen
-    # (threat model, Vector 1). A registry failure must not lose the manifest that
+    # A registry failure must not lose the manifest that
     # was just written, so it degrades to a warning.
     try:
         from agentscaffold.workspace_registry import register_workspace

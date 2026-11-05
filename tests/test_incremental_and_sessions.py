@@ -1,4 +1,4 @@
-"""Tests for Phase 6: Incremental indexing, cross-session memory, language support.
+"""Tests for incremental indexing, cross-session memory, language support.
 
 Tests cover:
 - Changeset computation (added/modified/deleted detection)
@@ -387,7 +387,7 @@ class TestSessionContext:
 
 
 class TestSessionOpenAndDecisions:
-    """Plan 263: open-session, decisions, project filter, files-without-vertex."""
+    """Open-session, decisions, project filter, files-without-vertex."""
 
     def test_second_start_reuses_open_session(self, graph_with_repo):
         store, _config, _repo = graph_with_repo

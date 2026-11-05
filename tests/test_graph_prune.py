@@ -1,4 +1,4 @@
-"""Tests for selective governance pruning (Plan 219)."""
+"""Tests for selective governance pruning."""
 
 from __future__ import annotations
 
@@ -130,7 +130,7 @@ def _appendix_finding(store, fid, finding, review_type="plan_appendix"):
 
 
 def test_malformed_finding_selection_targets_fragments_only(store):
-    """Plan 250: the store-level remedy for rows the old extractor manufactured.
+    """The store-level remedy for rows the old extractor manufactured.
 
     Anchoring the parser stops new ones, but nothing removes what is stored --
     create_node is ON CONFLICT DO NOTHING so re-indexing never deletes, and
@@ -158,7 +158,7 @@ def test_apply_writes_through_to_the_governance_artifact(store, tmp_path):
 
     ``governance.json`` is the git-backed system of record and ``index`` restores
     the graph from it. Every other governance mutation syncs; the delete helpers
-    did not, so pruning was silently non-durable for every category (Plan 250).
+    did not, so pruning was silently non-durable for every category.
     """
     import json
 

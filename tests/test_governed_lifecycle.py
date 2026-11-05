@@ -1,4 +1,4 @@
-"""Tests for governed plan lifecycle (Plan 152).
+"""Tests for governed plan lifecycle.
 
 Covers scaffold_begin_plan, scaffold_complete_plan, strict gate, and
 Plan.reviewedAt stamping.

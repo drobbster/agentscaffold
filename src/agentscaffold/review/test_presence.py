@@ -5,7 +5,7 @@ source stem. ``tests/`` is often not indexed, so a complete plan looked
 untested. Disk fallback uses the call's project root (``default_start``), the
 same root ``diff_plan_vs_code`` already uses.
 
-A file also counts as tested when a test module imports it (B-283-1): through
+A file also counts as tested when a test module imports it: through
 ``IMPORTS`` edges when the tests are indexed, and by parsing the imports of
 test modules under ``tests/`` or ``test/`` when they are not.
 """

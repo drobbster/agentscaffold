@@ -75,16 +75,16 @@ class TestIntentAdoption:
             ("search the workspace for X", "scaffold_search"),
             ("find duplicates across projects", "scaffold_search"),
             ("retro on plan X", "scaffold_prepare_retro"),
-            # E.6: new exact cases for finding tools
+            # Exact cases for finding tools
             ("record finding for plan X", "scaffold_record_finding"),
             ("mark finding F001 as resolved", "scaffold_resolve_finding"),
-            # Plan 246/247 agent tool pack
+            # Agent tool pack
             ("diff plan X vs code", "scaffold_diff_plan_vs_code"),
             ("what's left on plan X", "scaffold_diff_plan_vs_code"),
             ("grep the workspace for X", "scaffold_grep_graph"),
             ("why is search empty", "scaffold_why_empty"),
             ("what should I do next", "scaffold_next_action"),
-            # Plan 263: session continuity
+            # Session continuity
             ("start a working session", "scaffold_session_start"),
             ("record this decision", "scaffold_session_record_decision"),
             ("end this session", "scaffold_session_end"),
@@ -113,7 +113,7 @@ class TestIntentAdoption:
             ("Any experiments or studies on this approach already?", "scaffold_find_studies"),
             ("Look across every project for similar router implementations", "scaffold_search"),
             ("Find duplicate code in sibling workspace projects", "scaffold_search"),
-            # E.6: new paraphrase cases for finding tools
+            # Paraphrase cases for finding tools
             (
                 "note that the quant review found a contract gap in plan 42",
                 "scaffold_record_finding",
@@ -125,14 +125,14 @@ class TestIntentAdoption:
             ("log this architectural finding against the plan", "scaffold_record_finding"),
             ("the issue we found earlier has been fixed", "scaffold_resolve_finding"),
             ("close finding F001, it was addressed in plan 043", "scaffold_resolve_finding"),
-            # Plan 246/247: mid-impl / empty-result / routing paraphrases
+            # Mid-impl / empty-result / routing paraphrases
             ("mid-implementation progress on plan X", "scaffold_diff_plan_vs_code"),
             ("plan vs implementation for plan X", "scaffold_diff_plan_vs_code"),
             ("ripgrep for X in the project", "scaffold_grep_graph"),
             ("explain empty scaffold result", "scaffold_why_empty"),
             ("why empty impact", "scaffold_why_empty"),
             ("route me to the next step", "scaffold_next_action"),
-            # Plan 263 paraphrases
+            # Session continuity paraphrases
             ("open a scaffold session", "scaffold_session_start"),
             ("log a session decision", "scaffold_session_record_decision"),
             ("close the working session", "scaffold_session_end"),
@@ -152,7 +152,7 @@ class TestIntentAdoption:
             ("what is the weather in san francisco", None),
             ("help me reword this paragraph", None),
             ("generate a regex for UUIDs", None),
-            # E.6: new negative controls to guard against false positives on finding tools
+            # Negative controls to guard against false positives on finding tools
             (
                 "what findings exist for plan 42",
                 None,

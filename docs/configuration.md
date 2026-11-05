@@ -764,7 +764,7 @@ sees its own findings.
 
 ```yaml
 precedent:
-  sources: [agentscaffold-governance]
+  sources: [acme-governance]
   max_challenges: 5
 ```
 
@@ -776,8 +776,8 @@ Rule checks added to the post-implementation review's verification rows
 (`scaffold review verify`, `scaffold_prepare_retro`, `scaffold_complete_plan`).
 Each rule judges the files the plan changed, found from git in this order:
 a `base_ref` argument; the plan's merged branches (merge commits naming a
-branch with the plan number, such as `feature/281-x` or `docs/plan-281-y`, and
-squash merges whose subject starts with it, such as `Plan 281: ... (#12)`) on
+branch with the plan number, such as `feature/42-x` or `docs/plan-42-y`, and
+squash merges whose subject starts with it, such as `Plan 42: ... (#12)`) on
 HEAD and on each base branch that exists; the plan's open branch since its
 merge-base with the base branch, plus uncommitted and untracked files; the
 commit recorded when the pre-implementation review ran; else the plan's File

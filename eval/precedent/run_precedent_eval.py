@@ -1,4 +1,4 @@
-"""Precedent retrieval study: labelling sheet and scoring (Plan 281).
+"""Precedent retrieval study: labelling sheet and scoring.
 
 ``sheet`` selects completed plans from each registered project (a slice), runs
 every arm of the shipped ``precedent_for`` for each plan, and writes the pooled
@@ -17,11 +17,11 @@ search carry no plan number and are kept.
 Usage::
 
     python -m eval.precedent.run_precedent_eval sheet \\
-        --project agentscaffold-governance --project rebellion-trading-system \\
+        --project acme-governance --project acme-app \\
         --out <dir>
     python -m eval.precedent.run_precedent_eval score --out <dir>
     python -m eval.precedent.run_precedent_eval replay \\
-        --project agentscaffold-governance --project rebellion-trading-system \\
+        --project acme-governance --project acme-app \\
         --out <dir>
     python -m eval.precedent.run_precedent_eval replay-score --out <dir>
 """
@@ -453,14 +453,14 @@ def _scope_for(store: Any, project: str) -> str | None:
 
 
 def require_current_schema(store: Any, project: str) -> None:
-    """Refuse a graph indexed before Plan 281: every arm would come back empty."""
+    """Refuse a graph indexed before precedent support: every arm would come back empty."""
     try:
         store.query("SELECT impactPaths FROM Plan LIMIT 1")
         store.query("SELECT paths FROM ReviewFinding LIMIT 1")
         store.query("SELECT paths FROM Learning LIMIT 1")
     except Exception as exc:  # noqa: BLE001 - any failure here means a stale graph
         raise SystemExit(
-            f"graph for {project!r} predates Plan 281 (no stored paths); reindex it first"
+            f"graph for {project!r} predates precedent support (no stored paths); reindex it first"
         ) from exc
 
 
@@ -495,7 +495,7 @@ def open_slices(projects: Sequence[str]) -> Iterator[list[Slice]]:
 
 
 # ---------------------------------------------------------------------------
-# Rule replay (Step S4)
+# Rule replay
 # ---------------------------------------------------------------------------
 
 

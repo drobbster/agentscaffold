@@ -56,7 +56,7 @@ def matches_read_only(filepath: str, read_only_paths: list[str]) -> bool:
 
     A file outside the project folder listed by ``graph.extra_paths`` is passed
     as its ``@repo/<path>`` File path, so patterns such as ``@repo/airflow/``
-    protect it (Plan 283).
+    protect it.
     """
     for pattern in read_only_paths:
         if pattern.endswith("/"):

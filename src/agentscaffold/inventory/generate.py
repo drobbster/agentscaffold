@@ -1,4 +1,4 @@
-"""``scaffold inventory init`` and ``refresh`` (Plan 282).
+"""``scaffold inventory init`` and ``refresh``.
 
 Both work from the collectors. ``init`` writes a new inventory; ``refresh``
 adds entries for newly collected components and updates the collector-derived
@@ -8,7 +8,7 @@ cannot be verified by re-reading the result is not written; the caller gets the
 YAML to paste instead.
 
 The ``scaffold.yaml`` edit (adding the manual's Component Lifecycle section to
-Plan 280's step lists) follows the same rule: a targeted text edit, checked by
+the lifecycle step lists) follows the same rule: a targeted text edit, checked by
 re-loading, or a printed snippet when the file's shape is not one it recognizes.
 """
 
@@ -40,7 +40,7 @@ HUMAN_FIELDS: tuple[str, ...] = (
     "replaced_by",
 )
 MANUAL_SECTION = "Component Lifecycle"
-#: ``scaffold.yaml`` lists that deliver or excuse the manual section (Plan 280).
+#: ``scaffold.yaml`` lists that deliver or excuse the manual section.
 SCAFFOLD_LISTS: tuple[tuple[str, ...], ...] = (
     ("agents", "governance", "steps", "implementation"),
     ("agents", "governance", "steps", "completion"),
@@ -332,7 +332,7 @@ def _only(inventory: Inventory, ids: list[str]) -> Inventory:
 
 
 # ---------------------------------------------------------------------------
-# scaffold.yaml: deliver the Component Lifecycle section (Plan 280 steps)
+# scaffold.yaml: deliver the Component Lifecycle section (lifecycle step lists)
 # ---------------------------------------------------------------------------
 
 
@@ -406,7 +406,7 @@ def snippet_for(path: tuple[str, ...], values: list[str]) -> str:
 
 
 def add_manual_section(text: str, section: str = MANUAL_SECTION) -> ScaffoldEdit:
-    """Add *section* to the Plan 280 lists that ``scaffold.yaml`` sets explicitly.
+    """Add *section* to the lifecycle step lists that ``scaffold.yaml`` sets explicitly.
 
     A list the file does not set uses the built-in default, which already
     includes the section. The edit keeps comments and key order; when a list is

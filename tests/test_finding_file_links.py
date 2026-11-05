@@ -1,4 +1,4 @@
-"""Tests for finding-to-file linking (Plan 213, Item 1).
+"""Tests for finding-to-file linking.
 
 `begin_plan`/`complete_plan` auto-record review findings. For the [PATTERN]
 recurring-finding detector (challenges._check_patterns) to ever fire, those

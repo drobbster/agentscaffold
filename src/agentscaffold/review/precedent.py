@@ -1,6 +1,6 @@
 """Precedent: earlier findings, learnings and ADRs about the files a plan touches.
 
-Plan 281. The pre-implementation review, ``scaffold_prepare_implementation``
+The pre-implementation review, ``scaffold_prepare_implementation``
 and ``scaffold_impact`` all ask the same question -- what does the governance
 history already say about these files? -- and answer it here.
 

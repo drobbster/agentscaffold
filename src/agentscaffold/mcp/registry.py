@@ -928,7 +928,7 @@ def _tool_specs() -> list[ToolSpec]:
                 "required": ["item_id"],
             },
         ),
-        # --- Agent tool pack (Plan 246) ---
+        # --- Agent tool pack ---
         ToolSpec(
             name="scaffold_diff_plan_vs_code",
             description=(

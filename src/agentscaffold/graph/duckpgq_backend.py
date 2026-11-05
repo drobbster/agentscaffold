@@ -29,7 +29,7 @@ from agentscaffold.graph.duckpgq_schema import init_schema as _duckpgq_init_sche
 
 logger = logging.getLogger(__name__)
 
-# Node tables that carry no ``project`` column (Plan 225): GraphMeta is
+# Node tables that carry no ``project`` column: GraphMeta is
 # workspace-global and Project is the namespace itself. Mirrors
 # duckpgq_schema._PROJECT_SCOPED_EXCLUDE.
 _NO_PROJECT_COLUMN: frozenset[str] = frozenset({"GraphMeta", "Project"})
@@ -60,11 +60,11 @@ class GraphLockError(RuntimeError):
 class GraphCorruptionError(RuntimeError):
     """Raised when a multi-project write would corrupt cross-project isolation.
 
-    The choke-point check-before-insert (Plan 225) raises this if a node ID is
+    The choke-point check-before-insert raises this if a node ID is
     about to be written under one project while it already exists under another
     -- a signal that ID-prefixing or project stamping has gone wrong. Prefixing
     structurally prevents cross-project collisions, so this should never fire in
-    practice; it is a fail-loud safety net (the spike showed a post-index
+    practice; it is a fail-loud safety net (testing showed a post-index
     invariant cannot see a silently-dropped row).
     """
 
@@ -96,7 +96,7 @@ def _connect(
     ``read_only=True`` uses DuckDB's READ_ONLY access mode. Prefer the default
     (writable) configuration for same-process concurrent readers during an
     in-process index: DuckDB rejects a second connection that differs in
-    access mode from an existing writer (Plan 244 spike).
+    access mode from an existing writer.
     """
     if duckdb is None:
         raise ImportError(_EXTRAS_MSG)
@@ -190,7 +190,7 @@ class DuckPGQBackend:
 
             ensure_parent_dir(self._db_path)
 
-        # AgentScaffold read-preferring open (Plan 244). Does not force DuckDB
+        # AgentScaffold read-preferring open. Does not force DuckDB
         # READ_ONLY mode -- same-process concurrent readers must match the
         # writer's access mode. Guards mutation helpers instead.
         self._read_only = read_only
@@ -204,7 +204,7 @@ class DuckPGQBackend:
             backoff=backoff,
             read_only=False,
         )
-        # Active write project (Plan 225). None == single-project mode: writes
+        # Active write project. None == single-project mode: writes
         # are unprefixed and unstamped, exactly as before. When set (multi-project
         # indexing of one project), create_node/create_edge/store_embedding
         # project-qualify IDs and stamp the project column at this choke point.
@@ -370,7 +370,7 @@ class DuckPGQBackend:
     # CRUD helpers
     # ------------------------------------------------------------------
 
-    # -- Multi-project write scope (Plan 225) -------------------------------
+    # -- Multi-project write scope -------------------------------
 
     @property
     def write_project(self) -> str | None:
@@ -650,7 +650,7 @@ class DuckPGQBackend:
                 pass
 
     # ------------------------------------------------------------------
-    # Single -> multi-project mode flip (Plan 225)
+    # Single -> multi-project mode flip
     # ------------------------------------------------------------------
 
     def migrate_to_multi_project(self, project: str) -> dict[str, int]:
@@ -662,7 +662,7 @@ class DuckPGQBackend:
         sibling's identically-named nodes cannot collide. Node ids, every edge
         endpoint, and embedding ``node_id``s are rewritten inside one
         transaction; any failure rolls the whole thing back so the cache is never
-        left half-migrated (the spike showed a partial migration is the worst
+        left half-migrated (testing showed a partial migration is the worst
         outcome). Idempotent: rows already prefixed for *project* are skipped, so
         re-running is a safe no-op. Returns per-category rewrite counts.
 
@@ -683,9 +683,9 @@ class DuckPGQBackend:
 
         # Pre-count the rows that will actually be rewritten, so the return value
         # is meaningful and idempotent. A row qualifies when it is unprefixed and
-        # either unstamped or already stamped for *project*: Plan 276 stamps
+        # either unstamped or already stamped for *project*: session writes stamp
         # sessions with the project name on bare ids even in a lone repo, and
-        # those must be re-keyed too (Plan 279).
+        # those must be re-keyed too.
         for table in NODE_TABLE_NAMES:
             if table in _NO_PROJECT_COLUMN:
                 continue
@@ -1027,7 +1027,7 @@ class DuckPGQBackend:
         }
 
     # ------------------------------------------------------------------
-    # Embeddings (Step A.8)
+    # Embeddings
     # ------------------------------------------------------------------
 
     def store_embedding(

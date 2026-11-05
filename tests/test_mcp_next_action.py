@@ -1,4 +1,4 @@
-"""Plan 246 / 273: next_action router."""
+"""The next_action router."""
 
 from __future__ import annotations
 

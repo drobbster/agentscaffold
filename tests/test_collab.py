@@ -1,4 +1,4 @@
-"""Tests for collaboration ergonomics: sharding + advisory claims (Plan 226)."""
+"""Tests for collaboration ergonomics: sharding + advisory claims."""
 
 from __future__ import annotations
 

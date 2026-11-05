@@ -40,7 +40,7 @@ except ImportError:
 _MCP_EXTRAS_MSG = "MCP server requires extra dependencies: pip install agentscaffold[mcp]"
 
 # Tools that mutate the graph and must wait for the exclusive write lock.
-# All other tools open read-preferring (Plan 244) so async freshness refresh
+# All other tools open read-preferring so async freshness refresh
 # does not block interactive reads for ~20s+.
 #
 # Imported rather than restated: `doctor --tools` needs the same distinction to
@@ -49,7 +49,7 @@ _GRAPH_WRITE_TOOLS: frozenset[str] = WRITE_TOOLS
 
 from agentscaffold.mcp.intents import intent_phrases
 
-# Back-compat alias; routing phrases live in mcp/intents.py (Plan 251 C1).
+# Back-compat alias; routing phrases live in mcp/intents.py.
 TOOL_INTENTS = intent_phrases()
 
 _ROUTING_STOPWORDS = {
@@ -148,7 +148,7 @@ _TOOL_SIGNAL_TOKENS: dict[str, set[str]] = {
     "scaffold_next_action": {"next", "action", "route", "should", "tool"},
 }
 
-# Required string args that must be non-empty (Plan 246 fail-loud validation).
+# Required string args that must be non-empty (fail-loud validation).
 _REQUIRED_STRING_ARGS: dict[str, tuple[str, ...]] = {
     "scaffold_impact": ("file_or_symbol",),
     "scaffold_context": ("symbol",),
@@ -222,7 +222,7 @@ def run_mcp_server() -> None:
     import asyncio
 
     # MCP owns stdout for JSON-RPC. Suppress Rich pipeline progress so
-    # in-process incremental refresh cannot poison the transport (Plan 242).
+    # in-process incremental refresh cannot poison the transport.
     from agentscaffold.graph.pipeline import install_stdio_safe_console
 
     install_stdio_safe_console()
@@ -248,7 +248,7 @@ async def _serve() -> None:
 
 
 def _build_server() -> Server:
-    """The configured server, with the working procedure as its instructions (Plan 275)."""
+    """The configured server, with the working procedure as its instructions."""
     from agentscaffold.agents.rule_policy import generate_server_instructions
 
     instructions = generate_server_instructions() if _procedure_delivery_enabled() else None
@@ -338,7 +338,7 @@ _RESTRICT_TO: set[str] = set()
 def configure_restrict_to(names: Iterable[str] | None) -> None:
     """Set the ``--restrict-to`` allowlist for this server process.
 
-    Plan 249 Section 11 counts this among the mitigations for the fact that one
+    This is one of the mitigations for the fact that one
     process can now read every registered project: a user who wants a narrower
     blast radius can start the server bound to an explicit set. Passing None or
     an empty iterable clears the restriction rather than denying everything,
@@ -506,7 +506,7 @@ def _effective_mcp_root(start: Path | None = None) -> Path:
             resolve_workspace_root,
         )
 
-        # Plan 234: honor an explicit MCP anchor (scaffold mcp --workspace/--project
+        # Honor an explicit MCP anchor (scaffold mcp --workspace/--project
         # or AGENTSCAFFOLD_* env vars) before falling back to the launch cwd, so
         # no-argument tools resolve the configured project even when Cursor opens a
         # parent folder. The single-child / single-project heuristics below still
@@ -514,9 +514,9 @@ def _effective_mcp_root(start: Path | None = None) -> Path:
         current = resolve_mcp_start(start)
         workspace_root = resolve_workspace_root(current)
 
-        # Cursor can launch user-level MCP servers from the broad IDE workspace
-        # (for this devbox, /home/drobb) while the AgentScaffold workspace is a
-        # child folder. If there is exactly one child workspace manifest, use it
+        # Cursor can launch user-level MCP servers from a broad IDE workspace
+        # while the AgentScaffold workspace is a child folder. If there is
+        # exactly one child workspace manifest, use it
         # as the MCP workspace root so no-arg tools still resolve project state.
         #
         # The glob looks exactly one level down, so a registered workspace nested
@@ -526,7 +526,7 @@ def _effective_mcp_root(start: Path | None = None) -> Path:
         # to be seen. So the shortcut only stands while there is nothing better to
         # go on: with several workspaces registered the registry is the informed
         # signal and the glob is the least informed one available, so we leave the
-        # anchor alone and let resolve_project refuse rather than guess (ADR-026).
+        # anchor alone and let resolve_project refuse rather than guess.
         if (
             workspace_root == current
             and not (current / "workspace.yaml").is_file()
@@ -605,10 +605,10 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
     # Project-scoped reads resolve their scope from "where we are", and this is
     # where the resolved project reaches them. It used to be os.chdir, which is
-    # process-global and therefore only safe while dispatch is serialised (see
-    # finding rf::65b49d5c2a95); an active-root context is per-call, so two
-    # dispatches for different projects can now be in flight at once -- which is
-    # what makes the Step A6 handle pool reachable.
+    # process-global and therefore only safe while dispatch is serialised; an
+    # active-root context is per-call, so two dispatches for different projects
+    # can now be in flight at once -- which is what makes the handle pool
+    # reachable.
     with active_root(resolution.root):
         return _dispatch_resolved(name, arguments, resolution)
 
@@ -630,7 +630,7 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
         configure_embeddings(config.search.embedding_model, config.search.cache_dir)
     except Exception:  # pragma: no cover - defensive; search config optional
         pass
-    # The silent federation fallback that stood here is gone (Plan 249 Step A6b).
+    # The silent federation fallback that stood here is gone.
     # It existed because resolution could land on a root that was not a project;
     # resolve_project now either returns a real project root or refuses, so the
     # condition it guarded against cannot arise, and quietly widening a call's
@@ -640,7 +640,7 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
 
     read_preferring = name not in _GRAPH_WRITE_TOOLS
     store = None
-    # Read tools: at most one brief retry (Plan 244). Write tools keep Plan 235
+    # Read tools: at most one brief retry. Write tools keep the longer
     # backoff so transient lock contention can clear.
     open_attempts = (0.0, 0.1) if read_preferring else (0.0, 0.5, 1.0)
     for attempt, delay in enumerate(open_attempts, start=1):
@@ -920,7 +920,7 @@ def _procedure_delivery_enabled() -> bool:
 
 
 def _stamp_project(resolution: Any) -> str:
-    """The project sessions are stamped with and looked up under (Plan 276).
+    """The project sessions are stamped with and looked up under.
 
     The call's own resolved project, in single-project and multi-project
     workspaces alike. ``_current_project_or_none`` is a read filter that is
@@ -933,7 +933,7 @@ def _stamp_project(resolution: Any) -> str:
 def _attach_session_meta(
     name: str, store: Any, result: Any, session_project: str, config: Any
 ) -> None:
-    """Add ``session_open`` / ``procedure_hint`` to a successful tool result (Plan 275)."""
+    """Add ``session_open`` / ``procedure_hint`` to a successful tool result."""
     if name in _SESSION_META_EXCLUDED or not isinstance(result, dict) or "error" in result:
         return
     if not _procedure_delivery_enabled():
@@ -951,7 +951,7 @@ def _attach_session_meta(
 
 
 def _attach_governance(name: str, result: Any, root: Path, config: Any) -> None:
-    """Add the governance manual block for orient and the lifecycle tools (Plan 280).
+    """Add the governance manual block for orient and the lifecycle tools.
 
     Attached here, once per response, because the composite tools call other
     handlers and would otherwise carry a nested second copy.
@@ -977,7 +977,7 @@ def _attach_governance(name: str, result: Any, root: Path, config: Any) -> None:
 def _tool_governance(
     arguments: dict[str, Any], meta: dict[str, Any], root: Path, config: Any
 ) -> dict[str, Any]:
-    """Table of contents or one section of the governance manual (Plan 280)."""
+    """Table of contents or one section of the governance manual."""
     from agentscaffold.mcp.governance_delivery import project_manual
 
     manual = project_manual(root, config)
@@ -1002,7 +1002,7 @@ def _tool_governance(
     return payload
 
 
-#: Governance writes that count as session activity (Plan 276). Session tools
+#: Governance writes that count as session activity. Session tools
 #: stamp activity themselves; reads never write.
 _ACTIVITY_TOOLS = WRITE_TOOLS - _SESSION_META_EXCLUDED
 
@@ -1028,11 +1028,11 @@ def _touch_session_activity(
 
 
 def _resolution_meta(resolution: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Say which project answered and what decided it (Plan 257, B3).
+    """Say which project answered and what decided it.
 
     Until this existed, ``scaffold_projects`` was the only tool that revealed any
     of it, so a reply scoped to the wrong project was indistinguishable from a
-    correct one: the field report behind ADR-026 had to be diagnosed by reading
+    correct one: a wrong-project field report had to be diagnosed by reading
     resolution source rather than by looking at a response.
 
     ``working_path_unmatched`` is the load-bearing one. A path that resolved to no
@@ -1577,9 +1577,9 @@ def _governance_impact(
 ) -> dict[str, Any] | None:
     """Every finding, learning, ADR, contract and component about *target*.
 
-    Facts about the file only (Plan 281): no semantic matches and nothing that
+    Facts about the file only: no semantic matches and nothing that
     merely shares an earlier plan with it. Uncapped, like the dependency
-    results. ``components`` (Plan 282) lists the inventory components whose
+    results. ``components`` lists the inventory components whose
     ``reads`` or entrypoint the target touches.
     """
     from agentscaffold.review.precedent import STRUCTURAL_MATCHES, precedent_for_paths
@@ -1634,7 +1634,7 @@ def _components_touching(
     config: Any,
     scope: tuple[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Inventory components whose ``reads`` or entrypoint *paths* touch (Plan 282)."""
+    """Inventory components whose ``reads`` or entrypoint *paths* touch."""
     inventory = getattr(config, "inventory", None)
     if root is None or inventory is None or not inventory.enabled:
         return []
@@ -1667,7 +1667,7 @@ def _tool_search(
     top_k = arguments.get("top_k", 10)
     kind = arguments.get("kind", "code")
     rerank = bool(arguments.get("rerank", False))
-    # Scope (Plan 225): defaults to the current project in a multi-project
+    # Scope: defaults to the current project in a multi-project
     # workspace; clients may pass project / all_projects to retarget or federate.
     project = arguments.get("project") or None
     all_projects = bool(arguments.get("all_projects", False))
@@ -1843,7 +1843,7 @@ _SEVERITY_ORDER: tuple[str, ...] = ("critical", "high", "medium", "low")
 
 
 def _scope_args(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Read the per-call read scope (Plan 249): default is the resolved project."""
+    """Read the per-call read scope: default is the resolved project."""
     return {
         "project": arguments.get("project") or None,
         "all_projects": bool(arguments.get("all_projects", False)),
@@ -1887,7 +1887,7 @@ def _dedup_backlog_items(
 
     First-seen order of the suffix is preserved so query priority order stays.
     Fetch a wider window than the display limit so a leading duplicate pair
-    does not starve the unique top-N (Plan 274).
+    does not starve the unique top-N.
     """
     by_key: dict[str, dict[str, Any]] = {}
     order: list[str] = []
@@ -1920,7 +1920,7 @@ def _unique_open_backlog_count(rows: list[dict[str, Any]] | None) -> int:
 
 
 def _clean_out_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    """Strip ``alias.`` prefixes from agent-facing tool output rows (Plan 238).
+    """Strip ``alias.`` prefixes from agent-facing tool output rows.
 
     The query layer aliases columns as ``alias.field`` (a deliberate internal
     contract). That prefix is noise once it reaches the agent, so plan/governance
@@ -1933,7 +1933,7 @@ def _clean_out_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
 
 
 def _with_normalized_status(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Clean rows and attach ``status_normalized`` next to the raw ``status`` (Plan 238)."""
+    """Clean rows and attach ``status_normalized`` next to the raw ``status``."""
     from agentscaffold.review.filters import normalize_plan_status  # noqa: PLC0415
 
     cleaned = _clean_out_rows(rows)
@@ -1953,7 +1953,7 @@ def _is_plan_complete(raw_status: str | None) -> bool:
 def _adr_is_active(raw_status: str | None) -> bool:
     """Return True unless an ADR status indicates it is superseded/deprecated.
 
-    Uses substring matching so descriptive statuses like ``Superseded by ADR-030``
+    Uses substring matching so descriptive statuses like ``Superseded by ADR-012``
     are correctly treated as inactive (exact-token membership missed these).
     """
     s = (raw_status or "").lower()
@@ -1961,7 +1961,7 @@ def _adr_is_active(raw_status: str | None) -> bool:
 
 
 def _adr_matches_topic(adr: dict[str, Any], topic_lower: str) -> bool:
-    """Title first, then ADR file body when filePath is present (Plan 251 C6)."""
+    """Title first, then ADR file body when filePath is present."""
     title = str(adr.get("a.title") or "")
     if topic_lower in title.lower():
         return True
@@ -1978,7 +1978,7 @@ def _adr_matches_topic(adr: dict[str, Any], topic_lower: str) -> bool:
 
 
 def _empty_graph_warning(stats: dict[str, Any]) -> str | None:
-    """Return a warning string when the graph looks empty, else None (Plan 239).
+    """Return a warning string when the graph looks empty, else None.
 
     Several read tools render confident negatives (``is_stale: false``,
     ``has_full_decision_chain: false``, empty overlaps) that are indistinguishable
@@ -2224,7 +2224,7 @@ def _tool_prepare_implementation(
 
 
 def _attach_compact_precedent(payload: dict[str, Any], brief: dict[str, Any], config: Any) -> None:
-    """Short precedent reminder while coding (Plan 281), taken from the brief."""
+    """Short precedent reminder while coding, taken from the brief."""
     section = brief.get("precedent") if isinstance(brief, dict) else None
     if not isinstance(section, dict):
         return
@@ -2242,7 +2242,7 @@ def _attach_compact_precedent(payload: dict[str, Any], brief: dict[str, Any], co
 def _approval_check(
     store: Any, root: Path, config: Any, plan_number: int
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """``(refusal, approval)`` for implementation prep (Plan 280).
+    """``(refusal, approval)`` for implementation prep.
 
     Runs on every call, not only with ``gate_transition``: leaving out a flag
     must not bypass a required approval.
@@ -2379,7 +2379,7 @@ def _tool_staleness_check(
     noise_paths = resolve_overlap_noise_paths(configured)
 
     all_plans = get_all_plans(store)
-    # Frequency map: how many completed plans touch each path (Plan 247 demotion).
+    # Frequency map: how many completed plans touch each path (hot-file demotion).
     path_frequency: dict[str, int] = {}
     completed_file_sets: list[tuple[Any, dict[str, Any], set[str]]] = []
     for p in all_plans:
@@ -2550,7 +2550,7 @@ def _tool_prepare_retro(
 
 
 def _session_age_warning(session: dict[str, Any] | None, warn_after_hours: float) -> str:
-    """Name an open session that started longer ago than *warn_after_hours* (Plan 276)."""
+    """Name an open session that started longer ago than *warn_after_hours*."""
     if not session or warn_after_hours <= 0:
         return ""
     try:
@@ -2677,7 +2677,7 @@ def _tool_orient(
 
     active_adrs = [a for a in adrs if _adr_is_active(a.get("a.status"))]
 
-    # Plan 273: session_brief drives routing. Diary focus is not used.
+    # session_brief drives routing. Diary focus is not used.
     from agentscaffold.graph.sessions import find_open_session
     from agentscaffold.mcp.next_action import next_actions
     from agentscaffold.mcp.session_brief import build_session_brief, compact_session_context
@@ -2931,7 +2931,7 @@ def _tool_decision_context(
 
     scope = _scope_args(arguments)
     # A decision chain is a single plan's history, so federating it cannot mean
-    # "merge every project's plan 249" -- that would splice unrelated ADRs and
+    # "merge every project's plan 42" -- that would splice unrelated ADRs and
     # spikes into one narrative. It means "find which project owns this number".
     # If more than one does, the number alone is not an answer, so refuse and
     # name the candidates rather than silently returning whichever came first.
@@ -3231,7 +3231,7 @@ def _tool_resolve_backlog_item(
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
-# Agent tool pack handlers (Plan 246)
+# Agent tool pack handlers
 # ---------------------------------------------------------------------------
 
 
@@ -3302,7 +3302,7 @@ def _tool_next_action(
 
 
 # ---------------------------------------------------------------------------
-# Governed lifecycle composite handlers (Plan 152)
+# Governed lifecycle composite handlers
 # ---------------------------------------------------------------------------
 
 
@@ -3502,7 +3502,7 @@ def _tool_begin_plan(
 
 
 def _review_commits(root: Path | None, config: Any) -> dict[str, str] | None:
-    """HEAD per project root and implementation root, keyed by project name (Plan 281)."""
+    """HEAD per project root and implementation root, keyed by project name."""
     from agentscaffold.config import ScaffoldConfig
     from agentscaffold.review.changes import head_commit
     from agentscaffold.review.file_impact_resolve import current_project_name
@@ -3575,7 +3575,7 @@ def _tool_complete_plan(
     1. Graph-health pre-check
     2. Prepare retro (verification + enrichment)
     2a. With ``gates.in_progress_to_complete.compliance: block``, stop on a
-        failing rule row before anything is written (Plan 281)
+        failing rule row before anything is written
     3. Auto-write retro insights as ReviewFindings (review_type='post_retro')
     4. Write backlog items if provided
     5. Return structured output with structured_learnings + completion_checklist
@@ -3710,7 +3710,7 @@ def _tool_complete_plan(
 
 
 def _compliance_gate(retro_result: dict[str, Any], config: Any) -> list[dict[str, Any]]:
-    """Failing rule rows when the completion gate is ``block``; else empty (Plan 281)."""
+    """Failing rule rows when the completion gate is ``block``; else empty."""
     from agentscaffold.review.verify import COMPLIANCE_CHECKS
 
     gates = getattr(config, "gates", None)

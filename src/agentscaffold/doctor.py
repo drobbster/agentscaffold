@@ -1,6 +1,6 @@
-"""Read-only health checks for an AgentScaffold installation (Plan 249, Step B8).
+"""Read-only health checks for an AgentScaffold installation.
 
-Phase A and B each moved something that used to be self-evident. The MCP server
+Recent releases each moved something that used to be self-evident. The MCP server
 became one entry serving every project instead of one entry per project. The
 graph moved out of the working tree into a per-workspace state directory. The
 routing guidance became generated output with a canonical source. Every one of
@@ -9,8 +9,8 @@ server answers tool calls, a re-keyed graph re-indexes quietly, an unregenerated
 rule file still routes the agent. This module is where that invisibility ends.
 
 Checks are registered in :data:`CHECKS` rather than being called in sequence from
-the command, because Plan 251 adds three more (commit durability, intent-map
-drift, generated-file banners) and should be able to append rather than rework.
+the command, so later checks (commit durability, intent-map drift,
+generated-file banners) can append rather than rework.
 
 Every check is read-only. Nothing here creates, writes, or repairs; a check that
 fixed things would be a check nobody could safely run on a broken machine, which
@@ -62,7 +62,7 @@ class DoctorContext:
 
 @dataclass(frozen=True)
 class Check:
-    """A named diagnostic. Plan 251 appends to :data:`CHECKS` with these."""
+    """A named diagnostic. New checks append to :data:`CHECKS` with these."""
 
     name: str
     title: str
@@ -136,7 +136,7 @@ def _manifest_registry_drift(registry: Any) -> list[str]:
     afterwards is invisible to every registry-driven read: it cannot be named with
     ``project=``, it is absent from the candidate list in a refusal, and it is not
     a registered root -- which used to mean a call anchored at its workspace could
-    be answered as a synthesised project instead (ADR-026). None of that surfaces
+    be answered as a synthesised project instead. None of that surfaces
     as an error, so the drift has to be reported before it can be explained.
     """
     from agentscaffold.config import load_workspace_manifest
@@ -223,7 +223,7 @@ def _user_install_manifest() -> dict[str, Any]:
 
 
 def user_copy_drift() -> list[str]:
-    """User-scope files (Plan 277) that are gone, hand-edited, or behind the package.
+    """User-scope files that are gone, hand-edited, or behind the package.
 
     The install manifest records a hash per file it wrote; the shared routing
     rule is also re-rendered, because it changes when the package does.
@@ -254,7 +254,7 @@ def user_copy_drift() -> list[str]:
 
 
 def check_guidance_ignored(context: DoctorContext) -> CheckResult:
-    """Guidance files that git will not commit (Plan 251 Step 11).
+    """Guidance files that git will not commit.
 
     A parent-directory exclude (``.cursor/``) cannot be undone by a file-level
     negation. Remediation is directory-scoped: ``.cursor/*`` plus
@@ -296,7 +296,7 @@ def _project_config(root: Path) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Reachability and hook liveness (Plan 277)
+# Reachability and hook liveness
 # ---------------------------------------------------------------------------
 
 #: Project-level files an editor reads only from the folder it opened.
@@ -329,7 +329,7 @@ def _user_scope_covers(name: str | None, manifest: dict[str, Any]) -> bool:
 
 
 def check_guidance_reachable(context: DoctorContext) -> CheckResult:
-    """Project-level rules and hooks that the editor will not load (Plan 277).
+    """Project-level rules and hooks that the editor will not load.
 
     Cursor and Claude Code read ``.cursor/`` and ``.claude/`` from the folder
     that was opened, so a project below its repository root gets them only when
@@ -394,7 +394,7 @@ def _project_hook_kind(root: Path) -> str | None:
 
 
 def check_hooks_ran(context: DoctorContext) -> CheckResult:
-    """An edit hook that is installed but has never fired (Plan 277).
+    """An edit hook that is installed but has never fired.
 
     The worker writes ``hook.last_run`` beside the graph each time a hook
     reaches it. A graph that keeps being indexed while that file is missing or
@@ -576,7 +576,7 @@ def check_mcp_registration(context: DoctorContext) -> CheckResult:
     # nothing about these: a `.cursor/mcp.json` holding an agentscaffold entry is
     # a project-scoped server by construction, which is what the 0.10 migration
     # collapses. Checking only the shared config made that regression invisible
-    # to the command whose job is to verify the migration (Plan 253).
+    # to the command whose job is to verify the migration.
     from agentscaffold.mcp.install import find_legacy_project_configs, registered_roots
 
     # Only redundant if a shared server exists to make it redundant. A lone repo
@@ -703,10 +703,9 @@ def probe_launched_version(command: str) -> str | None:
 def check_version_skew(context: DoctorContext) -> CheckResult:
     """Whether the server the client launches is the CLI you are running.
 
-    This is the failure recorded as a blocker in the governance repo: the MCP
-    server ran a pre-0.9.0 install, so composite tools returned a surface that
-    had since moved, and every diagnosis pointed at the wrong repo because the
-    CLI in the terminal was fine.
+    This is a failure seen in practice: the MCP server ran a pre-0.9.0 install,
+    so composite tools returned a surface that had since moved, and every
+    diagnosis pointed at the wrong repo because the CLI in the terminal was fine.
     """
     document = _load_client_config(context.mcp_config_path)
     if document is None:
@@ -754,7 +753,7 @@ def check_version_skew(context: DoctorContext) -> CheckResult:
 def check_state_location(context: DoctorContext) -> CheckResult:
     """Where the graph actually resolves, and what got left behind.
 
-    Reported even when healthy: since Step B4 the graph is no longer where a
+    Reported even when healthy: since state relocation the graph is no longer where a
     user would think to look, and "which database am I actually reading" is the
     first question every other diagnosis depends on.
     """
@@ -801,7 +800,7 @@ def check_state_location(context: DoctorContext) -> CheckResult:
 
 
 def _in_tree_graph_candidates(project_root: Path, workspace_root: Path) -> list[Path]:
-    """Every in-tree graph location a project here may have used (Plan 279).
+    """Every in-tree graph location a project here may have used.
 
     The workspace root and each project folder: a team folder that indexed
     before its workspace was registered keeps its own ``.scaffold/`` behind.
@@ -836,7 +835,7 @@ def _in_tree_graph_candidates(project_root: Path, workspace_root: Path) -> list[
 def check_workspace_id(context: DoctorContext) -> CheckResult:
     """Whether the manifest and the registry name this workspace the same way.
 
-    Added after Step B5 found them diverging in practice. It is silent damage:
+    Added after they were found diverging in practice. It is silent damage:
     resolution prefers the manifest, so the graph keeps working while the
     registry reports an id that keys nothing -- and removing the manifest
     re-keys state to the other id and orphans a populated database.
@@ -880,7 +879,7 @@ def check_workspace_id(context: DoctorContext) -> CheckResult:
 def check_graph_schema(context: DoctorContext) -> CheckResult:
     """Whether the on-disk graph has every additive column the code expects.
 
-    Plan 255 added ``BacklogItem.resolution`` only inside ``init_schema``, so
+    An earlier change added ``BacklogItem.resolution`` only inside ``init_schema``, so
     upgrading the package did not heal an existing graph. 0.10.5 applies those
     columns on writable open; this check reports a graph that is still behind
     without writing anything. A missing graph, or one we cannot open because
@@ -938,7 +937,7 @@ def check_graph_schema(context: DoctorContext) -> CheckResult:
 
 
 def check_unstamped_rows(context: DoctorContext) -> CheckResult:
-    """Rows with no project in a multi-project workspace's graph (Plan 279).
+    """Rows with no project in a multi-project workspace's graph.
 
     A single-project repo keeps ``project = ''`` by design, so the check only
     runs where scoping filters on the column: there, an empty project is a row
@@ -1000,7 +999,7 @@ def check_unstamped_rows(context: DoctorContext) -> CheckResult:
 
 
 def check_governance_mapping(context: DoctorContext) -> CheckResult:
-    """Manual sections the MCP server is configured to deliver but cannot find (Plan 280).
+    """Manual sections the MCP server is configured to deliver but cannot find.
 
     Tools still succeed when a mapped heading is missing; they report it in
     ``missing``. This check names each one so the mapping or the manual can be
@@ -1059,7 +1058,7 @@ def check_governance_mapping(context: DoctorContext) -> CheckResult:
 
 
 def check_agent_docs(context: DoctorContext) -> CheckResult:
-    """Heading overlap in AGENTS.md -- the Plan 260 duplication."""
+    """Heading overlap in AGENTS.md -- sections copied in twice."""
     from agentscaffold.agents.repair import heading_overlap, split_managed
     from agentscaffold.rendering import markdown_h2_headings
 

@@ -1,4 +1,4 @@
-"""Integration tests for git-backed governance serialization (Plan 222).
+"""Integration tests for git-backed governance serialization.
 
 Verifies the end-to-end property: governance recorded at runtime is serialized to
 the committed artifact, and a rebuilt graph (fresh DB) reproduces it from the

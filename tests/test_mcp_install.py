@@ -1,4 +1,4 @@
-"""Tests for ``scaffold mcp install`` (Plan 249, Step A8).
+"""Tests for ``scaffold mcp install``.
 
 Written before the installer exists. The command rewrites a *shared* client
 config that the user also maintains by hand and that other tools register into,
@@ -159,7 +159,7 @@ def test_install_reports_a_superseded_per_project_config(tmp_path, cli_runner, m
     """The per-project config is redundant the moment the shared entry lands.
 
     Saying so here is what stops ``scaffold doctor`` reporting, later and out of
-    context, a problem the user created by following the quick start (Plan 253).
+    context, a problem the user created by following the quick start.
     """
     target = tmp_path / "mcp.json"
     project = tmp_path / "proj"
@@ -413,7 +413,7 @@ def test_plan_removes_legacy_entries_with_migrate():
 
 
 # ==========================================================================
-# Deprecation path for per-project entries (Plan 249, Step A9)
+# Deprecation path for per-project entries
 #
 # The contract is: legacy entries keep working, the user is warned once, and
 # the warning names the command that fixes it. "Once" is load-bearing -- an
@@ -429,7 +429,7 @@ def _reset_warning_latch(tmp_path, monkeypatch):
     without it a test asserting silence would read whatever repo the suite
     happens to be run from -- and this one really does carry a legacy
     `.cursor/mcp.json`, so three of these tests passed only until the scan
-    started working. Same lesson as the registry pollution at Step A8: make the
+    started working. Same lesson as the earlier registry pollution: make the
     environment hermetic in a fixture rather than asking each test to remember.
     """
     neutral = tmp_path / "_cwd"
@@ -532,7 +532,7 @@ def test_legacy_entries_still_work_after_the_warning(tmp_path):
 # --------------------------------------------------------------------------
 # The legacy shape found in the field
 #
-# Integration verification against this machine (Step A9) showed the unit tests
+# Integration verification against a real machine showed the unit tests
 # above had assumed the wrong shape. The real per-project registrations are not
 # `agentscaffold-<project>` entries in the shared user config -- they are per-repo
 # `.cursor/mcp.json` files, each holding an entry named plainly `agentscaffold`.

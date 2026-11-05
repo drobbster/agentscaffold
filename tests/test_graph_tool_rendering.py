@@ -1,4 +1,4 @@
-"""Tests for Plan 238: graph-tool rendering and signal hygiene.
+"""Tests for graph-tool rendering and signal hygiene.
 
 Covers the boundary helpers and the four fixes across the plan/governance
 composites: tolerant completed-plan detection, tolerant ADR active filtering,
@@ -32,7 +32,7 @@ def test_adr_is_active():
     assert _adr_is_active("Accepted")
     assert _adr_is_active("Proposed")
     assert not _adr_is_active("Superseded")
-    assert not _adr_is_active("Superseded by ADR-030")
+    assert not _adr_is_active("Superseded by ADR-012")
     assert not _adr_is_active("Deprecated")
 
 
@@ -204,7 +204,7 @@ def test_orient_excludes_superseded_adr_and_cleans():
 
     adrs = [
         {"a.number": 1, "a.title": "Active one", "a.status": "Accepted"},
-        {"a.number": 2, "a.title": "Old one", "a.status": "Superseded by ADR-030"},
+        {"a.number": 2, "a.title": "Old one", "a.status": "Superseded by ADR-012"},
     ]
 
     with (
@@ -242,7 +242,7 @@ def test_orient_excludes_superseded_adr_and_cleans():
 
 
 # ---------------------------------------------------------------------------
-# Plan 239: coverage honesty (empty-graph signal + heuristic basis)
+# Coverage honesty (empty-graph signal + heuristic basis)
 # ---------------------------------------------------------------------------
 
 

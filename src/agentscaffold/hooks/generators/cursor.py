@@ -1,4 +1,4 @@
-"""Cursor hook generator with rule taxonomy — Step B.3.
+"""Cursor hook generator with rule taxonomy.
 
 Emits YAML frontmatter on every generated ``.cursor/rules/`` file based on
 the rule class:
@@ -28,7 +28,7 @@ from agentscaffold.hooks.events import HookEvent
 # Native Cursor hooks (.cursor/hooks.json). Cursor's afterFileEdit event fires
 # after the agent edits a file -- the right place to keep the knowledge graph
 # fresh. The generated script is a one-line shim into the hook router
-# (``agentscaffold.hooks.router``, Plan 277): path resolution, single-flight
+# (``agentscaffold.hooks.router``): path resolution, single-flight
 # locking and the state directory live in Python, not shell, and the router
 # always answers with one JSON object.
 CURSOR_HOOKS_VERSION = 1

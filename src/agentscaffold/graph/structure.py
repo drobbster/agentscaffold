@@ -279,7 +279,7 @@ def _process_extra_paths(
     allowed_languages: set[str] | None,
     folder_ids: dict[str, str],
 ) -> dict[str, int]:
-    """Index ``graph.extra_paths`` files (Plan 283) under an ``@repo`` folder."""
+    """Index ``graph.extra_paths`` files under an ``@repo`` folder."""
     from agentscaffold.graph.source_roots import scan_extra_paths  # noqa: PLC0415
     from agentscaffold.paths import resolve_node_path  # noqa: PLC0415
 

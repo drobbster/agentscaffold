@@ -1,4 +1,4 @@
-"""Pydantic model for domain pack manifest.yaml — Step B.8."""
+"""Pydantic model for domain pack manifest.yaml."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ class DomainManifest(BaseModel):
             domain.  Used by Cursor rule generators to produce
             ``globs: [<patterns>]`` frontmatter instead of ``alwaysApply: true``.
             An empty list means ``alwaysApply: true`` (safe fallback).
-        inventory_collectors: System inventory collectors (Plan 282) this
+        inventory_collectors: System inventory collectors this
             domain enables in ``inventory.collectors``, for example ``prefect``.
     """
 

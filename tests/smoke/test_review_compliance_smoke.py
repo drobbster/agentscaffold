@@ -1,4 +1,4 @@
-"""End-to-end smoke for Plan 281: review stamp, change, and post-implementation rules.
+"""End-to-end smoke for the review stamp, change, and post-implementation rules.
 
 A governance repository whose ``implementation_project`` is a code repository,
 both registered and under git, committing directly to ``main``. The

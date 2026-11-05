@@ -1,4 +1,4 @@
-"""Plan 246: why_empty explainer."""
+"""The why_empty explainer."""
 
 from __future__ import annotations
 

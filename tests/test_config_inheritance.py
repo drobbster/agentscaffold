@@ -1,4 +1,4 @@
-"""Tests for config inheritance via ``extends:`` (Plan 224)."""
+"""Tests for config inheritance via ``extends:``."""
 
 from __future__ import annotations
 

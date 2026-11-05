@@ -1,4 +1,4 @@
-"""Monorepo source roots: module prefixes (Plan 278) and extra paths (Plan 283).
+"""Monorepo source roots: module prefixes and extra paths.
 
 A project registered at ``<repo>/company/team_x`` is imported as
 ``company.team_x.foo`` by code that runs from the repository root. The import

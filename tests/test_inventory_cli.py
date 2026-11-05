@@ -1,4 +1,4 @@
-"""``scaffold inventory init | refresh | check`` (Plan 282)."""
+"""``scaffold inventory init | refresh | check``."""
 
 from __future__ import annotations
 

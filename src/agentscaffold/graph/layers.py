@@ -153,7 +153,7 @@ def check_layers(
 
     # A handful of mapped files against thousands of unmapped imports is the
     # same honesty class as zero mapped files: the check looked at almost
-    # nothing. Threshold locked in Plan 269: unmapped >= 10 * max(checked, 1).
+    # nothing. Threshold: unmapped >= 10 * max(checked, 1).
     if not violations and unmapped >= 10 * max(checked, 1):
         return _not_evaluable(
             (

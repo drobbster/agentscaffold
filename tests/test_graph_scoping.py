@@ -1,4 +1,4 @@
-"""Tests for graph project scoping (Plan 225, Step 4).
+"""Tests for graph project scoping.
 
 Covers ID qualify/unqualify, fail-closed scope resolution (current/targeted/
 federated), current-project detection, and the plain-SQL + GRAPH_TABLE predicate

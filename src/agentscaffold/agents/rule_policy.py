@@ -10,7 +10,7 @@ from __future__ import annotations
 from agentscaffold.config import ScaffoldConfig
 from agentscaffold.mcp.resources import GUIDANCE_ROUTING_URI
 
-# Notes appended under specific Intent Map entries (Plan 247 call compression).
+# Notes appended under specific Intent Map entries (call compression).
 _INTENT_NOTES: dict[str, str] = {
     "scaffold_orient": (
         "Answers four questions: current work, blockers for that work, "
@@ -303,7 +303,7 @@ def _intent_map_lines(quote_intents: bool) -> list[str]:
 
 
 def generate_canonical_guidance_body(config: ScaffoldConfig) -> str:
-    """Build the platform-invariant routing guidance (Plan 249 Step B2).
+    """Build the platform-invariant routing guidance.
 
     This is the canonical source every per-project rule file is generated from,
     and the content served as the ``agentscaffold://guidance/routing`` resource.
@@ -323,7 +323,7 @@ def generate_canonical_guidance_body(config: ScaffoldConfig) -> str:
 
 
 def generate_user_scope_routing_body() -> str:
-    """Routing guidance for the shared user-scope plugin (Plan 277).
+    """Routing guidance for the shared user-scope plugin.
 
     One copy serves every registered project in a workspace, so it carries
     nothing that depends on a project's configuration: the guardrails go in
@@ -341,7 +341,7 @@ def generate_user_scope_routing_body() -> str:
 
 
 def generate_server_instructions() -> str:
-    """The working procedure sent in the MCP initialize result (Plan 275).
+    """The working procedure sent in the MCP initialize result.
 
     Takes no project input: one server serves every registered project, and the
     initialize handshake happens before any tool call names one. Kept to at most

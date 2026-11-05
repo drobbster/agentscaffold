@@ -50,7 +50,7 @@ def _finding_paths(
     texts: list[str | None],
     project_root: Path | None,
 ) -> list[str]:
-    """Explicit and mentioned paths, project-relative when the root is known (Plan 281)."""
+    """Explicit and mentioned paths, project-relative when the root is known."""
     from agentscaffold.review.path_mentions import collect_paths  # noqa: PLC0415
 
     return collect_paths(file_paths, texts, project_root=project_root)
@@ -122,7 +122,7 @@ def _finding_id(
 def is_malformed_finding(finding: str) -> bool:
     """True when a finding body is a mid-sentence fragment rather than an assertion.
 
-    Defence in depth behind the Plan 250 anchoring fix. Anchoring stops the known
+    Defence in depth behind the extractor anchoring fix. Anchoring stops the known
     producer of fragments, but the store outlives any one parser version and a
     consuming repo can call this path directly, so the write side checks the shape
     of what it is asked to persist.
@@ -142,7 +142,7 @@ def is_malformed_finding(finding: str) -> bool:
 
     Counting backticks for balance instead looks appealing and is wrong: a
     fragment that happens to carry another backtick pair (a trailing fence, say)
-    balances out and slips through. Observed on ``rf::8ecd53cc08b9``.
+    balances out and slips through. This has been observed on stored findings.
     """
     body = finding.strip()
     if not body:
@@ -262,7 +262,7 @@ def _returning_id(rows: list[dict[str, Any]]) -> str | None:
 
 
 def _id_candidates(raw_id: str, project: str | None) -> list[str]:
-    """Exact-id forms to try: as given, plus Plan 225 qualified/unqualified."""
+    """Exact-id forms to try: as given, plus project-qualified/unqualified."""
     raw_id = raw_id.strip()
     if not raw_id:
         return []

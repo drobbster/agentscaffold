@@ -1,4 +1,4 @@
-"""Brownfield workspace asset-layout migrator (Plan 234).
+"""Brownfield workspace asset-layout migrator.
 
 ``scaffold workspace migrate-layout`` promotes duplicated reusable *process*
 assets (prompts, standards, templates, collaboration protocol, commands, shared
@@ -16,7 +16,7 @@ Design invariants:
 - A dirty git worktree refuses a destructive ``--apply`` unless ``--force``.
 - Re-running on an already ``shared_workspace`` workspace is a no-op.
 
-Exit codes (Appendix E): ``0`` success / already migrated; ``2`` diverged
+Exit codes: ``0`` success / already migrated; ``2`` diverged
 conflicts unresolved on apply without policy; ``3`` dirty worktree without
 ``--force``.
 """
@@ -213,7 +213,7 @@ def _write_asset_layout(manifest_path: Path, workspace: WorkspaceConfig) -> None
 
 
 def _regenerate_agents(workspace_root: Path, workspace: WorkspaceConfig) -> str | None:
-    """Refresh the workspace router where AgentScaffold owns it (Plan 279).
+    """Refresh the workspace router where AgentScaffold owns it.
 
     Returns a message for the report when the router was left alone or could
     not be written, so neither outcome is silent; None when it was refreshed.

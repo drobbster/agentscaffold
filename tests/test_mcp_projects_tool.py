@@ -1,4 +1,4 @@
-"""Tests for ``scaffold_projects`` and opt-in federated discovery (Plan 249, A7).
+"""Tests for ``scaffold_projects`` and opt-in federated discovery.
 
 Two behaviours are under test and they are related.
 

@@ -1,4 +1,4 @@
-"""Plan 251: @generated banner provenance."""
+"""@generated banner provenance."""
 
 from __future__ import annotations
 

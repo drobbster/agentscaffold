@@ -1,4 +1,4 @@
-"""Directory-pruning walk must not descend into ignored trees (Plan 267)."""
+"""Directory-pruning walk must not descend into ignored trees."""
 
 from __future__ import annotations
 

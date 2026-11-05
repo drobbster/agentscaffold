@@ -1,4 +1,4 @@
-"""DuckPGQ native embedding storage and vector similarity tests — Step A.8."""
+"""DuckPGQ native embedding storage and vector similarity tests."""
 
 from __future__ import annotations
 

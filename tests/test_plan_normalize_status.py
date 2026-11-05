@@ -1,4 +1,4 @@
-"""``scaffold plan normalize-status`` and the shared status reader (Plan 282)."""
+"""``scaffold plan normalize-status`` and the shared status reader."""
 
 from __future__ import annotations
 

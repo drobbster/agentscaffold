@@ -58,8 +58,8 @@ def process_imports(
 ) -> dict[str, int]:
     """Resolve imports and create IMPORTS edges.
 
-    ``prefixes`` maps monorepo module prefixes to directories under *root*
-    (Plan 278). Both the full and the incremental path must pass the same
+    ``prefixes`` maps monorepo module prefixes to directories under *root*.
+    Both the full and the incremental path must pass the same
     mapping: the incremental path deletes a file's edges before re-resolving.
 
     Returns summary with resolved/unresolved counts.
@@ -216,7 +216,7 @@ def _resolve_python_module(
     """Resolve a Python module to ``(path, strategy)``.
 
     Strategies, in order: ``direct`` (module.py), ``package`` (__init__.py),
-    ``prefix`` (a monorepo module prefix stripped, Plan 278), ``source_relative``
+    ``prefix`` (a monorepo module prefix stripped), ``source_relative``
     (from the importing file's directory), ``src_prefix`` (src/, lib/, libs/).
     Relative imports use ``relative`` alone.
     """

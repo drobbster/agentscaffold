@@ -1,6 +1,6 @@
 """Regression: quiet incremental index must not write Rich progress to stdout.
 
-Plan 242 -- MCP stdio hosts treat stdout as JSON-RPC. In-process incremental
+MCP stdio hosts treat stdout as JSON-RPC. In-process incremental
 refresh used to print ``Incremental index...`` / Index Summary tables to
 stdout, which Cursor parsed as invalid JSON and then marked the transport
 failed (``Not connected``).

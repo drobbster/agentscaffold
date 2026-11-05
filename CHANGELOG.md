@@ -242,7 +242,7 @@ extra now requires `mcp>=1.3.0`. The system inventory stays off until
   records each repository's HEAD at review; stamps on older graphs carry over
   when they are upgraded.
 - **File Impact Map rows with a note after the path are read.** A row such as
-  ``| `docs/x.md` (governance repo) | MODIFY |`` was skipped, so those files
+  ``| `docs/x.md` (shared docs) | MODIFY |`` was skipped, so those files
   were missing from plan impact, verification and the rule checks.
 - **`scaffold_prepare_retro` verifies with the project root and config.** It
   ignored `implementation_project` before.
@@ -267,7 +267,7 @@ list are unchanged (an explicit list replaces the defaults).
 - **MCP responses carry a C3 guidance stamp.** Every tool `meta` includes
   `guidance_rule_path` and `guidance_is_generated`. `scaffold_orient` and
   `scaffold_projects` also return a `guidance` object with copy paths.
-  Paths are workspace-relative. Plan 273 summary still omits diary keys
+  Paths are workspace-relative. The summary view still omits diary keys
   (`stats`, `hot_files`, `recent_plans`, `recent_studies`, `active_adrs`).
   Clients that assert an exact top-level key set will need to allow the
   new `guidance` object and stamp fields.
@@ -314,7 +314,7 @@ list are unchanged (an explicit list replaces the defaults).
 - **Plan-vs-code symbol spot-checks skip ALL-CAPS filenames and `test_*`
   stems.** `CHANGELOG`, `README`, and `test_assembly` were reported as
   missing symbols because the filename stem was always checked. Title-case
-  prose was already filtered (Plan 270); stems now use the same identifier
+  prose was already filtered; stems now use the same identifier
   rule.
 - **`scaffold_staleness_check` plan-card checkbox counts match the plan file.**
   The card only reads Execution Steps when `root` is set. Diff, begin-plan,
@@ -437,8 +437,7 @@ it previously answered. The previous answer came from a project that does not
 exist in your registry, so it was describing a different codebase than the one
 you asked about. Pass `working_path` (the file or directory you are working on)
 or `project=<name>`; `scaffold_projects` lists what the server can answer for.
-Single-workspace installs are unaffected. Breaking contract change behind
-ADR-026.
+Single-workspace installs are unaffected. This is a breaking contract change.
 
 ### Fixed
 - **A no-argument MCP call can no longer be answered from the wrong project.**
@@ -601,26 +600,25 @@ which had been silently dead since the Cursor rules file was renamed.
 
 **One MCP server for a whole workspace, and a graph that sees your relative imports.**
 
-The headline is Plan 249: AgentScaffold no longer needs one MCP server process per
+The headline: AgentScaffold no longer needs one MCP server process per
 project. A single project-aware server resolves which project each call belongs to from
 the path you are working on, which is what makes monorepos and multi-repo workspaces
 practical. Alongside it, generated guidance and mutable state stop being copied into
 every project root.
 
-Phases A and B ship together deliberately. Phase A alone would have delivered a breaking
-change to MCP registration plus a state migration with no tool to tell you whether the
-migration worked. That tool is ``scaffold doctor``, and it lands in Phase B. Releasing a
+The shared server and its diagnostic ship together deliberately. The server alone would
+have delivered a breaking change to MCP registration plus a state migration with no tool
+to tell you whether the migration worked. That tool is ``scaffold doctor``. Releasing a
 migration a version ahead of its diagnostic would create exactly the kind of invisible
 failure this work exists to remove.
 
-Because Phase A changed how *every* tool resolves the project it answers from, the
-release was gated on a per-tool conformance sweep rather than on the unit suite alone.
-That sweep (Phase F) is what produced most of the fixes below, including two defects it
-found in the graph itself.
+Because the shared server changed how *every* tool resolves the project it answers from,
+the release was gated on a per-tool conformance sweep rather than on the unit suite alone.
+That sweep is what produced most of the fixes below, including two defects it found in
+the graph itself.
 
-Also included: the finding-extraction fix from Plan 250, the relative-import fix from
-Plan 252, and the parts of Plan 251 that were completed early because the conformance
-work depended on them — the ``layers`` check and the scoping conformance suite.
+Also included: the finding-extraction fix, the relative-import fix, and two pieces the
+conformance sweep depended on — the ``layers`` check and the scoping conformance suite.
 
 **Two things to know before upgrading.** Your graph rebuilds on the first ``scaffold
 index`` (see *Fixed*, relative imports). And if you have been running one MCP server per
@@ -628,7 +626,7 @@ project, see *Changed* for the migration — old registrations keep working behi
 deprecation notice rather than breaking.
 
 ### Added
-- **``scaffold doctor``** (Plan 249 Phase B) diagnoses an installation: registered roots
+- **``scaffold doctor``** diagnoses an installation: registered roots
   that no longer exist, a workspace recorded under two different ids, generated rule
   files that have drifted from their canonical source, legacy or interpreter-pinned MCP
   entries, version skew between the MCP server and your CLI, and where the graph
@@ -690,7 +688,7 @@ deprecation notice rather than breaking.
   behind becomes detectable rather than merely different. Also served as the
   ``agentscaffold://guidance/routing`` MCP resource. Single-project repositories are
   unaffected and emit byte-identical output to 0.9.x.
-- **One project-aware MCP server** (Plan 249 Phase A). A single MCP entry now serves
+- **One project-aware MCP server**. A single MCP entry now serves
   every registered project, replacing one server per repository. New user-level registry
   at ``~/.agentscaffold/registry.yaml`` (or ``$AGENTSCAFFOLD_HOME``), maintained with
   ``scaffold project register/unregister/list``.
@@ -749,14 +747,14 @@ deprecation notice rather than breaking.
   checkout.
 
 ### Fixed
-- **Finding extraction matched ``[CATEGORY]`` tokens anywhere in a line** (Plan 250),
+- **Finding extraction matched ``[CATEGORY]`` tokens anywhere in a line**,
   instead of only at the start where a real finding marker sits. Ordinary prose that
   happened to mention one produced a garbled finding with truncated text — including,
   with some irony, the plan documents that described the bug, which regenerated the bad
   rows on every re-index. The pattern is now anchored to the line start and a write-time
   guard rejects malformed text before it reaches the graph. Existing bad rows are not
   removed automatically; see ``scaffold graph prune --malformed-findings`` above.
-- **Relative Python imports produced no ``IMPORTS`` edge** (Plan 252), so ``scaffold
+- **Relative Python imports produced no ``IMPORTS`` edge**, so ``scaffold
   impact`` under-reported blast radius on any package that uses them — 22.8% of ``from``
   statements across 88 real packages, with 75 of the 88 affected. ``from .core import x``
   built a candidate path with a doubled separator (``src/pkg//core.py``); ``is_file()``
@@ -803,7 +801,7 @@ deprecation notice rather than breaking.
 ## [0.9.6] - 2026-07-15
 
 ### Fixed
-- MCP ``detail=summary`` trim (Plan 248): ``apply_detail`` no longer raises
+- MCP ``detail=summary`` trim: ``apply_detail`` no longer raises
   ``AttributeError: 'int' object has no attribute 'endswith'`` when a review payload
   contains an evidence dict keyed by non-string values (e.g. the ``similar_plans``
   gap evidence keyed by plan number). This crashed ``scaffold_begin_plan`` for any
@@ -815,7 +813,7 @@ deprecation notice rather than breaking.
 ## [0.9.5] - 2026-07-14
 
 ### Added
-- Workspace shared asset layout (Plan 234): a first-class ``asset_layout`` policy
+- Workspace shared asset layout: a first-class ``asset_layout`` policy
   in ``workspace.yaml``. ``layout: shared_workspace`` promotes reusable *process*
   assets (prompts, standards, templates, collaboration protocol, commands, shared
   security templates) to a single committed copy at the workspace root while each
@@ -823,18 +821,18 @@ deprecation notice rather than breaking.
   spikes, state, backlog, architecture, vision). The default remains
   ``project_local`` (fully backward compatible; a workspace with no
   ``asset_layout`` block is unchanged).
-- MCP resolution anchor (Plan 234): ``scaffold mcp --workspace <root> --project
+- MCP resolution anchor: ``scaffold mcp --workspace <root> --project
   <name>`` and the ``AGENTSCAFFOLD_WORKSPACE_ROOT`` / ``AGENTSCAFFOLD_PROJECT``
   environment variables pin the project resolution anchor so no-argument tools
   (``scaffold_orient``, staleness validate) resolve the intended project even when
   the IDE opens a parent folder. Generated ``.cursor/mcp.json`` emits the
   ``--workspace`` / ``--project`` args in a multi-project workspace.
-- Stub-first agent files (Plan 234): under ``shared_workspace`` the project
+- Stub-first agent files: under ``shared_workspace`` the project
   ``AGENTS.md`` is a thin pointer to shared process assets, and a thin
   workspace-root router ``AGENTS.md`` is generated. Managed ``.gitignore`` block
   now also ignores personal overlays (``AGENTS.local.md``,
   ``.cursor/rules/local.*.mdc``) without untracking team files.
-- ``scaffold workspace migrate-layout`` (Plan 234): brownfield migrator with
+- ``scaffold workspace migrate-layout``: brownfield migrator with
   ``--dry-run`` (default) / ``--apply`` / ``--prefer-project`` / ``--keep-diverged``
   / ``--force`` / ``--json``. Promotes identical/unique process assets, requires an
   explicit policy for diverged copies, never moves project system-of-record files,
@@ -844,7 +842,7 @@ deprecation notice rather than breaking.
 ## [0.9.4] - 2026-07-12
 
 ### Added
-- MCP call-compression hardening (Plan 247): empty ``scaffold_search`` /
+- MCP call-compression hardening: empty ``scaffold_search`` /
   ``scaffold_impact`` / missing-symbol ``scaffold_context`` responses inline
   ``why_empty`` + bounded ``grep_fallback``; ``scaffold_orient`` embeds
   ``recommended_actions``, ``plan_progress``, and ``next_action_focus``;
@@ -858,7 +856,7 @@ deprecation notice rather than breaking.
   covers the new tools, fused empty-result fields, adoption intents, and a
   call-compression efficiency scenario; README efficiency figures refreshed
   from ``eval/reports/latest.md`` (120 scenarios).
-- Agent MCP tool pack (Plan 246): ``scaffold_diff_plan_vs_code``,
+- Agent MCP tool pack: ``scaffold_diff_plan_vs_code``,
   ``scaffold_grep_graph``, ``scaffold_why_empty``, ``scaffold_next_action``;
   embedded ``plan_card`` (no full plan dump); ``dry_run`` on begin/complete;
   ``detail=summary|full`` on heavy read composites; fail-loud required-arg
@@ -866,20 +864,20 @@ deprecation notice rather than breaking.
 
 ### Fixed
 - MCP read tools no longer block ~20s+ on the exclusive graph write lock while
-  an in-process incremental refresh runs (Plan 244). ``open_graph(read_only=True)``
+  an in-process incremental refresh runs. ``open_graph(read_only=True)``
   skips the AgentScaffold writer wait; same-process DuckDB concurrent readers
   succeed and set ``meta.read_during_refresh`` / ``freshness_status=refreshing``.
   Cross-process DuckDB file locks still soft-fail quickly with
   ``refresh_in_progress`` rather than the old multi-retry hard wait. Write tools
   keep exclusive lock semantics.
 - Staleness / compare / prior-experiment overlap signals ignore ubiquitous
-  governance docs by default (Plan 245): ``docs/ai/contracts/README.md``,
+  governance docs by default: ``docs/ai/contracts/README.md``,
   ``workflow_state.md``, ``backlog.md``, and ``architectural_design_changelog.md``.
   Meaningful code/config overlaps still drive ``is_stale`` and ``conflict_risk``;
   filtered noise is reported via ``overlap_noise_filtered*``. Override with
   ``graph.overlap_noise_paths`` in ``scaffold.yaml``.
 - Keyword / hybrid code search no longer misses symbols outside a blind
-  ``LIMIT`` window (Plan 243). ``_keyword_search`` filters candidates with
+  ``LIMIT`` window. ``_keyword_search`` filters candidates with
   SQL ``contains(lower(...), term)`` before capping rows, then keeps Python
   scoring. Fixes empty ``scaffold_search`` results for names like
   ``normalize_feeds`` on large graphs when embeddings are absent.
@@ -888,7 +886,7 @@ deprecation notice rather than breaking.
 
 ### Fixed
 - MCP stdio transport no longer breaks when async freshness or embedding refresh
-  runs an in-process incremental index (Plan 242). Rich progress / Index Summary
+  runs an in-process incremental index. Rich progress / Index Summary
   output is suppressed via `index(..., quiet=True)` in background workers, and
   MCP server startup installs a quiet pipeline console so stdout stays JSON-RPC
   only. Symptom was Cursor logging `Unexpected token 'I', "Incrementa"... is not
@@ -897,7 +895,7 @@ deprecation notice rather than breaking.
 ## [0.9.2] - 2026-07-10
 
 ### Added
-- Auto `.gitignore` managed block in the install sequence (Plan 241). `scaffold
+- Auto `.gitignore` managed block in the install sequence. `scaffold
   init` and `scaffold agents generate-all` now ensure the project `.gitignore`
   contains an AgentScaffold-managed section that ignores the runtime artifacts
   the package writes into a consumer repo (`.scaffold/` -- graph DB, model cache,
@@ -909,7 +907,7 @@ deprecation notice rather than breaking.
   lines (there is deliberately no wholesale-replace path, even under `--force`).
   These entries were previously hand-added by consumers; they now ship for every
   generated project.
-- Generic governance controls in the generated `AGENTS.md` template (Plan 240).
+- Generic governance controls in the generated `AGENTS.md` template.
   The shipped `agents/agents_md.md.j2` now documents the Two-Phase Governed
   Lifecycle (begin-plan/complete-plan agent action checklists, the
   `freshness.gate_strict` strict-mode deferral, and the "tools own graph state;
@@ -921,7 +919,7 @@ deprecation notice rather than breaking.
   generated project.
 
 ### Fixed
-- Query escaping, search provenance, and coverage honesty (Plan 239). SQL string
+- Query escaping, search provenance, and coverage honesty. SQL string
   literals are now escaped consistently and correctly for DuckDB via a single
   `sql_escape` helper (quotes are doubled; backslashes are left literal), fixing a
   latent bug where identifiers containing an apostrophe (file paths, study
@@ -936,11 +934,11 @@ deprecation notice rather than breaking.
   and 0 plans so a confident negative (`is_stale: false`,
   `has_full_decision_chain: false`) is not mistaken for a confirmed absence, and
   `compare_plans` labels `conflict_risk` with its heuristic basis.
-- Graph-tool rendering and signal hygiene (Plan 238). `scaffold_staleness_check`
+- Graph-tool rendering and signal hygiene. `scaffold_staleness_check`
   and the rewrite context no longer miss completed plans whose status carries a
   trailing date or note (e.g. `COMPLETE (2026-07-09)`); completed detection now
   uses tolerant status normalization. `scaffold_orient` no longer lists an ADR
-  with a descriptive status like `Superseded by ADR-030` as active. The
+  with a descriptive status like `Superseded by ADR-012` as active. The
   plan/governance composites (`orient`, `prepare_review`, `decision_context`,
   `prior_experiments`, `find_studies`, `find_adrs`) now strip internal
   `alias.field` query-column prefixes from agent-facing output, matching
@@ -948,7 +946,7 @@ deprecation notice rather than breaking.
   normalized value alongside the raw string.
 
 ### Added
-- Architecture-layer and contract-to-file graph ingestion (Plan 237). The
+- Architecture-layer and contract-to-file graph ingestion. The
   `system_architecture.md` baseline is now parsed into `ArchitectureLayer` nodes
   and each source file is linked to its most-specific layer via `BELONGS_TO_LAYER`
   (matching the machine-readable path globs in the doc's Components tables). This
@@ -961,7 +959,7 @@ deprecation notice rather than breaking.
   `docs/ai/system_architecture.md`.
 
 ### Changed
-- Pre-review signal quality (Plan 236). `scaffold_begin_plan` now persists only
+- Pre-review signal quality. `scaffold_begin_plan` now persists only
   high-value findings (high severity, de-duplicated against already-open
   findings) instead of writing every generated challenge and gap, so repeated
   reviews no longer flood the finding graph. The full challenge/gap lists remain
@@ -1048,7 +1046,7 @@ queries byte-for-byte).
 
 ## [0.8.0] - 2026-06-16
 
-### Added (Plan 232 - async embedding lane and resident embedder)
+### Added (async embedding lane and resident embedder)
 - Added `graph.async_embeddings` (`off | idle | interval | commit`, default
   `off`) so projects can opt into background embedding refresh without changing
   historical behavior. With `off`, AgentScaffold schedules nothing and never
@@ -1064,7 +1062,7 @@ queries byte-for-byte).
 - Incremental `--embeddings` can now reconcile missing embeddings even when
   there are no structural changes, while changed-file runs remain scoped to the
   affected neighborhood.
-- Tightened the scoped Plan 232 validation target by typing legacy MCP
+- Tightened the embedding-lane validation target by typing legacy MCP
   decorator/helper signatures and isolating the governance migration test from
   the repo-level governance artifact; the package suite is back to all-green.
 - Live benchmark execution now validates the expected mini-swe-agent Docker API
@@ -1072,7 +1070,7 @@ queries byte-for-byte).
   fail closed instead of starting a container and then crashing on a missing
   method.
 
-### Changed (Plan 231 - incremental indexer scoping and hook debounce)
+### Changed (incremental indexer scoping and hook debounce)
 - `scaffold index --incremental` now keeps per-edit work proportional to the
   changed-file neighborhood: unchanged files use an `(mtime, size)` metadata
   prefilter before hashing; empty changesets exit as explicit no-ops; import and
@@ -1094,7 +1092,7 @@ queries byte-for-byte).
 
 ## [0.7.0] - 2026-06-16
 
-Phase 1 foundation chain (Plans 221-223) plus Phase 2 (Plans 224-229):
+Foundation work plus its follow-on features:
 multi-project / durability groundwork, shared-policy inheritance, namespaced
 multi-project workspaces, collaboration ergonomics, semantic search quality,
 eval harness coverage, and the AgentScaffold Benchmark CLI.
@@ -1143,7 +1141,7 @@ eval harness coverage, and the AgentScaffold Benchmark CLI.
   working directory determines the default project, while `--project` and
   `--all-projects` are explicit cross-project scope wideners.
 
-### Added (Plan 227 - semantic search quality, Tiers 2-3)
+### Added (semantic search quality, Tiers 2-3)
 - **Embedding model is configurable and its weights cache is workspace-pinned.**
   New `search:` config block (`search.embedding_model`, default `all-MiniLM-L6-v2`;
   `search.cache_dir`, default `.scaffold/models`). Indexing and querying now load
@@ -1182,7 +1180,7 @@ eval harness coverage, and the AgentScaffold Benchmark CLI.
   offline-safe fix. Documented in `docs/configuration.md` and
   `docs/platform-integration.md`.
 
-### Added (Plan 228 - eval harness coverage and rigor cost-benefit)
+### Added (eval harness coverage and rigor cost-benefit)
 - **Multi-project eval scenarios** for scoped/federated search, duplicate
   detection, and single->multi migration integrity.
 - **Search-quality eval scenarios** for keyword vs hybrid retrieval, embedding
@@ -1192,7 +1190,7 @@ eval harness coverage, and the AgentScaffold Benchmark CLI.
 - **Thread-safe governance writes** via a shared DuckDB write lock, fixing a
   pre-existing concurrent-write crash in the eval harness.
 
-### Added (Plan 229 - AgentScaffold Benchmark foundation)
+### Added (AgentScaffold Benchmark foundation)
 - **`scaffold benchmark` preflight and dry-run commands.** The new benchmark CLI
   group includes `models`, `doctor`, and `run --dry-run` so users can inspect
   selectable model configs, verify Docker/dependency/API-key/pricing readiness,
@@ -1210,7 +1208,7 @@ eval harness coverage, and the AgentScaffold Benchmark CLI.
   tests-go-green and planted-defect review tasks, a serializable `summary.json`
   result schema, per-arm metric aggregation, and `scaffold benchmark compare` /
   `report` commands for saved results. Live execution will write into these
-  contracts in the next Plan 229 slice.
+  contracts in a later release.
 - **Guarded live-runner adapter boundary.** Added baseline/equipped arm
   definitions, isolated task workspace setup, container-local `scaffold-*`
   wrapper scripts, trajectory metric extraction, and a guarded mini-swe-agent
@@ -1223,7 +1221,7 @@ eval harness coverage, and the AgentScaffold Benchmark CLI.
   benchmark summaries. Reports now include seed pass-rate ranges when multiple
   seeds are present.
 
-### Changed (Plan 227 - semantic search quality, Tier 1)
+### Changed (semantic search quality, Tier 1)
 - **Richer embedding text**: code embeddings now include each definition's
   docstring or leading comment (read from its source slice at index time), not
   just `name + signature + module`, so semantic search matches on intent rather
@@ -1235,7 +1233,7 @@ eval harness coverage, and the AgentScaffold Benchmark CLI.
 - Hybrid retrieval (lexical/symbol + vector via reciprocal-rank fusion) remains
   the default search mode; `--mode keyword|semantic` are the escape hatches.
 
-### Added (Plan 225 - namespaced multi-project workspace)
+### Added (namespaced multi-project workspace)
 - **Multi-project workspaces**: several projects can share one knowledge-graph
   cache. A `workspace.yaml` at the workspace root lists member projects; every
   node is then namespaced by project (`{project}::{raw_id}`) and stamped with a
@@ -1259,7 +1257,7 @@ eval harness coverage, and the AgentScaffold Benchmark CLI.
   in one transaction, idempotent, rollback-safe), and `verify_integrity` asserts
   every project-stamped row carries its matching id prefix.
 
-### Changed / Breaking (Plan 225)
+### Changed / Breaking (namespaced multi-project workspace)
 - **Schema `SCHEMA_VERSION` 7 -> 8**: additive `Project` node + `project` column
   on node tables and `EmbeddingStore`. The bump triggers the existing fail-closed
   export -> rebuild -> import on the next `scaffold index`; governance is
@@ -1272,7 +1270,7 @@ eval harness coverage, and the AgentScaffold Benchmark CLI.
   or `::`) so they are unambiguous as an ID prefix and safe to inline in scope
   predicates.
 
-### Added (Plan 226 - collaboration ergonomics)
+### Added (collaboration ergonomics)
 - **Opt-in governance-file sharding**: with `collab.sharded: true`, the
   high-contention `workflow_state.md` / `backlog.md` can be stored as per-entry
   fragments so concurrent writers touch different files. `scaffold state split`
@@ -1284,7 +1282,7 @@ eval harness coverage, and the AgentScaffold Benchmark CLI.
   clears it. `scaffold plan status` shows an Owner column when claims exist.
   Claims are visibility, not enforced locks (git still resolves concurrent edits).
 
-### Added (Plan 224 - config inheritance)
+### Added (config inheritance)
 - **`extends:` in `scaffold.yaml`**: a project can inherit shared policy (rigor,
   gates, standards, reviewers, prohibitions, approval rules) from a base config
   instead of copying it into every repo. The base is a filesystem path
@@ -1303,7 +1301,7 @@ eval harness coverage, and the AgentScaffold Benchmark CLI.
 - Repos without `extends:` are unaffected (resolution is byte-for-byte today's).
 
 ### Changed
-- **Path/root unification** (Plan 221): all CLI commands now resolve governance
+- **Path/root unification**: all CLI commands now resolve governance
   paths through one project-root rule (nearest `scaffold.yaml`, then nearest
   `.git`, then the working directory) and one `ResolvedPaths` accessor derived
   from `GraphConfig`. Commands that previously hardcoded `docs/ai/*` literals
@@ -1311,7 +1309,7 @@ eval harness coverage, and the AgentScaffold Benchmark CLI.
   `retro check`, `metrics`, `validate`, `domain add`) now honor customized
   `graph.*` paths. Defaults equal the previous literals, so an uncustomized repo
   is unaffected.
-- **`db_path` resolves from the project root** (Plan 221): `open_graph` and the
+- **`db_path` resolves from the project root**: `open_graph` and the
   index pipeline now resolve a relative `graph.db_path` against the project root
   instead of the bare working directory, so querying the graph works from any
   subdirectory and matches where `scaffold index` writes it. Repos that relied on
@@ -1322,7 +1320,7 @@ eval harness coverage, and the AgentScaffold Benchmark CLI.
 - New `graph.*` config fields (additive, defaults = previous literals):
   `backlog_file`, `backlog_archive_file`, `standards_dir`, `prompts_dir`,
   `templates_dir`, `plan_completion_log_file`, `security_dir`.
-- **Git-backed governance serialization** (Plan 222): review findings, sessions,
+- **Git-backed governance serialization**: review findings, sessions,
   and backlog items recorded at runtime are now serialized to a versioned,
   git-committed JSON artifact (`graph.governance_artifact`, default
   `docs/ai/state/governance.json`). This makes agent-generated knowledge the
@@ -1331,7 +1329,7 @@ eval harness coverage, and the AgentScaffold Benchmark CLI.
   share findings/sessions/backlog with teammates and to survive cache loss.
   Writes are atomic and emitted in a stable order to minimize git churn.
 - New `graph.governance_artifact` config field.
-- **Durable/ephemeral storage** (Plan 223): `graph.db_path` now supports
+- **Durable/ephemeral storage**: `graph.db_path` now supports
   `${ENV}`/`$VAR` and `~` expansion, and an `AGENTSCAFFOLD_DB_PATH` environment
   variable overrides it entirely -- so one committed `scaffold.yaml` can point
   the cache at a mounted volume on a persistent box and a scratch path on an
@@ -1341,10 +1339,10 @@ eval harness coverage, and the AgentScaffold Benchmark CLI.
 
 ## [0.6.0] - 2026-06-14
 
-Trust & Safety Hardening batch (Plans 217-220).
+Trust & Safety Hardening batch.
 
 ### Added
-- **Schema-migration export safety** (Plan 219): when the graph schema version
+- **Schema-migration export safety**: when the graph schema version
   changes, `scaffold index` now preserves governance (review findings, backlog
   items, sessions, and their edges) instead of silently wiping it. It exports to
   `.scaffold/graph_export_v{old}.json` before the rebuild and re-imports the
@@ -1355,15 +1353,15 @@ Trust & Safety Hardening batch (Plans 217-220).
 - **`scaffold index --force-rebuild`**: opt-in escape hatch that rebuilds anyway
   when an export error is unrecoverable. This permanently discards the preserved
   governance and is never the default.
-- **`scaffold graph prune`** (Plan 219): selectively prune old governance
+- **`scaffold graph prune`**: selectively prune old governance
   (resolved findings, archived backlog items, and sessions past an age cutoff).
   Status-aware and **dry-run by default**; requires `--apply` to delete.
-- **Retrieval degradation contract** (Plan 220): a capability oracle reports
+- **Retrieval degradation contract**: a capability oracle reports
   retrieval status (`available` / `degraded` / `unavailable`) plus the effective
   vs requested search mode. MCP tool `meta` and `scaffold graph search` now
   surface when semantic search has degraded to keyword (e.g. embeddings missing
   or `sentence-transformers` not installed) instead of failing silently.
-- **Backend connection diagnostics** (Plan 218): a clearer `GraphLockError` with
+- **Backend connection diagnostics**: a clearer `GraphLockError` with
   bounded retry/backoff on DuckDB lock contention, and explicit logging when the
   `duckpgq` / `vss` extensions fail to install or load. The MCP server now
   returns a clean `graph_locked` error instead of crashing when the graph file
@@ -1371,7 +1369,7 @@ Trust & Safety Hardening batch (Plans 217-220).
   model for teams.
 
 ### Changed
-- **Single source of truth for the graph schema** (Plan 217): edges are defined
+- **Single source of truth for the graph schema**: edges are defined
   once in `EDGE_DEFS`; the property-graph DDL, edge/node table-name lists, and
   the clear/governance helpers are all derived from it, eliminating schema drift
   between definitions. No on-disk schema change -- `SCHEMA_VERSION` remains 7.
@@ -1383,7 +1381,7 @@ Trust & Safety Hardening batch (Plans 217-220).
 - `scaffold init` now generates the complete platform rule set on a fresh init
   (previously it only wrote the static `AGENTS.md` and `.cursor/rules.md`).
   A fresh init now also emits `.cursor/rules/agentscaffold.md` (the MCP routing +
-  graph trust-discipline policy, including the Plan 214 context-blindness
+  graph trust-discipline policy, including the context-blindness
   mitigations), `.cursor/mcp.json`, `CLAUDE.md`, per-reviewer subagent files,
   `.windsurfrules`, and lifecycle hooks. Generation is gated on a fresh init
   (when `scaffold.yaml` is first created) so re-running `scaffold init` stays
@@ -1422,26 +1420,26 @@ Trust & Safety Hardening batch (Plans 217-220).
   fresh by running `scaffold index --incremental`. The wrapper is non-blocking and
   single-flight with a coalescing debounce, so rapid multi-file edits never stack and
   Cursor is never blocked.
-- **Config-reference indexing** (Plan 216): a new `CONFIG_REFERENCES` graph edge links
+- **Config-reference indexing**: a new `CONFIG_REFERENCES` graph edge links
   config files (YAML/JSON/TOML) to the code they wire dynamically. References are
   extracted only under an allowlist of keys (`class`, `_target_`, `type`, ...) and
   resolved to files/classes (confidence 0.9 for file+symbol, 0.7 for file-only). Config
   consumers now appear in `scaffold_impact` and `scaffold_context`, closing part of the
   config-driven-dispatch blind spot (e.g. editing a strategy class now shows
   `strategy_registry.yaml` as a dependent).
-- **Graph coverage signaling** (Plan 214): `scaffold_orient` reports repository parse
+- **Graph coverage signaling**: `scaffold_orient` reports repository parse
   coverage; `scaffold_impact` / `scaffold_context` attach a coverage caveat when a target
   is in an unparsed language or returns no results, so absence of edges is not mistaken
   for absence of relationships. Generated agent rules include a "graph trust discipline"
   section.
-- **Edge-confidence surfacing** (Plan 215): heuristic (low-confidence) call edges are
+- **Edge-confidence surfacing**: heuristic (low-confidence) call edges are
   annotated in tool markdown and counted (`heuristic_caller_count`), distinguishing
   guessed dispatch edges from resolved ones. `scaffold validate --check coverage` returns
   an on-demand coverage audit.
-- **ReviewFinding ingestion** (Plans 212/213): `[CATEGORY]` markers in plan text are
+- **ReviewFinding ingestion**: `[CATEGORY]` markers in plan text are
   parsed into `ReviewFinding` nodes during governance indexing (widened matcher, severity
   support), with findings linked to the files they reference.
-- **Incremental governance freshness gate** (Plan 213): governance documents are
+- **Incremental governance freshness gate**: governance documents are
   fingerprinted so a code-only edit skips the governance reingest while a doc edit forces
   a refresh.
 
@@ -1450,14 +1448,14 @@ Trust & Safety Hardening batch (Plans 217-220).
   reflect the DuckDB + DuckPGQ backend. Existing `.scaffold/graph.db` files can be deleted;
   `scaffold index` rebuilds the graph (it is a derived cache).
 - **KuzuDB backend fully removed.** DuckDB + DuckPGQ is the only supported backend;
-  `open_graph()` rejects any other `graph.backend` value. (See ADR-023 update.)
+  `open_graph()` rejects any other `graph.backend` value.
 - Graph schema bumped to version 7 (new `CONFIG_REFERENCES` edge). The graph rebuilds
   automatically on first run after upgrade.
 - `scaffold import --format claude` now reports clearly that Claude import is not yet
   supported instead of writing a placeholder file that looked like a successful import.
 
 ### Fixed
-- Graph integrity and agent-facing rendering (Plan 212): query alias prefixes are stripped
+- Graph integrity and agent-facing rendering: query alias prefixes are stripped
   from tool output and relationships render as readable markdown.
 - `__version__` was stale (`0.2.4`) and out of sync with the packaged version; both are now
   `0.4.0`.

@@ -1,4 +1,4 @@
-"""Plan 262: Python EXTENDS population, resolution, and context."""
+"""Python EXTENDS population, resolution, and context."""
 
 from __future__ import annotations
 

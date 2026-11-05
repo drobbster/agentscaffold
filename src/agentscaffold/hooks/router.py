@@ -1,4 +1,4 @@
-"""Registry-routed editor hooks (Plan 277, ADR-028 Decision 4).
+"""Registry-routed editor hooks.
 
 Every generated hook, project-level or user-level, is a one-line shim that runs
 this module with an event name. It reads the editor's JSON from stdin, resolves
@@ -86,7 +86,7 @@ class RoutedProject:
     name: str | None
     root: Path
     #: The ``@repo/`` File path when the edited file is one of the project's
-    #: ``graph.extra_paths`` files outside its folder (Plan 283).
+    #: ``graph.extra_paths`` files outside its folder.
     node_path: str | None = None
 
 
@@ -260,7 +260,7 @@ def edited_path(payload: dict[str, Any]) -> str | None:
 
 
 def _is_state_path(path: str) -> bool:
-    """Writes to AgentScaffold's own state must never retrigger the hook (Plan 267)."""
+    """Writes to AgentScaffold's own state must never retrigger the hook."""
     return ".scaffold" in Path(path).parts
 
 

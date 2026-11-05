@@ -1,4 +1,4 @@
-"""Tests for ``scaffold workspace migrate-layout`` (Plan 234, Appendix E).
+"""Tests for ``scaffold workspace migrate-layout``.
 
 Covers dry-run non-mutation, identical promote+delete, diverged policy branches,
 SoR-never-moved, the dirty-worktree guard, and idempotent re-runs.

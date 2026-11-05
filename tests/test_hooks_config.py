@@ -1,4 +1,4 @@
-"""Tests for hooks/events.py and hooks/config.py — Step B.1."""
+"""Tests for hooks/events.py and hooks/config.py."""
 
 from __future__ import annotations
 

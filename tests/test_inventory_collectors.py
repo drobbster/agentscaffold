@@ -1,4 +1,4 @@
-"""Shipped inventory collectors and source discovery (Plan 282)."""
+"""Shipped inventory collectors and source discovery."""
 
 from __future__ import annotations
 

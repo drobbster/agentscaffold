@@ -1,4 +1,4 @@
-"""Tests for incremental governance freshness gating (Plan 213, Item 2).
+"""Tests for incremental governance freshness gating.
 
 Governance is refreshed during incremental indexing based on a fingerprint of
 the governance source documents, not the code changeset. This means:

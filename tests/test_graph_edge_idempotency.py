@@ -1,6 +1,6 @@
-"""Regression tests for graph edge idempotency (Plan 212).
+"""Regression tests for graph edge idempotency.
 
-Before Plan 212, ``create_edge`` was a blind INSERT and the incremental
+Previously, ``create_edge`` was a blind INSERT and the incremental
 pipeline re-resolved all imports/calls without clearing prior edges. Repeated
 incremental runs therefore duplicated IMPORTS/CALLS edges ~750x and governance
 was never refreshed. These tests lock in the fixed behavior:

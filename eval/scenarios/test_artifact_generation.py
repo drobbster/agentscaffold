@@ -1,4 +1,4 @@
-"""Artifact generation eval scenarios — Step E.5.
+"""Artifact generation eval scenarios.
 
 Tests that scaffold agents cursor/claude/windsurf setup commands produce
 correct, well-formed output files.  Uses the sim_project scaffold.yaml
@@ -34,7 +34,7 @@ class TestCursorMcpJsonGeneration:
     def test_mcp_json_written_on_first_run(self, fresh_sim, monkeypatch):
         from agentscaffold.agents.cursor import write_cursor_mcp_json
 
-        # Plan 253 skips the write when a shared client entry already exists.
+        # The write is skipped when a shared client entry already exists.
         # Isolate so this scenario measures the lone-repo first-run path.
         monkeypatch.setattr(
             "agentscaffold.agents.cursor._canonical_entry_installed",

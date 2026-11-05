@@ -1,4 +1,4 @@
-"""SKILL.md generator — Step D.1.
+"""SKILL.md generator.
 
 Converts domain standards markdown files into SKILL.md format with
 progressive-disclosure YAML frontmatter for cross-platform AI agent discovery.

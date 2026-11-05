@@ -1,4 +1,4 @@
-"""Tests for Plan 239: federated search reports project provenance.
+"""Tests that federated search reports project provenance.
 
 Covers deriving the owning project from a project-qualified node id, the
 ``SearchResult.project`` field, and the conditional Project column in the

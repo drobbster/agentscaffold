@@ -1,4 +1,4 @@
-"""Plan 251 C1: intent map is derived from the registry."""
+"""Intent map is derived from the registry."""
 
 from __future__ import annotations
 

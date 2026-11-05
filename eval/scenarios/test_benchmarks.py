@@ -48,7 +48,7 @@ class TestPlanTemplateEnrichment:
 
 
 class TestAgentsMdGenerationPath:
-    """Plan 260: generate writes routing, not a graph dump into the manual."""
+    """Generate writes routing, not a graph dump into the manual."""
 
     @timed
     def test_agents_md_generate_path_is_routing(self, indexed_sim):

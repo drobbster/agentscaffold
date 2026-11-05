@@ -1,4 +1,4 @@
-"""The ``scaffold_projects`` tool (Plan 249, Step A7).
+"""The ``scaffold_projects`` tool.
 
 Once one server process serves every registered workspace, an agent needs a way
 to ask what it is allowed to ask about. Without it, discovering the available

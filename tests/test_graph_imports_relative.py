@@ -174,7 +174,7 @@ def test_absolute_root_module_still_resolves(package_tree: Path):
 
 
 def test_module_prefixes_do_not_touch_relative_imports(package_tree: Path):
-    """Plan 278: a relative import never reaches the prefix strategy."""
+    """A relative import never reaches the prefix strategy."""
     prefixes = {"pkg": "src/pkg", "core": "src/pkg/sub"}
 
     assert (

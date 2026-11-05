@@ -189,7 +189,7 @@ class TestPlanReview:
         # Plan review is the deliberate token-negative composite: it replaces ~10 file
         # reads with a single call but returns MORE tokens, because the one response
         # carries the brief, adversarial challenges, gaps, verification, and retro
-        # together (and, since Plans 213/216, any open findings and config consumers).
+        # together (and any open findings and config consumers).
         # Its value is call reduction and completeness, not token count -- so this
         # scenario is gated on call reduction and reports token/blended figures as
         # informational rather than asserting on the blended threshold.
@@ -422,7 +422,7 @@ class TestCodeSearch:
 class TestReviewWithFindingHistory:
     """Task: Review plan 042 when prior findings exist in the graph.
 
-    Step E.7: Measures the value of graph-stored findings vs. re-deriving them.
+    Measures the value of graph-stored findings vs. re-deriving them.
 
     Baseline: 3 prior session transcripts (~2000 tokens each) — the cost of
     re-deriving issues the graph already knows about.
@@ -502,11 +502,11 @@ class TestReviewWithFindingHistory:
 
 
 class TestCallCompressionEmptySearch:
-    """Task: diagnose an empty search without follow-up hops (Plan 247).
+    """Task: diagnose an empty search without follow-up hops.
 
-    Baseline/pre-247 agent: scaffold_search (empty) + scaffold_why_empty +
+    Baseline agent (no fused fields): scaffold_search (empty) + scaffold_why_empty +
     scaffold_grep_graph = 3 calls.
-    Graph (247): 1 empty scaffold_search that inlines why_empty + grep_fallback.
+    Graph (fused): 1 empty scaffold_search that inlines why_empty + grep_fallback.
     """
 
     def test_empty_search_call_compression(self, indexed_sim):

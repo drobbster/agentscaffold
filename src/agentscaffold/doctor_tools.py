@@ -14,7 +14,7 @@ even then they run against a throwaway project rather than the user's graph.
 **Busy is not broken.** Another process holding the graph -- an index running in
 the next terminal -- is routine and transient. Reporting it as a failure would
 make the command cry wolf during precisely the operation people run it around,
-so :class:`GraphLockError` gets its own status. The Step A0 spike established
+so :class:`GraphLockError` gets its own status. Testing established
 that this surfaces as a bounded error in ~65 ms rather than a hang, which is
 what makes probing every tool viable at all.
 
@@ -126,7 +126,7 @@ def _invoke(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _envelope_error(name: str, arguments: dict[str, Any], first: dict[str, Any]) -> str | None:
-    """Validate live probe samples against a generated envelope (Plan 251 C10).
+    """Validate live probe samples against a generated envelope.
 
     Required keys are the intersection of N live calls, not a hand-written
     schema. ``meta`` stays open. Diary keys are never required. Write tools

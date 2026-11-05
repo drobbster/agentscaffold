@@ -1,6 +1,6 @@
 """Relative working paths, and names for projects the registry does not know.
 
-Plan 257, Groups C and D. Both cases here fail quietly rather than loudly, which
+Both cases here fail quietly rather than loudly, which
 is why they are worth pinning: a relative path resolved against the server's own
 launch directory usually points at nothing and falls back to the anchor, and a
 project synthesised under its directory basename resolves fine while every scoped
@@ -56,7 +56,7 @@ def test_a_relative_path_matching_two_workspaces_is_not_guessed(home: Path) -> N
     """Two candidates means the fragment does not identify a project.
 
     Both projects contain ``src/main.py``, so any choice is a coin toss. The path
-    is left unmatched and the call refuses, which is the whole point of ADR-026.
+    is left unmatched and the call refuses, which is the whole point of refusing to guess a project.
     """
     from agentscaffold.mcp.errors import AmbiguousProjectError
     from agentscaffold.workspace_registry import register_workspace

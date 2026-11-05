@@ -88,7 +88,7 @@ def _brief_precedent(
     root: Path | None,
     config: Any,
 ) -> dict[str, Any] | None:
-    """Plan-level precedent for the expansion review (Plan 281); None when disabled."""
+    """Plan-level precedent for the expansion review; None when disabled."""
     from agentscaffold.config import find_config, load_config  # noqa: PLC0415
     from agentscaffold.review.file_impact_resolve import _resolve_base  # noqa: PLC0415
     from agentscaffold.review.precedent import precedent_for_paths  # noqa: PLC0415

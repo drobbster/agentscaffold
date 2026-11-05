@@ -213,7 +213,7 @@ def format_impact_markdown(
 
 
 def format_governance_impact_markdown(governance: dict[str, Any]) -> str:
-    """Render the ``governance_impact`` section appended to impact markdown (Plan 281)."""
+    """Render the ``governance_impact`` section appended to impact markdown."""
     counts = governance.get("counts", {})
     summary = (
         f"{counts.get('findings', 0)} findings, {counts.get('learnings', 0)} learnings, "
@@ -237,7 +237,7 @@ def format_governance_impact_markdown(governance: dict[str, Any]) -> str:
 
 
 def format_component_lines(components: list[dict[str, Any]]) -> list[str]:
-    """One bullet per inventory component (Plan 282)."""
+    """One bullet per inventory component."""
     lines: list[str] = []
     for comp in components:
         lifecycle = comp.get("lifecycle") or "unknown"

@@ -1,4 +1,4 @@
-"""Tests for graph coverage signaling (Plan 214, P1)."""
+"""Tests for graph coverage signaling."""
 
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def test_repo_coverage_totals_and_summary() -> None:
 
 
 def test_repo_coverage_reports_import_strategies() -> None:
-    """Plan 278: per-strategy counts, with a sentence when the prefix resolved anything."""
+    """Per-strategy counts, with a sentence when the prefix resolved anything."""
 
     class _Store:
         def query(self, sql: str) -> list[dict[str, Any]]:
@@ -203,7 +203,7 @@ def test_rule_policy_identical_across_quote_modes_for_compression() -> None:
     assert "Situational Tool Use" in plain
 
 
-def _assert_plan_272_routing(doc: str) -> None:
+def _assert_routing_policy_sections(doc: str) -> None:
     assert "Situational Tool Use" in doc
     assert "Architectural Research Gate" in doc
     assert "Call Compression Discipline" in doc
@@ -221,12 +221,12 @@ def _assert_plan_272_routing(doc: str) -> None:
 
 def test_rule_policy_includes_situational_tool_use_and_research_gate() -> None:
     doc = generate_rule_policy_document(config=ScaffoldConfig(), title="Test Rules")
-    _assert_plan_272_routing(doc)
+    _assert_routing_policy_sections(doc)
 
 
 def test_canonical_guidance_includes_situational_tool_use_and_research_gate() -> None:
     doc = generate_canonical_guidance_body(ScaffoldConfig())
-    _assert_plan_272_routing(doc)
+    _assert_routing_policy_sections(doc)
 
 
 def test_rule_policy_includes_multiproject_scope_discipline() -> None:

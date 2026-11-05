@@ -1,4 +1,4 @@
-"""Phase F conformance: every tool in the live registry, against every guarantee.
+"""Tool-surface conformance: every tool in the live registry, against every guarantee.
 
 Parametrized over :func:`tool_specs` rather than a hardcoded list, so a tool
 added later is covered automatically and a tool that skips these guarantees
@@ -58,12 +58,12 @@ def _dispatch(tool: str, workspace, asked_from: str, **arguments: Any) -> dict[s
 
 
 # ---------------------------------------------------------------------------
-# C4 -- a tool answers from the project its working_path resolves to
+# A tool answers from the project its working_path resolves to
 # ---------------------------------------------------------------------------
 
 
 def test_context_answers_from_the_project_the_working_path_resolves_to(two_project_workspace):
-    """The C4 case that matters: a symbol both projects define.
+    """The scoping case that matters: a symbol both projects define.
 
     Asking about a name unique to one project would pass against completely
     broken routing, because there is only one row to find. ``shared_name``
@@ -192,7 +192,7 @@ def test_stats_labels_its_totals_as_workspace_wide(two_project_workspace):
 
 
 # ---------------------------------------------------------------------------
-# C2 -- every tool accepts working_path and none rejects it
+# Every tool accepts working_path and none rejects it
 # ---------------------------------------------------------------------------
 
 
@@ -243,7 +243,7 @@ def test_code_tools_can_be_retargeted_and_federated(name):
 # ---------------------------------------------------------------------------
 
 
-def test_c1_intent_map_is_derived_from_the_registry():
+def test_intent_map_is_derived_from_the_registry():
     from agentscaffold.mcp.intents import INTENT_PHRASES, assert_intent_coverage
 
     names = set(tool_names())
@@ -255,7 +255,7 @@ def test_c1_intent_map_is_derived_from_the_registry():
         assert list(specs[name]) == list(INTENT_PHRASES[name])
 
 
-def test_c3_every_response_carries_a_scope_stamp(two_project_workspace):
+def test_every_response_carries_a_scope_stamp(two_project_workspace):
     from agentscaffold.doctor_tools import _arguments_for
     from agentscaffold.mcp.registry import WRITE_TOOLS
     from agentscaffold.mcp.server import _dispatch_tool
@@ -274,8 +274,8 @@ def test_c3_every_response_carries_a_scope_stamp(two_project_workspace):
             arguments["dry_run"] = True
         payload = _dispatch_tool(spec.name, arguments)
         meta = payload.get("meta") or {}
-        assert "guidance_rule_path" in meta, f"{spec.name} meta lacks C3 stamp: {payload}"
-        assert "guidance_is_generated" in meta, f"{spec.name} meta lacks C3 stamp"
+        assert "guidance_rule_path" in meta, f"{spec.name} meta lacks guidance stamp: {payload}"
+        assert "guidance_is_generated" in meta, f"{spec.name} meta lacks guidance stamp"
         path = meta.get("guidance_rule_path")
         if path:
             assert not str(path).startswith("/"), f"{spec.name} leaked absolute path: {path}"
@@ -285,10 +285,10 @@ def test_c3_every_response_carries_a_scope_stamp(two_project_workspace):
             assert diary.isdisjoint(guidance)
 
 
-def test_c5_unscopeable_call_returns_ambiguous_project(
+def test_unscopeable_call_returns_ambiguous_project(
     two_project_workspace, monkeypatch: pytest.MonkeyPatch
 ):
-    """Existing 249+257 resolver. Do not invent a second one."""
+    """Uses the existing project resolver. Do not invent a second one."""
     import agentscaffold.mcp.server as server_mod
     from agentscaffold.mcp.server import _dispatch_tool
 
@@ -300,7 +300,7 @@ def test_c5_unscopeable_call_returns_ambiguous_project(
     assert sorted(payload.get("candidates") or []) == sorted(two_project_workspace.names)
 
 
-def test_c10_live_envelopes_from_probe_samples(two_project_workspace):
+def test_live_envelopes_from_probe_samples(two_project_workspace):
     from agentscaffold.doctor_tools import _arguments_for
     from agentscaffold.mcp.output_envelope import intersect_keys, validate_envelope
     from agentscaffold.mcp.registry import WRITE_TOOLS
@@ -320,7 +320,7 @@ def test_c10_live_envelopes_from_probe_samples(two_project_workspace):
         assert not validate_envelope(second, required), spec.name
 
 
-def test_c10_orient_summary_and_full_are_two_envelopes(two_project_workspace):
+def test_orient_summary_and_full_are_two_envelopes(two_project_workspace):
     from agentscaffold.mcp.output_envelope import intersect_keys, validate_envelope
     from agentscaffold.mcp.server import _dispatch_tool
 
@@ -337,7 +337,7 @@ def test_c10_orient_summary_and_full_are_two_envelopes(two_project_workspace):
         assert key not in summary
 
 
-def test_c10_missing_required_key_fails_validation():
+def test_missing_required_key_fails_validation():
     from agentscaffold.mcp.output_envelope import validate_envelope
 
     errors = validate_envelope({"meta": {}}, frozenset({"plan_number"}))

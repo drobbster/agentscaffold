@@ -1,4 +1,4 @@
-"""Claude Code hook generator — Step B.2.
+"""Claude Code hook generator.
 
 Generates the ``hooks`` section of ``.claude/settings.json`` from an
 ``EnforcementConfig``.

@@ -130,7 +130,7 @@ class TestCritiqueReadability:
 
 
 class TestAgentsMdReadability:
-    """Plan 260: the init manual and the routing block stay readable."""
+    """The init manual and the routing block stay readable."""
 
     def test_agents_md_manual_and_routing_readable(self, indexed_sim):
         root, store, config = indexed_sim

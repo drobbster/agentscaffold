@@ -1,4 +1,4 @@
-"""Tests for index-time ReviewFinding ingestion from plan text (Plan 212).
+"""Tests for index-time ReviewFinding ingestion from plan text.
 
 `process_governance` parses `[CATEGORY] ...` review markers embedded in plan
 files and materializes them as ReviewFinding nodes. This closes the previously

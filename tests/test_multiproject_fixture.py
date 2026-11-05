@@ -1,6 +1,6 @@
 """Tests for the two-project fixture itself.
 
-A fixture that cannot tell the two projects apart would let the whole Phase F
+A fixture that cannot tell the two projects apart would let the whole
 conformance suite pass against broken routing. These tests establish that it
 discriminates, so the suites built on it are measuring what they claim to.
 """

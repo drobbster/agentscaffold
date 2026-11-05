@@ -1,4 +1,4 @@
-"""Plan 244: MCP / open_graph reads during AgentScaffold write lock."""
+"""MCP / open_graph reads during AgentScaffold write lock."""
 
 from __future__ import annotations
 

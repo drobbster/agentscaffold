@@ -161,7 +161,7 @@ def hybrid_search(
         all_projects: Search federated across the workspace (overrides ``project``)
         start: Working directory hint for current-project resolution
 
-    Scope (Plan 225): in a multi-project workspace both the keyword and semantic
+    Scope: in a multi-project workspace both the keyword and semantic
     halves default to the current project; ``project=``/``all_projects=`` widen
     or retarget. Single-project repos ignore scope entirely.
 
@@ -206,7 +206,7 @@ def _keyword_search(
     """Search using graph structure: name matching, path matching.
 
     Candidates are filtered in SQL with case-insensitive ``contains`` predicates
-    (Plan 243) so matches are not missed when they fall outside a blind ``LIMIT``
+    so matches are not missed when they fall outside a blind ``LIMIT``
     window. Surviving rows are still scored in Python via ``_text_match_score``.
 
     When *scope* targets a single project (multi-project workspace), a
