@@ -1,4 +1,4 @@
-"""Plan vs code/graph diff for mid-implementation checks (Plan 246/247)."""
+"""Plan vs code/graph diff for mid-implementation checks."""
 
 from __future__ import annotations
 

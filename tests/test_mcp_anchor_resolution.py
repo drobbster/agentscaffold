@@ -1,4 +1,4 @@
-"""The startup anchor itself (Plan 257, ADR-026).
+"""The startup anchor itself.
 
 Every other resolution test substitutes ``_effective_mcp_root`` with a lambda, so
 the one function that decides what the anchor *is* had no coverage at all. That
@@ -165,7 +165,7 @@ def test_container_of_the_only_registered_project_answers_that_project(
 
     Home holds a dotfiles ``.git`` and one registered project beneath it. Tier 3
     declines the container, and tier 4 then answers the sole registered project --
-    correctly, because nothing competes with it. This is why Plan 257's proposed
+    correctly, because nothing competes with it. This is why a proposed
     tier-4 constraint ("the sole project may not answer for an anchor outside
     itself") is deliberately *not* implemented: it would refuse exactly here, and
     this is the single-workspace convenience the fix promised to preserve.

@@ -1,4 +1,4 @@
-"""Tests for the auto .gitignore managed block (Plan 241).
+"""Tests for the auto .gitignore managed block.
 
 Covers the never-clobber writer (`write_gitignore_block`) and its wiring into
 `run_init` and `run_agents_generate_all_platforms`.

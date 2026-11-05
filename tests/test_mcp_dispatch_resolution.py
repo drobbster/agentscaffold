@@ -1,6 +1,6 @@
-"""Integration tests for project resolution inside tool dispatch (Plan 249, A6b).
+"""Integration tests for project resolution inside tool dispatch.
 
-Steps A5 and A6 built the resolution chain and proved it in isolation. These
+The resolution chain is proved in isolation elsewhere. These
 tests cover the part that actually changes behaviour for a user: that
 ``_dispatch_tool`` routes through it, and that an unresolvable call returns a
 structured refusal instead of quietly answering from somewhere plausible.
@@ -48,7 +48,7 @@ def stub_graph(monkeypatch: pytest.MonkeyPatch) -> dict:
         # into an error dict, which is fine: these tests are about routing, and
         # reaching this point at all already proves the call was not refused.
         #
-        # This records resolve_root() rather than the cwd: since Step A7b the
+        # This records resolve_root() rather than the cwd: since the active-root change the
         # resolved project reaches scoped reads through the active-root context,
         # not by chdir, so the cwd is no longer where a read would look.
         calls["opens"].append(kwargs)
@@ -159,7 +159,7 @@ def test_restrict_to_denies_a_call_outside_the_allowlist(
 ) -> None:
     """--restrict-to is enforced at dispatch, not merely advertised.
 
-    Section 11 of Plan 249 counts this as a mitigation for the widened
+    The shared-server design counts this as a mitigation for the widened
     in-process read surface, so it has to deny before the graph is opened.
     """
     import agentscaffold.mcp.server as server_mod
@@ -199,7 +199,7 @@ def test_restrict_to_permits_a_call_inside_the_allowlist(
 def test_missing_required_argument_still_short_circuits_resolution(
     home: Path, tmp_path: Path, stub_graph: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Plan 246's arg validation keeps precedence over project resolution.
+    """Argument validation keeps precedence over project resolution.
 
     An agent that omitted a required argument should be told that, not sent
     away to think about project scoping first.

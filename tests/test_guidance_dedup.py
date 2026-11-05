@@ -1,23 +1,22 @@
-"""Plan 249 Step B1: canonical routing guidance, hash-stamped copies, MCP resource.
+"""Canonical routing guidance, hash-stamped copies, MCP resource.
 
 The routing policy is generated into several files per project (Cursor's
 ``.cursor/rules/agentscaffold.mdc``, ``CLAUDE.md``, ``.windsurfrules``). In a
 workspace with N projects that is N copies of the same material, maintained
 nowhere in particular and free to diverge silently.
 
-Phase B makes one committed file at the workspace root the source those copies
-are generated from, and stamps each copy with the canonical content hash so a
+One committed file at the workspace root is the source those copies are
+generated from, and each copy is stamped with the canonical content hash so a
 stale or hand-edited copy is detectable. The same content is served as the MCP
 resource ``agentscaffold://guidance/routing`` for agents that would rather ask
 than read a file.
 
-**The copies keep their policy body inline.** ADR-025 Decision 6 originally
-called for emptying them to a pointer at the canonical file; that decision was
-amended on 2026-08-05 (see the ADR, and Plan 249 Section 1 goal 4). Editors
+**The copies keep their policy body inline.** The original design called for
+emptying them to a pointer at the canonical file; that was reversed. Editors
 inject these files into agent context verbatim at session start, so a pointer
 makes the routing guidance conditional on an agent noticing it and spending a
-call to follow it -- the exact failure this plan exists to remove.
-``test_platform_files_keep_the_policy_inline`` guards that amendment.
+call to follow it -- the exact failure the canonical source exists to remove.
+``test_platform_files_keep_the_policy_inline`` guards that decision.
 """
 
 from __future__ import annotations
@@ -47,7 +46,7 @@ def _make_shared_ws(tmp_path: Path) -> Path:
 
 
 def _make_lone_repo(tmp_path: Path) -> Path:
-    """A single repo with no workspace manifest -- the pre-Plan-234 shape."""
+    """A single repo with no workspace manifest -- the pre-workspace shape."""
     root = tmp_path / "solo"
     root.mkdir(parents=True)
     (root / "scaffold.yaml").write_text("framework:\n  project_name: solo\n")
@@ -162,7 +161,7 @@ def test_rewriting_unchanged_canonical_reports_unchanged(tmp_path: Path):
 
 
 def test_a_lone_repo_gets_no_canonical_file(tmp_path: Path):
-    """ADR-024 non-regression: generation for a lone repo is unchanged.
+    """Non-regression: generation for a lone repo is unchanged.
 
     Canonical emission is a shared_workspace feature. A repo that never opted
     into a workspace layout must not acquire a new committed file.
@@ -218,7 +217,7 @@ def test_generated_platform_files_carry_the_canonical_hash(tmp_path: Path):
 
 
 def test_platform_files_keep_the_policy_inline(tmp_path: Path):
-    """Guards the ADR-025 Decision 6 amendment of 2026-08-05.
+    """Guards the decision to keep the policy body inline.
 
     These files are injected into agent context verbatim at session start. If a
     future change empties them to a pointer at the canonical file, the routing
@@ -283,7 +282,7 @@ def test_editing_the_canonical_file_makes_the_copies_stale(tmp_path: Path):
 
 
 def test_an_unstamped_copy_is_reported(tmp_path: Path):
-    """A file generated before Phase B, or hand-authored, carries no stamp."""
+    """A file generated before stamping existed, or hand-authored, carries no stamp."""
     from agentscaffold.rendering import detect_guidance_drift
 
     ws = _make_shared_ws(tmp_path)
@@ -345,7 +344,7 @@ def test_guidance_resource_matches_the_canonical_file(tmp_path: Path):
 def test_guidance_resource_falls_back_to_generated_content(tmp_path: Path):
     """An MCP-first agent must get policy even with no file on disk.
 
-    ADR-025 Decision 6 keeps all three delivery paths precisely so none of them
+    All three delivery paths are kept precisely so none of them
     is load-bearing alone; a lone repo has no canonical file and must still be
     able to read the resource.
     """

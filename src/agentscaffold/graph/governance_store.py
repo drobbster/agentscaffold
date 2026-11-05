@@ -1,4 +1,4 @@
-"""Git-backed governance serialization (Plan 222).
+"""Git-backed governance serialization.
 
 Agent-generated knowledge -- review findings, sessions, and backlog items --
 historically lived only in the local DuckDB cache, invisible to teammates and
@@ -8,7 +8,7 @@ durable *system of record*; the graph is then a derived index that
 ``scaffold index`` rebuilds from the artifact plus code.
 
 The codec reuses the backend's ``export_governance``/``import_governance``
-shapes (introduced in Plan 219 for schema-migration safety), promoting them from
+shapes (introduced for schema-migration safety), promoting them from
 a migration-only mechanism into the durable store.
 
 Format: a single JSON object with a top-level ``governance_artifact_version``.

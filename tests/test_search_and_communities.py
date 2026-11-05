@@ -1,4 +1,4 @@
-"""Tests for Phase 5: Embeddings, communities, and hybrid search.
+"""Tests for embeddings, communities, and hybrid search.
 
 Tests cover:
 - Embedding generation and semantic similarity search
@@ -325,7 +325,7 @@ class TestPipelineWithCommunities:
 
 
 # ---------------------------------------------------------------------------
-# Retrieval capability oracle (Plan 220)
+# Retrieval capability oracle
 # ---------------------------------------------------------------------------
 
 

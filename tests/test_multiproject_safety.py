@@ -1,4 +1,4 @@
-"""Multi-project backend safety tests (Plan 225, Step 5).
+"""Multi-project backend safety tests.
 
 Exercises the create_node/create_edge/store_embedding choke point and the
 project-scoped clears against a real in-memory DuckPGQ backend: ID-prefixing,
@@ -229,7 +229,7 @@ def test_migrate_then_sibling_coexists(backend):
 
 
 def test_migrate_rekeys_rows_already_stamped_on_bare_ids(backend):
-    """Plan 279: single-project sessions carry the project name since Plan 276.
+    """Single-project sessions carry the project name.
 
     The migration used to re-key only rows with an empty project, so a session
     stamped ``alpha`` on a bare ``session::`` id stayed bare while its edges were

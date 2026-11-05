@@ -1,4 +1,4 @@
-"""``scaffold inventory init`` / ``refresh`` text generation (Plan 282).
+"""``scaffold inventory init`` / ``refresh`` text generation.
 
 Refresh edits text in place so comments survive; an edit it cannot verify is
 not written and the caller gets a snippet instead.

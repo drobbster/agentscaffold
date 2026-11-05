@@ -1,4 +1,4 @@
-"""Tests for embedding-model provisioning + offline-graceful degrade (Plan 227, Tier 2a).
+"""Tests for embedding-model provisioning + offline-graceful degrade.
 
 These cover the dependency/weight fragility fix: a configurable + workspace-pinned
 model, a deliberate ``warm`` provisioning path, a fast readiness probe, and search

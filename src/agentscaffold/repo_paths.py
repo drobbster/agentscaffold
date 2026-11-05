@@ -1,4 +1,4 @@
-"""Paths to project files outside the project folder (Plan 283).
+"""Paths to project files outside the project folder.
 
 ``graph.extra_paths`` lists globs, relative to the version-control root, of
 files that belong to a project but live elsewhere in its repository. Their

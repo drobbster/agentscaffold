@@ -1,4 +1,4 @@
-"""MCP embedding lane metadata tests for Plan 232."""
+"""MCP embedding lane metadata tests."""
 
 from __future__ import annotations
 

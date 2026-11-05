@@ -1,4 +1,4 @@
-"""Integration tests for Plan 221 path/root unification.
+"""Integration tests for path/root unification.
 
 Verifies the two intended behavior changes:
 1. CLI commands honor a customized ``graph.*`` path instead of the hardcoded

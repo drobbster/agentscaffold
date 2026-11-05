@@ -1,4 +1,4 @@
-"""Scoped incremental parity tests for Plan 231."""
+"""Scoped incremental parity tests."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Execution-step parsing for plan markdown (Plan 265).
+"""Execution-step parsing for plan markdown.
 
 The checkbox helpers stay file-text functions so ``plan_card`` / ``diff_plan``
 keep a live read. Ingest uses the same parser to create ``PlanStep`` nodes.
@@ -65,7 +65,7 @@ def count_execution_checkboxes(text: str) -> tuple[int, int]:
     """Return (unchecked, checked) counts from the Execution Steps section only.
 
     If no Execution Steps heading exists, returns (0, 0) rather than counting
-    every checklist in the plan (Plan 247).
+    every checklist in the plan.
     """
     section = execution_steps_section(text)
     if not section:

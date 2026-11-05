@@ -1,4 +1,4 @@
-"""CLI tests for ``scaffold workspace`` (Plan 225, Step 6).
+"""CLI tests for ``scaffold workspace``.
 
 Covers the read-only ``list`` (single + multi) and ``onboard`` (manifest
 creation, the single->multi transition, relative-path storage, and duplicate

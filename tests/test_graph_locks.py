@@ -1,4 +1,4 @@
-"""Regression tests for graph write-lock reaping (Plan 254)."""
+"""Regression tests for graph write-lock reaping."""
 
 from __future__ import annotations
 

@@ -65,7 +65,7 @@ def _db_path(root: Path, config: ScaffoldConfig) -> Path:
     """Resolve the graph database the same way every other reader does.
 
     This used to join ``config.graph.db_path`` to *root* itself. That agreed
-    with the rest of the system only while the default was in-tree; once Step B4
+    with the rest of the system only while the default was in-tree; once state relocation
     moved the default under the platform state directory, an independent
     resolver here would have indexed freshness against one file while the graph
     was read from another.
@@ -269,7 +269,7 @@ def _refresh_worker(root: Path, config: ScaffoldConfig, reason: str) -> None:
         try:
             _ = reason  # reserved for future telemetry routing context
             # quiet=True: this runs inside the MCP stdio process; Rich progress
-            # on stdout would break Cursor's JSON-RPC transport (Plan 242).
+            # on stdout would break Cursor's JSON-RPC transport.
             index(
                 path=root,
                 config=config,

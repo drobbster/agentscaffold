@@ -1,7 +1,7 @@
-"""Plan 243: keyword search must find symbols outside the old LIMIT window.
+"""Keyword search must find symbols outside the old LIMIT window.
 
 Regression for the blind ``SELECT ... LIMIT top_k*4`` scan that missed
-symbols on large graphs (e.g. rebellion ``normalize_feeds`` returned 0 hits
+symbols on large graphs (e.g. ``normalize_feeds`` in a large adopter repo returned 0 hits
 while ``scaffold_context`` resolved the same name).
 """
 

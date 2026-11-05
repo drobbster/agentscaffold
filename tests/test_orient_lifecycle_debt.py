@@ -1,4 +1,4 @@
-"""Orientation's ``lifecycle_debt`` from the system inventory (Plan 282)."""
+"""Orientation's ``lifecycle_debt`` from the system inventory."""
 
 from __future__ import annotations
 

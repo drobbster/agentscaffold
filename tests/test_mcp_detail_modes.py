@@ -1,4 +1,4 @@
-"""Plan 246: detail=summary vs full."""
+"""detail=summary vs full."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def test_summary_drops_markdown_and_truncates_lists() -> None:
 
 
 def test_summary_tolerates_non_string_keys() -> None:
-    """Regression (Plan 248): summary trim must not crash on int-keyed evidence.
+    """Regression: summary trim must not crash on int-keyed evidence.
 
     Review evidence generators (e.g. gaps.py SIMILAR_PATTERN) legitimately produce
     ``dict[int, int]`` values such as ``similar_plans`` (plan number -> shared-file

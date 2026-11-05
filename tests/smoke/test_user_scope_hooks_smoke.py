@@ -1,4 +1,4 @@
-"""End-to-end smoke for Plan 277: user-scope install and the routed edit hook.
+"""End-to-end smoke for user-scope install and the routed edit hook.
 
 Driven through the installed console scripts, as an editor would: install
 writes a user-level ``hooks.json``; running the command it registered, from the

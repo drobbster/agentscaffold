@@ -138,7 +138,7 @@ def test_secrets_ignores_placeholders(tmp_project: Path) -> None:
 
 
 def test_validate_inventory_row_fails_only_in_fail_mode(tmp_path: Path, monkeypatch) -> None:
-    """Plan 282: warn mode prints findings and passes; fail mode lists the errors."""
+    """Warn mode prints findings and passes; fail mode lists the errors."""
     import shutil
 
     from agentscaffold.config import load_config

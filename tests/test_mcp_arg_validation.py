@@ -1,4 +1,4 @@
-"""Plan 246: required-arg validation fails loud."""
+"""Required-arg validation fails loud."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""C3 guidance stamp (Plan 251). Built from the already-resolved project root."""
+"""C3 guidance stamp. Built from the already-resolved project root."""
 
 from __future__ import annotations
 

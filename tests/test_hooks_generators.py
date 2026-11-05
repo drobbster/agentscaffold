@@ -1,4 +1,4 @@
-"""Tests for Phase B hook generators — Steps B.2, B.3, B.3a, B.4, B.5, B.8."""
+"""Tests for hook generators."""
 
 from __future__ import annotations
 
@@ -362,7 +362,7 @@ def test_write_cursor_mcp_json_skips_existing(tmp_path: Path, capsys) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Plan 253: the per-project config must not undo the single-server migration
+# The per-project config must not undo the single-server migration
 #
 # Since 0.10 one project-aware server serves every registered project, so a
 # per-project `.cursor/mcp.json` in a registered root is the legacy registration

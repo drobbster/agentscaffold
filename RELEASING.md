@@ -179,7 +179,7 @@ seconds means "not yet", not "broken". Retry before concluding anything.
 
 ### 12. Record it
 
-In the governance repo, add the release to the **Recently Released** section of
+Add the release to the **Recently Released** section of the maintainers'
 `docs/ai/state/workflow_state.md`: what shipped, the tag, and any upgrade action.
 
 ## Why this document exists

@@ -1,10 +1,10 @@
-"""Multi-project embedding search tests (Plan 225, Step 6).
+"""Multi-project embedding search tests.
 
 Validates scoped/federated similarity search, per-hit project provenance, and
 cross-project duplicate detection at the SQL level -- no sentence-transformers
 model is required (vectors are inserted directly), so these run without the
 ``[search]`` extra. The natural-language ``search_similar`` path (which needs the
-model) is covered by the search-quality suite under Plan 227.
+model) is covered by the search-quality suite.
 """
 
 from __future__ import annotations

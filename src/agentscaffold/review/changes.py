@@ -1,12 +1,12 @@
-"""Which files a plan changed, from git, for the post-implementation rule rows (Plan 281).
+"""Which files a plan changed, from git, for the post-implementation rule rows.
 
 Sources, first that applies:
 
 1. ``base_ref``: the diff from that ref to the working tree.
 2. The plan's merged branches: merge commits whose message names a branch
-   carrying the plan number (``feature/278-x``, ``docs/plan-278-completion``),
-   and squash merges whose subject starts with the plan number (``Plans 277,
-   278: ... (#104)``), on the first-parent history of HEAD and of each base
+   carrying the plan number (``feature/42-x``, ``docs/plan-42-completion``),
+   and squash merges whose subject starts with the plan number (``Plans 41,
+   42: ... (#17)``), on the first-parent history of HEAD and of each base
    branch that exists; the union of each one's first-parent diff. When the current branch is
    also a plan branch (a completion branch still open), its changes are added.
 3. The plan's unmerged branch: the diff from its merge-base with the base
@@ -18,7 +18,7 @@ Sources, first that applies:
 Git runs with an argument list and a timeout, never a shell. Refs and commit ids
 are validated before they reach git.
 
-With ``graph.extra_paths`` (Plan 283), changed files outside the project folder
+With ``graph.extra_paths``, changed files outside the project folder
 that match one of its globs are listed as well, as ``@repo/<path>``.
 """
 

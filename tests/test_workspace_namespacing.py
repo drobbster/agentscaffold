@@ -1,4 +1,4 @@
-"""Tests for workspace resolution + project-name validation (Plan 225, Phase 2).
+"""Tests for workspace resolution + project-name validation.
 
 Covers Step 3: workspace config, ``resolve_workspace_root()``, single-project
 default (today's behavior), multi-project manifest, and the unique/delimiter-safe
@@ -142,9 +142,9 @@ def test_load_workspace_manifest_validates(tmp_path):
 
 
 def test_derive_project_name_from_basename(tmp_path):
-    proj = tmp_path / "rebellion-trading-system"
+    proj = tmp_path / "acme-billing-system"
     proj.mkdir()
-    assert derive_project_name(proj) == "rebellion-trading-system"
+    assert derive_project_name(proj) == "acme-billing-system"
 
 
 def test_derive_project_name_explicit_wins(tmp_path):

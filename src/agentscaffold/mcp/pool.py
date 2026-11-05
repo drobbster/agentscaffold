@@ -1,10 +1,10 @@
-"""Per-workspace graph handle pool for the single MCP server (Plan 249, Step A6).
+"""Per-workspace graph handle pool for the single MCP server.
 
 One server process now serves every registered workspace, so it holds several
-DuckDB connections at once. The Step A0 spike confirmed that is safe and turned
-up two constraints that shape this module.
+DuckDB connections at once. Testing confirmed that is safe and turned up two
+constraints that shape this module.
 
-The Plan 235 write lock is a ``mkdir`` directory lock. It is atomic across
+The graph write lock is a ``mkdir`` directory lock. It is atomic across
 processes but knows nothing about threads and is not reentrant, so two threads in
 one process contending for the same workspace get a ``TimeoutError`` rather than
 queueing. :meth:`GraphHandlePool.write_lock` puts an in-process mutex above it,
@@ -146,10 +146,10 @@ class GraphHandlePool:
     ) -> Iterator[None]:
         """Hold the write lock for *key* against threads and other processes.
 
-        Acquires the in-process mutex first, then the Plan 235 filesystem lock.
+        Acquires the in-process mutex first, then the filesystem lock.
         Ordering matters: taking the filesystem lock first would let sibling
         threads pile onto a lock that cannot queue them, which is the
-        ``TimeoutError`` the spike hit.
+        ``TimeoutError`` seen in testing.
 
         Args:
             timeout: How long to wait for the in-process mutex, which is where

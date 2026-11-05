@@ -1,4 +1,4 @@
-"""Session brief for scaffold_orient (Plan 273).
+"""Session brief for scaffold_orient.
 
 Current work, blockers for that work, related items, and idle-next come
 from an open Session and plan-file Status -- not the Current
@@ -47,7 +47,7 @@ def build_session_brief(
     """Return the locked ``session_brief`` object.
 
     *open_session* is the session orient already looked up (stamped project,
-    idle-aware; Plan 276). When omitted, the brief looks it up itself. With an
+    idle-aware). When omitted, the brief looks it up itself. With an
     enabled inventory in *config*, the brief carries ``lifecycle_debt``.
     """
     from agentscaffold.graph.sessions import find_open_session
@@ -168,7 +168,7 @@ def lifecycle_debt(
     project: str | None = None,
     today: Any = None,
 ) -> dict[str, Any] | None:
-    """Lifecycle debt from the system inventory (Plan 282); None when it is disabled.
+    """Lifecycle debt from the system inventory; None when it is disabled.
 
     Categories: expired reviews, overdue deprecations, failing active jobs and
     zombie candidates (from the optional health snapshot), drafts older than

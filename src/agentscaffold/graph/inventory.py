@@ -1,4 +1,4 @@
-"""System inventory in the graph (Plan 282).
+"""System inventory in the graph.
 
 ``process_inventory`` writes one ``Component`` node per inventory entry, with
 ``OWNED_BY`` to the owning Plan, ``ENTRYPOINT`` to the entrypoint's File, and

@@ -49,7 +49,7 @@ def open_graph(
         backend: Reserved for future use. Only "duckpgq" is supported.
         lock_timeout: Seconds to wait for AgentScaffold's shared graph write
             lock before attempting to open DuckDB. Ignored when
-            ``read_only=True`` (Plan 244): readers skip the exclusive writer
+            ``read_only=True``: readers skip the exclusive writer
             wait so MCP tools stay responsive during in-process refresh.
         read_only: When True, open without waiting for the AgentScaffold write
             lock and without enabling governance write-through. Same-process
@@ -59,7 +59,7 @@ def open_graph(
         start: Directory that owns the graph. Relative ``graph.db_path``
             resolves here (same as ``run_pipeline(..., root=start)``). Omit
             to use the process project root. Required when opening another
-            registered project's DuckDB from a different cwd (Plan 271).
+            registered project's DuckDB from a different cwd.
 
     Raises:
         ValueError: if an unknown backend name is given.
@@ -79,7 +79,7 @@ def open_graph(
                 raise GraphLockError(open_graph_lock_message(db_path))
         store = DuckPGQBackend(db_path, read_only=read_only)
         if not read_only:
-            # Enable git-backed governance write-through (Plan 222): runtime
+            # Enable git-backed governance write-through: runtime
             # finding/session/backlog mutations re-serialize to the committed
             # artifact so the graph stays a derived index of git state.
             from agentscaffold.graph.governance_store import (
@@ -133,7 +133,7 @@ def index(
 
 
 def _resolve_db_path(config: ScaffoldConfig | None, start: Path | None = None) -> Path:
-    """Resolve the graph DB path against the project root (Plan 221).
+    """Resolve the graph DB path against the project root.
 
     Delegates to :func:`agentscaffold.paths.resolve_db_path` so a relative
     ``db_path`` resolves under the project root (nearest ``scaffold.yaml`` ->

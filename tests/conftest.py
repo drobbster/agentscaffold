@@ -22,7 +22,7 @@ def isolate_agentscaffold_home(tmp_path_factory, monkeypatch) -> Path:
 
     Autouse and unconditional, because the failure it prevents is not local. The
     user-level registry is real shared state: once ``scaffold workspace onboard``
-    began mirroring into it (Plan 249, Step A8), the pre-existing onboard tests
+    began mirroring into it, the pre-existing onboard tests
     silently wrote ``alpha`` and ``beta`` into the developer's own
     ``~/.agentscaffold/registry.yaml``, pointing at temp directories that no
     longer existed.

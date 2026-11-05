@@ -49,7 +49,7 @@ def status_lines(text: str) -> list[str]:
 def plan_status(text: str) -> str:
     """The plan's Status line through ``normalize_plan_status``, else checkbox inference.
 
-    Plan 282: the same reading the orient plan cards use, so a plan marked
+    The same reading the orient plan cards use, so a plan marked
     Complete with unchecked steps reports Complete.
     """
     from agentscaffold.review.filters import normalize_plan_status
@@ -86,7 +86,7 @@ def run_plan_status() -> None:
         console.print(f"[yellow]Warning: {plans_dir} does not exist.[/yellow]")
         return
 
-    # Advisory plan claims (Plan 226): map plan number -> owner for the dashboard.
+    # Advisory plan claims: map plan number -> owner for the dashboard.
     claims = {
         str(c.get("plan", "")): str(c.get("owner", ""))
         for c in collab.list_claims(paths.claims_dir)

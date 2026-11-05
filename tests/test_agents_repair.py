@@ -1,4 +1,4 @@
-"""Plan 260: scaffold agents repair."""
+"""Tests for ``scaffold agents repair``."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def test_repair_dry_run_does_not_write(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Plan 279: --prefer-managed recovers pre-0.12 unmarked routing copies
+# --prefer-managed recovers pre-0.12 unmarked routing copies
 # ---------------------------------------------------------------------------
 
 _LEGACY = "## Planning Rules\n\nOur manual.\n\n## Session Working Rhythm\n\nOld routing line.\n\n"

@@ -1,4 +1,4 @@
-"""Session-state hint attached to MCP tool responses (Plan 275).
+"""Session-state hint attached to MCP tool responses.
 
 A client that drops the server's initialize instructions still reads tool
 results, so ``scaffold_orient`` and the governance write tools say when no
@@ -40,7 +40,7 @@ def session_meta(
 
     *project* must be the key the session writer stamps, matched exactly, or a
     session that is open will read as closed. A session idle beyond
-    *idle_hours* reads as closed (Plan 276) so the hint sends the agent to
+    *idle_hours* reads as closed so the hint sends the agent to
     start a new one. The lookup only reads; it never starts or closes a session.
     Any failure yields ``{}`` so a hint can never break the tool it rides on.
     """

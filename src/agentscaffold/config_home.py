@@ -1,4 +1,4 @@
-"""Org/user-level AgentScaffold home resolution (Plan 224).
+"""Org/user-level AgentScaffold home resolution.
 
 Shared policy (rigor, gates, standards lists, reviewers, prohibitions) historically
 had to be copied into every repo's ``scaffold.yaml`` and drifted. Config

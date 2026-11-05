@@ -1,9 +1,9 @@
-"""Plan 249 Step B7: health checks for every Phase B failure mode.
+"""Health checks for every failure mode of the shared-workspace layout.
 
-`scaffold doctor` exists because Phase A and B moved several things that used to
-be obvious: the MCP server is now one entry instead of one per project, the graph
-lives outside the tree, and the routing guidance is generated from a canonical
-source. Each of those is fine when it works and invisible when it does not,
+`scaffold doctor` exists because the move to a shared workspace changed several
+things that used to be obvious: the MCP server is now one entry instead of one per
+project, the graph lives outside the tree, and the routing guidance is generated
+from a canonical source. Each of those is fine when it works and invisible when it does not,
 which is the definition of a thing that needs a diagnostic.
 
 Every check gets a seeded fault here, because a health check that has never been
@@ -122,7 +122,7 @@ def test_doctor_writes_nothing(state_home: Path, tmp_path: Path, cli_runner: Cli
 
 
 def test_checks_are_registered_rather_than_hardcoded(state_home: Path):
-    """Plan 251 adds three more checks and must not have to rework this."""
+    """New checks are added by registration, without reworking this."""
     from agentscaffold.doctor import CHECKS
 
     names = [check.name for check in CHECKS]
@@ -378,7 +378,7 @@ def test_mcp_check_accepts_the_canonical_entry(
 def test_mcp_check_flags_a_stray_per_project_config(
     state_home: Path, tmp_path: Path, cli_runner: CliRunner
 ):
-    """A clean shared config says nothing about per-project files (Plan 253).
+    """A clean shared config says nothing about per-project files.
 
     Clients load both. A `.cursor/mcp.json` in a registered root is a second,
     project-scoped server -- exactly what the 0.10 migration collapses. Reporting
@@ -629,7 +629,7 @@ def test_state_check_flags_an_orphaned_in_tree_directory(
 
 
 def test_state_check_flags_an_orphan_inside_a_project_folder(state_home: Path, tmp_path: Path):
-    """Plan 279: a team folder's old .scaffold/ outlives the move to the state dir."""
+    """A team folder's old .scaffold/ outlives the move to the state dir."""
     from agentscaffold.doctor import DoctorContext, check_state_location
     from agentscaffold.paths import ensure_workspace_state_dir
 
@@ -706,14 +706,14 @@ def test_unstamped_rows_silent_in_a_single_project_repo(state_home: Path, tmp_pa
 
 
 # ---------------------------------------------------------------------------
-# Workspace id agreement (added at Step B8, from the Step B5 defect)
+# Workspace id agreement (from the onboard double-id defect)
 # ---------------------------------------------------------------------------
 
 
 def test_a_workspace_carrying_two_ids_is_reported(
     state_home: Path, tmp_path: Path, cli_runner: CliRunner
 ):
-    """The B5 defect, promoted to a check.
+    """The onboard double-id defect, promoted to a check.
 
     Resolution prefers the manifest, so divergence is silent until the manifest
     is removed and the graph re-keys to an id nothing points at.

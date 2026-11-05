@@ -1,4 +1,4 @@
-"""Tests for env-aware db_path resolution (Plan 223)."""
+"""Tests for env-aware db_path resolution."""
 
 from __future__ import annotations
 

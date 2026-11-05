@@ -1,4 +1,4 @@
-"""Inventory path rules (contract v1, Paths) and path matching (Plan 282)."""
+"""Inventory path rules (contract v1, Paths) and path matching."""
 
 from __future__ import annotations
 

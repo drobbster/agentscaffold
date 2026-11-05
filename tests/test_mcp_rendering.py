@@ -1,4 +1,4 @@
-"""Tests for agent-facing MCP rendering (Plan 212).
+"""Tests for agent-facing MCP rendering.
 
 Locks in that composite MCP tools return a readable 'markdown' field and that
 structured rows no longer leak dot-qualified query aliases (e.g. 'caller.name').

@@ -1,4 +1,4 @@
-"""System inventory in the graph: Component nodes, edges, impact and context (Plan 282)."""
+"""System inventory in the graph: Component nodes, edges, impact and context."""
 
 from __future__ import annotations
 

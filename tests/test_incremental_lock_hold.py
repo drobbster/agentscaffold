@@ -1,4 +1,4 @@
-"""No-op incremental must not hold the write lock during the disk walk (Plan 267)."""
+"""No-op incremental must not hold the write lock during the disk walk."""
 
 from __future__ import annotations
 

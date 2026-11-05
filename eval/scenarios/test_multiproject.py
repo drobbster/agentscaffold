@@ -16,7 +16,7 @@ def _normalize(vec: list[float]) -> list[float]:
 
 
 class TestMultiProjectCorrectness:
-    """Plan 225 workspace invariants at indexed-pipeline level."""
+    """Multi-project workspace invariants at indexed-pipeline level."""
 
     def test_scoped_default_search_stays_in_current_project(self, indexed_two_project_workspace):
         workspace, project_a, project_b, store, config = indexed_two_project_workspace

@@ -155,7 +155,7 @@ def repo_coverage(store: Any) -> dict[str, Any]:
 
 
 def _import_strategies(store: Any) -> dict[str, int] | None:
-    """Count IMPORTS edges by resolution strategy (Plan 278).
+    """Count IMPORTS edges by resolution strategy.
 
     Edges written before the strategy was recorded count as ``unrecorded``
     until the next full index. None when the column is not there yet (a graph

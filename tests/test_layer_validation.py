@@ -8,8 +8,8 @@ layer).
 
 The hardest requirement here is not detecting violations. It is refusing to
 report "no violations" when the check cannot see anything, which is the state
-this repository is actually in: layer definitions live in the governance repo
-and the code lives in the package repo, so in either graph alone one half is
+a split setup is actually in: layer definitions live in a governance repository
+and the code lives in a package repository, so in either graph alone one half is
 missing. A check that answers "clean" there would be lying in the most
 convincing possible way, and most of the tests below exist to pin that down.
 """
@@ -63,7 +63,7 @@ def test_no_layers_defined_is_not_evaluable():
 
 
 def test_layers_with_empty_path_patterns_is_no_data_not_conformant():
-    """Plan 261: empty patterns are 'no data ingested', not a clean pass."""
+    """Empty patterns are 'no data ingested', not a clean pass."""
     report = check_layers(
         FakeStore(
             layers=[

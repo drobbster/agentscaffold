@@ -1,4 +1,4 @@
-"""Tests for duckpgq_schema.py — Step A.5."""
+"""Tests for duckpgq_schema.py."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def conn():
 
 
 def test_schema_version():
-    assert SCHEMA_VERSION == 13  # bumped in Plan 282 (Component)
+    assert SCHEMA_VERSION == 13  # bumped for Component
 
 
 def test_backlogitem_ddl_includes_resolution():
@@ -52,7 +52,7 @@ def test_backlogitem_ddl_includes_resolution():
 
 
 def test_backlogitem_resolution_column_added_to_existing_table(conn):
-    """Plan 255: ALTER adds resolution without a SCHEMA_VERSION rebuild."""
+    """ALTER adds resolution without a SCHEMA_VERSION rebuild."""
     conn.execute("DROP TABLE IF EXISTS BacklogItem")
     conn.execute(
         """
@@ -80,7 +80,7 @@ def test_backlogitem_resolution_column_added_to_existing_table(conn):
 
 
 def test_extends_additive_columns_on_existing_table(conn):
-    """Plan 262: resolved/baseName ALTER without a SCHEMA_VERSION rebuild."""
+    """resolved/baseName ALTER without a SCHEMA_VERSION rebuild."""
     from agentscaffold.graph.duckpgq_schema import ensure_additive_columns
 
     conn.execute("DROP TABLE IF EXISTS EXTENDS")
@@ -101,7 +101,7 @@ def test_schema_version_unchanged_by_extends_columns():
 
 
 def test_session_additive_columns_on_existing_table(conn):
-    """Plan 263: decisions/endedAt ALTER without a SCHEMA_VERSION rebuild."""
+    """decisions/endedAt ALTER without a SCHEMA_VERSION rebuild."""
     from agentscaffold.graph.duckpgq_schema import ensure_additive_columns
 
     conn.execute("DROP TABLE IF EXISTS Session")
@@ -132,7 +132,7 @@ def test_schema_version_unchanged_by_session_columns():
 
 
 def test_finding_evidence_additive_columns_on_existing_table(conn):
-    """Plan 264: evidenceKind/evidence ALTER without a SCHEMA_VERSION rebuild."""
+    """evidenceKind/evidence ALTER without a SCHEMA_VERSION rebuild."""
     from agentscaffold.graph.duckpgq_schema import ensure_additive_columns
 
     conn.execute("DROP TABLE IF EXISTS ReviewFinding")
@@ -211,7 +211,7 @@ def test_fresh_backend_can_init_schema_after_constructor_additive_check(tmp_path
     store.close()
 
 
-def test_missing_additive_columns_detects_pre_255_shape(conn):
+def test_missing_additive_columns_detects_backlog_without_resolution(conn):
     from agentscaffold.graph.duckpgq_schema import missing_additive_columns
 
     conn.execute("DROP TABLE IF EXISTS BacklogItem")
@@ -227,30 +227,30 @@ def test_missing_additive_columns_detects_pre_255_shape(conn):
     assert ("BacklogItem", "resolution") in missing_additive_columns(conn)
 
 
-def test_the_plan_252_bump_changed_no_tables():
+def test_the_version_10_bump_changed_no_tables():
     """Version 10 is a *derivation* change, not a DDL one.
 
-    Plan 252 bumped the version to force existing graphs through a rebuild, so
+    The version was bumped to force existing graphs through a rebuild, so
     they gain the IMPORTS edges that relative imports should always have
     produced. No table was added or altered. The two counts below being
     unchanged across the bump is what distinguishes that case from a real schema
     migration, and keeps the bump from being read later as evidence of one.
 
-    Plan 255 later added BacklogItem.resolution at this same version, via an
+    A later change added BacklogItem.resolution at this same version, via an
     additive ALTER rather than a bump. So version 10 is not a promise that the
-    columns never moved -- only that the set of tables did not. Plans 265 and
-    281 and 282 added tables later, each with its own bump; the counts are current.
+    columns never moved -- only that the set of tables did not. Later changes
+    added tables, each with its own bump; the counts are current.
     """
     assert len(NODE_TABLES) == 24
     assert len(EDGE_TABLES) == 42
 
 
 def test_node_table_count():
-    assert len(NODE_TABLES) == 24  # +Component (Plan 282)
+    assert len(NODE_TABLES) == 24  # +Component
 
 
 def test_edge_table_count():
-    assert len(EDGE_TABLES) == 42  # +OWNED_BY, ENTRYPOINT, READS (Plan 282)
+    assert len(EDGE_TABLES) == 42  # +OWNED_BY, ENTRYPOINT, READS
 
 
 def test_all_node_ddl_returns_copy():

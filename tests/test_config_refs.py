@@ -1,4 +1,4 @@
-"""Tests for config-reference resolution (Plan 216)."""
+"""Tests for config-reference resolution."""
 
 from __future__ import annotations
 

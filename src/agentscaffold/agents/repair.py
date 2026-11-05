@@ -1,4 +1,4 @@
-"""De-duplicate already-copied AGENTS.md sections (Plan 260 Scope E)."""
+"""De-duplicate already-copied AGENTS.md sections."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class RepairReport:
     conflicts: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     #: Unmarked copies kept under ``prefer_managed`` because the governance
-    #: mapping reads them (Plan 279).
+    #: mapping reads them.
     protected: list[str] = field(default_factory=list)
 
     @property
@@ -73,7 +73,7 @@ def plan_repair(
     """Drop exact duplicate `## ` sections. Refuse when copies differ.
 
     With *prefer_managed* the managed block wins instead: every unmarked section
-    whose heading is in the block is dropped, whatever its body (Plan 279). A
+    whose heading is in the block is dropped, whatever its body. A
     marker-less file (routing written before 0.12) takes its block from
     *managed_body*. Headings in *protected_headings* (normalized, see
     :func:`governance_protected_headings`) are kept and reported.

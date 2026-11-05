@@ -1,10 +1,10 @@
-"""C10 envelopes from live payloads (Plan 251 spike). Not hand-written schemas."""
+"""Output envelopes from live payloads. Not hand-written schemas."""
 
 from __future__ import annotations
 
 from typing import Any
 
-#: Keys Plan 273 keeps off ``detail=summary``. A summary envelope must not
+#: Keys kept off ``detail=summary``. A summary envelope must not
 #: require them; a full envelope may include them.
 _DIARY_KEYS = frozenset(
     {"stats", "hot_files", "recent_plans", "recent_studies", "active_adrs"}

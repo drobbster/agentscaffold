@@ -1,4 +1,4 @@
-"""Plan 265: PlanStep ingest and pairwise dependency cycles."""
+"""PlanStep ingest and pairwise dependency cycles."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ _SAMPLE = """# Plan
 """
 
 
-def test_count_and_next_match_plan_247_shape() -> None:
+def test_count_and_next_match_plan_card_shape() -> None:
     unchecked, checked = count_execution_checkboxes(_SAMPLE)
     assert unchecked == 2
     assert checked == 1

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Project scoping (Plan 225)
+# Project scoping
 #
 # File paths and plan/study identifiers are NOT globally unique across the
 # projects sharing one graph cache, so an unscoped governance read could surface
@@ -281,7 +281,7 @@ def get_findings_for_file(
 def get_contracts_for_file(store: GraphBackend, file_path: str) -> list[dict[str, Any]]:
     """Return contracts covering the given file.
 
-    Prefers the direct ``CONTRACT_ABOUT_FILE`` edge (Plan 237); falls back to the
+    Prefers the direct ``CONTRACT_ABOUT_FILE`` edge; falls back to the
     declares-join (contracts whose declared functions/classes live in the file) so
     graphs indexed before the edge existed still resolve.
     """
@@ -524,7 +524,7 @@ def plan_dependency_cycle(
     plan_a: int,
     plan_b: int,
 ) -> dict[str, Any]:
-    """Pairwise apparent vs genuine cycle for two plans (Plan 265).
+    """Pairwise apparent vs genuine cycle for two plans.
 
     ``none`` if the pair is not mutually dependent. ``genuine`` if both
     directions wait on the other without disjoint step ranges. ``apparent``
@@ -1095,7 +1095,7 @@ def stamp_plan_reviewed(
 ) -> str | None:
     """Record that the pre-implementation review ran for *plan_number*.
 
-    The stamp lives in the preserved ``PlanReview`` table (Plan 281), because
+    The stamp lives in the preserved ``PlanReview`` table, because
     Plan rows are rebuilt on every governance reindex. ``Plan.reviewedAt`` is
     still set for older readers. *commits* maps a project name to the HEAD
     commit at review; None keeps any commits already recorded.

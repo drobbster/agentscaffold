@@ -1,4 +1,4 @@
-"""Inventory file models for contract v1 (Plan 282).
+"""Inventory file models for contract v1.
 
 The models accept what a human may have written and leave judgement to the
 checks: a missing or malformed field is an INV-003 finding, not a load error.

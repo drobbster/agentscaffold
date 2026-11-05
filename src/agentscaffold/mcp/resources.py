@@ -1,6 +1,6 @@
-"""MCP resources serving canonical routing guidance (Plan 249 Step B2).
+"""MCP resources serving canonical routing guidance.
 
-ADR-025 Decision 6 delivers the routing policy three ways from one source: the
+The routing policy is delivered three ways from one source: the
 canonical committed file, the per-project rule files generated from it, and this
 resource. The resource exists so an MCP-first agent can ask for policy rather
 than be handed it, and so an agent in a repo with no generated files at all

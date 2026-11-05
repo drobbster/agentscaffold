@@ -743,12 +743,12 @@ which ones can be done now?
 ```
 
 ```
-can we do B-049-9, B-049-10, B-049-11, and B-049-12 right now
+can we do B-012-1, B-012-2, B-012-3, and B-012-4 right now
 and update the status for them in the backlog
 ```
 
 ```
-great. lets do B-139-2 and B-141-M7 now. And mark B-139-3 complete.
+great. lets do B-020-2 and B-021-1 now. And mark B-020-3 complete.
 ```
 
 ### Study and Experiment Management
@@ -1211,7 +1211,7 @@ When running the MCP server (`scaffold mcp`), the tools below are available to A
 | `scaffold_begin_plan` | "begin plan X" / "kick off plan X" | Phase 1: orient + full pre-review, auto-writes findings, stamps `Plan.reviewedAt`, returns a proceed prompt |
 | `scaffold_complete_plan` | "wrap up plan X" / "close out plan X" | Phase 2: retro, auto-writes retro findings, optional backlog items, returns a completion checklist |
 
-**Session Continuity Tools** -- working-session ledger (Plan 263):
+**Session Continuity Tools** -- working-session ledger:
 
 | Tool | NL Trigger | What It Does |
 |------|-----------|-------------|

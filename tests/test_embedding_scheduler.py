@@ -1,4 +1,4 @@
-"""Async embedding scheduler tests for Plan 232."""
+"""Async embedding scheduler tests."""
 
 from __future__ import annotations
 

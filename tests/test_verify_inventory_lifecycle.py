@@ -1,4 +1,4 @@
-"""The ``inventory_lifecycle`` verification row and COMPONENT disposition (Plan 282)."""
+"""The ``inventory_lifecycle`` verification row and COMPONENT disposition."""
 
 from __future__ import annotations
 

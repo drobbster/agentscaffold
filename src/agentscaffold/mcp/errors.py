@@ -1,4 +1,4 @@
-"""Structured error taxonomy for MCP tool responses (Plan 249, Step A6).
+"""Structured error taxonomy for MCP tool responses.
 
 MCP tools return JSON to an agent rather than raising into a human's terminal, so
 a failure has to be legible to a model: a stable code it can branch on, a message

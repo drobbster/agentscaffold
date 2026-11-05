@@ -1,4 +1,4 @@
-"""User-level workspace registry and call-time project resolution (Plan 249).
+"""User-level workspace registry and call-time project resolution.
 
 Before this module, one MCP server process was bound to one directory by a ``cd``
 in its ``mcp.json`` entry, so a monorepo needed one server per project and the
@@ -215,13 +215,13 @@ def registry_lock(
 ) -> Iterator[Path]:
     """Hold an exclusive lock across a registry read-modify-write cycle.
 
-    Step A4 made registry writes atomic, which rules out a reader seeing a
+    Registry writes are atomic, which rules out a reader seeing a
     half-written file. It does not rule out a lost update: registering reads the
     document, appends to it, and writes it back, and two of those cycles can
     interleave so that the second write discards the first's workspace. The file
     is well-formed throughout -- a workspace has simply disappeared. Atomicity is
     a property of one write; this is a property of the cycle, so the lock has to
-    span the cycle (review finding ``rf::7918540f8b4b``).
+    span the cycle.
 
     The lock is a directory because ``mkdir`` is atomic across processes on
     common local filesystems, and processes are the real case: two ``scaffold``
@@ -410,7 +410,7 @@ def register_workspace(
     id. Duplicate roots would also make longest-prefix resolution ambiguous.
 
     Registration is only ever explicit. Nothing in the indexing or MCP paths may
-    call this as a side effect (threat model, Vector 1).
+    call this as a side effect.
 
     The whole read-modify-write cycle runs under the registry lock, so two
     concurrent registrations serialise instead of one silently discarding the

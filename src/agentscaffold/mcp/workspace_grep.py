@@ -1,4 +1,4 @@
-"""Scoped workspace ripgrep for MCP agents (Plan 246)."""
+"""Scoped workspace ripgrep for MCP agents."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def workspace_grep(
     """Run ripgrep under ``root`` with path sandboxing.
 
     Returns structured hits. Rejects paths that escape the project root, except
-    the project's ``graph.extra_paths`` files (Plan 283), named ``@repo/...``.
+    the project's ``graph.extra_paths`` files, named ``@repo/...``.
     """
     from agentscaffold.repo_paths import is_repo_path
 

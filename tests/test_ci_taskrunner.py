@@ -123,7 +123,7 @@ def test_taskrunner_invalid_format(tmp_project: Path, cli_runner: CliRunner) -> 
 
 
 def test_ci_template_runs_the_inventory_check_when_enabled() -> None:
-    """Plan 282: inventory check, and INV-008 over a pull request's changed files."""
+    """Inventory check, and INV-008 over a pull request's changed files."""
     import yaml
 
     from agentscaffold.config import ScaffoldConfig
