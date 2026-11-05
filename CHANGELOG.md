@@ -76,6 +76,30 @@ introduce additive features and small behavior changes).
 - **`scaffold doctor` adds an `unstamped_rows` check** counting graph rows with
   an empty `project` in a multi-project workspace, and `state_location` now
   also reports leftover `.scaffold/graph.duckdb` files in project folders.
+- **Reviews bring up earlier findings, learnings and ADRs about the same
+  files.** The pre-implementation review adds up to five `PRECEDENT`
+  challenges and a `precedent` section in the brief;
+  `scaffold_prepare_implementation` returns a short `precedent` list;
+  `scaffold_impact` adds an uncapped `governance_impact` section (argument
+  `include_precedent`). Matches come from graph links, the paths stored on
+  findings and learnings (new), earlier plans that changed the same file, and
+  ADRs governing them, read from this project, `implementation_project` and
+  `precedent.sources`. `scaffold review precedent <path>` shows the same from
+  the CLI. Semantic matching is behind `precedent.semantic` (off).
+- **Findings take a disposition.** `scaffold_resolve_finding` accepts
+  `disposition` (`resolved`, the default; `deferred`; `not_applicable`, the
+  last two needing a reason) and `backlog_id` for the item that carries
+  deferred work. Deferred findings are never pruned.
+- **Rule checks in the post-implementation review.** Verification gains
+  `pre_review_disposition`, `workflow_state_updated`,
+  `architecture_changelog`, `package_changelog`, `contract_with_interface`
+  and `read_only_paths` rows, judged on the files the plan changed in git
+  (its merged or open branches, else the commit recorded at the
+  pre-implementation review, else the File Impact Map). Configure them under
+  `compliance`; `gates.in_progress_to_complete.compliance: block` makes a
+  failing row stop `scaffold_complete_plan` before anything is written
+  (default `warn`). `scaffold review verify` takes `--plan` and `--base-ref`,
+  as do the MCP retro and completion tools (`base_ref`).
 
 ### Changed
 - **Generated hook scripts are one-line shims into a Python router.** The
@@ -127,6 +151,14 @@ introduce additive features and small behavior changes).
   edit hook and background refresh refuse too. `--force-root` overrides it.
 
 ### Fixed
+- **The pre-implementation review stamp survives reindexing.** It was stored
+  on the `Plan` row, which every governance reindex rebuilds, so a reviewed
+  plan read as unreviewed after any plan edit and the strict gate refused it.
+  The stamp now lives in a preserved `PlanReview` table (schema 12), which also
+  records each repository's HEAD at review; stamps on older graphs carry over
+  when they are upgraded.
+- **`scaffold_prepare_retro` verifies with the project root and config.** It
+  ignored `implementation_project` before.
 - **Single-to-multi-project migration re-keys session rows already stamped
   with the project name.** Sessions written since project-scoped sessions
   carry the project on a bare id even in a lone repo; the migration skipped

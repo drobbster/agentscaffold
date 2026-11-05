@@ -120,6 +120,7 @@ Gates control transitions between plan lifecycle states: Draft -> Review -> Read
 | tests_pass | bool | true | Tests must pass |
 | retrospective | bool | true | Retrospective must be completed |
 | domain_implementation_review | bool | false | Domain-specific post-implementation review (e.g. quant_architect_implementation) |
+| compliance | `off` / `warn` / `block` | warn | Rule checks in the post-implementation review (see [compliance](#compliance)). `block` stops `scaffold_complete_plan` before anything is written when a rule row fails; `off` omits the rows. Quote `'off'` in YAML |
 
 ---
 
@@ -693,6 +694,81 @@ go idle. To start fresh in a new chat while an old session is still active, call
 sessions:
   idle_hours: 12
   warn_after_hours: 24
+```
+
+---
+
+## precedent
+
+Earlier findings, learnings and ADRs about the files a plan touches, fed into
+the pre-implementation review (`PRECEDENT` challenges and the brief's
+`precedent` section), `scaffold_prepare_implementation`, and
+`scaffold_impact`'s `governance_impact`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| enabled | bool | true | `false` omits precedent everywhere |
+| semantic | bool | false | Add embedding matches after the structural ones. Needs the `search` extra and embeddings |
+| sources | list[str] | [] | Other registered project names to read precedent from, besides this project and `implementation_project`. Opened read-only; one that cannot be opened is reported, never an error |
+| max_challenges | int | 5 | Most `PRECEDENT` challenges in the pre-implementation review |
+| max_brief | int | 10 | Most items in the brief's `precedent` section |
+| max_compact | int | 5 | Most items on `scaffold_prepare_implementation` |
+| statistic_categories | list[str] | `HISTORY`, `VOLATILITY`, `HOT_FILE`, `COMPLEXITY` | Finding categories that are counts, not judgments; never returned as precedent |
+
+Items match, in rank order, through a graph link to the file, the stored
+paths of a finding or learning, an earlier plan that changed the same file, an
+ADR governing such a plan, and (with `semantic`) similar text. A plan never
+sees its own findings.
+
+```yaml
+precedent:
+  sources: [agentscaffold-governance]
+  max_challenges: 5
+```
+
+---
+
+## compliance
+
+Rule checks added to the post-implementation review's verification rows
+(`scaffold review verify`, `scaffold_prepare_retro`, `scaffold_complete_plan`).
+Each rule judges the files the plan changed, found from git in this order:
+a `base_ref` argument; the plan's merged branches (merge commits naming a
+branch with the plan number, such as `feature/281-x` or `docs/plan-281-y`, and
+squash merges whose subject starts with it, such as `Plan 281: ... (#12)`) on
+HEAD and on each base branch that exists; the plan's open branch since its
+merge-base with the base branch, plus uncommitted and untracked files; the
+commit recorded when the pre-implementation review ran; else the plan's File
+Impact Map. With `implementation_project` set, the code repository's changes
+are found the same way. Each row names the source it used.
+
+| Rule | Checks |
+|------|--------|
+| `pre_review_disposition` | Every pre-implementation finding recorded by an agent or human, and every automated `PRECEDENT` finding, has a disposition (`resolved`, `deferred` or `not_applicable`) |
+| `workflow_state_updated` | The workflow state file changed |
+| `architecture_changelog` | The architecture changelog changed for an architectural plan (an ADR governs it, `Breaking change: Yes`, or it changes the architecture document), and not otherwise |
+| `package_changelog` | Where `package_changelog` is set, it changed when source did |
+| `contract_with_interface` | A contract covering a changed file, or listed by the plan, changed |
+| `read_only_paths` | A changed file under `semi_autonomous.safety.read_only_paths` has a recorded approval (an `- Approved: YYYY-MM-DD by <name>` line in the plan, or an entry under `## Approvals` in the workflow state) |
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| base_branch | str | unset | Branch an open plan branch is compared with. Unset: the first of `origin/HEAD`, `staging`, `main`, `master` that exists |
+| package_changelog | str | unset | Changelog a source change should touch, relative to the project root. Unset skips that rule |
+| disposition_exempt_categories | list[str] | `DEPENDENCY`, `CONSUMER_AUDIT`, `TEST_COVERAGE` | Finding categories the disposition rule ignores |
+| rules | map | {} | Per rule: `off`, `warn` or `block`. `read_only_paths` defaults to `block` and the rest to `warn`. A violation is `fail` at `block` and `warn` at `warn`; `off` omits the row |
+
+Only `gates.in_progress_to_complete.compliance: block` makes a `fail` row stop
+completion.
+
+```yaml
+compliance:
+  package_changelog: CHANGELOG.md
+  rules:
+    architecture_changelog: 'off'
+gates:
+  in_progress_to_complete:
+    compliance: warn
 ```
 
 ---
