@@ -6,30 +6,61 @@ Verifies what was actually implemented versus what the plan specified:
   3. Layer conformance -- check for layer violations
   4. Wiring check -- verify all callers of modified functions still work
   5. Test delta -- count tests added/modified
+  6. Rule rows -- finding dispositions, workflow state, changelogs,
+     contracts and read-only paths, over the files the plan changed in git
 """
 
 from __future__ import annotations
 
+import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agentscaffold.graph.query_compat import ql, sql_escape
+from agentscaffold.paths import resolve_node_path
+from agentscaffold.review.changes import ChangeSet, plan_changes, validate_ref
 from agentscaffold.review.file_impact_resolve import (
     ImplementationProjectError,
+    current_project_name,
+    plan_impact_paths,
     query_root,
     query_store,
     resolved_impacts,
 )
+from agentscaffold.review.filters import is_always_shown, is_source_code_file
 from agentscaffold.review.queries import (
+    get_adrs_for_plan,
+    get_contracts_for_file,
     get_file_importers,
     get_function_callers,
     get_plan_by_number,
+    get_plan_review,
 )
 from agentscaffold.review.test_presence import source_has_tests
+from agentscaffold.validate.safety import matches_read_only
 
 if TYPE_CHECKING:
+    from agentscaffold.config import ScaffoldConfig
     from agentscaffold.graph.backend import GraphBackend
+
+logger = logging.getLogger(__name__)
+
+#: Rule rows, in output order.
+COMPLIANCE_CHECKS = (
+    "pre_review_disposition",
+    "workflow_state_updated",
+    "architecture_changelog",
+    "package_changelog",
+    "contract_with_interface",
+    "read_only_paths",
+    "inventory_lifecycle",
+)
+ARCHITECTURE_CHANGELOG = "docs/ai/architectural_design_changelog.md"
+#: Review types written by the tools, not by an agent or human.
+_AUTOMATED_REVIEW_TYPES = frozenset({"pre_review", "post_retro", "retro"})
+_BREAKING = re.compile(r"^\s*-?\s*\**Breaking change\**:\s*\**\s*yes", re.IGNORECASE | re.MULTILINE)
 
 
 @dataclass
@@ -48,11 +79,14 @@ def verify_implementation(
     *,
     root: Path | None = None,
     config: Any = None,
+    base_ref: str | None = None,
 ) -> list[VerificationItem]:
     """Verify a plan's implementation against the graph.
 
     Should be run AFTER re-indexing the codebase post-implementation.
-    Returns a list of verification items.
+    Returns a list of verification items. With *root*, the compliance rule rows
+    follow unless ``gates.in_progress_to_complete.compliance`` is ``off``.
+    Raises ValueError for an unsafe *base_ref*.
     """
     plan = get_plan_by_number(store, plan_number)
     if plan is None:
@@ -77,7 +111,431 @@ def verify_implementation(
                 evidence={"error_code": "implementation_project_unregistered"},
             )
         )
+    if root is not None and _gate_level(config) != "off":
+        items.extend(
+            compliance_items(store, plan_number, root=Path(root), config=config, base_ref=base_ref)
+        )
     return items
+
+
+def _gate_level(config: Any) -> str:
+    gates = getattr(config, "gates", None)
+    if gates is None:
+        return "off"
+    return str(gates.in_progress_to_complete.compliance)
+
+
+# ---------------------------------------------------------------------------
+# Rule rows
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _Root:
+    name: str
+    path: Path
+    config: ScaffoldConfig
+    changes: ChangeSet
+
+
+def compliance_items(
+    store: GraphBackend,
+    plan_number: int,
+    *,
+    root: Path,
+    config: Any = None,
+    base_ref: str | None = None,
+) -> list[VerificationItem]:
+    """Rule rows for *plan_number* over the files it changed under each root.
+
+    Roots are the project and its ``implementation_project``. A check set to
+    ``off`` in ``compliance.rules`` is omitted; a violation is ``fail`` at level
+    ``block`` and ``warn`` otherwise. Raises ValueError for an unsafe *base_ref*.
+    """
+    from agentscaffold.config import ScaffoldConfig  # noqa: PLC0415
+
+    cfg = config if isinstance(config, ScaffoldConfig) else ScaffoldConfig()
+    if base_ref is not None:
+        validate_ref(base_ref)
+    plan = get_plan_by_number(store, plan_number)
+    if plan is None:
+        return []
+    root = Path(root)
+    text = _plan_text(plan, root)
+    roots = _change_roots(store, plan_number, root, cfg, base_ref)
+    level = cfg.compliance.level
+
+    checks = {
+        "pre_review_disposition": lambda: _check_disposition(store, plan, cfg, text),
+        "workflow_state_updated": lambda: _check_workflow_state(roots, cfg),
+        "architecture_changelog": lambda: _check_architecture_changelog(
+            store, plan_number, plan, text, roots, cfg
+        ),
+        "package_changelog": lambda: _check_package_changelog(roots),
+        "contract_with_interface": lambda: _check_contracts(store, plan_number, roots, cfg),
+        "read_only_paths": lambda: _check_read_only(plan_number, text, roots, cfg),
+        "inventory_lifecycle": lambda: _check_inventory_lifecycle(text, roots, cfg),
+    }
+    items: list[VerificationItem] = []
+    for check in COMPLIANCE_CHECKS:
+        rule_level = level(check)
+        if rule_level == "off":
+            continue
+        status, detail, evidence = checks[check]()
+        if status == "violation":
+            status = "fail" if rule_level == "block" else "warn"
+        if check != "pre_review_disposition":
+            detail = f"{detail} Changes: {_change_note(roots)}."
+            evidence = {**_change_evidence(roots), **evidence}
+        items.append(VerificationItem(check=check, status=status, detail=detail, evidence=evidence))
+    return items
+
+
+Outcome = tuple[str, str, dict[str, Any]]
+
+
+def _change_roots(
+    store: GraphBackend,
+    plan_number: int,
+    root: Path,
+    cfg: ScaffoldConfig,
+    base_ref: str | None,
+) -> list[_Root]:
+    review = get_plan_review(store, plan_number) or {}
+    commits = review.get("reviewedCommits") or {}
+    impact = plan_impact_paths(store, plan_number, root)
+    candidates: list[tuple[str, Path, ScaffoldConfig]] = [
+        (current_project_name(root, cfg), root, cfg)
+    ]
+    sibling = _implementation_root(cfg)
+    if sibling is not None:
+        candidates.append(sibling)
+
+    roots: list[_Root] = []
+    for name, path, rcfg in candidates:
+        if len(candidates) > 1:
+            here = [p for p in impact if _exists(path, p)]
+        else:
+            here = impact
+        kwargs: dict[str, Any] = {
+            "base_branch": rcfg.compliance.base_branch,
+            "reviewed_commit": commits.get(name),
+            "impact_paths": here,
+            "extra_paths": rcfg.graph.extra_paths,
+        }
+        try:
+            changes = plan_changes(path, plan_number, base_ref=base_ref, **kwargs)
+        except ValueError as exc:
+            logger.warning("change range for %s: %s; using the default sources", name, exc)
+            changes = plan_changes(path, plan_number, **kwargs)
+        roots.append(_Root(name, path, rcfg, changes))
+    return roots
+
+
+def _exists(root: Path, node_path: str) -> bool:
+    disk = resolve_node_path(root, node_path)
+    return disk is not None and disk.exists()
+
+
+def _implementation_root(cfg: ScaffoldConfig) -> tuple[str, Path, ScaffoldConfig] | None:
+    name = cfg.implementation_project
+    if not name:
+        return None
+    from agentscaffold.config import find_config, load_config  # noqa: PLC0415
+    from agentscaffold.workspace_registry import (  # noqa: PLC0415
+        find_registered_project_by_name,
+    )
+
+    hit = find_registered_project_by_name(name)
+    if hit is None:
+        return None
+    path = Path(hit.project_root)
+    try:
+        sibling_cfg = load_config(find_config(start=path))
+    except Exception as exc:  # noqa: BLE001 - a broken sibling config skips only its rows
+        logger.warning("implementation_project %s config unreadable: %s", name, exc)
+        return None
+    return name, path, sibling_cfg
+
+
+def _change_note(roots: list[_Root]) -> str:
+    if len(roots) == 1:
+        changes = roots[0].changes
+        return f"{changes.source}, {changes.detail}"
+    return "; ".join(f"{r.name} from {r.changes.source}, {r.changes.detail}" for r in roots)
+
+
+def _change_evidence(roots: list[_Root]) -> dict[str, Any]:
+    evidence: dict[str, Any] = {"change_source": roots[0].changes.source}
+    if len(roots) > 1:
+        evidence["change_sources"] = {r.name: r.changes.source for r in roots}
+    return evidence
+
+
+def _plan_text(plan: dict[str, Any], root: Path) -> str:
+    raw = str(plan.get("p.filePath") or "")
+    if not raw:
+        return ""
+    path = Path(raw) if Path(raw).is_absolute() else root / raw
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _plan_project(store: GraphBackend, plan: dict[str, Any]) -> str:
+    rows = store.query(f"SELECT project FROM Plan WHERE id = '{sql_escape(str(plan['p.id']))}'")
+    return str((rows[0].get("project") if rows else "") or "")
+
+
+def _check_disposition(
+    store: GraphBackend, plan: dict[str, Any], cfg: ScaffoldConfig, text: str = ""
+) -> Outcome:
+    from agentscaffold.graph.findings import DISPOSITIONS  # noqa: PLC0415
+    from agentscaffold.inventory.plan_table import lifecycle_rows  # noqa: PLC0415
+
+    project = _plan_project(store, plan)
+    scope = f" AND COALESCE(project, '') IN ('', '{sql_escape(project)}')" if project else ""
+    rows = store.query(
+        "SELECT id, reviewType, category, status, finding FROM ReviewFinding"
+        f" WHERE planNumber = {int(plan['p.number'])}{scope} ORDER BY id"
+    )
+    skipped = {c.upper() for c in cfg.precedent.statistic_categories}
+    skipped |= {c.upper() for c in cfg.compliance.disposition_exempt_categories}
+    table = [r.component for r in lifecycle_rows(text) or []]
+    in_scope: list[str] = []
+    undisposed: list[str] = []
+    for row in rows:
+        category = str(row.get("category") or "").upper()
+        automated = str(row.get("reviewType") or "").lower() in _AUTOMATED_REVIEW_TYPES
+        if category in skipped or (automated and not is_always_shown(category)):
+            continue
+        in_scope.append(str(row["id"]))
+        if row.get("status") in DISPOSITIONS:
+            continue
+        if category == "COMPONENT" and _names_component(str(row.get("finding") or ""), table):
+            continue
+        undisposed.append(str(row["id"]))
+    if undisposed:
+        return (
+            "violation",
+            f"{len(undisposed)} of {len(in_scope)} pre-implementation finding(s) have no "
+            "disposition (resolved, deferred or not_applicable).",
+            {"undisposed": undisposed},
+        )
+    if not in_scope:
+        return "pass", "No pre-implementation findings need an answer.", {}
+    return "pass", f"All {len(in_scope)} pre-implementation finding(s) have a disposition.", {}
+
+
+_COMPONENT_ID = re.compile(r"[a-z][a-z0-9_]*:[^\s`'\",;()]+")
+
+
+def _names_component(finding: str, table: list[str]) -> bool:
+    """True when a COMPONENT finding's component has a lifecycle table row."""
+    named = {m.rstrip(".:") for m in _COMPONENT_ID.findall(finding)}
+    return bool(named & set(table))
+
+
+def _check_inventory_lifecycle(text: str, roots: list[_Root], cfg: ScaffoldConfig) -> Outcome:
+    """The plan's lifecycle table is reflected, and INV-008 is clean over its changes."""
+    from agentscaffold.inventory.checks import changed_file_findings  # noqa: PLC0415
+    from agentscaffold.inventory.plan_table import lifecycle_rows  # noqa: PLC0415
+    from agentscaffold.inventory.project import load_project_inventory  # noqa: PLC0415
+    from agentscaffold.inventory.schema import InventoryError  # noqa: PLC0415
+
+    if not cfg.inventory.enabled:
+        return "skip", "The system inventory is not enabled.", {}
+    root = roots[0]
+    try:
+        inventory = load_project_inventory(root.path, cfg)
+    except InventoryError as exc:
+        return "violation", f"The system inventory cannot be read: {exc}", {}
+    rows = lifecycle_rows(text)
+    inv008 = changed_file_findings(inventory, root.changes.files, root=root.path)
+    if rows is None and not inv008:
+        return (
+            "skip",
+            "No Component Lifecycle Changes table, and the change touches no paused or "
+            "deprecated component.",
+            {},
+        )
+    declared = inventory.by_id()
+    unreflected: list[str] = []
+    for row in rows or []:
+        entry = declared.get(row.component)
+        if row.after == "removed":
+            if entry is not None:
+                unreflected.append(f"{row.component}: still listed, but After is removed")
+        elif entry is None:
+            unreflected.append(f"{row.component}: not in the inventory")
+        elif (entry.lifecycle or "") != row.after:
+            unreflected.append(
+                f"{row.component}: inventory says {entry.lifecycle}, table says {row.after}"
+            )
+    tabled = {r.component for r in rows or []}
+    untabled = [f.to_dict() for f in inv008 if f.component not in tabled]
+    evidence: dict[str, Any] = {}
+    if unreflected:
+        evidence["unreflected"] = unreflected
+    if untabled:
+        evidence["inv_008"] = untabled
+    if evidence:
+        parts = []
+        if unreflected:
+            parts.append(
+                f"{len(unreflected)} lifecycle table row(s) not reflected in the inventory"
+            )
+        if untabled:
+            parts.append(
+                f"{len(untabled)} paused or deprecated component(s) changed without a table row"
+            )
+        return "violation", "; ".join(parts) + ".", evidence
+    count = len(rows or [])
+    return "pass", f"All {count} lifecycle table row(s) are reflected in the inventory.", {}
+
+
+def _check_workflow_state(roots: list[_Root], cfg: ScaffoldConfig) -> Outcome:
+    workflow = cfg.graph.workflow_state_file
+    if workflow in roots[0].changes.files:
+        return "pass", f"{workflow} was updated.", {}
+    return "violation", f"{workflow} was not updated.", {}
+
+
+def _check_architecture_changelog(
+    store: GraphBackend,
+    plan_number: int,
+    plan: dict[str, Any],
+    text: str,
+    roots: list[_Root],
+    cfg: ScaffoldConfig,
+) -> Outcome:
+    changed = set(roots[0].changes.files)
+    project = _plan_project(store, plan) or None
+    reasons: list[str] = []
+    if get_adrs_for_plan(store, plan_number, project=project):
+        reasons.append("an ADR governs it")
+    if _BREAKING.search(text):
+        reasons.append("it is a breaking change")
+    if cfg.graph.architecture_doc in changed:
+        reasons.append(f"it changes {cfg.graph.architecture_doc}")
+    logged = ARCHITECTURE_CHANGELOG in changed
+    if reasons:
+        why = " and ".join(reasons)
+        if logged:
+            return "pass", f"The plan is architectural ({why}) and the changelog was updated.", {}
+        return (
+            "violation",
+            f"The plan is architectural ({why}) but {ARCHITECTURE_CHANGELOG} was not updated.",
+            {},
+        )
+    if logged:
+        return (
+            "violation",
+            f"{ARCHITECTURE_CHANGELOG} changed, but no ADR, breaking change or architecture "
+            "document change marks the plan as architectural.",
+            {},
+        )
+    return "skip", "The plan is not architectural and the changelog is unchanged.", {}
+
+
+def _is_source(path: str) -> bool:
+    return not (path.startswith("docs/") or path.endswith(".md"))
+
+
+def _check_package_changelog(roots: list[_Root]) -> Outcome:
+    missing: list[str] = []
+    updated: list[str] = []
+    unconfigured: list[str] = []
+    for r in roots:
+        if not any(_is_source(p) for p in r.changes.files):
+            continue
+        changelog = r.config.compliance.package_changelog
+        if not changelog:
+            unconfigured.append(r.name)
+        elif changelog in r.changes.files:
+            updated.append(f"{r.name}: {changelog}")
+        else:
+            missing.append(f"{r.name}: {changelog}")
+    if missing:
+        return "violation", f"Source changed but not its changelog ({', '.join(missing)}).", {}
+    if updated:
+        return "pass", f"Changelog updated ({', '.join(updated)}).", {}
+    if unconfigured:
+        return (
+            "skip",
+            "compliance.package_changelog is not configured for "
+            f"{', '.join(unconfigured)}, where source changed.",
+            {},
+        )
+    return "skip", "No source files changed.", {}
+
+
+def _check_contracts(
+    store: GraphBackend, plan_number: int, roots: list[_Root], cfg: ScaffoldConfig
+) -> Outcome:
+    project = roots[0]
+    contracts_dir = cfg.graph.contracts_dir.rstrip("/") + "/"
+    contracts = {
+        p
+        for p in plan_impact_paths(store, plan_number, project.path)
+        if p.startswith(contracts_dir)
+    }
+    for path in project.changes.files:
+        if path.startswith(contracts_dir):
+            continue
+        for contract in get_contracts_for_file(store, path):
+            contract_path = _relative(str(contract.get("c.filePath") or ""), project.path)
+            if contract_path:
+                contracts.add(contract_path)
+    if not contracts:
+        return "skip", "No contract covers the changed files and the plan lists none.", {}
+    stale = sorted(c for c in contracts if c not in project.changes.files)
+    if stale:
+        return (
+            "violation",
+            f"{len(stale)} contract(s) not updated: {', '.join(stale)}.",
+            {"contracts": stale},
+        )
+    return "pass", f"All {len(contracts)} contract(s) were updated.", {}
+
+
+def _relative(path: str, root: Path) -> str:
+    if not path:
+        return ""
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        return candidate.as_posix()
+    try:
+        return candidate.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return ""
+
+
+def _check_read_only(
+    plan_number: int, text: str, roots: list[_Root], cfg: ScaffoldConfig
+) -> Outcome:
+    hits: list[str] = []
+    for r in roots:
+        protected = r.config.semi_autonomous.safety.read_only_paths
+        prefix = "" if r is roots[0] else f"{r.name}:"
+        hits.extend(f"{prefix}{p}" for p in r.changes.files if matches_read_only(p, protected))
+    if not hits:
+        return "skip", "No protected path changed.", {}
+    from agentscaffold.mcp.governance_delivery import approval_record  # noqa: PLC0415
+
+    record = approval_record(text, plan_number, roots[0].path / cfg.graph.workflow_state_file)
+    if record is not None:
+        return (
+            "pass",
+            f"Protected path(s) changed with a recorded approval ({record['line']}).",
+            {"paths": hits},
+        )
+    return (
+        "violation",
+        f"Protected path(s) changed without a recorded approval: {', '.join(hits)}.",
+        {"paths": hits},
+    )
 
 
 def _verify_from_rows(
@@ -150,8 +608,7 @@ def _check_plan_compliance(
             continue
         frow = row_by_path.get(fpath, {})
         if frow.get("resolution") == "sibling":
-            disk = query_root(frow, Path(".")) / fpath
-            if not disk.is_file():
+            if not _exists(query_root(frow, Path(".")), fpath):
                 missing.append(fpath)
             continue
         file_id = f"file::{fpath}"
@@ -272,11 +729,13 @@ def _check_test_delta(
     tested_count = 0
     untested: list[str] = []
 
-    for fpath in planned_paths:
+    for fpath in sorted(planned_paths):
         if not fpath or "/test" in fpath or fpath.startswith("tests/"):
             continue
 
         frow = row_by_path.get(fpath, {})
+        if not is_source_code_file(fpath, frow.get("f.language", "")):
+            continue
         qstore = query_store(frow, store)
         disk_root = query_root(frow, Path(".")) if frow else None
         if source_has_tests(qstore, fpath, root=disk_root):
@@ -285,7 +744,15 @@ def _check_test_delta(
             untested.append(fpath)
 
     total = tested_count + len(untested)
-    if untested:
+    if total == 0:
+        out.append(
+            VerificationItem(
+                check="test_delta",
+                status="skip",
+                detail="No source files in the change set; documents and config need no tests.",
+            )
+        )
+    elif untested:
         out.append(
             VerificationItem(
                 check="test_delta",

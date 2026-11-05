@@ -535,8 +535,8 @@ standalone study documents. When artifacts belong to an existing study, nest the
 the parent study slug and encode the plan number in the directory, not by appending it
 to the study date prefix:
 
-- Good: `outputs/studies/STU-2026-05-21-cost-realism/plan209/financials/summary.json`
-- Bad: `outputs/studies/STU-2026-05-21-financials-plan209-summary.json`
+- Good: `outputs/studies/STU-2026-01-15-example-study/plan042/results/summary.json`
+- Bad: `outputs/studies/STU-2026-01-15-results-plan042-summary.json`
 
 References in plans, studies, workflow state, and summaries must use the canonical
 nested path.
@@ -600,6 +600,38 @@ performance tweaks (batching, memory trims), queue/cache cleanup, or one-off rec
 steps. That lower-level history belongs in `docs/ai/state/workflow_state.md`, the
 relevant plan appendix/retrospective, or the runbook.
 
+{% if config.inventory.enabled %}
+## Component Lifecycle
+
+Every runtime component (scheduled and manual jobs, services, apps, config
+families, models, workflows, scripts) is listed in `{{ config.inventory.path }}` with
+an owner plan and a lifecycle: experimental, active, shadow, paused or deprecated.
+Paused and deprecated entries carry a reason, a review date and exit criteria.
+`scaffold inventory check` enforces this; `scaffold inventory refresh` adds what the
+collectors find without overwriting lifecycle fields a human set.
+
+**Trace before claiming.** Before stating what a component does, whether it runs,
+or that a change is safe for it, read its inventory entry, its entrypoint and the
+files it reads. Do not infer a component's state from its name, a plan's prose, or
+memory. `scaffold_impact` on a file lists the components that read it.
+
+**Retire in the same change.** A plan that replaces a component deprecates or
+removes the old one in the same plan, and a plan that adds a runtime component adds
+its inventory entry. Nothing is left running without an owner.
+
+**Plans decide lifecycles.** Plans list the components they touch in
+`- Components:` and carry a Component Lifecycle Changes table (Component, Before,
+After, Action; After may equal Before). The pre-implementation review raises one
+component challenge per paused or deprecated component the plan touches; answer
+each with a table row. The post-implementation review checks every row is reflected
+in the inventory.
+
+**Monthly architecture review.** Review the inventory's lifecycle debt (expired
+reviews, overdue deprecations, failing jobs, zombie candidates, stale drafts) with
+`docs/ai/prompts/architecture_review.md`, then record the date in
+`last_architecture_review`.
+
+{% endif %}
 ## Runbook Rules (Mandatory)
 
 The runbook (docs/runbook/) contains human-readable operational documentation.

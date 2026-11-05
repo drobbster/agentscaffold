@@ -1,4 +1,4 @@
-"""Plan 260: sentinel, heading-overlap guard, and upgrade lift."""
+"""Sentinel, heading-overlap guard, and upgrade lift."""
 
 from __future__ import annotations
 

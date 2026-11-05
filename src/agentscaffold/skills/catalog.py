@@ -1,4 +1,4 @@
-"""Progressive disclosure catalog — Step D.2.
+"""Progressive disclosure catalog.
 
 Builds a catalog from SKILL.md frontmatter, enabling agents to discover
 available skills with minimal token cost (~100 tokens per entry).

@@ -6,7 +6,7 @@ resolves those dispatch points heuristically, so editing such a class shows no c
 consumer. This processor extracts fully-qualified dotted references from config files and
 creates ``CONFIG_REFERENCES`` edges (config ``File`` -> target ``File``).
 
-Precision discipline (validated by SPIKE-2026-06-12-config-reference-resolution):
+Precision discipline (validated empirically on real config files):
 references are extracted ONLY when they appear under an allowlisted key (``class``,
 ``_target_``, ...). Arbitrary scalars are ignored -- they drop precision to ~85% and
 introduce false positives. We resolve against ``File`` nodes already in the graph, so the
@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agentscaffold.graph.query_compat import ql
+from agentscaffold.paths import resolve_node_path
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 CONFIG_LANGUAGES: frozenset[str] = frozenset({"yaml", "json", "toml"})
 
 # Keys whose string value is treated as a code reference. Lower-cased for matching.
-# Sourced from the P3 spike; deliberately narrow to keep precision high.
+# Sourced from that validation; deliberately narrow to keep precision high.
 ALLOWLIST_KEYS: frozenset[str] = frozenset(
     {
         "class",
@@ -99,8 +100,11 @@ def process_config_references(
     candidates = 0
     resolved = 0
     for file_id, file_path in config_files:
+        full_path = resolve_node_path(root, file_path)
+        if full_path is None:
+            continue
         try:
-            source = (root / file_path).read_text(errors="replace")
+            source = full_path.read_text(errors="replace")
         except (OSError, PermissionError):
             continue
 

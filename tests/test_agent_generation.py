@@ -1,4 +1,4 @@
-"""Tests for Steps C.4-C.6: agent markdown templates and all-platforms generation."""
+"""Tests for agent markdown templates and all-platforms generation."""
 
 from __future__ import annotations
 
@@ -457,7 +457,7 @@ def test_agents_md_template_stays_generic_no_domain_leakage():
     content = render_template("agents/agents_md.md.j2", get_default_context(ScaffoldConfig()))
 
     # The generic template must not carry consumer/domain-specific vocabulary.
-    for term in ("Prefect", "CUSIP", "CIK", "rebellion", "trading"):
+    for term in ("Prefect", "CUSIP", "CIK", "trading"):
         assert term not in content
 
 
@@ -660,7 +660,7 @@ def test_generate_all_writes_docs_when_absent(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Shared-workspace stub-first project AGENTS + workspace router (Plan 234)
+# Shared-workspace stub-first project AGENTS + workspace router
 # ---------------------------------------------------------------------------
 
 

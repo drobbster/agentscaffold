@@ -140,7 +140,7 @@ def extract_layer_path_patterns(
     section: str,
     known_top_level_dirs: list[str] | None = None,
 ) -> tuple[list[str], str]:
-    """Return ``(patterns, provenance)`` using the Plan 261 priority order.
+    """Return ``(patterns, provenance)`` using a fixed priority order.
 
     Provenance is ``curated`` (Components table or labeled line), ``inferred``
     (inline path-like backticks), or ``empty``.

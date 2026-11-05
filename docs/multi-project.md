@@ -226,6 +226,71 @@ A single-project repository has no canonical file and nothing to drift from.
 Personalize with `*.local` overlays (`AGENTS.local.md`,
 `.cursor/rules/local.*.mdc`) rather than by gitignoring the team `AGENTS.md`.
 
+The workspace-root `AGENTS.md` router is written only where AgentScaffold
+already manages that file. A root `AGENTS.md` your team owns is left
+byte-for-byte alone, and a missing one is not created; `generate-all` and
+`workspace migrate-layout` both report the skip. Pass
+`scaffold agents generate-all --include-workspace` to append the router to it.
+
+### When the rule files are not yours
+
+In a monorepo or a team repository you often cannot add AgentScaffold rules to
+the root `AGENTS.md` or `.cursor/rules/`, and a client opened at that root never
+sees the per-project copies. The server covers this case itself: its initialize
+result carries the working procedure (start a session, orient, route by intent,
+close the session), and `scaffold_orient` and the governance write tools return
+`meta.procedure_hint` while no session is open for the project the call resolved
+to. Sessions are tracked per project, so a session open in one project does not
+count for another.
+
+Clients differ in whether they show server instructions to the model; the
+response hint is the fallback for those that do not. To turn both off, see
+[`AGENTSCAFFOLD_MCP_INSTRUCTIONS`](configuration.md#agentscaffold_mcp_instructions).
+
+### Guidance outside the repository
+
+Server instructions say how to work; they do not carry the routing table, the
+per-project pointer, or the edit hooks that keep the graph fresh. Those live in
+`.cursor/` and `.claude/`, which an editor reads only from the folder it
+opened. A project at `services/api` inside a monorepo opened at its root gets
+none of them, and neither does a repository you are not allowed to add files to.
+
+A user-scope install delivers all of it from your home directory instead:
+
+```bash
+scaffold agents install --scope user --dry-run   # see what would change
+scaffold agents install --scope user
+```
+
+It covers every registered project (`--project` narrows that) for every client
+whose configuration directory exists (`--client cursor` or `--client claude`
+chooses).
+
+- **Cursor.** One shared routing plugin and one small pointer plugin per
+  project are generated under `$AGENTSCAFFOLD_HOME/cursor-plugins`. A
+  `workspaceOpen` hook in `~/.cursor/hooks.json` returns the plugins for the
+  projects inside the opened folder, so the rules load there and nowhere else.
+  The plugins ship no MCP server: the one entry from `scaffold mcp install`
+  still serves everything.
+- **Claude Code.** A `SessionStart` hook adds the pointer text for the projects
+  under the session's folder to its context.
+- **Hooks, both clients.** An after-edit hook resolves the edited file to its
+  registered project and starts that project's incremental index in the
+  background; edits outside every registered project return immediately. A
+  pre-edit hook refuses agent edits to the project's
+  `semi_autonomous.safety.read_only_paths` (see
+  [`agents.protect_read_only_paths`](configuration.md#agents)).
+
+The install only merges: other tools' hook entries survive, a timestamped
+`.bak` is kept, and `--uninstall` removes exactly what the install manifest
+(`$AGENTSCAFFOLD_HOME/user-install.json`) lists. User-scope guidance is
+personal; teammates who want it run the same command.
+
+Project-level hooks written by `scaffold agents hooks` now run the same router,
+so the two scopes share one lock. A project still on the older shell hook keeps
+its own lock; the install names those projects, and `doctor` warns about them.
+Re-run `scaffold agents hooks` in each to bring it onto the router.
+
 ---
 
 ## Checking a setup
@@ -239,10 +304,14 @@ scaffold doctor --strict   # exit non-zero if anything is not clean
 |---|---|
 | Workspace registry | Registered roots that no longer exist, and projects declared in a `workspace.yaml` but never registered |
 | Workspace identity | `workspace.yaml` and the registry naming one workspace differently |
-| Routing guidance | Generated rule files stale against the canonical source |
+| Routing guidance | Generated rule files stale against the canonical source, and user-scope copies missing, edited or stale |
+| Guidance not gitignored | Generated guidance git will not commit (OK with `agents.durability: local`) |
+| Guidance reaches the editor | Project-level rules and hooks in a project below its repository root, and whether a user-scope install covers it |
 | MCP registration | Legacy per-project entries, directory binding, hardcoded interpreters |
 | Version skew | Whether the MCP server runs the same AgentScaffold as your CLI |
-| Graph state location | Where the graph resolves, and in-tree databases being ignored |
+| Graph state location | Where the graph resolves, and in-tree databases being ignored at the workspace root or in any project folder |
+| Edit hook activity | An installed edit hook that has never run, and two hooks with different locks |
+| Graph rows without a project | In a multi-project workspace, graph rows with an empty `project`, which scoped reads skip (counted per table) |
 
 A `skip` means the check did not apply, and is never a fault.
 
@@ -336,9 +405,40 @@ registered a project and now see an unexpectedly empty graph, run
 
 ### `doctor` reports an in-tree graph is being ignored
 
-You have both a state-directory graph and a leftover `<repo>/.scaffold/`. The
-state one is in use. Delete the leftover, or run
-`scaffold workspace migrate-state --restore --apply` if it is the one you wanted.
+You have both a state-directory graph and a leftover `.scaffold/` at the
+workspace root or in a project folder (a team folder indexed before its
+workspace was registered keeps its own). The state one is in use. Delete the
+leftover, or run `scaffold workspace migrate-state --restore --apply` if the
+workspace-root one is the one you wanted.
+
+### `scaffold index` refuses with "is not a project"
+
+You ran it at a directory that contains registered projects but is not one: a
+monorepo root above a team folder, or a multi-project workspace root. Indexing
+there would build one graph over every project at once. Run it from each
+project's folder, or pass `--force-root` if one combined graph is what you want.
+
+### Imports like `company.team_x.foo` have no edges
+
+A project in a monorepo subfolder is indexed from its own folder, so the
+module named by its full repository path is resolved through an inferred
+prefix (`company.team_x` for `<repo>/company/team_x/`). If those imports still
+show no callers or impact, check `import_strategies` in `scaffold_validate`
+(`check=coverage`): a `prefix` count of zero means nothing matched. A folder
+name with a hyphen or a Python keyword disables inference; map the prefix
+yourself with `graph.module_prefixes`. See
+[Monorepo module prefixes](configuration.md#monorepo-module-prefixes).
+
+### Files outside the team folder are missing from the graph
+
+Code that a team owns but keeps elsewhere in the repository, such as
+`airflow/dags/team_x/`, is not under the project root, so it is not indexed
+by default. List it in `graph.extra_paths` with globs relative to the git
+root; the files are then indexed as `@repo/<path>`. If a listed file is still
+missing, check the warnings from `scaffold index`: a glob that starts with a
+wildcard is refused, and a file inside another registered project, or claimed
+by two projects, is left out. See
+[Files outside the project folder](configuration.md#files-outside-the-project-folder-extra_paths).
 
 ### The workspace is recorded under two different ids
 

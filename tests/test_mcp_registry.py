@@ -47,6 +47,7 @@ EXPECTED_TOOLS = (
     "scaffold_find_studies",
     "scaffold_prior_experiments",
     "scaffold_find_adrs",
+    "scaffold_governance",
     "scaffold_decision_context",
     "scaffold_projects",
     "scaffold_record_finding",
@@ -104,7 +105,7 @@ def test_every_tool_accepts_working_path():
 
 
 def test_working_path_is_described_as_the_thing_to_send_but_stays_optional():
-    """The description is the only steering an agent reads (Plan 257, B4).
+    """The description is the only steering an agent reads.
 
     It used to open with "Optional", which is true of the schema and misleading
     about the consequence: with several projects registered there is no default to
@@ -182,5 +183,18 @@ def test_the_registry_imports_without_the_mcp_sdk():
 
 @pytest.mark.parametrize("spec", tool_specs(), ids=lambda s: s.name)
 def test_each_tool_is_individually_addressable(spec: ToolSpec):
-    """Proves the registry is parametrisable, which is what Phase F needs it for."""
+    """Proves the registry is parametrisable, which is what the conformance suites need it for."""
     assert get_tool_spec(spec.name) is not None
+
+
+def test_session_start_and_orient_descriptions_state_the_call_order():
+    """Clients that drop server instructions still see the order."""
+    start = get_tool_spec("scaffold_session_start")
+    orient = get_tool_spec("scaffold_orient")
+    assert start is not None and orient is not None
+    assert start.description.startswith(
+        "Call this first in every new chat, before any other AgentScaffold write."
+    )
+    assert orient.description.startswith(
+        "Call this second in every new chat, right after scaffold_session_start."
+    )

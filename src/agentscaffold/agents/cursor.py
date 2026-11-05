@@ -22,7 +22,7 @@ def _mcp_json_content(
 
     In a multi-project workspace the generated config pins the resolution anchor
     so no-argument MCP tools resolve the intended project even when the IDE opens
-    a parent folder (Plan 234). A lone repo keeps the bare ``["mcp"]`` args.
+    a parent folder. A lone repo keeps the bare ``["mcp"]`` args.
     """
     args = ["mcp"]
     if workspace_root:
@@ -100,7 +100,7 @@ def write_cursor_mcp_json(
     config. Since 0.10 one project-aware server serves every registered project,
     so a per-project config alongside it is the legacy registration that
     ``scaffold mcp install --migrate`` exists to retire; generating one undoes
-    that migration, which is what this guard prevents (Plan 253).
+    that migration, which is what this guard prevents.
 
     Both conditions are needed, and each catches a case the other misses.
     Registration alone misses a fresh project created after ``scaffold mcp
@@ -114,7 +114,7 @@ def write_cursor_mcp_json(
 
     When *workspace_root*/*project_name* are not supplied they are auto-detected
     from ``cursor_dir``'s parent, so a registered project in a multi-project
-    workspace emits ``["mcp", "--workspace", ..., "--project", ...]`` (Plan 234).
+    workspace emits ``["mcp", "--workspace", ..., "--project", ...]``.
 
     If the file already exists, skip writing and emit a diff-suggestion to
     stdout so existing custom configs are not overwritten. *dry_run* reports what
@@ -241,24 +241,14 @@ def run_cursor_setup(force: bool = False) -> None:
 
     if config.enforcement.platform_enabled("cursor"):
         from agentscaffold.hooks.generators.cursor import (
-            resolve_scaffold_bin,
             write_cursor_hooks,
             write_embedding_commit_hooks,
         )
 
-        for path in write_cursor_hooks(
-            config.enforcement,
-            project_root,
-            scaffold_bin=resolve_scaffold_bin(),
-            min_interval_seconds=config.graph.incremental_min_interval_seconds,
-        ):
+        for path in write_cursor_hooks(config.enforcement, project_root):
             console.print(f"[green]Wrote[/green] {path.relative_to(project_root)}")
         if getattr(config.graph, "async_embeddings", "off") == "commit":
-            for path in write_embedding_commit_hooks(
-                project_root,
-                scaffold_bin=resolve_scaffold_bin(),
-                min_interval_seconds=config.graph.embedding_min_interval_seconds,
-            ):
+            for path in write_embedding_commit_hooks(project_root):
                 console.print(f"[green]Wrote[/green] {path.relative_to(project_root)}")
 
 

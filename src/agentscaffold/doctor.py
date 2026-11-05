@@ -1,6 +1,6 @@
-"""Read-only health checks for an AgentScaffold installation (Plan 249, Step B8).
+"""Read-only health checks for an AgentScaffold installation.
 
-Phase A and B each moved something that used to be self-evident. The MCP server
+Recent releases each moved something that used to be self-evident. The MCP server
 became one entry serving every project instead of one entry per project. The
 graph moved out of the working tree into a per-workspace state directory. The
 routing guidance became generated output with a canonical source. Every one of
@@ -9,8 +9,8 @@ server answers tool calls, a re-keyed graph re-indexes quietly, an unregenerated
 rule file still routes the agent. This module is where that invisibility ends.
 
 Checks are registered in :data:`CHECKS` rather than being called in sequence from
-the command, because Plan 251 adds three more (commit durability, intent-map
-drift, generated-file banners) and should be able to append rather than rework.
+the command, so later checks (commit durability, intent-map drift,
+generated-file banners) can append rather than rework.
 
 Every check is read-only. Nothing here creates, writes, or repairs; a check that
 fixed things would be a check nobody could safely run on a broken machine, which
@@ -62,7 +62,7 @@ class DoctorContext:
 
 @dataclass(frozen=True)
 class Check:
-    """A named diagnostic. Plan 251 appends to :data:`CHECKS` with these."""
+    """A named diagnostic. New checks append to :data:`CHECKS` with these."""
 
     name: str
     title: str
@@ -136,7 +136,7 @@ def _manifest_registry_drift(registry: Any) -> list[str]:
     afterwards is invisible to every registry-driven read: it cannot be named with
     ``project=``, it is absent from the candidate list in a refusal, and it is not
     a registered root -- which used to mean a call anchored at its workspace could
-    be answered as a synthesised project instead (ADR-026). None of that surfaces
+    be answered as a synthesised project instead. None of that surfaces
     as an error, so the drift has to be reported before it can be explained.
     """
     from agentscaffold.config import load_workspace_manifest
@@ -170,8 +170,17 @@ def check_guidance(context: DoctorContext) -> CheckResult:
     """
     from agentscaffold.rendering import canonical_guidance_path, detect_guidance_drift
 
+    user_drift = user_copy_drift()
+    user_remedy = "Run `scaffold agents install --scope user` to regenerate the user-scope copies."
     canonical = canonical_guidance_path(context.project_root)
     if canonical is None:
+        if user_drift:
+            return CheckResult(
+                status="warn",
+                summary=f"{len(user_drift)} user-scope guidance file(s) have drifted.",
+                details=user_drift,
+                remediation=user_remedy,
+            )
         return CheckResult(
             status="ok",
             summary="No canonical guidance applies here, so there is nothing to drift from.",
@@ -182,7 +191,7 @@ def check_guidance(context: DoctorContext) -> CheckResult:
         )
 
     drift = detect_guidance_drift(context.project_root)
-    if not drift:
+    if not drift and not user_drift:
         return CheckResult(status="ok", summary="Generated rule files match the canonical source.")
 
     reasons = {
@@ -190,16 +199,62 @@ def check_guidance(context: DoctorContext) -> CheckResult:
         "unstamped": "unstamped (hand-edited, or predates the canonical source)",
         "missing_canonical": "cites a canonical file that is gone",
     }
+    remedies = ["Run `scaffold agents generate-all` to regenerate them."] if drift else []
+    if user_drift:
+        remedies.append(user_remedy)
     return CheckResult(
         status="warn",
-        summary=f"{len(drift)} generated rule file(s) have drifted.",
-        details=[f"{item.path}: {reasons.get(item.reason, item.reason)}" for item in drift],
-        remediation="Run `scaffold agents generate-all` to regenerate them.",
+        summary=f"{len(drift) + len(user_drift)} generated rule file(s) have drifted.",
+        details=[f"{item.path}: {reasons.get(item.reason, item.reason)}" for item in drift]
+        + user_drift,
+        remediation=" ".join(remedies),
     )
 
 
+def _user_install_manifest() -> dict[str, Any]:
+    from agentscaffold.config_home import resolve_home_dir
+    from agentscaffold.hooks.router import MANIFEST_FILENAME
+
+    try:
+        data = json.loads((resolve_home_dir() / MANIFEST_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def user_copy_drift() -> list[str]:
+    """User-scope files that are gone, hand-edited, or behind the package.
+
+    The install manifest records a hash per file it wrote; the shared routing
+    rule is also re-rendered, because it changes when the package does.
+    """
+    import hashlib
+
+    manifest = _user_install_manifest()
+    files = manifest.get("files")
+    if not isinstance(files, dict):
+        return []
+    from agentscaffold.agents.user_scope import SHARED_RULE_NAME, render_shared_rule
+
+    problems: list[str] = []
+    for raw, recorded in sorted(files.items()):
+        path = Path(raw)
+        try:
+            current = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            problems.append(f"{path}: missing (user scope)")
+            continue
+        if current != recorded:
+            problems.append(f"{path}: edited since it was installed (user scope)")
+        elif path.name == SHARED_RULE_NAME:
+            fresh = hashlib.sha256(render_shared_rule().encode("utf-8")).hexdigest()
+            if fresh != recorded:
+                problems.append(f"{path}: stale (generated by an older AgentScaffold)")
+    return problems
+
+
 def check_guidance_ignored(context: DoctorContext) -> CheckResult:
-    """Guidance files that git will not commit (Plan 251 Step 11).
+    """Guidance files that git will not commit.
 
     A parent-directory exclude (``.cursor/``) cannot be undone by a file-level
     negation. Remediation is directory-scoped: ``.cursor/*`` plus
@@ -213,11 +268,221 @@ def check_guidance_ignored(context: DoctorContext) -> CheckResult:
             status="ok",
             summary="Generated guidance files are not gitignored.",
         )
+    config = _project_config(context.project_root)
+    if config is not None and config.agents.durability == "local":
+        return CheckResult(
+            status="ok",
+            summary=f"{len(ignored)} guidance file(s) are gitignored, as intended.",
+            details=["agents.durability is 'local': generated guidance stays on this machine."],
+        )
     return CheckResult(
         status="warn",
         summary=f"{len(ignored)} guidance file(s) are ignored by git.",
         details=[str(path) for path in ignored],
-        remediation=GUIDANCE_IGNORE_REMEDIATION,
+        remediation=GUIDANCE_IGNORE_REMEDIATION
+        + " Or set agents.durability: local if they are meant to stay uncommitted.",
+    )
+
+
+def _project_config(root: Path) -> Any:
+    """The project's ScaffoldConfig, defaults without a scaffold.yaml, None if unreadable."""
+    from agentscaffold.config import ScaffoldConfig, load_config
+
+    path = root / "scaffold.yaml"
+    try:
+        return load_config(path) if path.is_file() else ScaffoldConfig()
+    except Exception:  # noqa: BLE001 - other checks report a broken scaffold.yaml
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Reachability and hook liveness
+# ---------------------------------------------------------------------------
+
+#: Project-level files an editor reads only from the folder it opened.
+_ROOT_ONLY_GUIDANCE = (".cursor/hooks.json", ".claude/settings.json", ".windsurfrules")
+
+#: A hook that has not run for this long, while the graph was indexed since, is suspect.
+HOOK_SILENCE_SECONDS = 7 * 24 * 3600
+
+
+def _vcs_root(start: Path) -> Path | None:
+    for candidate in (start, *start.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def _registered_name(root: Path) -> str | None:
+    from agentscaffold.hooks.router import load_registered_projects, resolve_registered
+
+    routed = resolve_registered(str(root.resolve()), load_registered_projects())
+    return routed.name if routed is not None else None
+
+
+def _user_scope_covers(name: str | None, manifest: dict[str, Any]) -> bool:
+    if name is None:
+        return False
+    plugins = (manifest.get("cursor_plugins") or {}).get("projects") or {}
+    contexts = manifest.get("claude_context") or {}
+    return name in plugins or name in contexts
+
+
+def check_guidance_reachable(context: DoctorContext) -> CheckResult:
+    """Project-level rules and hooks that the editor will not load.
+
+    Cursor and Claude Code read ``.cursor/`` and ``.claude/`` from the folder
+    that was opened, so a project below its repository root gets them only when
+    someone opens the project folder itself. A user-scope install delivers the
+    same guidance and hooks wherever the workspace is opened.
+    """
+    root = context.project_root.resolve()
+    vcs_root = _vcs_root(root)
+    if vcs_root is None or vcs_root == root:
+        return CheckResult(
+            status="ok",
+            summary="The project is its repository root; project-level guidance loads there.",
+        )
+
+    files = [root / rel for rel in _ROOT_ONLY_GUIDANCE if (root / rel).is_file()]
+    rules_dir = root / ".cursor" / "rules"
+    if rules_dir.is_dir():
+        files += sorted(p for p in rules_dir.rglob("*") if p.is_file())
+    name = _registered_name(root)
+    covered = _user_scope_covers(name, _user_install_manifest())
+    details = [f"repository root: {vcs_root}"] + [str(p.relative_to(root)) for p in files]
+    if covered:
+        return CheckResult(
+            status="ok",
+            summary=f"A user-scope install covers project {name} wherever it is opened.",
+            details=details,
+        )
+    if not files:
+        return CheckResult(
+            status="ok",
+            summary="No project-level rule or hook files to reach.",
+            details=details,
+        )
+    if name is None:
+        remediation = (
+            "Register the project (`scaffold project register`), then run "
+            "`scaffold agents install --scope user`."
+        )
+    else:
+        remediation = f"Run `scaffold agents install --scope user --project {name}`."
+    return CheckResult(
+        status="warn",
+        summary=(
+            f"{len(files)} project-level file(s) load only when {root.name}/ itself is "
+            "opened, not the repository root."
+        ),
+        details=details,
+        remediation=remediation,
+    )
+
+
+def _project_hook_kind(root: Path) -> str | None:
+    """``shim``, ``legacy`` or None for the project-level edit hook script."""
+    from agentscaffold.hooks.generators.cursor import INDEX_HOOK_REL_PATH, is_router_shim
+
+    script = root / INDEX_HOOK_REL_PATH
+    try:
+        text = script.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return "shim" if is_router_shim(text) else "legacy"
+
+
+def check_hooks_ran(context: DoctorContext) -> CheckResult:
+    """An edit hook that is installed but has never fired.
+
+    The worker writes ``hook.last_run`` beside the graph each time a hook
+    reaches it. A graph that keeps being indexed while that file is missing or
+    old means the index is being refreshed some other way and the hook is not
+    running. Also flags a project still on the pre-router shell hook alongside
+    a user-scope hook: the two keep different locks.
+    """
+    import time
+
+    from agentscaffold.hooks.worker import read_last_run
+    from agentscaffold.paths import resolve_db_path
+
+    root = context.project_root.resolve()
+    project_hook = _project_hook_kind(root)
+    manifest = _user_install_manifest()
+    user_hooks = (
+        "hooks" in (manifest.get("components") or []) and _registered_name(root) is not None
+    )
+    if project_hook is None and not user_hooks:
+        return CheckResult(status="skip", summary="No edit hook is installed for this project.")
+
+    if project_hook == "legacy" and user_hooks:
+        return CheckResult(
+            status="warn",
+            summary="Two edit hooks with different locks can index this project at once.",
+            details=[
+                "project hook: pre-router shell script (lock under ./.scaffold/)",
+                "user hook: router (lock in the graph's state directory)",
+            ],
+            remediation="Run `scaffold agents hooks` in the project to regenerate it as a shim.",
+        )
+
+    config = _project_config(root)
+    try:
+        db_path = resolve_db_path(config, start=root)
+    except Exception as exc:  # pragma: no cover - unresolvable layout
+        return CheckResult(
+            status="skip", summary="Could not resolve the graph.", details=[str(exc)]
+        )
+    last = read_last_run(db_path.parent)
+    try:
+        indexed_at: float | None = db_path.stat().st_mtime
+    except OSError:
+        indexed_at = None
+    installed = ", ".join(
+        label
+        for label, present in (("project", project_hook is not None), ("user", user_hooks))
+        if present
+    )
+
+    last = last or {}
+    ran_at = last.get("at")
+    if isinstance(ran_at, (int, float)):
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(ran_at))
+        stale = (
+            indexed_at is not None
+            and time.time() - ran_at > HOOK_SILENCE_SECONDS
+            and indexed_at > ran_at + 24 * 3600
+        )
+        if not stale:
+            return CheckResult(
+                status="ok",
+                summary=f"Edit hook last ran {when} ({last.get('event', 'unknown event')}).",
+                details=[f"installed: {installed}"],
+            )
+        return CheckResult(
+            status="warn",
+            summary=f"Edit hook has not run since {when}, but the graph was indexed since.",
+            details=[f"installed: {installed}", f"graph: {db_path}"],
+            remediation=(
+                "Check that the editor trusts its hooks (Cursor: Settings, Hooks) and that "
+                "SCAFFOLD_HOOK_DISABLE is not set."
+            ),
+        )
+    if indexed_at is None:
+        return CheckResult(
+            status="ok",
+            summary="Edit hook installed; no graph yet, so it has had nothing to do.",
+            details=[f"installed: {installed}"],
+        )
+    return CheckResult(
+        status="warn",
+        summary="Edit hook is installed but has never recorded a run.",
+        details=[f"installed: {installed}", f"graph: {db_path}"],
+        remediation=(
+            "Make an agent edit in this project and re-run doctor. If it still has not "
+            "run, check the editor's hook settings and SCAFFOLD_HOOK_DISABLE."
+        ),
     )
 
 
@@ -311,7 +576,7 @@ def check_mcp_registration(context: DoctorContext) -> CheckResult:
     # nothing about these: a `.cursor/mcp.json` holding an agentscaffold entry is
     # a project-scoped server by construction, which is what the 0.10 migration
     # collapses. Checking only the shared config made that regression invisible
-    # to the command whose job is to verify the migration (Plan 253).
+    # to the command whose job is to verify the migration.
     from agentscaffold.mcp.install import find_legacy_project_configs, registered_roots
 
     # Only redundant if a shared server exists to make it redundant. A lone repo
@@ -438,10 +703,9 @@ def probe_launched_version(command: str) -> str | None:
 def check_version_skew(context: DoctorContext) -> CheckResult:
     """Whether the server the client launches is the CLI you are running.
 
-    This is the failure recorded as a blocker in the governance repo: the MCP
-    server ran a pre-0.9.0 install, so composite tools returned a surface that
-    had since moved, and every diagnosis pointed at the wrong repo because the
-    CLI in the terminal was fine.
+    This is a failure seen in practice: the MCP server ran a pre-0.9.0 install,
+    so composite tools returned a surface that had since moved, and every
+    diagnosis pointed at the wrong repo because the CLI in the terminal was fine.
     """
     document = _load_client_config(context.mcp_config_path)
     if document is None:
@@ -489,12 +753,11 @@ def check_version_skew(context: DoctorContext) -> CheckResult:
 def check_state_location(context: DoctorContext) -> CheckResult:
     """Where the graph actually resolves, and what got left behind.
 
-    Reported even when healthy: since Step B4 the graph is no longer where a
+    Reported even when healthy: since state relocation the graph is no longer where a
     user would think to look, and "which database am I actually reading" is the
     first question every other diagnosis depends on.
     """
     from agentscaffold.paths import (
-        _DEFAULT_DB_PATH,
         resolve_db_path,
         resolve_workspace_root,
         resolve_workspace_state_id,
@@ -517,18 +780,51 @@ def check_state_location(context: DoctorContext) -> CheckResult:
     else:
         details.append("workspace id: none (unregistered repo, graph stays in-tree)")
 
-    in_tree = workspace_root / _DEFAULT_DB_PATH
-    if in_tree.exists() and in_tree != resolved:
+    orphans = [
+        candidate
+        for candidate in _in_tree_graph_candidates(context.project_root, workspace_root)
+        if candidate.exists() and candidate.resolve() != resolved.resolve()
+    ]
+    if orphans:
         return CheckResult(
             status="warn",
             summary="An in-tree graph is being ignored.",
-            details=details + [f"orphaned: {in_tree}"],
+            details=details + [f"orphaned: {orphan}" for orphan in orphans],
             remediation=(
-                "It is not the database in use. Remove it, or run "
-                "`scaffold workspace migrate-state --restore` to go back to it."
+                "None of these is the database in use. Remove them, or run "
+                "`scaffold workspace migrate-state --restore` to go back to the "
+                "workspace-root one."
             ),
         )
     return CheckResult(status="ok", summary="Graph resolves as expected.", details=details)
+
+
+def _in_tree_graph_candidates(project_root: Path, workspace_root: Path) -> list[Path]:
+    """Every in-tree graph location a project here may have used.
+
+    The workspace root and each project folder: a team folder that indexed
+    before its workspace was registered keeps its own ``.scaffold/`` behind.
+    """
+    from agentscaffold.paths import _DEFAULT_DB_PATH, load_workspace
+
+    roots = [workspace_root, project_root]
+    try:
+        workspace = load_workspace(project_root)
+    except Exception:
+        workspace = None
+    if workspace is not None:
+        for entry in workspace.projects:
+            entry_path = Path(entry.path)
+            roots.append(entry_path if entry_path.is_absolute() else workspace_root / entry_path)
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        candidate = root / _DEFAULT_DB_PATH
+        key = candidate.resolve()
+        if key not in seen:
+            seen.add(key)
+            candidates.append(candidate)
+    return candidates
 
 
 # ---------------------------------------------------------------------------
@@ -539,7 +835,7 @@ def check_state_location(context: DoctorContext) -> CheckResult:
 def check_workspace_id(context: DoctorContext) -> CheckResult:
     """Whether the manifest and the registry name this workspace the same way.
 
-    Added after Step B5 found them diverging in practice. It is silent damage:
+    Added after they were found diverging in practice. It is silent damage:
     resolution prefers the manifest, so the graph keeps working while the
     registry reports an id that keys nothing -- and removing the manifest
     re-keys state to the other id and orphans a populated database.
@@ -583,7 +879,7 @@ def check_workspace_id(context: DoctorContext) -> CheckResult:
 def check_graph_schema(context: DoctorContext) -> CheckResult:
     """Whether the on-disk graph has every additive column the code expects.
 
-    Plan 255 added ``BacklogItem.resolution`` only inside ``init_schema``, so
+    An earlier change added ``BacklogItem.resolution`` only inside ``init_schema``, so
     upgrading the package did not heal an existing graph. 0.10.5 applies those
     columns on writable open; this check reports a graph that is still behind
     without writing anything. A missing graph, or one we cannot open because
@@ -640,8 +936,129 @@ def check_graph_schema(context: DoctorContext) -> CheckResult:
     )
 
 
+def check_unstamped_rows(context: DoctorContext) -> CheckResult:
+    """Rows with no project in a multi-project workspace's graph.
+
+    A single-project repo keeps ``project = ''`` by design, so the check only
+    runs where scoping filters on the column: there, an empty project is a row
+    every scoped read silently skips. Read-only; a missing or locked graph is
+    skip.
+    """
+    from agentscaffold.graph.duckpgq_schema import NODE_TABLE_NAMES
+    from agentscaffold.paths import load_workspace, resolve_db_path
+
+    try:
+        multi = load_workspace(context.project_root).is_multi_project
+        resolved = resolve_db_path(None, context.project_root)
+    except Exception:
+        return CheckResult(status="skip", summary="No workspace to inspect.")
+    if not multi:
+        return CheckResult(status="skip", summary="One project here; rows need no project stamp.")
+    if not resolved.is_file():
+        return CheckResult(status="skip", summary="No graph to inspect.")
+
+    counts: dict[str, int] = {}
+    try:
+        import duckdb
+
+        conn = duckdb.connect(str(resolved), read_only=True)
+        try:
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT table_name FROM information_schema.columns "
+                    "WHERE column_name = 'project'"
+                ).fetchall()
+            }
+            for table in NODE_TABLE_NAMES:
+                if table not in tables:
+                    continue
+                row = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE project = ''").fetchone()
+                if row and row[0]:
+                    counts[table] = int(row[0])
+        finally:
+            conn.close()
+    except Exception as exc:
+        return CheckResult(
+            status="skip" if "lock" in str(exc).lower() else "warn",
+            summary="Could not inspect graph rows.",
+            details=[str(exc)],
+        )
+
+    if not counts:
+        return CheckResult(status="ok", summary="Every graph row carries a project.")
+    return CheckResult(
+        status="warn",
+        summary=f"{sum(counts.values())} graph row(s) carry no project; scoped reads skip them.",
+        details=[f"{table}: {count}" for table, count in sorted(counts.items())],
+        remediation=(
+            "Usually left over from before the workspace had more than one project. "
+            "Nothing backfills them yet; report the counts if they matter to you."
+        ),
+    )
+
+
+def check_governance_mapping(context: DoctorContext) -> CheckResult:
+    """Manual sections the MCP server is configured to deliver but cannot find.
+
+    Tools still succeed when a mapped heading is missing; they report it in
+    ``missing``. This check names each one so the mapping or the manual can be
+    fixed. Headings listed under ``agents.governance.optional`` are never
+    reported.
+    """
+    from agentscaffold.agents.governance_manual import load_manual, normalize_heading
+    from agentscaffold.config import ScaffoldConfig, load_config
+
+    config_path = context.project_root / "scaffold.yaml"
+    try:
+        config = load_config(config_path) if config_path.is_file() else ScaffoldConfig()
+    except Exception as exc:
+        return CheckResult(
+            status="warn", summary="Could not read scaffold.yaml.", details=[str(exc)]
+        )
+    agents = config.agents
+    manual = load_manual(context.project_root, agents.manual_path)
+    if manual is None:
+        if not agents.agents_md:
+            return CheckResult(status="ok", summary="No governance manual is configured.")
+        return CheckResult(
+            status="warn",
+            summary=f"No governance manual at {agents.manual_path}.",
+            details=["scaffold_orient and the lifecycle tools will deliver no manual sections."],
+            remediation=(
+                "Create the manual (scaffold init writes the template), or point "
+                "agents.manual_path at it in scaffold.yaml."
+            ),
+        )
+
+    governance = agents.governance
+    optional = {normalize_heading(name.split(" / ")[-1]) for name in governance.optional}
+    mapped = [("orient", name) for name in governance.orient]
+    for step in ("review", "implementation", "completion", "backlog"):
+        mapped += [(step, name) for name in getattr(governance.steps, step)]
+    missing = [
+        f"{step}: {name}"
+        for step, name in mapped
+        if manual.resolve(name) is None and normalize_heading(name.split(" / ")[-1]) not in optional
+    ]
+    if not missing:
+        return CheckResult(
+            status="ok",
+            summary=f"All {len(mapped)} mapped sections found in {manual.path}.",
+        )
+    return CheckResult(
+        status="warn",
+        summary=f"{len(missing)} mapped section(s) not found in {manual.path}.",
+        details=missing,
+        remediation=(
+            "Rename the heading in the manual, update agents.governance in scaffold.yaml, "
+            "or list it under agents.governance.optional."
+        ),
+    )
+
+
 def check_agent_docs(context: DoctorContext) -> CheckResult:
-    """Heading overlap in AGENTS.md -- the Plan 260 duplication."""
+    """Heading overlap in AGENTS.md -- sections copied in twice."""
     from agentscaffold.agents.repair import heading_overlap, split_managed
     from agentscaffold.rendering import markdown_h2_headings
 
@@ -669,11 +1086,15 @@ CHECKS: list[Check] = [
     Check("workspace_id", "Workspace identity", check_workspace_id),
     Check("guidance", "Routing guidance", check_guidance),
     Check("guidance_ignored", "Guidance not gitignored", check_guidance_ignored),
+    Check("guidance_reachable", "Guidance reaches the editor", check_guidance_reachable),
     Check("agent_docs", "Agent document integrity", check_agent_docs),
+    Check("governance_mapping", "Governance manual mapping", check_governance_mapping),
     Check("mcp_registration", "MCP registration", check_mcp_registration),
     Check("version_skew", "Version skew", check_version_skew),
     Check("state_location", "Graph state location", check_state_location),
+    Check("hooks_ran", "Edit hook activity", check_hooks_ran),
     Check("graph_schema", "Graph schema", check_graph_schema),
+    Check("unstamped_rows", "Graph rows without a project", check_unstamped_rows),
 ]
 
 

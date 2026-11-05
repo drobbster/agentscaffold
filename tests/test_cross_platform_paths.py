@@ -1,12 +1,11 @@
-"""Path-flavour correctness for registry resolution (Plan 249, Step A9b).
+"""Path-flavour correctness for registry resolution.
 
 The package has no CI of any kind, so there is no Windows job to lean on. Rather
 than pretend otherwise, these tests parametrise over path *flavour* -- exercising
 the Windows branches of the resolution logic on any host by constructing
 ``PureWindowsPath`` inputs directly. That genuinely covers where the bugs live
 (case folding, drive letters, UNC shares, separator handling), while being honest
-that end-to-end Windows integration remains unverified. See Plan 249 Appendix D,
-Decision 2, and the manual WSL check in Section 9.
+that end-to-end Windows integration remains unverified beyond a manual WSL check.
 
 Three distinct path spaces have to behave differently, which is the whole point:
 
@@ -80,7 +79,7 @@ def test_windows_shaped_paths_parse_as_windows(recorded):
     [
         "/repo",
         "/mnt/c/repo",
-        "/Users/dave/repo",
+        "/Users/alice/repo",
         "/mnt/c",
     ],
 )

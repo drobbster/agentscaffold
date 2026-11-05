@@ -1,6 +1,6 @@
 # System Architecture -- prose layout (no Components Paths column)
 
-Mirrors the rebellion-trading-system architecture doc: layer sections use
+Mirrors a common prose architecture layout: layer sections use
 Purpose / Current State / Components tables without a Paths column, and
 express locations as inline backticked paths.
 

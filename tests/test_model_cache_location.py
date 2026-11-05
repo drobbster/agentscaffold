@@ -1,7 +1,7 @@
-"""Tests for embedding weights cache location (Plan 249, Step A7c).
+"""Tests for embedding weights cache location.
 
 ``search.cache_dir`` defaults to ``.scaffold/models``, a *project*-relative path.
-That is deterministic and offline-capable, which is what Plan 227 wanted, but it
+That is deterministic and offline-capable, which is what the default is for, but it
 also means every project keeps its own copy of byte-identical weights: four
 warmed caches were measured on the development machine at 87 MB each.
 
@@ -232,7 +232,7 @@ def test_embeddings_resolve_through_the_shared_location(
 
 
 def test_model_cache_is_bounded(monkeypatch) -> None:
-    """Defence in depth for genuinely distinct models (Step A7c).
+    """Defence in depth for genuinely distinct models.
 
     Safe to evict here in a way it was *not* safe for the graph handle pool:
     dropping a model from the dict does not invalidate references callers

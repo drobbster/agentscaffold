@@ -1,4 +1,4 @@
-"""Plan 260: provenance stamp and three-way manual diff."""
+"""Provenance stamp and three-way manual diff."""
 
 from __future__ import annotations
 

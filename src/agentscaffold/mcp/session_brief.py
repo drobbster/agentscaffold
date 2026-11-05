@@ -1,4 +1,4 @@
-"""Session brief for scaffold_orient (Plan 273).
+"""Session brief for scaffold_orient.
 
 Current work, blockers for that work, related items, and idle-next come
 from an open Session and plan-file Status -- not the Current
@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from agentscaffold.mcp.governance_delivery import approval_record
 from agentscaffold.mcp.plan_card import build_plan_card
 from agentscaffold.mcp.workflow_state import (
     blockers_that_name_focus,
@@ -21,6 +22,9 @@ from agentscaffold.review.filters import normalize_plan_status
 _GATED = frozenset({"Draft", "Review", "Ready", "In Progress"})
 _STATUS_LINE = re.compile(r"^-\s*Status:\s*(.+)$", re.MULTILINE)
 _APPROVAL_LINE = re.compile(r"^-\s*Approval Required:\s*(.+)$", re.MULTILINE | re.IGNORECASE)
+
+#: Statuses before implementation, where a required approval is still awaited.
+_AWAITING_APPROVAL_STATUSES = frozenset({"Draft", "Review", "Ready"})
 
 _IDLE_NEXT = {
     "action": "Nothing in flight; no gated plan found.",
@@ -37,15 +41,26 @@ def build_session_brief(
     workflow: dict[str, Any],
     project: str | None = None,
     plan_number: int | None = None,
+    open_session: dict[str, Any] | None | object = ...,
+    config: Any = None,
 ) -> dict[str, Any]:
-    """Return the locked ``session_brief`` object."""
+    """Return the locked ``session_brief`` object.
+
+    *open_session* is the session orient already looked up (stamped project,
+    idle-aware). When omitted, the brief looks it up itself. With an
+    enabled inventory in *config*, the brief carries ``lifecycle_debt``.
+    """
     from agentscaffold.graph.sessions import find_open_session
 
-    session = find_open_session(store, project=project)
+    if open_session is ...:
+        session = find_open_session(store, project=project)
+    else:
+        session = open_session if isinstance(open_session, dict) else None
     candidate, source = _resolve_candidate(store, root, session, explicit=plan_number)
     card = None
     status = ""
     approval_required = False
+    awaiting_approval = False
     text = ""
     if candidate is not None:
         pn = int(candidate.get("p.number"))
@@ -58,6 +73,11 @@ def build_session_brief(
                 status = inferred
             card = {**card, "status_normalized": status}
         approval_required = _approval_required(text)
+        awaiting_approval = (
+            approval_required
+            and status in _AWAITING_APPROVAL_STATUSES
+            and approval_record(text, pn, workflow.get("path")) is None
+        )
 
     in_flight = _is_in_flight(status, card)
     focus_pn = int(card["plan_number"]) if card is not None else None
@@ -70,11 +90,11 @@ def build_session_brief(
             source=source,
             approval_required=approval_required,
         )
-        nxt = _next_for(card, status, approval_required)
+        nxt = _next_for(card, status, awaiting_approval)
         related_pn = focus_pn
     elif card is not None:
         current_work = _idle_work()
-        nxt = _next_for(card, status, approval_required)
+        nxt = _next_for(card, status, awaiting_approval)
         related_pn = focus_pn
     else:
         current_work = _idle_work()
@@ -83,11 +103,14 @@ def build_session_brief(
 
     named = blockers_that_name_focus(workflow.get("blockers") or "", related_pn)
     blockers_for_work: list[dict[str, Any]] = []
-    if approval_required and status in {"Draft", "Review"}:
+    if awaiting_approval:
         blockers_for_work.append(
             {
                 "kind": "approval",
-                "text": f"Plan {related_pn} requires approval (Status is {status}).",
+                "text": (
+                    f"Plan {related_pn} requires approval and none is recorded "
+                    f"(Status is {status})."
+                ),
             }
         )
     for bullet in named:
@@ -112,7 +135,7 @@ def build_session_brief(
                 open_backlog_ids.append(str(bid))
         session_decisions = session_decisions_for_plan(store, related_pn, project=project, limit=5)
 
-    return {
+    brief: dict[str, Any] = {
         "current_work": current_work,
         "blockers_for_work": blockers_for_work,
         "related": {
@@ -126,6 +149,122 @@ def build_session_brief(
             current_work["plan_number"] if current_work["kind"] == "in_flight" else related_pn
         ),
     }
+    debt = lifecycle_debt(store, root, config, project=project)
+    if debt is not None:
+        brief["lifecycle_debt"] = debt
+    return brief
+
+
+#: Items shown per lifecycle-debt category; ``count`` still reports the total.
+DEBT_CAP = 10
+_PLAN_DATE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+
+
+def lifecycle_debt(
+    store: Any,
+    root: Path,
+    config: Any,
+    *,
+    project: str | None = None,
+    today: Any = None,
+) -> dict[str, Any] | None:
+    """Lifecycle debt from the system inventory; None when it is disabled.
+
+    Categories: expired reviews, overdue deprecations, failing active jobs and
+    zombie candidates (from the optional health snapshot), drafts older than
+    ``inventory.draft_stale_days``, and an overdue architecture review. Each
+    category is ``{"count", "items"}`` with at most ``DEBT_CAP`` items, and is
+    omitted when empty; an empty dict means no debt.
+    """
+    import datetime as dt  # noqa: PLC0415
+
+    from agentscaffold.inventory import health  # noqa: PLC0415
+    from agentscaffold.inventory.project import maybe_inventory  # noqa: PLC0415
+
+    inv_cfg = getattr(config, "inventory", None)
+    if inv_cfg is None or not inv_cfg.enabled:
+        return None
+    today = today or dt.date.today()
+    inventory = maybe_inventory(root, config)
+    if inventory is None:
+        return {"error": "the inventory cannot be read; run `scaffold inventory check`"}
+
+    categories: dict[str, list[str]] = {
+        "expired_reviews": [],
+        "overdue_deprecations": [],
+        "failing": [],
+        "zombies": [],
+        "stale_drafts": [],
+    }
+    for comp in inventory.components:
+        review_by = comp.review_by_date
+        if comp.id and review_by is not None and review_by < today:
+            key = "overdue_deprecations" if comp.lifecycle == "deprecated" else "expired_reviews"
+            categories[key].append(f"{comp.id} (review by {review_by})")
+
+    debt: dict[str, Any] = {}
+    snapshot = health.read_snapshot(
+        Path(root) / inv_cfg.health_snapshot,
+        today=today,
+        max_bytes=inv_cfg.health_max_bytes,
+        stale_days=inv_cfg.failing_days,
+    )
+    if snapshot.status in ("stale", "malformed"):
+        debt["health_snapshot"] = {"status": snapshot.status, "reason": snapshot.reason}
+    for row in health.failing(inventory, snapshot, days=inv_cfg.failing_days):
+        categories["failing"].append(_days_label(row))
+    for row in health.zombies(inventory, snapshot, days=inv_cfg.zombie_days):
+        categories["zombies"].append(_days_label(row))
+    categories["stale_drafts"] = _stale_drafts(store, today, inv_cfg.draft_stale_days, project)
+
+    for key, items in categories.items():
+        if items:
+            debt[key] = {"count": len(items), "items": items[:DEBT_CAP]}
+
+    last = inventory.last_review_date
+    limit = inventory.review_cadence_days + 5
+    if last is None:
+        debt["architecture_review"] = "last_architecture_review is not recorded"
+    elif (today - last).days > limit:
+        debt["architecture_review"] = (
+            f"last review {last} is {(today - last).days} days old (cadence "
+            f"{inventory.review_cadence_days} days)"
+        )
+    return debt
+
+
+def _days_label(row: dict[str, Any]) -> str:
+    days = row.get("days_without_success")
+    return f"{row['component']} ({'never succeeded' if days is None else f'{days} days'})"
+
+
+def _stale_drafts(store: Any, today: Any, days: int, project: str | None) -> list[str]:
+    import datetime as dt  # noqa: PLC0415
+
+    sql = "SELECT number, status, createdDate FROM Plan"
+    params: dict[str, Any] | None = None
+    if project:
+        sql += " WHERE COALESCE(project, '') IN ('', ?)"
+        params = {"project": project}
+    try:
+        rows = store.query(sql + " ORDER BY number", params)
+    except Exception:  # noqa: BLE001 - an empty or older graph has no answer
+        return []
+    out: list[str] = []
+    for row in rows:
+        if normalize_plan_status(row.get("status") or "") != "Draft":
+            continue
+        match = _PLAN_DATE.search(str(row.get("createdDate") or ""))
+        if not match:
+            continue
+        try:
+            created = dt.date.fromisoformat(match.group(1))
+        except ValueError:
+            continue
+        age = (today - created).days
+        if age > days:
+            out.append(f"Plan {row.get('number')} ({age} days)")
+    return out
 
 
 def compact_session_context(session: dict[str, Any] | None) -> dict[str, Any]:
@@ -199,15 +338,46 @@ def _gated_status(store: Any, root: Path, plan_row: dict[str, Any]) -> str:
     return _routing_status({**card, "status_normalized": "Unknown"})
 
 
+def plan_file_status(store: Any, root: Path, plan_number: int) -> str:
+    """The plan's normalized Status, read from its file (graph value as fallback)."""
+    return plan_title_and_status(store, root, plan_number)[1]
+
+
+def plan_title_and_status(store: Any, root: Path, plan_number: int) -> tuple[str, str]:
+    """``(title, normalized status)`` for a plan, or ``("", "")`` when unknown."""
+    from agentscaffold.review.queries import get_plan_by_number
+
+    try:
+        row = get_plan_by_number(store, int(plan_number))
+    except Exception:  # noqa: BLE001 - a missing plan is not an orient failure
+        return "", ""
+    if row is None:
+        return "", ""
+    status = _status_from_text(_read_plan_text(root, row), row.get("p.status") or "")
+    return str(row.get("p.title") or ""), status
+
+
+def plan_text(store: Any, root: Path, plan_number: int) -> str:
+    """The plan file's text, or ``""`` when the plan or its file is unknown."""
+    from agentscaffold.review.queries import get_plan_by_number
+
+    try:
+        row = get_plan_by_number(store, int(plan_number))
+    except Exception:  # noqa: BLE001 - a missing plan reads as no text
+        return ""
+    return _read_plan_text(root, row) if row is not None else ""
+
+
 def _read_plan_text(root: Path, plan_row: dict[str, Any]) -> str:
     path = plan_row.get("p.filePath") or plan_row.get("filePath") or ""
     if not path:
         return ""
-    full = Path(path)
-    if not full.is_absolute():
-        full = root / path
+    from agentscaffold.paths import resolve_node_path
+
+    given = Path(path)
+    full = given if given.is_absolute() else resolve_node_path(root, path)
     try:
-        if full.is_file():
+        if full is not None and full.is_file():
             return full.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
@@ -288,15 +458,15 @@ def _current_work(
 def _next_for(
     card: dict[str, Any],
     status: str,
-    approval_required: bool,
+    awaiting_approval: bool,
 ) -> dict[str, Any]:
     pn = card["plan_number"]
-    if approval_required and status in {"Draft", "Review"}:
+    if awaiting_approval:
         return {
             "action": f"Present Plan {pn} for approval (do not implement).",
             "tool": "scaffold_begin_plan",
             "arguments": {"plan_number": pn, "dry_run": True},
-            "rationale": "Approval Required and Status is still Draft/Review",
+            "rationale": f"Approval Required, no approval recorded, Status is {status}",
         }
     if status in {"Draft", "Review"}:
         return {

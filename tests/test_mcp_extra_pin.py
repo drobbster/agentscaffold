@@ -13,8 +13,14 @@ from pathlib import Path
 
 def test_mcp_extra_refuses_sdk_2() -> None:
     text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
-    assert '"mcp>=1.0.0,<2"' in text
-    assert '"mcp>=1.0.0"' not in text
+    assert '"mcp>=1.3.0,<2"' in text
+    assert '"mcp>=1.3.0"' not in text
+
+
+def test_mcp_extra_requires_server_instructions() -> None:
+    """The low-level ``Server`` takes ``instructions`` from 1.3.0 on."""
+    text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+    assert '"mcp>=1.0.0' not in text
 
 
 def test_duckpgq_extra_refuses_duckdb_without_duckpgq() -> None:

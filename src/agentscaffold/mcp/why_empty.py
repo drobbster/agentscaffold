@@ -1,4 +1,4 @@
-"""Explain empty structural/search results (Plan 246)."""
+"""Explain empty structural/search results."""
 
 from __future__ import annotations
 

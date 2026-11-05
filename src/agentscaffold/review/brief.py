@@ -7,6 +7,7 @@ layer analysis, and contract status for every file in the plan's impact map.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +36,9 @@ if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
 
 
+logger = logging.getLogger(__name__)
+
+
 def generate_brief(
     store: GraphBackend,
     plan_number: int,
@@ -52,12 +56,55 @@ def generate_brief(
 
     try:
         with resolved_impacts(store, plan_number, root=root, config=config) as impacted_files:
-            return _brief_from_rows(store, plan, plan_number, impacted_files)
+            brief = _brief_from_rows(store, plan, plan_number, impacted_files)
+            try:
+                precedent = _brief_precedent(store, plan_number, impacted_files, root, config)
+            except Exception as exc:  # noqa: BLE001 - precedent must not break the brief
+                logger.warning("precedent skipped for plan %s: %s", plan_number, exc)
+                precedent = None
+            try:
+                from agentscaffold.review.challenges import component_hits  # noqa: PLC0415
+
+                components = component_hits(store, plan_number, impacted_files, root, config)
+            except Exception as exc:  # noqa: BLE001 - components must not break the brief
+                logger.warning("components skipped for plan %s: %s", plan_number, exc)
+                components = []
     except ImplementationProjectError as exc:
         return {
             "error": str(exc),
             "error_code": "implementation_project_unregistered",
         }
+    if precedent is not None:
+        brief["precedent"] = precedent
+    if components:
+        brief["components"] = components
+    return brief
+
+
+def _brief_precedent(
+    store: GraphBackend,
+    plan_number: int,
+    impacted_files: list[dict[str, Any]],
+    root: Path | None,
+    config: Any,
+) -> dict[str, Any] | None:
+    """Plan-level precedent for the expansion review; None when disabled."""
+    from agentscaffold.config import find_config, load_config  # noqa: PLC0415
+    from agentscaffold.review.file_impact_resolve import _resolve_base  # noqa: PLC0415
+    from agentscaffold.review.precedent import precedent_for_paths  # noqa: PLC0415
+
+    base = _resolve_base(store, plan_number, root)
+    cfg = config if config is not None else load_config(find_config(start=base))
+    paths = [str(f.get("f.path")) for f in impacted_files if f.get("f.path")]
+    result = precedent_for_paths(
+        store,
+        paths,
+        root=base,
+        config=cfg,
+        plan_number=plan_number,
+        budget=cfg.precedent.max_brief,
+    )
+    return None if result is None else result.to_dict()
 
 
 def _brief_from_rows(
@@ -232,6 +279,16 @@ def _brief_from_rows(
     }
 
 
+def _precedent_label(item: dict[str, Any]) -> str:
+    """How a reader names a precedent item; finding ids stay whole for the resolve tools."""
+    item_id = str(item.get("id", ""))
+    if item.get("kind") == "learning":
+        return item_id.rsplit("learning::", 1)[-1]
+    if item.get("kind") == "adr" and "adr::" in item_id:
+        return "ADR " + item_id.rsplit("adr::", 1)[-1].split("::", 1)[0]
+    return item_id
+
+
 def format_brief_markdown(brief: dict[str, Any]) -> str:
     """Render a brief dict as human-readable markdown."""
     if "error" in brief:
@@ -325,6 +382,42 @@ def format_brief_markdown(brief: dict[str, Any]) -> str:
         lines.append("")
         for lr in brief["learnings"]:
             lines.append(f"- {lr['id']}: {lr['description']} [{lr['status']}]")
+        lines.append("")
+
+    precedent = brief.get("precedent") or {}
+    if precedent.get("items"):
+        n_shown, n_total = len(precedent["items"]), precedent.get("total", 0)
+        lines.append("## Precedent")
+        lines.append("")
+        lines.append(
+            f"Earlier findings, learnings and ADRs about these files ({n_shown} of {n_total}):"
+        )
+        lines.append("")
+        for item in precedent["items"]:
+            plan_label = f"Plan {item['plan']}" if item.get("plan") is not None else "no plan"
+            lines.append(
+                f"- {_precedent_label(item)} ({plan_label}, {item['match']} {item['path']}"
+                f"{', project ' + item['project'] if item.get('project') else ''}): {item['text']}"
+            )
+        lines.append("")
+    for gone in precedent.get("sources_unavailable") or []:
+        lines.append(f"- Precedent source {gone['project']} unavailable: {gone['reason']}")
+
+    if brief.get("components"):
+        from agentscaffold.review.challenges import component_state  # noqa: PLC0415
+
+        lines.append("## Component lifecycle")
+        lines.append("")
+        lines.append(
+            "Paused or deprecated components this plan touches; each needs a row in the "
+            "Component Lifecycle Changes table:"
+        )
+        lines.append("")
+        for hit in brief["components"]:
+            lines.append(
+                f"- {hit['component']}: {component_state(hit)}; touches "
+                f"{', '.join(hit['touched'][:5])}"
+            )
         lines.append("")
 
     return "\n".join(lines)

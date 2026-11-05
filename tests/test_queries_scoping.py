@@ -1,4 +1,4 @@
-"""Multi-project read-scoping tests for review/queries.py (Plan 225, Step 6).
+"""Multi-project read-scoping tests for review/queries.py.
 
 File paths and plan numbers are NOT unique across the projects sharing one
 graph cache, so governance reads must default to the *current* project (resolved

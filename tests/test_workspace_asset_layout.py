@@ -1,4 +1,4 @@
-"""Tests for the workspace asset-layout schema + path resolution (Plan 234).
+"""Tests for the workspace asset-layout schema + path resolution.
 
 Covers the ``asset_layout`` config models, ``effective_asset_layout`` defaulting,
 and the ``ResolvedPaths`` shared/project dual-anchor behavior (including the

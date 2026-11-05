@@ -1,4 +1,4 @@
-"""Evidence provenance and FINDING_ADDRESSED_BY (Plan 264)."""
+"""Evidence provenance and FINDING_ADDRESSED_BY."""
 
 from __future__ import annotations
 
@@ -222,7 +222,7 @@ def test_mcp_function_ids_create_about_func(store, monkeypatch):
 
 
 def test_upgrade_adds_columns_and_keeps_existing_rows():
-    """Plan 256 guard: ALTER on an old ReviewFinding / Learning table."""
+    """Schema-upgrade guard: ALTER on an old ReviewFinding / Learning table."""
     store = DuckPGQBackend(":memory:")
     conn = store._conn
     conn.execute("DROP TABLE IF EXISTS ReviewFinding")
@@ -272,5 +272,5 @@ def test_upgrade_adds_columns_and_keeps_existing_rows():
     assert finding[1] == "legacy"
     assert learning[0] == "unspecified"
     assert learning[1] == "legacy learning"
-    assert SCHEMA_VERSION == 11
+    assert SCHEMA_VERSION == 13
     store.close()

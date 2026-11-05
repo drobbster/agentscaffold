@@ -173,6 +173,20 @@ def test_absolute_root_module_still_resolves(package_tree: Path):
     assert _python_module_to_path("core", "src/pkg/rel.py", package_tree) == "core.py"
 
 
+def test_module_prefixes_do_not_touch_relative_imports(package_tree: Path):
+    """A relative import never reaches the prefix strategy."""
+    prefixes = {"pkg": "src/pkg", "core": "src/pkg/sub"}
+
+    assert (
+        _python_module_to_path(".core", "src/pkg/rel.py", package_tree, prefixes=prefixes)
+        == "src/pkg/core.py"
+    )
+    assert (
+        _python_module_to_path(".missing", "src/pkg/rel.py", package_tree, prefixes=prefixes)
+        is None
+    )
+
+
 def test_no_returned_path_contains_a_doubled_separator(package_tree: Path):
     """The specific malformation that made this bug silent.
 

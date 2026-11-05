@@ -30,6 +30,7 @@ read or write the knowledge graph need it to exist — run `scaffold index` firs
 - [Agent integration files](#agent-integration-files)
 - [Sessions](#sessions)
 - [Governance state](#governance-state)
+- [System inventory](#system-inventory)
 - [Validation and CI](#validation-and-ci)
 - [Domain packs](#domain-packs)
 - [Benchmarking](#benchmarking)
@@ -69,11 +70,17 @@ the workspace's shared assets into the project.
 ```bash
 scaffold index                   # full build
 scaffold index --incremental     # only what changed
+scaffold index --force-root      # index a directory that only contains projects
 ```
 
 The graph backs search, impact analysis, and every governance query. Build it
 once after `init`, then rebuild after significant changes. See
 [Knowledge graph](#knowledge-graph) for what you can ask it.
+
+`index` refuses a directory that is not itself a project but contains
+registered ones (a monorepo root above a team folder, or a multi-project
+workspace root), and names the projects inside. Run it from each project
+instead. `--force-root` indexes the whole directory as one project.
 
 ---
 
@@ -186,9 +193,11 @@ scaffold doctor --project-root /path/to/repo
 scaffold doctor --mcp-config /path/to/mcp.json
 ```
 
-Checks the registry, workspace identity, generated rule-file drift, whether
-generated guidance is gitignored, MCP registration, version skew between the
-MCP server and your CLI, and where the graph resolves.
+Checks the registry, workspace identity, generated rule-file drift (including
+user-scope copies), whether generated guidance is gitignored, whether it
+reaches the editor, MCP registration, version skew between the MCP server and
+your CLI, where the graph resolves, and whether an installed edit hook has
+actually run.
 
 If `.cursor/` is ignored as a directory, a file-level negation cannot
 re-include `.cursor/rules/agentscaffold.mdc`. Use a directory-scoped pair
@@ -323,6 +332,7 @@ across projects in a workspace as candidates for a shared library.
 | `scaffold plan create` | Create a plan from a template |
 | `scaffold plan status` | All plans with their lifecycle state |
 | `scaffold plan lint` | Validate plan structure and cohesion |
+| `scaffold plan normalize-status` | Propose, or with `--apply` write, a single `- Status:` line on plans that lack one |
 | `scaffold plan claim` | Record advisory, git-backed ownership of an in-flight plan |
 | `scaffold plan release` | Clear an advisory claim |
 | `scaffold metrics` | Plan metrics and analytics dashboard |
@@ -333,7 +343,16 @@ scaffold plan create "Add rate limiting"
 scaffold plan create "Fix token refresh" --type bugfix
 scaffold plan status
 scaffold plan lint
+scaffold plan normalize-status               # report proposals, write nothing
+scaffold plan normalize-status --apply       # write the unambiguous ones
+scaffold plan normalize-status -p 42 -f json
 ```
+
+`plan status` reads each plan's `- Status:` line (Draft, Review, Ready, In
+Progress, Complete, Superseded) and falls back to inferring from checked steps
+when there is none. `normalize-status` proposes Complete when every step is
+checked and In Progress when some are; plans with several Status lines or a
+status outside that list are reported as ambiguous and left for you.
 
 Claims are advisory and git-backed: they tell a teammate or another agent that a
 plan is in flight. They do not lock anything.
@@ -356,13 +375,16 @@ equivalent your agent calls directly.
 | `scaffold review rewrite` | Staleness check plus rewrite context |
 | `scaffold review compare` | Compare two plans for overlap and conflicts |
 | `scaffold review retro` | Retrospective context |
-| `scaffold review verify` | Post-implementation compliance against a plan |
+| `scaffold review verify` | Post-implementation verification against a plan, with the rule checks (`--plan N` or `N`; `--base-ref REF` to diff from a given ref) |
+| `scaffold review precedent` | Earlier findings, learnings and ADRs about the given files (`--plan N` excludes that plan's own items; `--json`) |
 | `scaffold review history` | Review findings and plan history for a file or module |
 
 ```bash
 scaffold review prepare 42
 scaffold review compare 42 43
 scaffold review history src/api/auth.py
+scaffold review verify --plan 42 --base-ref main
+scaffold review precedent src/api/auth.py --plan 42
 ```
 
 ---
@@ -403,13 +425,21 @@ scaffold study create "Compare retrieval strategies"
 | `scaffold agents windsurf` | `.windsurfrules` |
 | `scaffold agents skills` | `SKILL.md` files for Claude and Cursor |
 | `scaffold agents hooks` | Platform-native lifecycle hooks |
+| `scaffold agents install --scope user` | Guidance and hooks in your home directory, for every registered project |
 | `scaffold agents prompt` | A generic system-prompt snippet for any platform |
 
 ```bash
 scaffold agents generate-all
 scaffold agents generate-all --allow-append   # append routing when the overlap guard refuses
+scaffold agents generate-all --include-workspace  # also write an unmanaged workspace-root router
+scaffold agents install --scope user --dry-run
+scaffold agents install --scope user          # all registered projects, every client found
+scaffold agents install --scope user --project api --client cursor
+scaffold agents install --scope user --uninstall
 scaffold agents repair                        # dry run
 scaffold agents repair --apply
+scaffold agents repair --prefer-managed       # dry run: the managed block wins
+scaffold agents repair --prefer-managed --apply
 scaffold agents diff-manual                   # dry run
 scaffold agents diff-manual --apply
 ```
@@ -417,9 +447,42 @@ scaffold agents diff-manual --apply
 `--force` rewrites the whole file. `--allow-append` only appends. They are not
 the same flag.
 
+In a shared workspace, `generate-all` refreshes the workspace-root `AGENTS.md`
+router only when AgentScaffold already manages that file; otherwise it skips it
+and says so. `--include-workspace` writes it anyway, appending a managed block
+and leaving the existing text alone.
+
+`repair` refuses when two copies of a heading differ. `--prefer-managed` treats
+the managed block as authoritative instead: it drops every unmarked section
+whose heading is in the block, even when the text differs. That is the fix for
+an `AGENTS.md` that carried routing sections before 0.12 introduced markers;
+on such a file it adds the managed block first. Headings that
+[`agents.governance`](configuration.md#agents) reads from are never dropped;
+`repair` names them so you can merge them by hand. `--apply` saves
+`AGENTS.md.bak` first.
+
 Run `generate-all` after changing `scaffold.yaml`, and whenever `scaffold doctor`
 reports that generated rule files have drifted. Use `repair` on a duplicated
 `AGENTS.md`. Use `diff-manual` to pull template updates into a manual you own.
+
+`agents install --scope user` is for projects whose repository files you
+cannot or do not want to change, and for a project below its repository root,
+which an editor opened at that root never sees. It writes nothing into any
+repository. For Cursor it writes generated plugins under
+`$AGENTSCAFFOLD_HOME/cursor-plugins` and adds `workspaceOpen`, `afterFileEdit`
+and `preToolUse` entries to `~/.cursor/hooks.json`; for Claude Code it adds
+`SessionStart`, `PostToolUse` and `PreToolUse` entries to
+`~/.claude/settings.json`. Entries from other tools are kept, a timestamped
+`.bak` is written before the first change, and a settings file that is not
+valid JSON is refused rather than overwritten. `--components rules` or
+`--components hooks` installs half. `--scope project` (the default) is the
+same as `generate-all`. See
+[Multi-project workspaces](multi-project.md#guidance-outside-the-repository).
+
+Generated hooks run `scaffold-hook <event>`, a light entry point that answers
+in tens of milliseconds and starts a detached worker for the actual indexing.
+`scaffold hook` and `scaffold hook-worker` are the same machinery behind the
+full CLI; they are hidden because only generated hooks call them.
 
 ---
 
@@ -456,6 +519,55 @@ scaffold session list
 
 Sharding reduces merge conflicts on `workflow_state.md` and `backlog.md` when
 several people or agents write to them. It is reversible.
+
+---
+
+## System inventory
+
+`docs/ai/system_inventory.yaml` lists what the project runs (scheduled and
+manual jobs, services, workflows, scripts) with an owner plan and a lifecycle
+(experimental, active, shadow, paused, deprecated). It is off unless
+`scaffold.yaml` has an `inventory:` block with `enabled: true`; `scaffold init`
+writes one for new projects.
+
+| Command | Does |
+|---|---|
+| `scaffold inventory init` | Write a first inventory from the collectors |
+| `scaffold inventory refresh` | Add newly collected components and update collector-owned fields |
+| `scaffold inventory check` | Run checks INV-001 to INV-010 |
+
+```bash
+scaffold inventory init --dry-run            # print the inventory, write nothing
+scaffold inventory init
+scaffold inventory refresh --dry-run
+scaffold inventory check
+scaffold inventory check --format json
+git diff --name-only origin/staging HEAD | scaffold inventory check --changed-files -
+```
+
+Collectors read `prefect.yaml` (`prefect`), docker compose files (`compose`),
+`.github/workflows/*` (`github_workflows`) and `[project.scripts]`
+(`pyproject_scripts`). Without a `collectors` list the last three run, plus any
+your domain packs enable (`data_engineering`, `mlops` and `trading` enable
+`prefect`). Set `sources` when files live elsewhere:
+
+```yaml
+inventory:
+  enabled: true
+  enforcement: warn            # fail: INV-001 to INV-006 and INV-010 exit non-zero
+  collectors:
+    - prefect
+    - name: compose
+      sources: ["infra/docker/docker-compose*.yml"]
+    - github_workflows
+```
+
+`refresh` never overwrites fields a person set (layer, owner plan, roadmap
+stage, lifecycle). `--changed-files` enables INV-008, which warns when a change
+edits a path a paused or deprecated component reads. With the inventory
+enabled, plan templates gain Roadmap Stage, Components and a Component
+Lifecycle Changes table, plan lint checks them on plans created on or after
+`plan_adoption_date`, and orient reports lifecycle debt.
 
 ---
 
@@ -518,6 +630,8 @@ Requires the `benchmark` extra: `pip install "agentscaffold[benchmark]"`.
 | `AGENTSCAFFOLD_PROJECT` | Pin the MCP server's project anchor (single-workspace installs only) |
 | `XDG_STATE_HOME` | Base for graph state (default `~/.local/state`) |
 | `XDG_CACHE_HOME` | Base for the embedding model cache (default `~/.cache`) |
+| `SCAFFOLD_HOOK_DISABLE` | `1` makes every generated hook answer at once and do nothing |
+| `SCAFFOLD_HOOK_TIMING` | `1` makes a hook print how long it took to stderr |
 
 `AGENTSCAFFOLD_DB_PATH` is the one to reach for in CI and containers: it pins
 the database wherever your cache already lives, and takes precedence over both
@@ -567,6 +681,14 @@ check failed closed. Use `--dry-run` to inspect the intended change.
 Something holds the graph open, usually the MCP server started by your editor.
 Quit the editor and retry. The check is cross-process, so it also catches
 another terminal running `scaffold index`.
+
+### `scaffold inventory init` misses components
+
+Run `scaffold inventory init --dry-run` and compare with your files. The
+collectors read only their default paths (for example `docker-compose.yml` at
+the repository root); set `sources` for files elsewhere, as in
+[System inventory](#system-inventory). Listing `collectors` replaces the
+defaults, so include every collector you want.
 
 ### `scaffold init` seems to do nothing
 

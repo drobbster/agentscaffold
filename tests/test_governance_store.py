@@ -1,4 +1,4 @@
-"""Tests for the git-backed governance serialization codec (Plan 222)."""
+"""Tests for the git-backed governance serialization codec."""
 
 from __future__ import annotations
 

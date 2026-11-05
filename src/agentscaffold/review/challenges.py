@@ -5,11 +5,12 @@ Each challenge is tagged with a category and grounded in graph facts,
 not LLM speculation. The LLM then reasons over these challenges.
 
 Categories: DEPENDENCY, HISTORY, LEARNING, LAYER, CONTRACT, PATTERN,
-CONSUMER, PERFORMANCE
+CONSUMER, PERFORMANCE, PRECEDENT, COMPONENT
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -21,6 +22,7 @@ from agentscaffold.review.file_impact_resolve import (
     resolved_impacts,
 )
 from agentscaffold.review.filters import is_source_code_file
+from agentscaffold.review.precedent import PrecedentItem, PrecedentResult, precedent_for_paths
 from agentscaffold.review.queries import (
     get_contracts_for_file,
     get_file_importers,
@@ -34,6 +36,9 @@ from agentscaffold.review.queries import (
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -63,15 +68,107 @@ def generate_challenges(
 
     try:
         with resolved_impacts(store, plan_number, root=root, config=config) as impacted_files:
-            return _challenges_from_rows(store, plan_number, impacted_files)
+            try:
+                precedent = _plan_precedent(store, plan_number, impacted_files, root, config)
+            except Exception as exc:  # noqa: BLE001 - precedent must not break the review
+                logger.warning("precedent skipped for plan %s: %s", plan_number, exc)
+                precedent = None
+            challenges = _challenges_from_rows(store, plan_number, impacted_files, precedent)
+            try:
+                hits = component_hits(store, plan_number, impacted_files, root, config)
+            except Exception as exc:  # noqa: BLE001 - components must not break the review
+                logger.warning("component challenge skipped for plan %s: %s", plan_number, exc)
+                hits = []
+            _check_components(hits, challenges)
+            return challenges
     except ImplementationProjectError:
         return []
+
+
+def component_hits(
+    store: GraphBackend,
+    plan_number: int,
+    impacted_files: list[dict[str, Any]],
+    root: Path | None,
+    config: Any,
+) -> list[dict[str, Any]]:
+    """Paused or deprecated components the plan's File Impact Map touches.
+
+    The INV-008 rule over the plan's files instead of a change's. One entry per
+    component, with the touched paths; empty when the inventory is disabled or
+    unreadable. ``broad_reads`` names any of the component's ``reads`` that
+    cover the project root or more than ``inventory.broad_reads_share`` of the
+    indexed files, the usual cause of a noisy challenge.
+    """
+    from agentscaffold.config import find_config, load_config  # noqa: PLC0415
+    from agentscaffold.inventory.checks import broad_reads, dormant_hits  # noqa: PLC0415
+    from agentscaffold.inventory.project import indexed_files, maybe_inventory  # noqa: PLC0415
+    from agentscaffold.review.file_impact_resolve import (  # noqa: PLC0415
+        _resolve_base,
+        plan_impact_paths,
+    )
+
+    base = _resolve_base(store, plan_number, root)
+    cfg = config if config is not None else load_config(find_config(start=base))
+    inventory = maybe_inventory(base, cfg)
+    if inventory is None:
+        return []
+    paths = [str(f.get("f.path")) for f in impacted_files if f.get("f.path")]
+    paths += [p for p in plan_impact_paths(store, plan_number, base) if p not in paths]
+    hits = dormant_hits(inventory, paths, root=base)
+    if not hits:
+        return []
+    from agentscaffold.inventory.schema import Inventory  # noqa: PLC0415
+
+    hit_only = Inventory(components=[comp for comp, _ in hits])
+    broad: dict[str, list[str]] = {}
+    for notice in broad_reads(
+        hit_only, indexed_files(base, cfg), root=base, share=cfg.inventory.broad_reads_share
+    ):
+        broad.setdefault(notice["component"], []).append(notice["read"])
+    return [
+        {
+            "component": comp.id,
+            "kind": comp.kind,
+            "lifecycle": comp.lifecycle,
+            "since": comp.since,
+            "reason": comp.reason,
+            "review_by": comp.review_by,
+            "exit_criteria": comp.exit_criteria,
+            "replaced_by": comp.replaced_by,
+            "owner_plan": comp.owner_plan,
+            "touched": touched,
+            "broad_reads": broad.get(comp.id or "", []),
+        }
+        for comp, touched in hits
+    ]
+
+
+def _plan_precedent(
+    store: GraphBackend,
+    plan_number: int,
+    impacted_files: list[dict[str, Any]],
+    root: Path | None,
+    config: Any,
+) -> tuple[PrecedentResult, int] | None:
+    """All precedent for the plan's paths and the challenge cap; None when disabled."""
+    from agentscaffold.config import find_config, load_config  # noqa: PLC0415
+    from agentscaffold.review.file_impact_resolve import _resolve_base  # noqa: PLC0415
+
+    base = _resolve_base(store, plan_number, root)
+    cfg = config if config is not None else load_config(find_config(start=base))
+    paths = [str(f.get("f.path")) for f in impacted_files if f.get("f.path")]
+    result = precedent_for_paths(
+        store, paths, root=base, config=cfg, plan_number=plan_number, budget=None
+    )
+    return None if result is None else (result, cfg.precedent.max_challenges)
 
 
 def _challenges_from_rows(
     store: GraphBackend,
     plan_number: int,
     impacted_files: list[dict[str, Any]],
+    precedent: tuple[PrecedentResult, int] | None = None,
 ) -> list[Challenge]:
     challenges: list[Challenge] = []
 
@@ -84,13 +181,18 @@ def _challenges_from_rows(
         qstore = query_store(frow, store)
         _check_dependency_blast(qstore, fpath, challenges)
         _check_history(qstore, fpath, plan_number, challenges, language=flang)
-        _check_learnings(qstore, fpath, challenges)
+        if precedent is None:
+            _check_learnings(qstore, fpath, challenges)
+        else:
+            _check_ranked_learnings(precedent[0], fpath, challenges)
         _check_layer(qstore, fpath, impacted_files, challenges)
         _check_contracts(qstore, fpath, challenges)
 
     # Plan-level checks (not per-file)
     _check_patterns(store, plan_number, impacted_files, challenges)
     _check_consumer_coverage(store, plan_number, impacted_files, challenges)
+    if precedent is not None:
+        _check_precedent(precedent[0], challenges, limit=precedent[1])
 
     return challenges
 
@@ -243,6 +345,47 @@ def _check_learnings(
                     },
                 )
             )
+
+
+def _check_ranked_learnings(
+    precedent: PrecedentResult, file_path: str, out: list[Challenge], *, max_per_file: int = 5
+) -> None:
+    """LEARNING challenges for *file_path*, in precedent order.
+
+    Only learnings linked to the file or naming it count here; those that
+    merely share an earlier plan with it are too loose to ask about.
+    """
+    ranked = [
+        item
+        for item in precedent.items
+        if item.kind == "learning" and item.path == file_path and item.match in ("linked", "path")
+    ]
+    total = len(ranked)
+    for idx, item in enumerate(ranked[:max_per_file]):
+        learning_id = item.id.rsplit("learning::", 1)[-1]
+        suffix = ""
+        if idx == 0 and total > max_per_file:
+            suffix = f" (showing top {max_per_file} of {total} learnings about this file)"
+        out.append(
+            Challenge(
+                category="LEARNING",
+                severity="medium",
+                text=(
+                    f'{learning_id} (from Plan {item.plan_number}) states: "{item.text}" '
+                    f"This plan modifies {file_path}. "
+                    f"Has this learning been accounted for?{suffix}"
+                ),
+                evidence={
+                    "file": file_path,
+                    "learning_id": learning_id,
+                    "plan_number": item.plan_number,
+                    "match": item.match,
+                    "project": item.project,
+                    "total_linked_learnings": total,
+                    "shown": min(max_per_file, total),
+                },
+            )
+        )
 
 
 def _check_layer(
@@ -416,6 +559,113 @@ def _check_consumer_coverage(
                 },
             )
         )
+
+
+_MATCH_PHRASE = {
+    "linked": "is linked to",
+    "path": "names",
+    "plan_overlap": "came from a plan that also changed",
+    "adr": "governs a plan that also changed",
+    "semantic": "resembles this plan's subject; nearest file",
+}
+
+
+def _check_precedent(precedent: PrecedentResult, out: list[Challenge], *, limit: int) -> None:
+    """PRECEDENT challenges: earlier findings and ADRs about the plan's files.
+
+    Learnings are raised as LEARNING challenges instead. Ranking and the cap
+    are plan-wide, so an item matched through several files appears once.
+    """
+    picked = [item for item in precedent.items if item.kind in ("finding", "adr")][:limit]
+    for item in picked:
+        out.append(
+            Challenge(
+                category="PRECEDENT",
+                severity=_precedent_severity(item),
+                text=_precedent_text(item),
+                evidence={
+                    "file": item.path,
+                    "precedent_id": item.id,
+                    "match": item.match,
+                    "plan_number": item.plan_number,
+                    "project": item.project,
+                },
+            )
+        )
+
+
+def component_state(hit: dict[str, Any]) -> str:
+    """``paused since 2026-06-16 (reason); review by ...; exit: ...`` for one component."""
+    parts = [str(hit.get("lifecycle") or "unknown")]
+    if hit.get("since"):
+        parts[0] += f" since {hit['since']}"
+    if hit.get("reason"):
+        parts[0] += f" ({hit['reason']})"
+    if hit.get("review_by"):
+        parts.append(f"review by {hit['review_by']}")
+    if hit.get("exit_criteria"):
+        parts.append(f"exit: {hit['exit_criteria']}")
+    if hit.get("lifecycle") == "deprecated":
+        parts.append(f"replaced by {hit.get('replaced_by') or 'nothing'}")
+    return "; ".join(parts)
+
+
+def _check_components(hits: list[dict[str, Any]], out: list[Challenge]) -> None:
+    """COMPONENT challenges: one per paused or deprecated component the plan touches.
+
+    Not capped: each is a declared fact, and the plan answers
+    each with a row in its Component Lifecycle Changes table.
+    """
+    for hit in hits:
+        touched = hit["touched"]
+        shown = ", ".join(touched[:5]) + (
+            f" and {len(touched) - 5} more" if len(touched) > 5 else ""
+        )
+        text = (
+            f"Component {hit['component']} is {component_state(hit)}. This plan touches "
+            f"{shown}. Does it change this component's lifecycle? Answer with a row in the "
+            "plan's Component Lifecycle Changes table (After may equal Before)."
+        )
+        if hit.get("broad_reads"):
+            text += (
+                f" Note: its reads {', '.join(hit['broad_reads'])} cover much of the "
+                "repository; narrowing them keeps this challenge specific."
+            )
+        out.append(
+            Challenge(
+                category="COMPONENT",
+                severity="medium",
+                text=text,
+                evidence={
+                    "component": hit["component"],
+                    "lifecycle": hit.get("lifecycle"),
+                    "touched": touched,
+                    "review_by": hit.get("review_by"),
+                    "broad_reads": hit.get("broad_reads", []),
+                },
+            )
+        )
+
+
+def _precedent_severity(item: PrecedentItem) -> str:
+    sev = item.severity.lower()
+    if sev in ("critical", "high"):
+        return "high"
+    return "low" if sev == "low" else "medium"
+
+
+def _precedent_text(item: PrecedentItem) -> str:
+    where = f" in project {item.project}" if item.project else ""
+    if item.kind == "adr":
+        head = f"{item.text}{where} {_MATCH_PHRASE.get(item.match, 'relates to')} {item.path}."
+    else:
+        detail = ", ".join(x for x in (item.severity, item.category) if x)
+        head = (
+            f"Earlier finding {item.id} (Plan {item.plan_number}{', ' + detail if detail else ''})"
+            f"{where} {_MATCH_PHRASE.get(item.match, 'relates to')} {item.path}: "
+            f'"{item.text}"'
+        )
+    return f"{head} Does this plan account for it?"
 
 
 # ---------------------------------------------------------------------------

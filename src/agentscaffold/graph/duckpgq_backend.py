@@ -29,7 +29,7 @@ from agentscaffold.graph.duckpgq_schema import init_schema as _duckpgq_init_sche
 
 logger = logging.getLogger(__name__)
 
-# Node tables that carry no ``project`` column (Plan 225): GraphMeta is
+# Node tables that carry no ``project`` column: GraphMeta is
 # workspace-global and Project is the namespace itself. Mirrors
 # duckpgq_schema._PROJECT_SCOPED_EXCLUDE.
 _NO_PROJECT_COLUMN: frozenset[str] = frozenset({"GraphMeta", "Project"})
@@ -60,11 +60,11 @@ class GraphLockError(RuntimeError):
 class GraphCorruptionError(RuntimeError):
     """Raised when a multi-project write would corrupt cross-project isolation.
 
-    The choke-point check-before-insert (Plan 225) raises this if a node ID is
+    The choke-point check-before-insert raises this if a node ID is
     about to be written under one project while it already exists under another
     -- a signal that ID-prefixing or project stamping has gone wrong. Prefixing
     structurally prevents cross-project collisions, so this should never fire in
-    practice; it is a fail-loud safety net (the spike showed a post-index
+    practice; it is a fail-loud safety net (testing showed a post-index
     invariant cannot see a silently-dropped row).
     """
 
@@ -96,7 +96,7 @@ def _connect(
     ``read_only=True`` uses DuckDB's READ_ONLY access mode. Prefer the default
     (writable) configuration for same-process concurrent readers during an
     in-process index: DuckDB rejects a second connection that differs in
-    access mode from an existing writer (Plan 244 spike).
+    access mode from an existing writer.
     """
     if duckdb is None:
         raise ImportError(_EXTRAS_MSG)
@@ -159,6 +159,7 @@ _PRESERVED_NODE_TABLES: tuple[str, ...] = (
     "ReviewFinding",
     "BacklogItem",
     "Session",
+    "PlanReview",
     "GraphMeta",
 )
 _PRESERVED_EDGE_TABLES: tuple[str, ...] = (
@@ -189,7 +190,7 @@ class DuckPGQBackend:
 
             ensure_parent_dir(self._db_path)
 
-        # AgentScaffold read-preferring open (Plan 244). Does not force DuckDB
+        # AgentScaffold read-preferring open. Does not force DuckDB
         # READ_ONLY mode -- same-process concurrent readers must match the
         # writer's access mode. Guards mutation helpers instead.
         self._read_only = read_only
@@ -203,7 +204,7 @@ class DuckPGQBackend:
             backoff=backoff,
             read_only=False,
         )
-        # Active write project (Plan 225). None == single-project mode: writes
+        # Active write project. None == single-project mode: writes
         # are unprefixed and unstamped, exactly as before. When set (multi-project
         # indexing of one project), create_node/create_edge/store_embedding
         # project-qualify IDs and stamp the project column at this choke point.
@@ -369,7 +370,7 @@ class DuckPGQBackend:
     # CRUD helpers
     # ------------------------------------------------------------------
 
-    # -- Multi-project write scope (Plan 225) -------------------------------
+    # -- Multi-project write scope -------------------------------
 
     @property
     def write_project(self) -> str | None:
@@ -545,7 +546,7 @@ class DuckPGQBackend:
     def clear_derived(self, project: str | None = None) -> None:
         """Clear index-derived data while preserving user-generated knowledge.
 
-        Keeps: ReviewFinding (+ edges), Session (+ edges)
+        Keeps: ReviewFinding (+ edges), Session (+ edges), BacklogItem, PlanReview
         Clears: everything else (files, functions, classes, communities, governance, etc.)
 
         This is the correct method for full re-indexing -- learned knowledge
@@ -558,7 +559,7 @@ class DuckPGQBackend:
         """
         self._ensure_writable()
         # Tables that represent knowledge gained through work, not derived from code
-        preserve_nodes = {"ReviewFinding", "BacklogItem", "Session", "GraphMeta"}
+        preserve_nodes = set(_PRESERVED_NODE_TABLES)
         preserve_edges = {
             "FINDING_ABOUT_FILE",
             "FINDING_ABOUT_FUNC",
@@ -649,7 +650,7 @@ class DuckPGQBackend:
                 pass
 
     # ------------------------------------------------------------------
-    # Single -> multi-project mode flip (Plan 225)
+    # Single -> multi-project mode flip
     # ------------------------------------------------------------------
 
     def migrate_to_multi_project(self, project: str) -> dict[str, int]:
@@ -661,7 +662,7 @@ class DuckPGQBackend:
         sibling's identically-named nodes cannot collide. Node ids, every edge
         endpoint, and embedding ``node_id``s are rewritten inside one
         transaction; any failure rolls the whole thing back so the cache is never
-        left half-migrated (the spike showed a partial migration is the worst
+        left half-migrated (testing showed a partial migration is the worst
         outcome). Idempotent: rows already prefixed for *project* are skipped, so
         re-running is a safe no-op. Returns per-category rewrite counts.
 
@@ -680,22 +681,26 @@ class DuckPGQBackend:
         like = f"{prefix}%"
         counts = {"nodes": 0, "edges": 0, "embeddings": 0}
 
-        # Pre-count the rows that will actually be rewritten (project='' and not
-        # already prefixed), so the return value is meaningful and idempotent.
+        # Pre-count the rows that will actually be rewritten, so the return value
+        # is meaningful and idempotent. A row qualifies when it is unprefixed and
+        # either unstamped or already stamped for *project*: session writes stamp
+        # sessions with the project name on bare ids even in a lone repo, and
+        # those must be re-keyed too.
         for table in NODE_TABLE_NAMES:
             if table in _NO_PROJECT_COLUMN:
                 continue
             counts["nodes"] += int(
                 self.query_scalar(
-                    f"SELECT COUNT(*) FROM {table} WHERE project = '' AND id NOT LIKE ?",
-                    {"like": like},
+                    f"SELECT COUNT(*) FROM {table} WHERE project IN ('', ?) AND id NOT LIKE ?",
+                    {"project": project, "like": like},
                 )
                 or 0
             )
         counts["embeddings"] = int(
             self.query_scalar(
-                "SELECT COUNT(*) FROM EmbeddingStore WHERE project = '' AND node_id NOT LIKE ?",
-                {"like": like},
+                "SELECT COUNT(*) FROM EmbeddingStore"
+                " WHERE project IN ('', ?) AND node_id NOT LIKE ?",
+                {"project": project, "like": like},
             )
             or 0
         )
@@ -720,8 +725,8 @@ class DuckPGQBackend:
                     continue
                 self._conn.execute(
                     f"UPDATE {table} SET id = ? || id, project = ?"
-                    " WHERE project = '' AND id NOT LIKE ?",
-                    [prefix, project, like],
+                    " WHERE project IN ('', ?) AND id NOT LIKE ?",
+                    [prefix, project, project, like],
                 )
             for edge_table in EDGE_TABLE_NAMES:
                 self._conn.execute(
@@ -734,8 +739,8 @@ class DuckPGQBackend:
                 )
             self._conn.execute(
                 "UPDATE EmbeddingStore SET node_id = ? || node_id, project = ?"
-                " WHERE project = '' AND node_id NOT LIKE ?",
-                [prefix, project, like],
+                " WHERE project IN ('', ?) AND node_id NOT LIKE ?",
+                [prefix, project, project, like],
             )
             self._conn.execute("COMMIT")
         except Exception:
@@ -806,6 +811,10 @@ class DuckPGQBackend:
                 "columns": columns,
                 "rows": self.query(f"SELECT * FROM {table}"),
             }
+        if "PlanReview" not in nodes:
+            legacy = self._legacy_plan_reviews()
+            if legacy is not None:
+                nodes["PlanReview"] = legacy
 
         for table in _PRESERVED_EDGE_TABLES:
             columns = self._table_columns(table)
@@ -821,6 +830,38 @@ class DuckPGQBackend:
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "nodes": nodes,
             "edges": edges,
+        }
+
+    def _legacy_plan_reviews(self) -> dict[str, Any] | None:
+        """PlanReview rows from ``Plan.reviewedAt`` on a graph built before schema 12.
+
+        Those graphs kept the stamp only on the Plan row, which the rebuild
+        re-ingests from markdown, so it is carried over as a PlanReview row.
+        """
+        plan_cols = self._table_columns("Plan")
+        if "reviewedAt" not in plan_cols:
+            return None
+        project_col = "project" if "project" in plan_cols else "''"
+        rows = self.query(
+            f"SELECT number, reviewedAt, {project_col} AS project FROM Plan"
+            " WHERE number IS NOT NULL AND COALESCE(reviewedAt, '') <> ''"
+        )
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            project = str(row.get("project") or "")
+            raw_id = f"planreview::{int(row['number'])}"
+            out.append(
+                {
+                    "id": f"{project}{PROJECT_DELIMITER}{raw_id}" if project else raw_id,
+                    "planNumber": int(row["number"]),
+                    "reviewedAt": str(row["reviewedAt"]),
+                    "reviewedCommits": "{}",
+                    "project": project,
+                }
+            )
+        return {
+            "columns": ["id", "planNumber", "reviewedAt", "reviewedCommits", "project"],
+            "rows": out,
         }
 
     def import_governance(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -986,7 +1027,7 @@ class DuckPGQBackend:
         }
 
     # ------------------------------------------------------------------
-    # Embeddings (Step A.8)
+    # Embeddings
     # ------------------------------------------------------------------
 
     def store_embedding(

@@ -5,12 +5,36 @@ from __future__ import annotations
 import sys
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
-from agentscaffold.config import load_config
+from agentscaffold.config import ScaffoldConfig, load_config
 from agentscaffold.paths import ResolvedPaths, resolve_root
 
 console = Console()
+
+
+def _inventory_issues(config: ScaffoldConfig) -> list[str]:
+    """``scaffold inventory check`` as a validate row.
+
+    Findings fail the row only in ``fail`` mode, as they fail the check's exit
+    code; in ``warn`` mode they print and the row passes.
+    """
+    from agentscaffold.inventory.project import check_project
+    from agentscaffold.inventory.schema import InventoryError
+
+    try:
+        report = check_project(resolve_root(), config)
+    except InventoryError as exc:
+        return [str(exc)]
+    lines = [f"{f.id} {f.component or '(inventory)'}: {f.message}" for f in report.findings]
+    if report.exit_code != 0:
+        return [
+            line for line, f in zip(lines, report.findings, strict=True) if f.severity == "error"
+        ]
+    for line in lines:
+        console.print(f"[yellow]System inventory: {escape(line)}[/yellow]")
+    return []
 
 
 def run_validate(
@@ -71,7 +95,7 @@ def run_validate(
                 if _infer_status(total, done) == "Complete":
                     continue
 
-                for issue in _lint_plan(pf):
+                for issue in _lint_plan(pf, config):
                     plan_issues.append(f"{pf.name}: {issue}")
             results.append(("Plan Lint", plan_issues))
     else:
@@ -107,6 +131,9 @@ def run_validate(
 
         governance_issues = check_governance_formats(config=config)
         results.append(("Governance Formats", governance_issues))
+
+        if config.inventory.enabled:
+            results.append(("System Inventory", _inventory_issues(config)))
 
         # Retrospective check (if enabled in config gates)
         if config.gates.in_progress_to_complete.retrospective:

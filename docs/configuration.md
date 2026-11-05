@@ -108,7 +108,7 @@ Gates control transitions between plan lifecycle states: Draft -> Review -> Read
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | review_checklist | bool | true | Require plan review checklist completed |
-| approval_gates | bool | true | Require human approval for approval-required changes |
+| approval_gates | bool | true | Require human approval for approval-required changes. While true, `scaffold_prepare_implementation` refuses a plan with `Approval Required: Yes` until an approval is recorded (see [agents](#agents)) |
 | interactive_gate | bool | true | Require human confirmation when "review it with me" requested |
 
 ### gates.in_progress_to_complete
@@ -120,6 +120,7 @@ Gates control transitions between plan lifecycle states: Draft -> Review -> Read
 | tests_pass | bool | true | Tests must pass |
 | retrospective | bool | true | Retrospective must be completed |
 | domain_implementation_review | bool | false | Domain-specific post-implementation review (e.g. quant_architect_implementation) |
+| compliance | `off` / `warn` / `block` | off | Rule checks in the post-implementation review (see [compliance](#compliance)). `off` omits the rows; `warn` reports them; `block` stops `scaffold_complete_plan` before anything is written when a rule row fails. Quote `'off'` in YAML |
 
 ---
 
@@ -187,6 +188,56 @@ Domain packs can add approval gates (e.g. `financial_calculations`, `model_deplo
 |-------|------|---------|-------------|
 | agents_md | bool | true | Generate AGENTS.md |
 | cursor_rules | bool | true | Generate .cursor/rules.md |
+| manual_path | str | `AGENTS.md` | The project's governance manual, relative to the project root. A path outside the root is ignored |
+| governance | object | see below | Which manual sections the MCP server delivers, and when |
+| durability | `committed` or `local` | `committed` | `local` means generated guidance is meant to stay uncommitted, so `scaffold doctor` stops warning that it is gitignored |
+| protect_read_only_paths | bool | true | Generated pre-edit hooks refuse agent edits to `semi_autonomous.safety.read_only_paths` in this project |
+| claude_md | `full` or `import` | `full` | `import` makes the `CLAUDE.md` managed block a single `@AGENTS.md` line instead of a second copy of the routing |
+
+`claude_md: import` relies on Claude Code expanding `@AGENTS.md`, so it only
+applies where `AGENTS.md` carries the full routing. In a shared-layout
+workspace the project `AGENTS.md` is a short stub, so `generate-all` ignores
+the setting there, says so, and keeps the full document in `CLAUDE.md`.
+
+`protect_read_only_paths` is a guardrail for agents that follow it, not an
+access control: it applies only where AgentScaffold's hooks are installed
+(`scaffold agents hooks`, or `scaffold agents install --scope user`), only to
+the editor's edit tools, and a human can still edit the file. Because
+`scaffold.yaml` is in the default `read_only_paths`, an agent asked to change
+it is refused and told to ask you; set this to `false` to turn the check off.
+
+### agents.governance
+
+The MCP server reads the manual's `##` and `###` sections (outside managed
+blocks and fenced code) and attaches the ones that govern each step.
+`scaffold_orient` returns them as `governance`; the lifecycle tools return them
+as `governance_sections`; `scaffold_governance` returns the table of contents
+or any one section. Heading names ignore case, surrounding whitespace, a
+leading `Gate:` and a trailing parenthetical. Address a `###` section as
+`Parent / Child`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| orient | list[str] | `[Hard Prohibitions, Approval Gates]` | Sections attached to `scaffold_orient` |
+| orient_budget | int | 2800 | Character limit for the orient block |
+| step_budget | int | 6000 | Character limit for each lifecycle block |
+| steps.review | list[str] | the Draft -> Review and Review -> Ready gates under Plan Lifecycle, Spike Requirements, Review Output Format, Review Terminology | `scaffold_begin_plan`, `scaffold_prepare_review` |
+| steps.implementation | list[str] | the Ready -> In Progress gate, Execution Rules, Test Requirements, Breaking Changes Protocol, Linter Warning Protocol | `scaffold_prepare_implementation` |
+| steps.completion | list[str] | the In Progress -> Complete gate, Retrospective Requirements, Runbook Rules, Architecture Changelog Scope | `scaffold_complete_plan`, `scaffold_prepare_retro` |
+| steps.backlog | list[str] | `[Backlog Rules]` | `scaffold_record_backlog_item` |
+| optional | list[str] | `[]` | Mapped headings that may be absent without being reported in `missing` or by `scaffold doctor` |
+
+Sections that do not fit the budget are listed in `truncated`; fetch them with
+`scaffold_governance(section=...)`. Mapped headings the manual lacks are
+listed in `missing` and reported by the `governance_mapping` doctor check;
+they never fail a tool call.
+
+**Approval.** When `gates.ready_to_in_progress.approval_gates` is true and a
+plan says `Approval Required: Yes`, `scaffold_prepare_implementation` returns
+only a `gate` (with the question to ask) until the approval is recorded,
+either as `- Approved: YYYY-MM-DD by <name>` in the plan metadata or as a
+`**Plan N -- APPROVED ...**` entry under `## Approvals` in the workflow state
+file. `- Approved: Pending`, the plan template default, is not an approval.
 
 ---
 
@@ -331,6 +382,83 @@ Knowledge-graph backend, indexing, and governance paths.
 | incremental_min_interval_seconds | int | `0` | Minimum seconds between generated async structural-index hook runs. `0` disables the interval guard; the hook remains single-flight/coalesced |
 | embedding_min_interval_seconds | int | `0` | Minimum seconds between async embedding refreshes. `0` disables the interval guard; requests remain single-flight/coalesced |
 | async_embeddings | `"off" \| "idle" \| "interval" \| "commit"` | `off` | Controls whether AgentScaffold schedules background embedding refreshes. `off` preserves historical behavior and never loads the embedding model |
+| infer_module_prefix | bool | `true` | Treat the project's dotted path below its git root as a Python module prefix for the project root (see below) |
+| module_prefixes | map of str to str | `{}` | Extra Python module prefixes, each mapped to a directory relative to the project root |
+| extra_paths | list[str] | `[]` | Globs, relative to the git root, naming files outside the project folder that belong to this project (see below) |
+
+### Monorepo module prefixes
+
+A project in a subfolder of a larger repository, such as
+`<repo>/company/team_x/`, is usually imported by its full path from the
+repository root: `from company.team_x.foo import bar`. The graph is built from
+the project root, where that file is `foo.py`, so without help those imports
+resolve to nothing and impact and caller queries miss them.
+
+`infer_module_prefix` handles the common case. The project's path below its
+git root (`company/team_x`) becomes the prefix `company.team_x`, mapped to the
+project root. Nothing is inferred when the project is the git root, when there
+is no git root, or when a folder name cannot appear in an import (`team-x`,
+`class`). The prefix is tried after the exact-path lookups, so a file that
+really sits at `company/team_x/foo.py` under the project root still wins.
+
+`module_prefixes` adds mappings the inference cannot see:
+
+```yaml
+graph:
+  module_prefixes:
+    team_x: "."          # import team_x.foo -> foo.py
+    team_x.core: src     # import team_x.core.util -> src/util.py
+```
+
+Keys must be dotted module names; values must stay inside the project root. An
+entry for the same prefix as the inferred one replaces it, and the longest
+matching prefix is tried first. Set `infer_module_prefix: false` to use only
+the explicit entries.
+
+`scaffold_validate` with `check=coverage` reports `import_strategies`: how
+many imports each lookup resolved, with `prefix` for these. Edges indexed
+before this was recorded show as `unrecorded` until the next full
+`scaffold index`.
+
+### Files outside the project folder (`extra_paths`)
+
+Some monorepos keep part of a team's code outside the team folder, such as
+Airflow DAGs under `<repo>/airflow/dags/team_x/` for a project at
+`<repo>/company/team_x/`. `extra_paths` lists globs, relative to the git root,
+for files like these:
+
+```yaml
+graph:
+  extra_paths:
+    - airflow/dags/team_x/**/*.py
+```
+
+Matching files are indexed with the project and get ids of the form
+`@repo/<path from the git root>`, for example
+`file::@repo/airflow/dags/team_x/load.py`. They take part in imports, callers,
+impact, search, `scaffold_grep_graph`, plan change lists and precedent like
+any other project file. A File Impact row may name them either way
+(`@repo/airflow/...` or `airflow/...`).
+
+The glob rules:
+
+- `*` and `?` stay within one folder, `**` spans folders, and `[abc]` matches
+  one character from the set.
+- A glob must start with at least one literal folder (`airflow/**` is
+  accepted, `**/*.py` and `*/dags/*.py` are not), must not be absolute, and
+  must not contain `..`.
+- The repository's `.gitignore` rules and the project's language filter
+  apply. Symlinks that lead outside the repository are skipped.
+
+Files are left out, with a warning in the index output, when they sit inside
+another registered project, when two projects' `extra_paths` both match them,
+or when the project folder itself contains a directory named `@repo`.
+Without a git root, `extra_paths` is ignored.
+
+Edit hooks route an edit to one of these files to the project that claims it,
+so the incremental index and the read-only guard both apply. A
+`read_only_paths` pattern for such a file uses the `@repo/` form, for example
+`@repo/airflow/dags/team_x/**`.
 
 ### Incremental index policy
 
@@ -579,6 +707,143 @@ When enabled, MCP request handlers avoid synchronous re-indexing. They return fr
 metadata and schedule eligible refreshes asynchronously.
 
 ---
+
+## sessions
+
+Controls how long a working session stays open without activity.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| idle_hours | float | 12 | Close an open session after this many hours with no session or governance write activity. `0` keeps sessions open until they are ended. |
+| warn_after_hours | float | 24 | `scaffold_orient` adds `session_warning` when the open session started more than this many hours ago. `0` turns the warning off. |
+
+Each session belongs to the project resolved for the call (the MCP tool's
+`working_path`, or the working directory for `scaffold session` commands), and
+sessions in one project never reuse, close or receive decisions for another
+project's session. Activity is recorded by the session tools and by the
+governance write tools (findings, backlog items, plan transitions); reads do not
+count and never close anything.
+
+An idle session is closed the next time a session is started or a decision is
+recorded, with ` [closed: idle]` appended to its summary. Sessions written before
+projects were stamped (an empty project) are closed by the same sweep once they
+go idle. To start fresh in a new chat while an old session is still active, call
+`scaffold_session_start` with `force_new: true`; the old session is closed with
+` [closed: force_new]`.
+
+```yaml
+sessions:
+  idle_hours: 12
+  warn_after_hours: 24
+```
+
+---
+
+## precedent
+
+Earlier findings, learnings and ADRs about the files a plan touches, fed into
+the pre-implementation review (`PRECEDENT` challenges and the brief's
+`precedent` section), `scaffold_prepare_implementation`, and
+`scaffold_impact`'s `governance_impact`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| enabled | bool | true | `false` omits precedent everywhere |
+| semantic | bool | false | Add embedding matches after the structural ones. Needs the `search` extra and embeddings |
+| sources | list[str] | [] | Other registered project names to read precedent from, besides this project and `implementation_project`. Opened read-only; one that cannot be opened is reported, never an error |
+| max_challenges | int | 5 | Most `PRECEDENT` challenges in the pre-implementation review. They are listed in addition to the five other challenges a summary response keeps, and each is recorded as a finding whatever its severity |
+| max_brief | int | 10 | Most items in the brief's `precedent` section |
+| max_compact | int | 5 | Most items on `scaffold_prepare_implementation` |
+| statistic_categories | list[str] | `HISTORY`, `VOLATILITY`, `HOT_FILE`, `COMPLEXITY` | Finding categories that are counts, not judgments; never returned as precedent |
+| automated_skip_categories | list[str] | `DEPENDENCY`, `CONSUMER_AUDIT`, `TEST_COVERAGE` | Categories never returned when the review engine wrote the finding (review type `pre_review` or `plan_appendix`); each review recomputes those notices. The same categories recorded by an agent or a human are returned |
+
+Items match, in rank order, through a graph link to the file, the stored
+paths of a finding or learning, an earlier plan that changed the same file, an
+ADR governing such a plan, and (with `semantic`) similar text. A plan never
+sees its own findings.
+
+```yaml
+precedent:
+  sources: [acme-governance]
+  max_challenges: 5
+```
+
+---
+
+## compliance
+
+Rule checks added to the post-implementation review's verification rows
+(`scaffold review verify`, `scaffold_prepare_retro`, `scaffold_complete_plan`).
+Each rule judges the files the plan changed, found from git in this order:
+a `base_ref` argument; the plan's merged branches (merge commits naming a
+branch with the plan number, such as `feature/42-x` or `docs/plan-42-y`, and
+squash merges whose subject starts with it, such as `Plan 42: ... (#12)`) on
+HEAD and on each base branch that exists; the plan's open branch since its
+merge-base with the base branch, plus uncommitted and untracked files; the
+commit recorded when the pre-implementation review ran; else the plan's File
+Impact Map. With `implementation_project` set, the code repository's changes
+are found the same way. Each row names the source it used.
+
+| Rule | Checks |
+|------|--------|
+| `pre_review_disposition` | Every pre-implementation finding recorded by an agent or human, and every automated `PRECEDENT` finding, has a disposition (`resolved`, `deferred` or `not_applicable`) |
+| `workflow_state_updated` | The workflow state file changed |
+| `architecture_changelog` | The architecture changelog changed for an architectural plan (an ADR governs it, `Breaking change: Yes`, or it changes the architecture document), and not otherwise |
+| `package_changelog` | Where `package_changelog` is set, it changed when source did |
+| `contract_with_interface` | A contract covering a changed file, or listed by the plan, changed |
+| `read_only_paths` | A changed file under `semi_autonomous.safety.read_only_paths` has a recorded approval (an `- Approved: YYYY-MM-DD by <name>` line in the plan, or an entry under `## Approvals` in the workflow state) |
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| base_branch | str | unset | Branch an open plan branch is compared with. Unset: the first of `origin/HEAD`, `staging`, `main`, `master` that exists |
+| package_changelog | str | unset | Changelog a source change should touch, relative to the project root. Unset skips that rule |
+| disposition_exempt_categories | list[str] | `DEPENDENCY`, `CONSUMER_AUDIT`, `TEST_COVERAGE` | Finding categories the disposition rule ignores |
+| rules | map | {} | Per rule: `off`, `warn` or `block`. `read_only_paths` defaults to `block` and the rest to `warn`. A violation is `fail` at `block` and `warn` at `warn`; `off` omits the row |
+
+The rules are off until `gates.in_progress_to_complete.compliance` is set to
+`warn` or `block`, including for `scaffold review verify`. They default to off
+because, replayed over plans completed before a commit was recorded at review,
+most rows were false alarms: with no plan branch or recorded commit to follow,
+the change list falls back to the File Impact Map. Turn them on once plans are
+reviewed with this version, so the reviewed commit is recorded. Only `block`
+makes a `fail` row stop completion.
+
+```yaml
+compliance:
+  package_changelog: CHANGELOG.md
+  rules:
+    architecture_changelog: 'off'
+gates:
+  in_progress_to_complete:
+    compliance: warn
+```
+
+---
+
+## MCP server environment
+
+### AGENTSCAFFOLD_MCP_INSTRUCTIONS
+
+The MCP server sends a short working procedure (start a session, orient, route by
+intent, close the session) in its initialize result, so a client follows it even
+in a repository whose rule files are not generated by AgentScaffold. Tool
+responses also report the session state: `meta.session_open` on every
+project-scoped tool except the session tools and `scaffold_projects`, plus
+`meta.procedure_hint` on `scaffold_orient` and the governance write tools when no
+session is open.
+
+Set `AGENTSCAFFOLD_MCP_INSTRUCTIONS` to `0`, `false` or `off` (any case) in the
+server's environment to turn off both the instructions and the response keys.
+Any other value, or leaving it unset, keeps them on. The server reads the
+variable once at startup, so restart the client after changing it.
+
+```json
+"agentscaffold": {
+  "command": "scaffold",
+  "args": ["mcp"],
+  "env": { "AGENTSCAFFOLD_MCP_INSTRUCTIONS": "off" }
+}
+```
 
 ## Retrieval and Search
 

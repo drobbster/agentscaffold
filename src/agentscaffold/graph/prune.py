@@ -1,13 +1,14 @@
 """Selective pruning of governance knowledge from the graph.
 
 Powers ``scaffold graph prune``. Selection is read-only and status-aware: only
-resolved findings, archived backlog items, and sessions older than a cutoff are
-ever eligible. Deletion is performed by ``apply_prune`` and is only invoked when
-the caller explicitly opts in (the CLI defaults to a dry run).
+resolved and not-applicable findings, archived backlog items, and sessions older
+than a cutoff are ever eligible. Deletion is performed by ``apply_prune`` and is
+only invoked when the caller explicitly opts in (the CLI defaults to a dry run).
 
 Note on findings: the ``ReviewFinding`` table has no timestamp column, so the
-age cutoff cannot be applied to findings -- selection is by ``resolved`` status
-alone. Sessions and backlog items do carry timestamps and are filtered by age.
+age cutoff cannot be applied to findings -- selection is by status alone
+(``resolved`` or ``not_applicable``; ``deferred`` is still live work). Sessions
+and backlog items do carry timestamps and are filtered by age.
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ def _esc(value: str) -> str:
 
 
 def _scope_and(project: str | None, all_projects: bool) -> str:
-    """Inline `` AND project = '<name>'`` for the current scope, or '' (Plan 225).
+    """Inline `` AND project = '<name>'`` for the current scope, or ''.
 
     Pruning is destructive, so it must default to the current project: a prune in
     one project must never select (and then delete) a sibling project's resolved
@@ -88,7 +89,7 @@ def select_prunable(
     scope = _scope_and(project, all_projects)
 
     if malformed_findings:
-        # Plan 250: rows the unanchored extractor manufactured out of prose. The
+        # Rows the unanchored extractor manufactured out of prose. The
         # parser fix stops new ones, but nothing removes what is already stored:
         # create_node uses ON CONFLICT DO NOTHING, so re-indexing never deletes,
         # and purging the serialized export just gets overwritten from the store
@@ -104,12 +105,13 @@ def select_prunable(
         ]
 
     if resolved_findings_before is not None:
-        # ReviewFinding has no timestamp; eligibility is by 'resolved' status only.
+        # ReviewFinding has no timestamp; eligibility is by status only. Deferred
+        # findings are still live work and are never pruned.
         # parse_age still validates the spec so the CLI surface stays consistent.
         parse_age(resolved_findings_before)
         selection["resolved_findings"] = store.query(
             "SELECT id, planNumber, severity, category FROM ReviewFinding"
-            f" WHERE status = 'resolved'{scope}"
+            f" WHERE status IN ('resolved', 'not_applicable'){scope}"
         )
 
     if sessions_before is not None:
@@ -137,7 +139,7 @@ def apply_prune(store: GraphBackend, selection: dict[str, list[dict[str, Any]]])
     the system of record: ``index`` restores the graph from it, so a prune that
     only touched the derived store would be undone by the next index. Every other
     governance mutation already syncs; the delete helpers did not, which made
-    pruning silently non-durable for all categories (Plan 250).
+    pruning silently non-durable for all categories.
     """
     from agentscaffold.graph.backlog import delete_backlog_item
     from agentscaffold.graph.findings import delete_finding

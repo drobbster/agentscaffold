@@ -317,7 +317,7 @@ The {name} project, working on plan {ids["plan"]}.
 {ids["blocker"]}
 """
     )
-    # The table form, not the prose form the governance repo happens to use --
+    # The table form, not the prose form some governance docs use --
     # the parser recognises tables and a "### L042-1" list, and prose silently
     # yields zero learnings. Built separately because the row has to stay on one
     # physical line for the parser and does not fit the line limit inline.

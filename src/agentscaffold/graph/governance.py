@@ -16,6 +16,7 @@ Artifacts follow AgentScaffold template conventions:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Artifact registry (Plan 261)
+# Artifact registry
 # ---------------------------------------------------------------------------
 # Zero rows means three different things. The declaration lives in one table so
 # a future parser cannot inherit silence by being forgotten.
@@ -111,7 +112,7 @@ ARTIFACT_REGISTRY: dict[str, ArtifactSpec] = {
         name="findings",
         shape="opportunistic",
         zero_policy="legitimate",
-        expected_format="[CATEGORY] markers anchored at line start (Plan 250)",
+        expected_format="[CATEGORY] markers anchored at line start",
     ),
 }
 
@@ -215,10 +216,79 @@ _PLAN_METADATA_RE = re.compile(
 )
 _PLAN_NUMBER_RE = re.compile(r"^(?:plan[_\-]?)?0*(\d+)", re.IGNORECASE)
 _FILE_IMPACT_ROW_RE = re.compile(
-    r"^\|\s*(?!File\s|---)[`]?(?P<path>[^|`]+?)[`]?\s*\|" r"\s*(?P<change_type>[^|]+?)\s*\|",
+    r"^\|\s*(?!File\s|---)(?P<cell>[^|\n]+?)\s*\|\s*(?P<change_type>[^|\n]+?)\s*\|",
     re.MULTILINE,
 )
 _HEADER_VALUES = {"File", "Change Type", "Description", "---"}
+_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+_PAREN_NOTE_RE = re.compile(r"\([^)]*\)")
+_CELL_SEPARATOR_RE = re.compile(r"\s*[,;]\s*|\s+(?:\+|/|and|or)\s+")
+_BRACE_RE = re.compile(r"\{([^{}]*,[^{}]*)\}")
+_FILE_EXTENSION_RE = re.compile(r"\.[A-Za-z][A-Za-z0-9]*$")
+
+
+def _looks_like_path(token: str) -> bool:
+    if not token or any(ch.isspace() for ch in token):
+        return False
+    return "/" in token or bool(_FILE_EXTENSION_RE.search(token))
+
+
+def _expand_braces(token: str) -> list[str]:
+    m = _BRACE_RE.search(token)
+    if m is None:
+        return [token]
+    head, tail = token[: m.start()], token[m.end() :]
+    out: list[str] = []
+    for part in m.group(1).split(","):
+        out.extend(_expand_braces(f"{head}{part.strip()}{tail}"))
+    return out
+
+
+def _split_path_cell(cell: str) -> list[str]:
+    """Paths named in one File Impact Map cell.
+
+    Parenthetical notes are ignored. Code spans win when present; otherwise the
+    cell is split on ``,`` ``;`` and on `` + `` `` / `` `` and `` `` or `` with
+    spaces around them. An entry with spaces keeps only its path-like words
+    (``governance: docs/x.md``). ``{a,b}`` lists expand. A single entry is kept when it
+    is path-like or is the whole cell without spaces (``justfile``). With
+    several, only path-like entries count, and a bare file name takes the
+    folder of the path before it (`` `docs/t/a.md`, `b.md` `` lists
+    ``docs/t/b.md``).
+    """
+    note_free = _PAREN_NOTE_RE.sub("", cell)
+    spans = [s.strip() for s in _CODE_SPAN_RE.findall(note_free)]
+    bare = note_free.replace("`", "").strip()
+    if spans:
+        raw = spans
+    else:
+        guarded = _BRACE_RE.sub(lambda b: b.group(0).replace(",", "\0"), bare)
+        raw = [t.strip().replace("\0", ",") for t in _CELL_SEPARATOR_RE.split(guarded)]
+    tokens: list[str] = []
+    for t in raw:
+        if not t:
+            continue
+        words = [w for w in t.split() if _looks_like_path(w)] if " " in t else []
+        for entry in words or [t]:
+            tokens.extend(_expand_braces(entry))
+
+    if len(tokens) == 1:
+        token = tokens[0]
+        whole = token == bare and not any(ch.isspace() for ch in token)
+        return [token] if _looks_like_path(token) or whole else []
+
+    paths: list[str] = []
+    folder = ""
+    for token in tokens:
+        if not _looks_like_path(token):
+            continue
+        if "/" in token:
+            folder = token.rstrip("/") if token.endswith("/") else token.rsplit("/", 1)[0]
+        elif folder:
+            token = f"{folder}/{token}"
+        if token not in paths:
+            paths.append(token)
+    return paths
 
 
 def _extract_plan_number(filename: str) -> int | None:
@@ -283,15 +353,17 @@ def _extract_file_impact(text: str) -> list[dict[str, str]]:
     section = text[section_start:next_section] if next_section != -1 else text[section_start:]
 
     for m in _FILE_IMPACT_ROW_RE.finditer(section):
-        path = m.group("path").strip()
+        cell = m.group("cell").strip()
         change_type = m.group("change_type").strip()
         if (
-            path
-            and path not in _HEADER_VALUES
-            and not path.startswith("---")
-            and change_type
-            and change_type not in _HEADER_VALUES
+            not cell
+            or cell in _HEADER_VALUES
+            or cell.startswith("---")
+            or not change_type
+            or change_type in _HEADER_VALUES
         ):
+            continue
+        for path in _split_path_cell(cell):
             impacts.append({"path": path, "change_type": change_type})
     return impacts
 
@@ -457,7 +529,7 @@ _LEARNING_RE_LIST = re.compile(
     re.MULTILINE,
 )
 
-# Bold-bullet prose: - **L249-17 (2026-08-06, Plan 249 Step F6): title**
+# Bold-bullet prose: - **L042-3 (2026-01-15, Plan 042 Step 2): title**
 _LEARNING_RE_BOLD = re.compile(
     r"^-\s+\*\*(?P<id>L(?P<plan>\d+)-\d+)\s*\([^)]*\):\s*(?P<desc>.+?)\*\*",
     re.MULTILINE | re.DOTALL,
@@ -474,7 +546,7 @@ def _status_from_section_heading(heading: str) -> str:
 
 
 def _parse_learnings_bold(text: str) -> list[dict[str, Any]]:
-    """Parse the bold-bullet prose format used by agentscaffold-governance."""
+    """Parse the bold-bullet prose format (one ``- **L<plan>-<n> (...): title**`` per entry)."""
     learnings: list[dict[str, Any]] = []
     chunks = re.split(r"^##\s+", text, flags=re.MULTILINE)
     for index, chunk in enumerate(chunks):
@@ -511,7 +583,7 @@ def _parse_learnings(filepath: Path) -> list[dict[str, Any]]:
     - 4-column table: ``| ID | Learning | Target | Status |`` (plan in ID)
     - 3-column table: ``| ID | Learning | Target |``
     - YAML-like list:  ``### L042-1`` with ``- Plan:`` / ``- Description:`` fields
-    - Bold-bullet prose: ``- **L249-17 (date, Plan N ...): title**``
+    - Bold-bullet prose: ``- **L042-3 (date, Plan N ...): title**``
     """
     try:
         text = filepath.read_text(errors="replace")
@@ -564,7 +636,7 @@ def _parse_learnings(filepath: Path) -> list[dict[str, Any]]:
 # The optional (?P<severity>!{1,2}) consumes the "!"/"!!" severity markers the
 # formatters append (e.g. "[DEPENDENCY]!! ..."), keeping them out of the text.
 #
-# Anchored to line start (Plan 250). Unanchored, the pattern also fired on
+# Anchored to line start. Unanchored, the pattern also fired on
 # category names mentioned in ordinary prose -- including inside inline code
 # spans -- and captured the rest of the sentence as the finding body. Over the
 # 44-plan governance corpus that was a 100 per cent false-positive rate, because
@@ -615,7 +687,9 @@ def _parse_review_findings(text: str, plan_number: int, review_type: str) -> lis
 _PLAN_APPENDIX_REVIEW_TYPE = "plan_appendix"
 
 
-def _ingest_plan_findings(store: GraphBackend, plan_number: int, text: str) -> int:
+def _ingest_plan_findings(
+    store: GraphBackend, plan_number: int, text: str, root: Path | None = None
+) -> int:
     """Create ReviewFinding nodes from [CATEGORY] markers in a plan's text.
 
     Returns the number of findings parsed. Nodes use deterministic ids and
@@ -623,6 +697,7 @@ def _ingest_plan_findings(store: GraphBackend, plan_number: int, text: str) -> i
     across re-indexing and never clobbers a finding already marked resolved.
     """
     from agentscaffold.graph.findings import _finding_id, is_malformed_finding
+    from agentscaffold.review.path_mentions import collect_paths
 
     raw = [
         f
@@ -644,6 +719,7 @@ def _ingest_plan_findings(store: GraphBackend, plan_number: int, text: str) -> i
                 "finding": f["finding"],
                 "resolution": "",
                 "status": "open",
+                "paths": json.dumps(collect_paths(None, [f["finding"]], project_root=root)),
             },
         )
     return len(raw)
@@ -772,7 +848,7 @@ def _parse_adr(filepath: Path) -> dict[str, Any] | None:
     date_text = _extract_section_text(text, "Date")
     date_line = date_text.split("\n")[0].strip() if date_text else ""
 
-    # House format (ADR-025): **Status**: Accepted / **Date**: YYYY-MM-DD
+    # House format: **Status**: Accepted / **Date**: YYYY-MM-DD
     for bold in _ADR_BOLD_META_RE.finditer(text[:4000]):
         key = bold.group("key").lower()
         value = bold.group("value").strip()
@@ -955,7 +1031,31 @@ def governance_source_files(root: Path, config: Any | None = None) -> list[Path]
     for f in files:
         if f.is_file():
             result.append(f)
+    result.extend(_inventory_source_files(root, config))
     return result
+
+
+def _inventory_source_files(root: Path, config: Any | None) -> list[Path]:
+    """The inventory file and its collector sources, when the inventory is enabled.
+
+    An edit to either changes the Component nodes, which the code changeset
+    alone would not trigger.
+    """
+    inventory = getattr(config, "inventory", None) if config is not None else None
+    if inventory is None or not getattr(inventory, "enabled", False):
+        return []
+    from agentscaffold.inventory.collectors import expand_sources, registered  # noqa: PLC0415
+
+    files: list[Path] = []
+    path = root / inventory.path
+    if path.is_file():
+        files.append(path)
+    specs = registered()
+    for collector in inventory.collectors:
+        spec = specs.get(collector.name)
+        globs = list(collector.sources) or (list(spec.default_sources) if spec else [])
+        files.extend(disk for _form, disk in expand_sources(root, globs))
+    return files
 
 
 def _ingest_architecture_layers(
@@ -1068,7 +1168,7 @@ def process_governance(
         spikes_dir = root / "docs" / "ai" / "spikes"
         architecture_doc = root / "docs" / "ai" / "system_architecture.md"
 
-    # Restore git-backed governance (Plan 222): findings, sessions, and backlog
+    # Restore git-backed governance: findings, sessions, and backlog
     # items recorded at runtime live in a committed artifact, not in code. On a
     # fresh build the graph has none of them, so ingest the artifact (idempotent)
     # before parsing code-derived governance. A missing artifact is a no-op; a
@@ -1104,7 +1204,7 @@ def process_governance(
     ):
         file_id_map[row["f.path"]] = row["f.id"]
 
-    # --- Architecture layers (Plan 237) ---
+    # --- Architecture layers ---
     # Parse the human-owned architecture baseline into ArchitectureLayer nodes and
     # link each file to its most-specific layer. A missing/placeholder doc yields
     # no layers (clean no-op); a parse failure is logged and skipped so indexing
@@ -1127,6 +1227,8 @@ def process_governance(
     plan_dependencies: list[tuple[str, list[int]]] = []
     step_dependencies: list[tuple[str, list[dict[str, Any]]]] = []
     if plans_dir.is_dir():
+        from agentscaffold.review.path_mentions import collect_paths  # noqa: PLC0415
+
         seen_plan_ids: set[str] = set()
         for plan_file in sorted(plans_dir.glob("*.md")):
             data = _parse_plan(plan_file)
@@ -1151,6 +1253,11 @@ def process_governance(
                     "filePath": data["filepath"],
                     "createdDate": data["created"],
                     "lastUpdated": data["last_updated"],
+                    "impactPaths": json.dumps(
+                        collect_paths(
+                            None, [i["path"] for i in data["file_impacts"]], project_root=root
+                        )
+                    ),
                 },
             )
             plan_count += 1
@@ -1201,7 +1308,7 @@ def process_governance(
             # ids are deterministic and create_node is ON CONFLICT DO NOTHING, so
             # re-indexing re-affirms findings and preserves any 'resolved' status
             # set later via the runtime resolve_finding path.
-            finding_count += _ingest_plan_findings(store, data["number"], data["text"])
+            finding_count += _ingest_plan_findings(store, data["number"], data["text"], root)
 
     # --- Plan dependency edges (second pass, all plan nodes exist) ---
     dep_edge_count = 0
@@ -1260,7 +1367,7 @@ def process_governance(
             contract_count += 1
 
             # Files that contain a declared symbol -> direct CONTRACT_ABOUT_FILE
-            # edge (Plan 237). This makes contract coverage a first-class,
+            # edge. This makes contract coverage a first-class,
             # queryable relationship instead of only an implicit declares-join.
             contract_files: set[str] = set()
 
@@ -1321,8 +1428,11 @@ def process_governance(
     if learnings_file.is_file():
         parsed_learnings = _parse_learnings(learnings_file)
         _maybe_warn_whole_file(store, "learnings", learnings_file, len(parsed_learnings))
+        from agentscaffold.review.path_mentions import collect_paths  # noqa: PLC0415
+
         for lr in parsed_learnings:
             lr_id = f"learning::{lr['learning_id']}"
+            lr_paths = collect_paths(None, [lr["description"], lr["target"]], project_root=root)
             store.create_node(
                 "Learning",
                 {
@@ -1334,6 +1444,7 @@ def process_governance(
                     "status": lr["status"],
                     "evidenceKind": "unspecified",
                     "evidence": "",
+                    "paths": json.dumps(lr_paths),
                 },
             )
             learning_count += 1

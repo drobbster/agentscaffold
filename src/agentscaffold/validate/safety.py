@@ -51,8 +51,13 @@ def _get_modified_files() -> list[str] | None:
     return None
 
 
-def _matches_read_only(filepath: str, read_only_paths: list[str]) -> bool:
-    """Check if a filepath matches any read-only path pattern."""
+def matches_read_only(filepath: str, read_only_paths: list[str]) -> bool:
+    """Check if a project-relative POSIX path matches any read-only path pattern.
+
+    A file outside the project folder listed by ``graph.extra_paths`` is passed
+    as its ``@repo/<path>`` File path, so patterns such as ``@repo/airflow/``
+    protect it.
+    """
     for pattern in read_only_paths:
         if pattern.endswith("/"):
             if filepath.startswith(pattern) or filepath.startswith(pattern.rstrip("/")):
@@ -82,7 +87,7 @@ def check_safety_boundaries(config: ScaffoldConfig | None = None) -> list[str]:
 
     read_only = config.semi_autonomous.safety.read_only_paths
     for filepath in modified:
-        if _matches_read_only(filepath, read_only):
+        if matches_read_only(filepath, read_only):
             issues.append(f"Read-only file was modified: {filepath}")
 
     return issues

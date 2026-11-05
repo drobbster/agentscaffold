@@ -1,4 +1,4 @@
-"""Plan 246: dry_run lifecycle writes nothing."""
+"""dry_run lifecycle writes nothing."""
 
 from __future__ import annotations
 

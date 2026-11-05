@@ -16,6 +16,7 @@ from rich.console import Console
 from rich.table import Table
 
 from agentscaffold.graph.query_compat import ql
+from agentscaffold.paths import resolve_node_path
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
@@ -72,12 +73,12 @@ def verify_graph(
     for row in file_rows:
         file_path = row["f.path"]
         stored_hash = row["f.contentHash"]
-        full_path = root / file_path
+        full_path = resolve_node_path(root, file_path)
 
         report["file_existence"]["total"] += 1
         report["hash_freshness"]["total"] += 1
 
-        if not full_path.is_file():
+        if full_path is None or not full_path.is_file():
             report["file_existence"]["missing"] += 1
             report["missing_files"].append(file_path)
         else:
@@ -139,9 +140,9 @@ def _deep_verify(
 
     for row in sample:
         file_path = row["f.path"]
-        full_path = root / file_path
+        full_path = resolve_node_path(root, file_path)
 
-        if not full_path.is_file():
+        if full_path is None or not full_path.is_file():
             continue
 
         stored_funcs = ql(
@@ -317,8 +318,8 @@ def check_staleness(
             continue
 
         stored_hash = rows[0]["f.contentHash"]
-        full_path = root / fp
-        if not full_path.is_file():
+        full_path = resolve_node_path(root, fp)
+        if full_path is None or not full_path.is_file():
             result[fp] = "missing"
         else:
             current_hash = _file_hash(full_path)

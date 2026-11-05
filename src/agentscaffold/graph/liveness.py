@@ -1,8 +1,8 @@
-"""Detect whether a graph database is in use, before migrating it (Plan 249, A9).
+"""Detect whether a graph database is in use, before migrating it.
 
-Threat model Vector 5 requires that relocation never race a live process: two live
-databases, or an old one still readable after the move, is the failure mode. This
-module supplies the detection that ``workspace migrate-state`` (Step B4) refuses on.
+Relocation must never race a live process: two live databases, or an old one still
+readable after the move, is the failure mode. This module supplies the detection
+that ``workspace migrate-state`` refuses on.
 
 The mechanism was chosen by measurement rather than design, and the measurement is
 what makes it this small. DuckDB locks the database file such that:
@@ -14,11 +14,11 @@ what makes it this small. DuckDB locks the database file such that:
 
 An attempted read/write open is therefore a complete cross-process liveness probe.
 It fails if anyone else holds the database at all -- an indexer mid-write, or an
-idle MCP server holding a read-preferring handle (Plan 244). That second case is
+idle MCP server holding a read-preferring handle. That second case is
 the one worth having: such a server is not writing anything, so a "is anyone
 writing?" check would wave the migration through, and on POSIX the old file would
 unlink while that process kept its descriptor and went on serving content from a
-database nobody can see any more. Which is exactly what Vector 5 describes.
+database nobody can see any more. Which is exactly the failure mode above.
 
 The alternatives were all worse. A heartbeat or pid table adds state that goes
 stale and has to be reaped, and pids are meaningless across containers and wrong

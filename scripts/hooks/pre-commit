@@ -1,0 +1,29 @@
+#!/bin/sh
+# AGENTSCAFFOLD PUBLIC CONTENT HOOK
+# Scan the index before a commit. An existing hook is run afterwards as
+# pre-commit.local.
+
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+if [ -x "$root/.venv/bin/python" ]; then
+  PY="$root/.venv/bin/python"
+else
+  PY="python3"
+fi
+
+if [ -z "${PUBLIC_CONTENT_DENYLIST_FILE:-}" ] && [ -z "${PUBLIC_CONTENT_DENYLIST:-}" ]; then
+  config="${HOME:-}/.config/agentscaffold/public-content-denylist.txt"
+  if [ -n "${HOME:-}" ] && [ -f "$config" ]; then
+    PUBLIC_CONTENT_DENYLIST_FILE=$config
+    export PUBLIC_CONTENT_DENYLIST_FILE
+  fi
+fi
+
+"$PY" "$root/scripts/check_public_content.py" --staged --repo "$root"
+
+if [ -x "$root/.git/hooks/pre-commit.local" ]; then
+  "$root/.git/hooks/pre-commit.local"
+fi

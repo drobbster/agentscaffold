@@ -1,9 +1,9 @@
-"""Finding lifecycle eval scenarios — Step E.3.
+"""Finding lifecycle eval scenarios.
 
-Prerequisite for Phase C gate.  Verifies that the ReviewFinding write-back
+Verifies that the ReviewFinding write-back
 path (record → query → resolve → verify) works correctly.
 
-Also covers B-149-2: concurrent write hardening — N threads calling
+Also covers concurrent write hardening — N threads calling
 record_finding() concurrently on the same store instance must not lose writes
 or corrupt data.  Latency is measured to surface WAL serialization overhead.
 """
@@ -162,7 +162,7 @@ class TestFindingLifecycle:
 
 
 class TestConcurrentFindingWrites:
-    """B-149-2: Concurrent write hardening.
+    """Concurrent write hardening.
 
     Validates that N threads calling record_finding() on the same store instance
     simultaneously produce no data loss, no corruption, and acceptable latency.
@@ -285,7 +285,7 @@ class TestConcurrentFindingWrites:
 
 
 class TestFindingEvidence:
-    """Plan 264: evidence fields persist and default to unspecified."""
+    """Evidence fields persist and default to unspecified."""
 
     def test_record_finding_keeps_explicit_evidence(self, indexed_sim):
         _, store, _ = indexed_sim

@@ -13,6 +13,7 @@ from agentscaffold.config import ScaffoldConfig, WorkspaceConfig, find_config, l
 from agentscaffold.rendering import (
     MANAGED_BLOCK_BEGIN,
     MANAGED_BLOCK_END,
+    ManagedBlockAppendRefusedError,
     canonical_guidance_document,
     canonical_guidance_path,
     ensure_agents_guidance_pointer,
@@ -44,7 +45,7 @@ console = Console()
 def _shared_workspace_context(
     project_root: Path,
 ) -> tuple[bool, WorkspaceConfig | None, Path | None]:
-    """Return (is_shared, workspace, workspace_root) for a project (Plan 234).
+    """Return (is_shared, workspace, workspace_root) for a project.
 
     Detects whether the project belongs to a workspace whose ``asset_layout``
     opts into ``shared_workspace``. Returns ``(False, None, None)`` for a lone or
@@ -79,7 +80,7 @@ def render_agents_routing(config: ScaffoldConfig) -> str:
 def _render_project_agents_md(config: ScaffoldConfig, project_root: Path, context: dict) -> str:  # type: ignore[type-arg]
     """Render the AGENTS.md managed body.
 
-    Shared-workspace projects stay stub-first (Plan 234). A lone project gets
+    Shared-workspace projects stay stub-first. A lone project gets
     routing only; the governance manual is scaffolded once by init.
     """
     is_shared, workspace, _ = _shared_workspace_context(project_root)
@@ -146,7 +147,7 @@ def _drop_exact_routing_sections(lifted: str, routing_body: str) -> str:
 
 
 def _lift_legacy_agents_block(path: Path, routing_body: str) -> bool:
-    """Move a pre-260 governance block out of the markers. Keeps a ``.bak``."""
+    """Move an old-format governance block out of the markers. Keeps a ``.bak``."""
     if not path.exists():
         return False
     text = path.read_text()
@@ -180,7 +181,7 @@ def write_workspace_agents_router(
     force: bool = False,
     allow_append: bool = False,
 ) -> str:
-    """Write the thin workspace-root AGENTS.md router (Plan 234).
+    """Write the thin workspace-root AGENTS.md router.
 
     Written into a managed block so a hand-authored workspace AGENTS.md is never
     clobbered. Returns the write status.
@@ -199,15 +200,36 @@ def write_workspace_agents_router(
     return write_managed_block(dest, content, force=force, allow_append=allow_append)
 
 
+def workspace_router_is_managed(workspace_root: Path) -> bool:
+    """True when the workspace-root AGENTS.md already holds our managed block.
+
+    In a company monorepo the root AGENTS.md belongs to whoever owns the
+    repository, so the router is refreshed only where AgentScaffold put it.
+    """
+    path = workspace_root / "AGENTS.md"
+    try:
+        return path.is_file() and MANAGED_BLOCK_BEGIN in path.read_text()
+    except OSError:
+        return False
+
+
+#: Printed when the router is left alone; names the opt-in.
+WORKSPACE_ROUTER_SKIPPED = (
+    "not managed by AgentScaffold; pass `scaffold agents generate-all "
+    "--include-workspace` to write the workspace router"
+)
+
+
 def _guidance_stamper(config: ScaffoldConfig, project_root: Path) -> Callable[[str], str]:
     """Return a function that stamps rule content with provenance.
 
     Shared workspaces cite the canonical file. Lone / ``project_local`` repos
-    still get an ``@generated`` banner (Plan 251) hashed from the body itself,
+    still get an ``@generated`` banner hashed from the body itself,
     with a workspace-relative source -- never an absolute home path.
     """
     canonical = canonical_guidance_path(project_root)
     if canonical is None:
+
         def _local_stamp(content: str) -> str:
             return prepend_generated_banner(
                 content,
@@ -307,6 +329,7 @@ def run_agents_generate_all_platforms(
     dry_run: bool = False,
     force: bool = False,
     allow_append: bool = False,
+    include_workspace: bool = False,
 ) -> dict[str, list[Path]]:
     """Generate all platform artifacts from a single config.
 
@@ -325,9 +348,13 @@ def run_agents_generate_all_platforms(
     stubs) are always regenerated so policy/config updates land; mcp.json remains
     skip-if-exists.
 
+    The workspace-root AGENTS.md router of a shared workspace is refreshed only
+    when that file already holds our managed block, or with *include_workspace*.
+
     Returns a dict mapping platform -> list of written paths.
     """
     from agentscaffold.agents.claude import (  # noqa: PLC0415
+        CLAUDE_MD_IMPORT,
         generate_claude_rules,
         write_claude_agents,
     )
@@ -347,9 +374,6 @@ def run_agents_generate_all_platforms(
         generate_cursor_enforcement_files,
         write_cursor_hooks,
         write_embedding_commit_hooks,
-    )
-    from agentscaffold.hooks.generators.cursor import (
-        resolve_scaffold_bin as _resolve_scaffold_bin,
     )
     from agentscaffold.hooks.generators.windsurf import write_windsurf_hooks  # noqa: PLC0415
 
@@ -391,7 +415,7 @@ def run_agents_generate_all_platforms(
     # AGENTS.md (project-owned -- managed block, never clobbered unless force).
     # Under shared_workspace the project AGENTS.md is stub-first (pointers to the
     # workspace shared process assets), and a thin workspace-root router AGENTS.md
-    # is generated too (Plan 234).
+    # is generated too.
     context = get_default_context(config)
     agents_md_path = project_root / "AGENTS.md"
     is_shared, ws, ws_root = _shared_workspace_context(project_root)
@@ -399,12 +423,20 @@ def run_agents_generate_all_platforms(
         agents_body = _render_project_agents_md(config, project_root, context)
         if not force:
             _lift_legacy_agents_block(agents_md_path, agents_body)
-        status = write_managed_block(
-            agents_md_path,
-            agents_body,
-            force=force,
-            allow_append=allow_append,
-        )
+        try:
+            status = write_managed_block(
+                agents_md_path,
+                agents_body,
+                force=force,
+                allow_append=allow_append,
+            )
+        except ManagedBlockAppendRefusedError as exc:
+            raise ManagedBlockAppendRefusedError(
+                f"{agents_md_path} already carries AgentScaffold routing sections "
+                "written without markers (before 0.12). Run `scaffold agents repair "
+                "--prefer-managed --apply` to replace those copies with the managed "
+                "block and keep the rest of your manual (a .bak is saved)."
+            ) from exc
         _report_managed_write(status, "AGENTS.md")
         pointer_status = ensure_agents_guidance_pointer(agents_md_path)
         if pointer_status in {"created", "inserted"}:
@@ -417,21 +449,32 @@ def run_agents_generate_all_platforms(
 
     if is_shared and ws is not None and ws_root is not None and ws_root != project_root:
         router_path = ws_root / "AGENTS.md"
-        if not dry_run:
-            status = write_workspace_agents_router(
-                ws_root, ws, force=force, allow_append=allow_append
+        if not (include_workspace or workspace_router_is_managed(ws_root)):
+            console.print(
+                f"[dim]Skipped[/dim] {router_path} [dim]({WORKSPACE_ROUTER_SKIPPED})[/dim]"
             )
-            _report_managed_write(status, str(router_path))
         else:
-            console.print("[dim]dry-run[/dim] would update workspace-root AGENTS.md router")
-        written["project"].append(router_path)
+            if not dry_run:
+                status = write_workspace_agents_router(
+                    ws_root, ws, force=force, allow_append=allow_append
+                )
+                _report_managed_write(status, str(router_path))
+            else:
+                console.print("[dim]dry-run[/dim] would update workspace-root AGENTS.md router")
+            written["project"].append(router_path)
 
     # Claude Code: CLAUDE.md (project-owned -- managed block) + subagents
     claude_md = project_root / "CLAUDE.md"
-    if not dry_run:
-        status = write_managed_block(
-            claude_md, stamp(generate_claude_rules(config)), force=force, allow_append=allow_append
+    claude_import = config.agents.claude_md == "import"
+    if claude_import and is_shared:
+        console.print(
+            "[yellow]agents.claude_md: import ignored[/yellow] [dim](AGENTS.md here is a "
+            "shared-workspace stub without the routing; CLAUDE.md keeps the full document)[/dim]"
         )
+        claude_import = False
+    if not dry_run:
+        claude_body = CLAUDE_MD_IMPORT if claude_import else stamp(generate_claude_rules(config))
+        status = write_managed_block(claude_md, claude_body, force=force, allow_append=allow_append)
         _report_managed_write(status, "CLAUDE.md")
     else:
         console.print(
@@ -445,8 +488,6 @@ def run_agents_generate_all_platforms(
         p = write_claude_code_hooks(
             config.enforcement,
             project_root,
-            scaffold_bin=_resolve_scaffold_bin(),
-            min_interval_seconds=config.graph.incremental_min_interval_seconds,
             dry_run=dry_run,
         )
         written["hooks"].append(p)
@@ -497,8 +538,6 @@ def run_agents_generate_all_platforms(
             write_cursor_hooks(
                 config.enforcement,
                 project_root,
-                scaffold_bin=_resolve_scaffold_bin(),
-                min_interval_seconds=config.graph.incremental_min_interval_seconds,
                 dry_run=dry_run,
             )
         )
@@ -506,8 +545,6 @@ def run_agents_generate_all_platforms(
         written["hooks"].extend(
             write_embedding_commit_hooks(
                 project_root,
-                scaffold_bin=_resolve_scaffold_bin(),
-                min_interval_seconds=config.graph.embedding_min_interval_seconds,
                 dry_run=dry_run,
             )
         )

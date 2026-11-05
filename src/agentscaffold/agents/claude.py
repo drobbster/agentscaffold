@@ -13,6 +13,10 @@ from agentscaffold.rendering import render_template
 console = Console()
 
 
+#: CLAUDE.md managed body under ``agents.claude_md: import``.
+CLAUDE_MD_IMPORT = "@AGENTS.md"
+
+
 def generate_claude_rules(config: ScaffoldConfig | None = None) -> str:
     """Build CLAUDE.md content from MCP-first policy + intents.
 

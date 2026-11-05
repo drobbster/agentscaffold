@@ -1,4 +1,4 @@
-"""Tests for graph coverage signaling (Plan 214, P1)."""
+"""Tests for graph coverage signaling."""
 
 from __future__ import annotations
 
@@ -97,6 +97,38 @@ def test_repo_coverage_totals_and_summary() -> None:
     assert "verify with grep" in cov["summary"]
 
 
+def test_repo_coverage_reports_import_strategies() -> None:
+    """Per-strategy counts, with a sentence when the prefix resolved anything."""
+
+    class _Store:
+        def query(self, sql: str) -> list[dict[str, Any]]:
+            if "IMPORTS" in sql:
+                return [
+                    {"strategy": "direct", "n": 40},
+                    {"strategy": "prefix", "n": 12},
+                    {"strategy": "", "n": 3},
+                ]
+            return [{"language": "python", "n": 10}]
+
+    cov = repo_coverage(_Store())
+    assert cov["import_strategies"] == {"direct": 40, "prefix": 12, "unrecorded": 3}
+    assert "12 imports resolved through a monorepo module prefix" in cov["summary"]
+
+
+def test_repo_coverage_without_a_strategy_column_omits_the_counts() -> None:
+    """A graph not yet opened read-write since the upgrade has no IMPORTS.strategy."""
+
+    class _Store:
+        def query(self, sql: str) -> list[dict[str, Any]]:
+            if "IMPORTS" in sql:
+                raise RuntimeError('Referenced column "strategy" not found')
+            return [{"language": "python", "n": 10}]
+
+    cov = repo_coverage(_Store())
+    assert cov["available"] is True
+    assert "import_strategies" not in cov
+
+
 def test_repo_coverage_unavailable_on_error() -> None:
     class _BadStore:
         def query(self, sql: str) -> list[dict[str, Any]]:  # noqa: ARG002
@@ -171,7 +203,7 @@ def test_rule_policy_identical_across_quote_modes_for_compression() -> None:
     assert "Situational Tool Use" in plain
 
 
-def _assert_plan_272_routing(doc: str) -> None:
+def _assert_routing_policy_sections(doc: str) -> None:
     assert "Situational Tool Use" in doc
     assert "Architectural Research Gate" in doc
     assert "Call Compression Discipline" in doc
@@ -189,12 +221,12 @@ def _assert_plan_272_routing(doc: str) -> None:
 
 def test_rule_policy_includes_situational_tool_use_and_research_gate() -> None:
     doc = generate_rule_policy_document(config=ScaffoldConfig(), title="Test Rules")
-    _assert_plan_272_routing(doc)
+    _assert_routing_policy_sections(doc)
 
 
 def test_canonical_guidance_includes_situational_tool_use_and_research_gate() -> None:
     doc = generate_canonical_guidance_body(ScaffoldConfig())
-    _assert_plan_272_routing(doc)
+    _assert_routing_policy_sections(doc)
 
 
 def test_rule_policy_includes_multiproject_scope_discipline() -> None:

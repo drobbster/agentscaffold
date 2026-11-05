@@ -12,6 +12,7 @@ import logging
 import re
 import time
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +40,7 @@ except ImportError:
 _MCP_EXTRAS_MSG = "MCP server requires extra dependencies: pip install agentscaffold[mcp]"
 
 # Tools that mutate the graph and must wait for the exclusive write lock.
-# All other tools open read-preferring (Plan 244) so async freshness refresh
+# All other tools open read-preferring so async freshness refresh
 # does not block interactive reads for ~20s+.
 #
 # Imported rather than restated: `doctor --tools` needs the same distinction to
@@ -48,7 +49,7 @@ _GRAPH_WRITE_TOOLS: frozenset[str] = WRITE_TOOLS
 
 from agentscaffold.mcp.intents import intent_phrases
 
-# Back-compat alias; routing phrases live in mcp/intents.py (Plan 251 C1).
+# Back-compat alias; routing phrases live in mcp/intents.py.
 TOOL_INTENTS = intent_phrases()
 
 _ROUTING_STOPWORDS = {
@@ -131,6 +132,7 @@ _TOOL_SIGNAL_TOKENS: dict[str, set[str]] = {
     "scaffold_find_studies": {"study", "studies", "experiment", "experiments", "tested"},
     "scaffold_prior_experiments": {"prior", "experiments", "evidence", "tested"},
     "scaffold_find_adrs": {"adr", "architecture", "decision", "governs"},
+    "scaffold_governance": {"governance", "rules", "manual", "agents", "section"},
     "scaffold_decision_context": {"decision", "history", "chain", "spike", "intent", "adr"},
     "scaffold_search": {"search", "find", "workspace", "projects", "duplicate", "similar"},
     "scaffold_record_finding": {"record", "log", "finding", "discovered", "issue", "capture"},
@@ -146,7 +148,7 @@ _TOOL_SIGNAL_TOKENS: dict[str, set[str]] = {
     "scaffold_next_action": {"next", "action", "route", "should", "tool"},
 }
 
-# Required string args that must be non-empty (Plan 246 fail-loud validation).
+# Required string args that must be non-empty (fail-loud validation).
 _REQUIRED_STRING_ARGS: dict[str, tuple[str, ...]] = {
     "scaffold_impact": ("file_or_symbol",),
     "scaffold_context": ("symbol",),
@@ -220,7 +222,7 @@ def run_mcp_server() -> None:
     import asyncio
 
     # MCP owns stdout for JSON-RPC. Suppress Rich pipeline progress so
-    # in-process incremental refresh cannot poison the transport (Plan 242).
+    # in-process incremental refresh cannot poison the transport.
     from agentscaffold.graph.pipeline import install_stdio_safe_console
 
     install_stdio_safe_console()
@@ -236,7 +238,21 @@ def run_mcp_server() -> None:
 
 async def _serve() -> None:
     """Async entry point for the MCP server."""
-    server = Server("agentscaffold")
+    global _procedure_delivery
+    from agentscaffold.mcp.procedure_hint import procedure_delivery_enabled
+
+    _procedure_delivery = procedure_delivery_enabled()
+    server = _build_server()
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(read_stream, write_stream, server.create_initialization_options())
+
+
+def _build_server() -> Server:
+    """The configured server, with the working procedure as its instructions."""
+    from agentscaffold.agents.rule_policy import generate_server_instructions
+
+    instructions = generate_server_instructions() if _procedure_delivery_enabled() else None
+    server = Server("agentscaffold", instructions=instructions)
 
     @server.list_tools()  # type: ignore[no-untyped-call,untyped-decorator]
     async def list_tools() -> list[Tool]:
@@ -255,8 +271,7 @@ async def _serve() -> None:
     async def read_resource(uri: str) -> str:
         return json.dumps(_dispatch_resource(uri), indent=2, default=str)
 
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+    return server
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +338,7 @@ _RESTRICT_TO: set[str] = set()
 def configure_restrict_to(names: Iterable[str] | None) -> None:
     """Set the ``--restrict-to`` allowlist for this server process.
 
-    Plan 249 Section 11 counts this among the mitigations for the fact that one
+    This is one of the mitigations for the fact that one
     process can now read every registered project: a user who wants a narrower
     blast radius can start the server bound to an explicit set. Passing None or
     an empty iterable clears the restriction rather than denying everything,
@@ -491,7 +506,7 @@ def _effective_mcp_root(start: Path | None = None) -> Path:
             resolve_workspace_root,
         )
 
-        # Plan 234: honor an explicit MCP anchor (scaffold mcp --workspace/--project
+        # Honor an explicit MCP anchor (scaffold mcp --workspace/--project
         # or AGENTSCAFFOLD_* env vars) before falling back to the launch cwd, so
         # no-argument tools resolve the configured project even when Cursor opens a
         # parent folder. The single-child / single-project heuristics below still
@@ -499,9 +514,9 @@ def _effective_mcp_root(start: Path | None = None) -> Path:
         current = resolve_mcp_start(start)
         workspace_root = resolve_workspace_root(current)
 
-        # Cursor can launch user-level MCP servers from the broad IDE workspace
-        # (for this devbox, /home/drobb) while the AgentScaffold workspace is a
-        # child folder. If there is exactly one child workspace manifest, use it
+        # Cursor can launch user-level MCP servers from a broad IDE workspace
+        # while the AgentScaffold workspace is a child folder. If there is
+        # exactly one child workspace manifest, use it
         # as the MCP workspace root so no-arg tools still resolve project state.
         #
         # The glob looks exactly one level down, so a registered workspace nested
@@ -511,7 +526,7 @@ def _effective_mcp_root(start: Path | None = None) -> Path:
         # to be seen. So the shortcut only stands while there is nothing better to
         # go on: with several workspaces registered the registry is the informed
         # signal and the glob is the least informed one available, so we leave the
-        # anchor alone and let resolve_project refuse rather than guess (ADR-026).
+        # anchor alone and let resolve_project refuse rather than guess.
         if (
             workspace_root == current
             and not (current / "workspace.yaml").is_file()
@@ -590,10 +605,10 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
     # Project-scoped reads resolve their scope from "where we are", and this is
     # where the resolved project reaches them. It used to be os.chdir, which is
-    # process-global and therefore only safe while dispatch is serialised (see
-    # finding rf::65b49d5c2a95); an active-root context is per-call, so two
-    # dispatches for different projects can now be in flight at once -- which is
-    # what makes the Step A6 handle pool reachable.
+    # process-global and therefore only safe while dispatch is serialised; an
+    # active-root context is per-call, so two dispatches for different projects
+    # can now be in flight at once -- which is what makes the handle pool
+    # reachable.
     with active_root(resolution.root):
         return _dispatch_resolved(name, arguments, resolution)
 
@@ -615,7 +630,7 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
         configure_embeddings(config.search.embedding_model, config.search.cache_dir)
     except Exception:  # pragma: no cover - defensive; search config optional
         pass
-    # The silent federation fallback that stood here is gone (Plan 249 Step A6b).
+    # The silent federation fallback that stood here is gone.
     # It existed because resolution could land on a root that was not a project;
     # resolve_project now either returns a real project root or refuses, so the
     # condition it guarded against cannot arise, and quietly widening a call's
@@ -625,7 +640,7 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
 
     read_preferring = name not in _GRAPH_WRITE_TOOLS
     store = None
-    # Read tools: at most one brief retry (Plan 244). Write tools keep Plan 235
+    # Read tools: at most one brief retry. Write tools keep the longer
     # backoff so transient lock contention can clear.
     open_attempts = (0.0, 0.1) if read_preferring else (0.0, 0.5, 1.0)
     for attempt, delay in enumerate(open_attempts, start=1):
@@ -721,147 +736,303 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
                 "meta": meta,
             }
 
+    session_project = _stamp_project(resolution)
     try:
-        if name == "scaffold_stats":
-            result = store.get_stats()
-            # Counts are workspace-wide by design -- this is the graph's health
-            # dashboard, not a per-project report. Said explicitly because the
-            # tool accepts working_path and its neighbours all scope to one
-            # project, so an unlabelled "functions: 5" reads as this project's 5.
-            result["scope"] = _stats_scope_label()
-            result["meta"] = meta
-            return result
-
-        elif name == "scaffold_query":
-            sql = arguments.get("sql", "")
-            if not sql:
-                return {"error": "Missing 'sql' parameter.", "meta": meta}
-            try:
-                rows = store.query(sql)
-            except Exception as exc:
-                return {"error": _query_error_message(sql, exc), "meta": meta}
-            return {"results": rows, "count": len(rows), "meta": meta}
-
-        elif name == "scaffold_context":
-            return _tool_context(store, arguments, meta, root)
-
-        elif name == "scaffold_impact":
-            return _tool_impact(store, arguments, meta, root)
-
-        elif name == "scaffold_search":
-            if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
-                from agentscaffold.graph.embeddings import configure_embeddings
-
-                configure_embeddings(config.search.embedding_model, config.search.cache_dir)
-            return _tool_search(store, arguments, meta, root)
-
-        elif name == "scaffold_recall_governance":
-            if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
-                from agentscaffold.graph.embeddings import configure_embeddings
-
-                configure_embeddings(config.search.embedding_model, config.search.cache_dir)
-            return _tool_search(store, {**arguments, "kind": "governance"}, meta, root)
-
-        elif name == "scaffold_validate":
-            return _tool_validate(store, arguments, meta)
-
-        elif name == "scaffold_review_context":
-            return _tool_review_context(store, arguments, meta, root, config)
-
-        elif name == "scaffold_prepare_review":
-            return _tool_prepare_review(store, arguments, meta, root, config)
-
-        elif name == "scaffold_prepare_implementation":
-            return _tool_prepare_implementation(store, arguments, meta, root, config)
-
-        elif name == "scaffold_compare_plans":
-            return _tool_compare_plans(store, arguments, meta, config)
-
-        elif name == "scaffold_staleness_check":
-            return _tool_staleness_check(store, arguments, meta, config)
-
-        elif name == "scaffold_prepare_rewrite":
-            return _tool_prepare_rewrite(store, arguments, meta, config)
-
-        elif name == "scaffold_prepare_retro":
-            return _tool_prepare_retro(store, arguments, meta)
-
-        elif name == "scaffold_orient":
-            return _tool_orient(store, meta, root, config, arguments)
-
-        elif name == "scaffold_diff_plan_vs_code":
-            return _tool_diff_plan_vs_code(store, arguments, meta, root)
-
-        elif name == "scaffold_grep_graph":
-            return _tool_grep_graph(arguments, meta, root)
-
-        elif name == "scaffold_why_empty":
-            return _tool_why_empty(store, arguments, meta)
-
-        elif name == "scaffold_next_action":
-            return _tool_next_action(store, arguments, meta, root, config)
-
-        elif name == "scaffold_find_studies":
-            return _tool_find_studies(store, arguments, meta)
-
-        elif name == "scaffold_prior_experiments":
-            return _tool_prior_experiments(store, arguments, meta, config)
-
-        elif name == "scaffold_find_adrs":
-            return _tool_find_adrs(store, arguments, meta)
-
-        elif name == "scaffold_decision_context":
-            return _tool_decision_context(store, arguments, meta)
-
-        elif name == "scaffold_record_finding":
-            return _tool_record_finding(store, arguments, meta)
-
-        elif name == "scaffold_resolve_finding":
-            return _tool_resolve_finding(store, arguments, meta)
-
-        elif name == "scaffold_record_findings_batch":
-            return _tool_record_findings_batch(store, arguments, meta)
-
-        elif name == "scaffold_record_backlog_item":
-            return _tool_record_backlog_item(store, arguments, meta)
-
-        elif name == "scaffold_resolve_backlog_item":
-            return _tool_resolve_backlog_item(store, arguments, meta)
-
-        elif name == "scaffold_begin_plan":
-            return _tool_begin_plan(store, arguments, meta, root, config)
-
-        elif name == "scaffold_complete_plan":
-            return _tool_complete_plan(store, arguments, meta)
-
-        elif name == "scaffold_session_start":
-            return _tool_session_start(store, arguments, meta)
-
-        elif name == "scaffold_session_end":
-            return _tool_session_end(store, arguments, meta)
-
-        elif name == "scaffold_session_record_decision":
-            return _tool_session_record_decision(store, arguments, meta)
-
-        elif name == "scaffold_session_context":
-            return _tool_session_context(store, arguments, meta)
-
-        elif name == "scaffold_session_list":
-            return _tool_session_list(store, arguments, meta)
-
-        else:
-            return {"error": f"Unknown tool: {name}"}
-
+        result = _run_tool(name, store, arguments, meta, root, config, session_project)
+        _touch_session_activity(name, store, arguments, result, session_project, config)
+        _attach_session_meta(name, store, result, session_project, config)
+        _attach_governance(name, result, root, config)
+        return result
     finally:
         store.close()
 
 
+def _run_tool(
+    name: str,
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    root: Path,
+    config: Any,
+    session_project: str,
+) -> dict[str, Any]:
+    """Route one tool call to its implementation on an open store."""
+    if name == "scaffold_stats":
+        result: dict[str, Any] = store.get_stats()
+        # Counts are workspace-wide by design -- this is the graph's health
+        # dashboard, not a per-project report. Said explicitly because the
+        # tool accepts working_path and its neighbours all scope to one
+        # project, so an unlabelled "functions: 5" reads as this project's 5.
+        result["scope"] = _stats_scope_label()
+        result["meta"] = meta
+        return result
+
+    elif name == "scaffold_query":
+        sql = arguments.get("sql", "")
+        if not sql:
+            return {"error": "Missing 'sql' parameter.", "meta": meta}
+        try:
+            rows = store.query(sql)
+        except Exception as exc:
+            return {"error": _query_error_message(sql, exc), "meta": meta}
+        return {"results": rows, "count": len(rows), "meta": meta}
+
+    elif name == "scaffold_context":
+        return _tool_context(store, arguments, meta, root, config)
+
+    elif name == "scaffold_impact":
+        return _tool_impact(store, arguments, meta, root, config)
+
+    elif name == "scaffold_search":
+        if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
+            from agentscaffold.graph.embeddings import configure_embeddings
+
+            configure_embeddings(config.search.embedding_model, config.search.cache_dir)
+        return _tool_search(store, arguments, meta, root)
+
+    elif name == "scaffold_recall_governance":
+        if str(arguments.get("mode", "hybrid")).lower() in ("semantic", "hybrid"):
+            from agentscaffold.graph.embeddings import configure_embeddings
+
+            configure_embeddings(config.search.embedding_model, config.search.cache_dir)
+        return _tool_search(store, {**arguments, "kind": "governance"}, meta, root)
+
+    elif name == "scaffold_validate":
+        return _tool_validate(store, arguments, meta)
+
+    elif name == "scaffold_review_context":
+        return _tool_review_context(store, arguments, meta, root, config)
+
+    elif name == "scaffold_prepare_review":
+        return _tool_prepare_review(store, arguments, meta, root, config)
+
+    elif name == "scaffold_prepare_implementation":
+        return _tool_prepare_implementation(store, arguments, meta, root, config)
+
+    elif name == "scaffold_compare_plans":
+        return _tool_compare_plans(store, arguments, meta, config)
+
+    elif name == "scaffold_staleness_check":
+        return _tool_staleness_check(store, arguments, meta, config)
+
+    elif name == "scaffold_prepare_rewrite":
+        return _tool_prepare_rewrite(store, arguments, meta, config)
+
+    elif name == "scaffold_prepare_retro":
+        return _tool_prepare_retro(store, arguments, meta, root, config)
+
+    elif name == "scaffold_orient":
+        return _tool_orient(store, meta, root, config, arguments, session_project=session_project)
+
+    elif name == "scaffold_diff_plan_vs_code":
+        return _tool_diff_plan_vs_code(store, arguments, meta, root)
+
+    elif name == "scaffold_grep_graph":
+        return _tool_grep_graph(arguments, meta, root)
+
+    elif name == "scaffold_why_empty":
+        return _tool_why_empty(store, arguments, meta)
+
+    elif name == "scaffold_next_action":
+        return _tool_next_action(store, arguments, meta, root, config)
+
+    elif name == "scaffold_find_studies":
+        return _tool_find_studies(store, arguments, meta)
+
+    elif name == "scaffold_prior_experiments":
+        return _tool_prior_experiments(store, arguments, meta, config)
+
+    elif name == "scaffold_find_adrs":
+        return _tool_find_adrs(store, arguments, meta)
+
+    elif name == "scaffold_governance":
+        return _tool_governance(arguments, meta, root, config)
+
+    elif name == "scaffold_decision_context":
+        return _tool_decision_context(store, arguments, meta)
+
+    elif name == "scaffold_record_finding":
+        return _tool_record_finding(store, arguments, meta, root)
+
+    elif name == "scaffold_resolve_finding":
+        return _tool_resolve_finding(store, arguments, meta)
+
+    elif name == "scaffold_record_findings_batch":
+        return _tool_record_findings_batch(store, arguments, meta, root)
+
+    elif name == "scaffold_record_backlog_item":
+        return _tool_record_backlog_item(store, arguments, meta)
+
+    elif name == "scaffold_resolve_backlog_item":
+        return _tool_resolve_backlog_item(store, arguments, meta)
+
+    elif name == "scaffold_begin_plan":
+        return _tool_begin_plan(store, arguments, meta, root, config)
+
+    elif name == "scaffold_complete_plan":
+        return _tool_complete_plan(store, arguments, meta, root, config)
+
+    elif name == "scaffold_session_start":
+        return _tool_session_start(store, arguments, meta, session_project, config)
+
+    elif name == "scaffold_session_end":
+        return _tool_session_end(store, arguments, meta, session_project)
+
+    elif name == "scaffold_session_record_decision":
+        return _tool_session_record_decision(store, arguments, meta, session_project, config)
+
+    elif name == "scaffold_session_context":
+        return _tool_session_context(store, arguments, meta)
+
+    elif name == "scaffold_session_list":
+        return _tool_session_list(store, arguments, meta)
+
+    else:
+        return {"error": f"Unknown tool: {name}"}
+
+
+#: Tools whose responses carry no session-state keys: the session tools answer
+#: the question themselves, and ``scaffold_projects`` is not project-scoped.
+_SESSION_META_EXCLUDED = frozenset(
+    {
+        "scaffold_session_start",
+        "scaffold_session_end",
+        "scaffold_session_list",
+        "scaffold_session_context",
+        "scaffold_session_record_decision",
+        "scaffold_projects",
+    }
+)
+
+_PROCEDURE_HINT_TOOLS = frozenset({"scaffold_orient"} | (WRITE_TOOLS - _SESSION_META_EXCLUDED))
+
+#: Opt-out read once at server start; ``None`` until then, so in-process
+#: callers (tests, the CLI) read the environment on each call instead.
+_procedure_delivery: bool | None = None
+
+
+def _procedure_delivery_enabled() -> bool:
+    from agentscaffold.mcp.procedure_hint import procedure_delivery_enabled
+
+    if _procedure_delivery is not None:
+        return _procedure_delivery
+    return procedure_delivery_enabled()
+
+
+def _stamp_project(resolution: Any) -> str:
+    """The project sessions are stamped with and looked up under.
+
+    The call's own resolved project, in single-project and multi-project
+    workspaces alike. ``_current_project_or_none`` is a read filter that is
+    deliberately empty in a lone repository, so stamping with it let every chat
+    reuse any open session.
+    """
+    return str(resolution.project.name or "")
+
+
+def _attach_session_meta(
+    name: str, store: Any, result: Any, session_project: str, config: Any
+) -> None:
+    """Add ``session_open`` / ``procedure_hint`` to a successful tool result."""
+    if name in _SESSION_META_EXCLUDED or not isinstance(result, dict) or "error" in result:
+        return
+    if not _procedure_delivery_enabled():
+        return
+    from agentscaffold.mcp.procedure_hint import session_meta
+
+    extra = session_meta(
+        store,
+        session_project,
+        with_hint=name in _PROCEDURE_HINT_TOOLS,
+        idle_hours=config.sessions.idle_hours,
+    )
+    if extra:
+        result.setdefault("meta", {}).update(extra)
+
+
+def _attach_governance(name: str, result: Any, root: Path, config: Any) -> None:
+    """Add the governance manual block for orient and the lifecycle tools.
+
+    Attached here, once per response, because the composite tools call other
+    handlers and would otherwise carry a nested second copy.
+    """
+    if not isinstance(result, dict) or "error" in result:
+        return
+    from agentscaffold.mcp.governance_delivery import STEP_FOR_TOOL, orient_block, step_block
+
+    if name != "scaffold_orient" and name not in STEP_FOR_TOOL:
+        return
+    try:
+        if name == "scaffold_orient":
+            result["governance"] = orient_block(root, config)
+            return
+        block = step_block(name, root, config)
+    except Exception:
+        logger.debug("Governance manual delivery failed for %s", name, exc_info=True)
+        return
+    if block is not None:
+        result["governance_sections"] = block
+
+
+def _tool_governance(
+    arguments: dict[str, Any], meta: dict[str, Any], root: Path, config: Any
+) -> dict[str, Any]:
+    """Table of contents or one section of the governance manual."""
+    from agentscaffold.mcp.governance_delivery import project_manual
+
+    manual = project_manual(root, config)
+    if manual is None:
+        manual_path = getattr(getattr(config, "agents", None), "manual_path", "AGENTS.md")
+        return {"path": None, "reason": f"no manual at {manual_path}", "meta": meta}
+    requested = str(arguments.get("section") or "").strip()
+    payload: dict[str, Any] = {"path": manual.path, "sha256": manual.sha256}
+    if not requested:
+        payload["headings"] = list(manual.headings)
+    else:
+        canonical = manual.resolve(requested)
+        if canonical is None:
+            payload.update(
+                {"found": False, "section": requested, "suggestions": manual.suggestions(requested)}
+            )
+        else:
+            payload.update(
+                {"found": True, "section": canonical, "text": manual.section(canonical) or ""}
+            )
+    payload["meta"] = meta
+    return payload
+
+
+#: Governance writes that count as session activity. Session tools
+#: stamp activity themselves; reads never write.
+_ACTIVITY_TOOLS = WRITE_TOOLS - _SESSION_META_EXCLUDED
+
+
+def _touch_session_activity(
+    name: str,
+    store: Any,
+    arguments: dict[str, Any],
+    result: Any,
+    session_project: str,
+    config: Any,
+) -> None:
+    if name not in _ACTIVITY_TOOLS or arguments.get("dry_run"):
+        return
+    if not isinstance(result, dict) or "error" in result:
+        return
+    from agentscaffold.graph.sessions import touch_session
+
+    try:
+        touch_session(store, project=session_project, idle_hours=config.sessions.idle_hours)
+    except Exception:
+        logger.debug("Session activity refresh failed", exc_info=True)
+
+
 def _resolution_meta(resolution: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Say which project answered and what decided it (Plan 257, B3).
+    """Say which project answered and what decided it.
 
     Until this existed, ``scaffold_projects`` was the only tool that revealed any
     of it, so a reply scoped to the wrong project was indistinguishable from a
-    correct one: the field report behind ADR-026 had to be diagnosed by reading
+    correct one: a wrong-project field report had to be diagnosed by reading
     resolution source rather than by looking at a response.
 
     ``working_path_unmatched`` is the load-bearing one. A path that resolved to no
@@ -946,6 +1117,7 @@ def _tool_context(
     arguments: dict[str, Any],
     meta: dict[str, Any],
     root: Path | None = None,
+    config: Any = None,
 ) -> dict[str, Any]:
     """Handle scaffold_context tool call."""
     from agentscaffold.graph.query_compat import ql
@@ -1133,6 +1305,16 @@ def _tool_context(
         payload["methods"] = methods
         payload["method_count"] = len(methods)
         payload["construction_sites"] = []
+    components = _components_touching(
+        store, [file_path] if file_path else [], root, config, (scope_sql, scope_params)
+    )
+    if components:
+        from agentscaffold.mcp.render import format_component_lines
+
+        payload["components"] = components
+        payload["markdown"] += "\n\n### Components\n" + "\n".join(
+            format_component_lines(components)
+        )
     return payload
 
 
@@ -1253,6 +1435,7 @@ def _tool_impact(
     arguments: dict[str, Any],
     meta: dict[str, Any],
     root: Path | None = None,
+    config: Any = None,
 ) -> dict[str, Any]:
     """Handle scaffold_impact tool call."""
     from agentscaffold.graph.query_compat import ql
@@ -1375,7 +1558,93 @@ def _tool_impact(
             kind="impact",
             target=target,
         )
+    if root is not None and arguments.get("include_precedent", True) is not False:
+        governance = _governance_impact(store, target, root, config, scope=_scope_sql(arguments))
+        if governance is not None:
+            from agentscaffold.mcp.render import format_governance_impact_markdown
+
+            payload["governance_impact"] = governance
+            payload["markdown"] += format_governance_impact_markdown(governance)
     return payload
+
+
+def _governance_impact(
+    store: Any,
+    target: str,
+    root: Path,
+    config: Any,
+    scope: tuple[str, dict[str, Any]] = ("", {}),
+) -> dict[str, Any] | None:
+    """Every finding, learning, ADR, contract and component about *target*.
+
+    Facts about the file only: no semantic matches and nothing that
+    merely shares an earlier plan with it. Uncapped, like the dependency
+    results. ``components`` lists the inventory components whose
+    ``reads`` or entrypoint the target touches.
+    """
+    from agentscaffold.review.precedent import STRUCTURAL_MATCHES, precedent_for_paths
+    from agentscaffold.review.queries import get_contracts_for_file
+
+    components = _components_touching(store, [target], root, config, scope)
+    try:
+        result = precedent_for_paths(
+            store, [target], root=root, config=config, budget=None, match_kinds=STRUCTURAL_MATCHES
+        )
+    except Exception as exc:  # noqa: BLE001 - governance facts must not break impact
+        logger.debug("governance_impact skipped: %s", exc)
+        result = None
+    if result is None and not components:
+        return None
+    by_kind: dict[str, list[dict[str, Any]]] = {"finding": [], "learning": [], "adr": []}
+    contracts: list[dict[str, Any]] = []
+    if result is not None:
+        for item in result.items:
+            by_kind[item.kind].append(item.to_dict())
+        contracts = [
+            {
+                "name": c.get("c.name", ""),
+                "version": c.get("c.version", ""),
+                "path": c.get("c.filePath"),
+            }
+            for c in get_contracts_for_file(store, target)
+        ]
+    payload: dict[str, Any] = {
+        "findings": by_kind["finding"],
+        "learnings": by_kind["learning"],
+        "adrs": by_kind["adr"],
+        "contracts": contracts,
+        "counts": {
+            "findings": len(by_kind["finding"]),
+            "learnings": len(by_kind["learning"]),
+            "adrs": len(by_kind["adr"]),
+            "contracts": len(contracts),
+        },
+        "sources_unavailable": result.sources_unavailable if result is not None else [],
+    }
+    if components:
+        payload["components"] = components
+        payload["counts"]["components"] = len(components)
+    return payload
+
+
+def _components_touching(
+    store: Any,
+    paths: list[str],
+    root: Path | None,
+    config: Any,
+    scope: tuple[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Inventory components whose ``reads`` or entrypoint *paths* touch."""
+    inventory = getattr(config, "inventory", None)
+    if root is None or inventory is None or not inventory.enabled:
+        return []
+    from agentscaffold.graph.inventory import components_for_paths
+
+    try:
+        return components_for_paths(store, paths, root=root, scope=scope)
+    except Exception as exc:  # noqa: BLE001 - component facts must not break the tool
+        logger.debug("component lookup skipped: %s", exc)
+        return []
 
 
 def _tool_search(
@@ -1398,7 +1667,7 @@ def _tool_search(
     top_k = arguments.get("top_k", 10)
     kind = arguments.get("kind", "code")
     rerank = bool(arguments.get("rerank", False))
-    # Scope (Plan 225): defaults to the current project in a multi-project
+    # Scope: defaults to the current project in a multi-project
     # workspace; clients may pass project / all_projects to retarget or federate.
     project = arguments.get("project") or None
     all_projects = bool(arguments.get("all_projects", False))
@@ -1542,10 +1811,13 @@ def _tool_review_context(
             verify_implementation,
         )
 
-        items = verify_implementation(store, plan_number, root=root, config=config)
-        result["verification"] = [
-            {"check": i.check, "status": i.status, "detail": i.detail} for i in items
-        ]
+        try:
+            items = verify_implementation(
+                store, plan_number, root=root, config=config, base_ref=arguments.get("base_ref")
+            )
+        except ValueError as exc:
+            return {"error": str(exc), "meta": meta}
+        result["verification"] = _verification_rows(items)
         result["verification_markdown"] = format_verification_markdown(items)
 
     if review_type in ("retro", "all"):
@@ -1571,7 +1843,7 @@ _SEVERITY_ORDER: tuple[str, ...] = ("critical", "high", "medium", "low")
 
 
 def _scope_args(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Read the per-call read scope (Plan 249): default is the resolved project."""
+    """Read the per-call read scope: default is the resolved project."""
     return {
         "project": arguments.get("project") or None,
         "all_projects": bool(arguments.get("all_projects", False)),
@@ -1615,7 +1887,7 @@ def _dedup_backlog_items(
 
     First-seen order of the suffix is preserved so query priority order stays.
     Fetch a wider window than the display limit so a leading duplicate pair
-    does not starve the unique top-N (Plan 274).
+    does not starve the unique top-N.
     """
     by_key: dict[str, dict[str, Any]] = {}
     order: list[str] = []
@@ -1648,7 +1920,7 @@ def _unique_open_backlog_count(rows: list[dict[str, Any]] | None) -> int:
 
 
 def _clean_out_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    """Strip ``alias.`` prefixes from agent-facing tool output rows (Plan 238).
+    """Strip ``alias.`` prefixes from agent-facing tool output rows.
 
     The query layer aliases columns as ``alias.field`` (a deliberate internal
     contract). That prefix is noise once it reaches the agent, so plan/governance
@@ -1661,7 +1933,7 @@ def _clean_out_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
 
 
 def _with_normalized_status(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Clean rows and attach ``status_normalized`` next to the raw ``status`` (Plan 238)."""
+    """Clean rows and attach ``status_normalized`` next to the raw ``status``."""
     from agentscaffold.review.filters import normalize_plan_status  # noqa: PLC0415
 
     cleaned = _clean_out_rows(rows)
@@ -1681,7 +1953,7 @@ def _is_plan_complete(raw_status: str | None) -> bool:
 def _adr_is_active(raw_status: str | None) -> bool:
     """Return True unless an ADR status indicates it is superseded/deprecated.
 
-    Uses substring matching so descriptive statuses like ``Superseded by ADR-030``
+    Uses substring matching so descriptive statuses like ``Superseded by ADR-012``
     are correctly treated as inactive (exact-token membership missed these).
     """
     s = (raw_status or "").lower()
@@ -1689,7 +1961,7 @@ def _adr_is_active(raw_status: str | None) -> bool:
 
 
 def _adr_matches_topic(adr: dict[str, Any], topic_lower: str) -> bool:
-    """Title first, then ADR file body when filePath is present (Plan 251 C6)."""
+    """Title first, then ADR file body when filePath is present."""
     title = str(adr.get("a.title") or "")
     if topic_lower in title.lower():
         return True
@@ -1706,7 +1978,7 @@ def _adr_matches_topic(adr: dict[str, Any], topic_lower: str) -> bool:
 
 
 def _empty_graph_warning(stats: dict[str, Any]) -> str | None:
-    """Return a warning string when the graph looks empty, else None (Plan 239).
+    """Return a warning string when the graph looks empty, else None.
 
     Several read tools render confident negatives (``is_stale: false``,
     ``has_full_decision_chain: false``, empty overlaps) that are indistinguishable
@@ -1888,23 +2160,27 @@ def _tool_prepare_implementation(
     if pn is None:
         return {"error": "plan_number is required.", "meta": meta}
 
-    # --- Strict gate: check Plan.reviewedAt when gate_strict is enabled ---
+    # --- Strict gate: the pre-implementation review must have stamped the plan ---
     try:
-        cfg = _load_config()
+        cfg = config if config is not None else _load_config()
         if cfg.freshness.gate_strict and bool(arguments.get("gate_transition")):
             reviewed_at = get_plan_reviewed_at(store, pn)
             if reviewed_at is None:
                 return {
                     "error": (
                         f"scaffold_begin_plan must be called before implementation of Plan {pn}. "
-                        "The pre-review chain has not been completed (Plan.reviewedAt is NULL). "
-                        "Run 'begin plan {pn}' first."
+                        "The pre-review chain has not been completed (no review stamp). "
+                        f"Run 'begin plan {pn}' first."
                     ),
                     "gate_deferred": True,
                     "meta": meta,
                 }
     except Exception:  # noqa: BLE001
         pass  # Config load failure should not block implementation
+
+    gate, approval = _approval_check(store, root, config, int(pn))
+    if gate is not None:
+        return {"plan_number": pn, "gate": gate, "meta": meta}
 
     brief = generate_brief(store, pn, root=root, config=config)
     impacted = brief.get("file_profiles", [])
@@ -1941,7 +2217,55 @@ def _tool_prepare_implementation(
         ],
         "meta": meta,
     }
+    if approval is not None:
+        payload["approval"] = approval
+    _attach_compact_precedent(payload, brief, config)
     return apply_detail(payload, arguments.get("detail"))
+
+
+def _attach_compact_precedent(payload: dict[str, Any], brief: dict[str, Any], config: Any) -> None:
+    """Short precedent reminder while coding, taken from the brief."""
+    section = brief.get("precedent") if isinstance(brief, dict) else None
+    if not isinstance(section, dict):
+        return
+    from agentscaffold.config import PrecedentConfig  # noqa: PLC0415
+
+    limit = getattr(config, "precedent", None) or PrecedentConfig()
+    keys = ("id", "kind", "match", "plan", "project", "text")
+    payload["precedent"] = [
+        {key: item.get(key) for key in keys} for item in section.get("items", [])
+    ][: limit.max_compact]
+    if section.get("sources_unavailable"):
+        payload["precedent_sources_unavailable"] = section["sources_unavailable"]
+
+
+def _approval_check(
+    store: Any, root: Path, config: Any, plan_number: int
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """``(refusal, approval)`` for implementation prep.
+
+    Runs on every call, not only with ``gate_transition``: leaving out a flag
+    must not bypass a required approval.
+    """
+    from agentscaffold.config import GatesConfig, GraphConfig
+    from agentscaffold.mcp.governance_delivery import (
+        approval_gate,
+        approval_record,
+        approval_required,
+    )
+    from agentscaffold.mcp.session_brief import plan_text
+
+    gates = getattr(config, "gates", None) or GatesConfig()
+    if not gates.ready_to_in_progress.approval_gates:
+        return None, None
+    text = plan_text(store, root, plan_number)
+    if not approval_required(text):
+        return None, None
+    graph = getattr(config, "graph", None) or GraphConfig()
+    record = approval_record(text, plan_number, root / graph.workflow_state_file)
+    if record is not None:
+        return None, record
+    return approval_gate(plan_number), None
 
 
 def _tool_compare_plans(
@@ -2055,7 +2379,7 @@ def _tool_staleness_check(
     noise_paths = resolve_overlap_noise_paths(configured)
 
     all_plans = get_all_plans(store)
-    # Frequency map: how many completed plans touch each path (Plan 247 demotion).
+    # Frequency map: how many completed plans touch each path (hot-file demotion).
     path_frequency: dict[str, int] = {}
     completed_file_sets: list[tuple[Any, dict[str, Any], set[str]]] = []
     for p in all_plans:
@@ -2171,8 +2495,22 @@ def _tool_prepare_rewrite(
     return staleness
 
 
+def _verification_rows(items: list[Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        row: dict[str, Any] = {"check": item.check, "status": item.status, "detail": item.detail}
+        if item.evidence:
+            row["evidence"] = item.evidence
+        rows.append(row)
+    return rows
+
+
 def _tool_prepare_retro(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    root: Path | None = None,
+    config: Any = None,
 ) -> dict[str, Any]:
     """Composite: retrospective context for a completed plan."""
     from agentscaffold.review.feedback import format_retro_markdown, generate_retro_enrichment
@@ -2187,14 +2525,19 @@ def _tool_prepare_retro(
     if not plan:
         return {"error": f"Plan {pn} not found.", "meta": meta}
 
-    items = verify_implementation(store, pn)
+    try:
+        items = verify_implementation(
+            store, pn, root=root, config=config, base_ref=arguments.get("base_ref")
+        )
+    except ValueError as exc:
+        return {"error": str(exc), "meta": meta}
     insights = generate_retro_enrichment(store, pn)
     studies = get_studies_for_plan(store, pn)
 
     return {
         "plan_number": pn,
         "plan_title": plan.get("p.title"),
-        "verification": [{"check": i.check, "status": i.status, "detail": i.detail} for i in items],
+        "verification": _verification_rows(items),
         "verification_markdown": format_verification_markdown(items),
         "retro_insights": [{"category": i.category, "text": i.text} for i in insights],
         "retro_markdown": format_retro_markdown(insights),
@@ -2206,7 +2549,28 @@ def _tool_prepare_retro(
     }
 
 
-def _plan_progress_from_brief(brief: dict[str, Any]) -> list[dict[str, Any]]:
+def _session_age_warning(session: dict[str, Any] | None, warn_after_hours: float) -> str:
+    """Name an open session that started longer ago than *warn_after_hours*."""
+    if not session or warn_after_hours <= 0:
+        return ""
+    try:
+        started = datetime.fromisoformat(str(session.get("date") or ""))
+    except ValueError:
+        return ""
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    hours = int((datetime.now(timezone.utc) - started).total_seconds() // 3600)
+    if hours < warn_after_hours:
+        return ""
+    return (
+        f"Open session {session.get('id')} started {hours} hours ago. If this is a new "
+        "chat, call scaffold_session_start with force_new=true."
+    )
+
+
+def _plan_progress_from_brief(
+    brief: dict[str, Any], store: Any = None, root: Path | None = None
+) -> list[dict[str, Any]]:
     """In-flight and/or idle-next only (max 2)."""
     rows: list[dict[str, Any]] = []
     current = brief.get("current_work") or {}
@@ -2223,11 +2587,16 @@ def _plan_progress_from_brief(brief: dict[str, Any]) -> list[dict[str, Any]]:
         )
     nxt_pn = (nxt.get("arguments") or {}).get("plan_number")
     if nxt_pn is not None and nxt_pn not in {r.get("plan_number") for r in rows}:
+        title, status = "", ""
+        if store is not None and root is not None:
+            from agentscaffold.mcp.session_brief import plan_title_and_status
+
+            title, status = plan_title_and_status(store, root, int(nxt_pn))
         rows.append(
             {
                 "plan_number": nxt_pn,
-                "title": "",
-                "status": "",
+                "title": title,
+                "status": status,
                 "action": nxt.get("action"),
             }
         )
@@ -2247,6 +2616,8 @@ def _tool_orient(
     root: Path,
     config: Any,
     arguments: dict[str, Any] | None = None,
+    *,
+    session_project: str | None = None,
 ) -> dict[str, Any]:
     """Composite: session orientation with stats + workflow state."""
     from agentscaffold.mcp.coverage import repo_coverage
@@ -2306,19 +2677,28 @@ def _tool_orient(
 
     active_adrs = [a for a in adrs if _adr_is_active(a.get("a.status"))]
 
-    # Plan 273: session_brief drives routing. Diary focus is not used.
+    # session_brief drives routing. Diary focus is not used.
     from agentscaffold.graph.sessions import find_open_session
     from agentscaffold.mcp.next_action import next_actions
     from agentscaffold.mcp.session_brief import build_session_brief, compact_session_context
 
     project = _current_project_or_none()
-    open_session = find_open_session(store, project=project)
+    sessions_cfg = getattr(config, "sessions", None)
+    idle_hours = float(getattr(sessions_cfg, "idle_hours", 0) or 0)
+    if session_project is None:
+        open_session = find_open_session(store, project=project)
+    else:
+        open_session = find_open_session(
+            store, project=session_project, exact_project=True, idle_hours=idle_hours
+        )
     brief = build_session_brief(
         store,
         root=root,
         workflow=workflow,
         project=project,
         plan_number=arguments.get("plan_number"),
+        open_session=open_session,
+        config=config,
     )
     actions_payload = next_actions(
         store,
@@ -2330,7 +2710,7 @@ def _tool_orient(
         project=project,
         session_brief=brief,
     )
-    plan_progress = _plan_progress_from_brief(brief)
+    plan_progress = _plan_progress_from_brief(brief, store, root)
 
     result = {
         "stats": stats,
@@ -2358,7 +2738,20 @@ def _tool_orient(
         for key, value in workflow.items()
         if key not in {"live_blockers", "workflow_live"}
     }
+    if "error" not in public_ws:
+        from agentscaffold.mcp.session_brief import plan_file_status
+        from agentscaffold.mcp.workflow_state import find_contradictions
+
+        public_ws["contradictions"] = find_contradictions(
+            public_ws.get("in_progress_plans") or [],
+            lambda pn: plan_file_status(store, root, pn),
+        )
     result["workflow_state"] = public_ws
+    warning = _session_age_warning(
+        open_session, float(getattr(sessions_cfg, "warn_after_hours", 0) or 0)
+    )
+    if warning:
+        result["session_warning"] = warning
     from agentscaffold.graph.sessions import get_session_context
 
     detail_mode = (arguments.get("detail") or "summary").strip().lower()
@@ -2538,7 +2931,7 @@ def _tool_decision_context(
 
     scope = _scope_args(arguments)
     # A decision chain is a single plan's history, so federating it cannot mean
-    # "merge every project's plan 249" -- that would splice unrelated ADRs and
+    # "merge every project's plan 42" -- that would splice unrelated ADRs and
     # spikes into one narrative. It means "find which project owns this number".
     # If more than one does, the number alone is not an answer, so refuse and
     # name the candidates rather than silently returning whichever came first.
@@ -2605,7 +2998,7 @@ def _dry_run_write(meta: dict[str, Any], **preview: Any) -> dict[str, Any]:
 
 
 def _tool_record_finding(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any], root: Path | None = None
 ) -> dict[str, Any]:
     """Record a review finding in the knowledge graph."""
     from agentscaffold.graph.findings import record_finding  # noqa: PLC0415
@@ -2636,6 +3029,7 @@ def _tool_record_finding(
         evidence_kind=arguments.get("evidence_kind"),
         evidence=arguments.get("evidence"),
         project=_current_project_or_none(),
+        project_root=root,
     )
     result["meta"] = meta
     return result
@@ -2644,7 +3038,7 @@ def _tool_record_finding(
 def _tool_resolve_finding(
     store: Any, arguments: dict[str, Any], meta: dict[str, Any]
 ) -> dict[str, Any]:
-    """Mark a ReviewFinding as resolved."""
+    """Dispose of a ReviewFinding: resolved, deferred or not_applicable."""
     from agentscaffold.graph.findings import resolve_finding  # noqa: PLC0415
 
     finding_id = arguments.get("finding_id", "")
@@ -2662,7 +3056,11 @@ def _tool_resolve_finding(
         resolution=resolution,
         resolved_by_plan=arguments.get("resolved_by_plan"),
         project=_current_project_or_none(),
+        disposition=arguments.get("disposition") or "resolved",
+        backlog_id=arguments.get("backlog_id") or None,
     )
+    if result.get("status") == "refused":
+        return {"error": result["error"], "id": result.get("id"), "meta": meta}
     return _wrap_resolve_result(
         result,
         meta,
@@ -2719,7 +3117,7 @@ def _wrap_resolve_result(
 
 
 def _tool_record_findings_batch(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any], root: Path | None = None
 ) -> dict[str, Any]:
     """Record multiple ReviewFindings in one transaction."""
     from agentscaffold.graph.findings import record_findings_batch  # noqa: PLC0415
@@ -2743,6 +3141,7 @@ def _tool_record_findings_batch(
         review_type=review_type,
         findings=findings,
         project=_current_project_or_none(),
+        project_root=root,
     )
     result["meta"] = meta
     return result
@@ -2832,7 +3231,7 @@ def _tool_resolve_backlog_item(
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
-# Agent tool pack handlers (Plan 246)
+# Agent tool pack handlers
 # ---------------------------------------------------------------------------
 
 
@@ -2903,7 +3302,7 @@ def _tool_next_action(
 
 
 # ---------------------------------------------------------------------------
-# Governed lifecycle composite handlers (Plan 152)
+# Governed lifecycle composite handlers
 # ---------------------------------------------------------------------------
 
 
@@ -3046,10 +3445,13 @@ def _tool_begin_plan(
             review_type="pre_review",
             findings=findings_to_write,
             project=_current_project_or_none(),
+            project_root=root,
         )
 
-    # --- Stamp Plan.reviewedAt ---
-    reviewed_at = None if dry_run else stamp_plan_reviewed(store, pn)
+    # --- Stamp the review, with each root's HEAD for the change range ---
+    reviewed_at = (
+        None if dry_run else stamp_plan_reviewed(store, pn, commits=_review_commits(root, config))
+    )
 
     # --- Build proceed_prompt ---
     n_findings = findings_written["count"]
@@ -3099,6 +3501,25 @@ def _tool_begin_plan(
     return payload
 
 
+def _review_commits(root: Path | None, config: Any) -> dict[str, str] | None:
+    """HEAD per project root and implementation root, keyed by project name."""
+    from agentscaffold.config import ScaffoldConfig
+    from agentscaffold.review.changes import head_commit
+    from agentscaffold.review.file_impact_resolve import current_project_name
+    from agentscaffold.workspace_registry import find_registered_project_by_name
+
+    if root is None:
+        return None
+    cfg = config if isinstance(config, ScaffoldConfig) else ScaffoldConfig()
+    roots = [(current_project_name(root, cfg), Path(root))]
+    if cfg.implementation_project:
+        hit = find_registered_project_by_name(cfg.implementation_project)
+        if hit is not None:
+            roots.append((cfg.implementation_project, Path(hit.project_root)))
+    commits = {name: head for name, path in roots if (head := head_commit(path))}
+    return commits or None
+
+
 def _select_findings_to_persist(
     candidates: list[dict[str, Any]],
     existing_open: list[dict[str, Any]],
@@ -3107,11 +3528,15 @@ def _select_findings_to_persist(
 ) -> list[dict[str, Any]]:
     """Filter review findings down to the set worth persisting to the graph.
 
-    Keeps only findings at or above ``min_severity`` (default ``high``) and drops
-    any that duplicate an already-open finding for the plan (matched on category +
-    normalized finding text). This makes ``scaffold_begin_plan`` idempotent: a
-    re-run does not multiply findings.
+    Keeps only findings at or above ``min_severity`` (default ``high``), plus
+    every finding in ``ALWAYS_SHOWN_CATEGORIES`` (PRECEDENT, COMPONENT), which
+    the disposition rule always asks about, and drops any that duplicate an
+    already-open finding for the plan (matched on category + normalized finding
+    text). This makes ``scaffold_begin_plan`` idempotent: a re-run does not
+    multiply findings.
     """
+    from agentscaffold.review.filters import is_always_shown
+
     order = {"low": 0, "medium": 1, "high": 2}
     threshold = order.get(min_severity, 2)
 
@@ -3126,7 +3551,9 @@ def _select_findings_to_persist(
     selected: list[dict[str, Any]] = []
     batch_keys: set[tuple[str, str]] = set()
     for f in candidates:
-        if order.get(f.get("severity", "medium"), 1) < threshold:
+        if not is_always_shown(f.get("category")) and (
+            order.get(f.get("severity", "medium"), 1) < threshold
+        ):
             continue
         key = (str(f.get("category", "")).lower(), _norm(f.get("finding", "")))
         if key in existing_keys or key in batch_keys:
@@ -3137,12 +3564,18 @@ def _select_findings_to_persist(
 
 
 def _tool_complete_plan(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    root: Path | None = None,
+    config: Any = None,
 ) -> dict[str, Any]:
     """Composite: full post-implementation chain.
 
     1. Graph-health pre-check
     2. Prepare retro (verification + enrichment)
+    2a. With ``gates.in_progress_to_complete.compliance: block``, stop on a
+        failing rule row before anything is written
     3. Auto-write retro insights as ReviewFindings (review_type='post_retro')
     4. Write backlog items if provided
     5. Return structured output with structured_learnings + completion_checklist
@@ -3161,12 +3594,33 @@ def _tool_complete_plan(
         graph_warning = "Graph appears empty (0 files, 0 plans). Retro output may be incomplete."
 
     # --- Run prepare_retro internally ---
-    retro_args = {"plan_number": pn}
-    retro_result = _tool_prepare_retro(store, retro_args, meta)
+    retro_args = {"plan_number": pn, "base_ref": arguments.get("base_ref")}
+    retro_result = _tool_prepare_retro(store, retro_args, meta, root, config)
     if "error" in retro_result:
         return {
             "error": f"prepare_retro failed: {retro_result['error']}",
             "graph_warning": graph_warning,
+            "meta": meta,
+        }
+    blocked = _compliance_gate(retro_result, config)
+    if blocked:
+        return {
+            "plan_number": pn,
+            "gate_blocked": True,
+            "failing": blocked,
+            "message": (
+                f"Plan {pn} cannot complete: {len(blocked)} rule check(s) fail and "
+                "gates.in_progress_to_complete.compliance is block. Fix them, or record "
+                "the approval, then run the post-implementation review again. Nothing "
+                "was written."
+            ),
+            "graph_warning": graph_warning,
+            "retro": {
+                "verification": retro_result.get("verification"),
+                "verification_markdown": retro_result.get("verification_markdown"),
+            },
+            "findings_written": {"ids": [], "count": 0, "would_write_count": 0},
+            "backlog_items_written": {"ids": [], "count": 0},
             "meta": meta,
         }
 
@@ -3192,6 +3646,7 @@ def _tool_complete_plan(
             review_type="post_retro",
             findings=retro_findings,
             project=_current_project_or_none(),
+            project_root=root,
         )
 
     # --- Write backlog items if provided ---
@@ -3254,8 +3709,33 @@ def _tool_complete_plan(
     return payload
 
 
+def _compliance_gate(retro_result: dict[str, Any], config: Any) -> list[dict[str, Any]]:
+    """Failing rule rows when the completion gate is ``block``; else empty."""
+    from agentscaffold.review.verify import COMPLIANCE_CHECKS
+
+    gates = getattr(config, "gates", None)
+    if gates is None or gates.in_progress_to_complete.compliance != "block":
+        return []
+    return [
+        row
+        for row in retro_result.get("verification") or []
+        if row.get("check") in COMPLIANCE_CHECKS and row.get("status") == "fail"
+    ]
+
+
+def _session_idle_hours(config: Any) -> float:
+    from agentscaffold.config import SessionsConfig
+
+    sessions = getattr(config, "sessions", None) or SessionsConfig()
+    return float(sessions.idle_hours)
+
+
 def _tool_session_start(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    session_project: str | None = None,
+    config: Any = None,
 ) -> dict[str, Any]:
     """Start or reuse the open working session."""
     from agentscaffold.graph.sessions import get_session, start_session
@@ -3267,13 +3747,19 @@ def _tool_session_start(
         store,
         plan_numbers=arguments.get("plan_numbers") or None,
         summary=arguments.get("summary") or "",
-        project=_current_project_or_none(),
+        project=session_project if session_project is not None else _current_project_or_none(),
+        force_new=bool(arguments.get("force_new")),
+        idle_hours=_session_idle_hours(config),
     )
     return {"id": session_id, "session": get_session(store, session_id), "meta": meta}
 
 
 def _tool_session_record_decision(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    session_project: str | None = None,
+    config: Any = None,
 ) -> dict[str, Any]:
     """Record a typed session decision (opens a session if none is open)."""
     from agentscaffold.graph.sessions import record_decision
@@ -3289,17 +3775,21 @@ def _tool_session_record_decision(
         evidence=arguments.get("evidence") or "",
         status=arguments.get("status") or "inferred",
         kind=arguments.get("kind") or "operational",
-        project=_current_project_or_none(),
+        project=session_project if session_project is not None else _current_project_or_none(),
         plan_numbers=arguments.get("plan_numbers") or None,
         ensure_session=True,
         source="session_record_decision",
+        idle_hours=_session_idle_hours(config),
     )
     result["meta"] = meta
     return result
 
 
 def _tool_session_end(
-    store: Any, arguments: dict[str, Any], meta: dict[str, Any]
+    store: Any,
+    arguments: dict[str, Any],
+    meta: dict[str, Any],
+    session_project: str | None = None,
 ) -> dict[str, Any]:
     """Close a working session."""
     from agentscaffold.graph.sessions import end_session
@@ -3314,7 +3804,7 @@ def _tool_session_end(
         decisions=arguments.get("decisions"),
         plan_numbers=arguments.get("plan_numbers"),
         files=arguments.get("files"),
-        project=_current_project_or_none(),
+        project=session_project if session_project is not None else _current_project_or_none(),
     )
     if not result:
         return {"error": "No open session.", "meta": meta}

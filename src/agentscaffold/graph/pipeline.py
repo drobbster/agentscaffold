@@ -84,6 +84,9 @@ def _probe_incremental_noop(
     disk_files = set(
         scan_indexable_files(root, ignore_patterns, allowed_languages=allowed_languages)
     )
+    from agentscaffold.graph.source_roots import extra_path_files
+
+    disk_files.update(extra_path_files(root, graph_config, allowed_languages))
 
     gov_files = governance_source_files(root, config)
     current_gov_fp = governance_fingerprint(gov_files)
@@ -254,6 +257,14 @@ def quiet_pipeline_output() -> Iterator[None]:
                 _QUIET_PREVIOUS = None
 
 
+def _module_prefixes(root: Path, graph_config: Any) -> dict[str, str]:
+    """Monorepo module prefixes for import resolution."""
+    from agentscaffold.config import GraphConfig
+    from agentscaffold.graph.source_roots import effective_module_prefixes
+
+    return effective_module_prefixes(root, graph_config or GraphConfig())
+
+
 def run_pipeline(
     root: Path,
     config: ScaffoldConfig | None = None,
@@ -287,7 +298,7 @@ def run_pipeline(
     root = root.resolve()
     graph_config = config.graph if config else None
 
-    # Resolve the DB path against the project root (Plan 221) so the index-time
+    # Resolve the DB path against the project root so the index-time
     # location matches what open_graph uses at query time. A relative db_path
     # anchors to the nearest scaffold.yaml/.git (falling back to the scan root)
     # rather than the bare working directory; an absolute db_path is honored.
@@ -295,7 +306,7 @@ def run_pipeline(
 
     db_path = resolve_db_path(config, start=root)
 
-    # Plan 223: note whether the cache exists before we build. On an ephemeral
+    # Note whether the cache exists before we build. On an ephemeral
     # box (no cache) the governance phase restores findings/sessions/backlog from
     # the committed artifact; we surface that so the operator sees the rebuild
     # reconstructed durable knowledge from git rather than starting empty.
@@ -321,7 +332,7 @@ def run_pipeline(
     phases_completed: list[str] = []
     summary: dict[str, Any] = {}
 
-    # Plan 225: in a multi-project workspace, tag every write with this project
+    # In a multi-project workspace, tag every write with this project
     # and scope clears to it so re-indexing one project never touches siblings.
     # Single-project repos resolve to None -- the choke point is a no-op.
     from agentscaffold.paths import load_workspace as _load_workspace
@@ -429,7 +440,9 @@ def run_pipeline(
             from agentscaffold.graph.calls import process_calls
             from agentscaffold.graph.imports import process_imports
 
-            import_result = process_imports(store, root, symbol_table)
+            import_result = process_imports(
+                store, root, symbol_table, prefixes=_module_prefixes(root, graph_config)
+            )
             summary["imports"] = import_result
 
             total_imports = import_result["resolved"] + import_result["unresolved"]
@@ -520,6 +533,7 @@ def run_pipeline(
                 "pw::pipeline::governance", "", "governance", str(exc), "error"
             )
             # Governance failure is non-fatal; code graph is still usable
+        _run_inventory(store, root, config, summary)
 
     # Phase 5 (optional): Community detection
     if "communities" not in phases_completed:
@@ -579,7 +593,7 @@ def run_pipeline(
     summary["elapsed_seconds"] = round(elapsed, 1)
     summary["phases_completed"] = phases_completed
 
-    # Plan 223: report governance restored from the committed artifact on a fresh
+    # Report governance restored from the committed artifact on a fresh
     # build (e.g. ephemeral devbox or after a deleted cache).
     restored = summary.get("governance", {}).get("governance_restored", 0)
     summary["restored_from_artifact"] = (not cache_existed) and restored > 0
@@ -625,6 +639,28 @@ def _write_governance_fingerprint(
         fp_path.write_text(governance_fingerprint(governance_source_files(root, config)))
     except OSError as exc:
         logger.warning("Could not write governance fingerprint: %s", exc)
+
+
+def _run_inventory(
+    store: GraphBackend, root: Path, config: ScaffoldConfig | None, summary: dict[str, Any]
+) -> None:
+    """Replace Component nodes from the system inventory; never fatal."""
+    try:
+        from agentscaffold.graph.inventory import process_inventory
+
+        result = process_inventory(store, root, config)
+    except Exception as exc:  # noqa: BLE001 - the code graph stays usable
+        logger.error("Inventory ingestion failed: %s", exc)
+        store.add_parsing_warning("pw::pipeline::inventory", "", "inventory", str(exc), "warning")
+        return
+    if result.get("enabled"):
+        summary["inventory"] = result
+        if result.get("error"):
+            console.print(f"  [yellow]Inventory not indexed: {result['error']}[/yellow]")
+        else:
+            console.print(
+                f"  Inventory: {result['components']} components, {result['reads']} reads edges"
+            )
 
 
 def _run_incremental(
@@ -740,7 +776,13 @@ def _run_incremental(
         from agentscaffold.graph.calls import process_calls
         from agentscaffold.graph.imports import process_imports
 
-        import_result = process_imports(store, root, symbol_table, file_paths=affected_files)
+        import_result = process_imports(
+            store,
+            root,
+            symbol_table,
+            file_paths=affected_files,
+            prefixes=_module_prefixes(root, graph_config),
+        )
         summary["imports"] = import_result
 
         from agentscaffold.graph.parsing import process_extends
@@ -798,6 +840,10 @@ def _run_incremental(
             )
     else:
         console.print("  Governance unchanged; skipping refresh")
+
+    # Components link to Plans and Files that a governance refresh or a file
+    # re-add just recreated, so the (cheap) inventory pass runs on every change.
+    _run_inventory(store, root, config, summary)
 
     # Re-run communities only when the incremental policy says the coarse
     # orientation clusters need refreshing.

@@ -17,3 +17,5 @@ file_patterns:
   - "execution/**"
   - "backtest/**"
   - "strategies/**"
+inventory_collectors:
+  - prefect

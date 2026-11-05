@@ -213,6 +213,14 @@ def _tool_specs() -> list[ToolSpec]:
                         "description": "Traversal depth (default 2)",
                         "default": 2,
                     },
+                    "include_precedent": {
+                        "type": "boolean",
+                        "description": (
+                            "Include governance_impact: every finding, learning, ADR, "
+                            "contract and inventory component about the file (default true)"
+                        ),
+                        "default": True,
+                    },
                     **_SCOPE_PROPS,
                 },
                 "required": ["file_or_symbol"],
@@ -369,6 +377,14 @@ def _tool_specs() -> list[ToolSpec]:
                         "description": "Token control: summary (default) or full",
                         "default": "summary",
                     },
+                    "base_ref": {
+                        "type": "string",
+                        "description": (
+                            "Git ref the rule checks diff from. Default: the plan's "
+                            "merged or open branches, else the commit recorded at the "
+                            "pre-implementation review, else the File Impact Map."
+                        ),
+                    },
                 },
                 "required": ["plan_number", "review_type"],
             },
@@ -483,6 +499,14 @@ def _tool_specs() -> list[ToolSpec]:
                 "type": "object",
                 "properties": {
                     "plan_number": {"type": "integer", "description": "Plan number"},
+                    "base_ref": {
+                        "type": "string",
+                        "description": (
+                            "Git ref the rule checks diff from. Default: the plan's "
+                            "merged or open branches, else the commit recorded at the "
+                            "pre-implementation review, else the File Impact Map."
+                        ),
+                    },
                 },
                 "required": ["plan_number"],
             },
@@ -490,9 +514,12 @@ def _tool_specs() -> list[ToolSpec]:
         ToolSpec(
             name="scaffold_orient",
             description=(
+                "Call this second in every new chat, right after "
+                "scaffold_session_start. "
                 "Answer four questions: what are we working on, what is blocked "
                 "for that work, what is related to it, and if nothing is in "
-                "flight what is next. Returns session_brief plus "
+                "flight what is next. Returns session_brief (with lifecycle_debt "
+                "when the system inventory is enabled) plus "
                 "recommended_actions, plan_progress, and next_action_focus. "
                 "Do not call this again as the next action. Prefer embedded "
                 "recommended_actions over a separate scaffold_next_action call."
@@ -563,6 +590,29 @@ def _tool_specs() -> list[ToolSpec]:
                     **_SCOPE_PROPS,
                 },
                 "required": ["topic"],
+            },
+        ),
+        ToolSpec(
+            name="scaffold_governance",
+            description=(
+                "Read the project's governance manual (the project-owned part of "
+                "AGENTS.md). Without a section, returns the full table of contents; with "
+                "one, returns that section's text, or found=false and the closest "
+                "headings. Use when asked what the rules say about a topic, or to read a "
+                "section a lifecycle tool listed as truncated."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "section": {
+                        "type": "string",
+                        "description": (
+                            "Heading or heading path, e.g. 'Backlog Rules' or "
+                            "'Plan Lifecycle / Ready -> In Progress'"
+                        ),
+                    },
+                    "project": _SCOPE_PROPS["project"],
+                },
             },
         ),
         ToolSpec(
@@ -672,12 +722,15 @@ def _tool_specs() -> list[ToolSpec]:
         ToolSpec(
             name="scaffold_resolve_finding",
             description=(
-                "Mark a ReviewFinding as resolved. Use this when an issue identified "
-                "during a prior review has been addressed. The finding remains in the "
-                "graph with status='resolved' for audit trail purposes. finding_id must "
-                "be the rf:: id from scaffold_record_finding or from orient / "
-                "prepare_review. A miss returns status=not_found (error_code not_found) "
-                "rather than a fake resolve."
+                "Dispose of a ReviewFinding. Use this when an issue identified "
+                "during a prior review has been addressed (disposition resolved, the "
+                "default), deferred to later work (deferred), or does not apply "
+                "(not_applicable). deferred and not_applicable need the reason in "
+                "resolution. The finding remains in the graph with its disposition as "
+                "status for audit trail purposes. finding_id must be the rf:: id from "
+                "scaffold_record_finding or from orient / prepare_review. A miss "
+                "returns status=not_found (error_code not_found) rather than a fake "
+                "resolve."
             ),
             input_schema={
                 "type": "object",
@@ -699,6 +752,22 @@ def _tool_specs() -> list[ToolSpec]:
                         "description": (
                             "Plan number that addressed the finding. Creates "
                             "FINDING_ADDRESSED_BY only when that Plan vertex exists."
+                        ),
+                    },
+                    "disposition": {
+                        "type": "string",
+                        "enum": ["resolved", "deferred", "not_applicable"],
+                        "default": "resolved",
+                        "description": (
+                            "resolved (default), deferred (still live work, never "
+                            "pruned) or not_applicable. The last two need a reason "
+                            "in resolution."
+                        ),
+                    },
+                    "backlog_id": {
+                        "type": "string",
+                        "description": (
+                            "BacklogItem id that carries a deferred finding's work. Must exist."
                         ),
                     },
                 },
@@ -859,7 +928,7 @@ def _tool_specs() -> list[ToolSpec]:
                 "required": ["item_id"],
             },
         ),
-        # --- Agent tool pack (Plan 246) ---
+        # --- Agent tool pack ---
         ToolSpec(
             name="scaffold_diff_plan_vs_code",
             description=(
@@ -988,6 +1057,14 @@ def _tool_specs() -> list[ToolSpec]:
                         "description": "When true, return retro payload without graph writes",
                         "default": False,
                     },
+                    "base_ref": {
+                        "type": "string",
+                        "description": (
+                            "Git ref the rule checks diff from. Default: the plan's "
+                            "merged or open branches, else the commit recorded at the "
+                            "pre-implementation review, else the File Impact Map."
+                        ),
+                    },
                     "backlog_items": {
                         "type": "array",
                         "description": "Optional backlog items to record",
@@ -1012,9 +1089,10 @@ def _tool_specs() -> list[ToolSpec]:
         ToolSpec(
             name="scaffold_session_start",
             description=(
-                "Start a working session in the knowledge graph. Returns the session "
-                "id. If a session is already open for this project, returns that id "
-                "instead of minting a second one."
+                "Call this first in every new chat, before any other AgentScaffold "
+                "write. Start a working session in the knowledge graph. Returns the "
+                "session id. If a session is already open for this project, returns "
+                "that id instead of minting a second one."
             ),
             input_schema={
                 "type": "object",
@@ -1027,6 +1105,15 @@ def _tool_specs() -> list[ToolSpec]:
                     "summary": {
                         "type": "string",
                         "description": "Optional opening summary",
+                    },
+                    "force_new": {
+                        "type": "boolean",
+                        "description": (
+                            "Close this project's open session and start a new one, "
+                            "even if it is still active. Use when a new chat finds an "
+                            "old session open."
+                        ),
+                        "default": False,
                     },
                 },
             },

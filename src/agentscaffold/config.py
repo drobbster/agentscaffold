@@ -37,12 +37,34 @@ class ReadyToInProgressGates(BaseModel):
     interactive_gate: bool = True
 
 
+RuleLevel = Literal["off", "warn", "block"]
+
+
+def _rule_level(value: Any) -> Any:
+    """YAML 1.1 reads an unquoted ``off`` as False; accept it as the level."""
+    if value is False:
+        return "off"
+    if value is True:
+        return "warn"
+    return value
+
+
 class InProgressToCompleteGates(BaseModel):
     all_steps_checked: bool = True
     validation_commands: bool = True
     tests_pass: bool = True
     retrospective: bool = True
     domain_implementation_review: bool = False
+    #: Rule rows in the post-implementation review. ``block`` stops
+    #: ``scaffold_complete_plan`` on a failing row; ``off`` omits the rows.
+    #: Off by default: replayed over plans completed without a recorded review
+    #: commit, most rows were false alarms.
+    compliance: RuleLevel = "off"
+
+    @field_validator("compliance", mode="before")
+    @classmethod
+    def _compliance_level(cls, value: Any) -> Any:
+        return _rule_level(value)
 
 
 class GatesConfig(BaseModel):
@@ -119,9 +141,72 @@ class ReviewsConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class GovernanceStepsConfig(BaseModel):
+    """Manual sections delivered with each lifecycle step.
+
+    Defaults name the shipped template's headings; lookup ignores a trailing
+    qualifier such as ``(Mandatory)``.
+    """
+
+    review: list[str] = Field(
+        default_factory=lambda: [
+            "Plan Lifecycle / Gate: Draft -> Review",
+            "Plan Lifecycle / Gate: Review -> Ready",
+            "Spike Requirements",
+            "Review Output Format",
+            "Review Terminology",
+        ]
+    )
+    implementation: list[str] = Field(
+        default_factory=lambda: [
+            "Plan Lifecycle / Gate: Ready -> In Progress",
+            "Execution Rules",
+            "Test Requirements",
+            "Breaking Changes Protocol",
+            "Linter Warning Protocol",
+            "Component Lifecycle",
+        ]
+    )
+    completion: list[str] = Field(
+        default_factory=lambda: [
+            "Plan Lifecycle / Gate: In Progress -> Complete",
+            "Retrospective Requirements",
+            "Runbook Rules",
+            "Architecture Changelog Scope",
+            "Component Lifecycle",
+        ]
+    )
+    backlog: list[str] = Field(default_factory=lambda: ["Backlog Rules"])
+
+
+class GovernanceConfig(BaseModel):
+    """Which parts of the governance manual the MCP server delivers."""
+
+    orient: list[str] = Field(default_factory=lambda: ["Hard Prohibitions", "Approval Gates"])
+    orient_budget: int = Field(default=2800, ge=0)
+    step_budget: int = Field(default=6000, ge=0)
+    steps: GovernanceStepsConfig = Field(default_factory=GovernanceStepsConfig)
+    #: Sections a manual may lack without a doctor warning. Component Lifecycle
+    #: reaches existing manuals only through ``agents diff-manual``.
+    optional: list[str] = Field(default_factory=lambda: ["Component Lifecycle"])
+
+
 class AgentsConfig(BaseModel):
     agents_md: bool = True
     cursor_rules: bool = True
+    manual_path: str = "AGENTS.md"
+    governance: GovernanceConfig = Field(default_factory=GovernanceConfig)
+    #: ``local`` declares that generated guidance is deliberately not committed
+    #: (it is delivered by the user-scope install), so doctor stops warning
+    #: that it is gitignored.
+    durability: Literal["committed", "local"] = "committed"
+    #: Pre-edit hooks refuse agent edits to
+    #: ``semi_autonomous.safety.read_only_paths``.
+    protect_read_only_paths: bool = True
+    #: ``import`` writes CLAUDE.md as a single ``@AGENTS.md`` import so Claude
+    #: Code reads the same routing as everyone else. Ignored where AGENTS.md is
+    #: a shared-workspace stub, which does not carry the routing.
+    claude_md: Literal["full", "import"] = "full"
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +286,7 @@ class ImportConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Collaboration ergonomics configuration (Plan 226)
+# Collaboration ergonomics configuration
 # ---------------------------------------------------------------------------
 
 
@@ -221,7 +306,7 @@ class CollabConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Workspace configuration (Plan 225 - namespaced multi-project workspace)
+# Workspace configuration (namespaced multi-project workspace)
 # ---------------------------------------------------------------------------
 
 #: Filename of the optional outer workspace manifest. Its presence is what
@@ -248,7 +333,7 @@ class ProjectEntry(BaseModel):
     path: str
 
 
-#: The two supported asset-layout policies (Plan 234). ``project_local`` is the
+#: The two supported asset-layout policies. ``project_local`` is the
 #: backward-compatible default: every project keeps a full ``docs/ai`` tree.
 #: ``shared_workspace`` promotes reusable process assets (prompts, standards,
 #: templates, protocol, commands, shared security templates) to the workspace
@@ -257,7 +342,7 @@ AssetLayoutMode = Literal["project_local", "shared_workspace"]
 
 
 class SharedAssetPaths(BaseModel):
-    """Workspace-root-relative locations of reusable *process* assets (Plan 234).
+    """Workspace-root-relative locations of reusable *process* assets.
 
     In ``shared_workspace`` mode these directories/files resolve against the
     workspace root, so every registered project reads one committed copy of the
@@ -276,7 +361,7 @@ class SharedAssetPaths(BaseModel):
 
 
 class ProjectAssetPaths(BaseModel):
-    """Project-root-relative locations of system-of-record artifacts (Plan 234).
+    """Project-root-relative locations of system-of-record artifacts.
 
     These are never promoted to the workspace root: plans, ADRs, contracts,
     spikes, state, backlog, architecture, vision, and history are per-project
@@ -301,7 +386,7 @@ class ProjectAssetPaths(BaseModel):
 
 
 class AssetLayoutConfig(BaseModel):
-    """Workspace asset-layout policy (Plan 234).
+    """Workspace asset-layout policy.
 
     ``layout`` selects whether reusable process assets are shared at the
     workspace root (``shared_workspace``) or kept project-local
@@ -332,13 +417,13 @@ class WorkspaceConfig(BaseModel):
     A single-project tree has no manifest; one is synthesized with exactly one
     project (see :func:`agentscaffold.paths.load_workspace`). ``is_multi_project``
     is the single switch that gates ID-prefixing and read scoping everywhere.
-    ``asset_layout`` is optional (Plan 234): ``None`` behaves as
+    ``asset_layout`` is optional: ``None`` behaves as
     ``project_local`` for full backward compatibility.
     """
 
-    #: Stable opaque workspace id (Plan 249). Written on first manifest write and
+    #: Stable opaque workspace id. Written on first manifest write and
     #: never derived from the path, so moving or renaming a workspace root does
-    #: not orphan the state keyed by it. None for a manifest predating Plan 249.
+    #: not orphan the state keyed by it. None for a manifest predating workspace ids.
     id: str | None = None
     projects: list[ProjectEntry] = Field(default_factory=list)
     asset_layout: AssetLayoutConfig | None = None
@@ -457,7 +542,7 @@ class LayerMapping(BaseModel):
 
 
 class GraphConfig(BaseModel):
-    # None means "use the platform default" (Plan 249 Step B4): the state
+    # None means "use the platform default": the state
     # directory for a registered workspace, or the historical in-tree path when
     # there is no workspace id to key state by. A string here means the user
     # chose a location and it is honored unchanged.
@@ -478,7 +563,7 @@ class GraphConfig(BaseModel):
     adrs_dir: str = "docs/ai/adrs/"
     spikes_dir: str = "docs/ai/spikes/"
     workflow_state_file: str = "docs/ai/state/workflow_state.md"
-    # Additive governance path fields (Plan 221). Defaults equal the literals
+    # Additive governance path fields. Defaults equal the literals
     # that the CLI / domain-pack installer previously hardcoded, so an
     # uncustomized repo is unaffected.
     backlog_file: str = "docs/ai/backlog.md"
@@ -488,14 +573,14 @@ class GraphConfig(BaseModel):
     templates_dir: str = "docs/ai/templates/"
     plan_completion_log_file: str = "docs/ai/state/plan_completion_log.md"
     security_dir: str = "docs/security/"
-    # Git-committed governance system of record (Plan 222). Findings, sessions,
+    # Git-committed governance system of record. Findings, sessions,
     # and backlog items are serialized here so the graph can be rebuilt from
     # git. Relative values resolve against the project root.
     governance_artifact: str = "docs/ai/state/governance.json"
-    # Human-owned architecture baseline (Plan 237). Parsed into ArchitectureLayer
+    # Human-owned architecture baseline. Parsed into ArchitectureLayer
     # nodes + BELONGS_TO_LAYER edges so file->layer analyses activate.
     architecture_doc: str = "docs/ai/system_architecture.md"
-    # Optional override for Plan 245 overlap-noise denylist. ``None`` keeps the
+    # Optional override for the overlap-noise denylist. ``None`` keeps the
     # built-in defaults (contracts README, workflow_state, backlog, architecture
     # changelog). An explicit list replaces defaults (empty list disables filtering).
     overlap_noise_paths: list[str] | None = None
@@ -506,6 +591,35 @@ class GraphConfig(BaseModel):
     incremental_min_interval_seconds: int = 0
     embedding_min_interval_seconds: int = 0
     async_embeddings: str = "off"
+    # Monorepo-absolute Python imports. The project's dotted path below
+    # its VCS root is inferred as a prefix for the project root; module_prefixes
+    # maps further prefixes to directories relative to the project root.
+    infer_module_prefix: bool = True
+    module_prefixes: dict[str, str] = Field(default_factory=dict)
+    # Globs, relative to the VCS root, of files that belong to this
+    # project but live outside its folder. Indexed as ``@repo/<path>``.
+    extra_paths: list[str] = Field(default_factory=list)
+
+    @field_validator("module_prefixes")
+    @classmethod
+    def validate_module_prefixes(cls, value: dict[str, str]) -> dict[str, str]:
+        """Keys are dotted module names; values stay inside the project root."""
+        from pathlib import PurePosixPath
+
+        from agentscaffold.graph.source_roots import is_module_name
+
+        cleaned: dict[str, str] = {}
+        for prefix, directory in value.items():
+            if not is_module_name(prefix):
+                raise ValueError(f"module_prefixes key {prefix!r} is not a dotted module name")
+            rel = PurePosixPath(directory.replace("\\", "/") or ".")
+            if rel.is_absolute() or ".." in rel.parts:
+                raise ValueError(
+                    f"module_prefixes[{prefix!r}] = {directory!r} must be a path "
+                    "inside the project root"
+                )
+            cleaned[prefix] = str(rel)
+        return cleaned
 
     @field_validator("async_embeddings", mode="before")
     @classmethod
@@ -533,13 +647,26 @@ class FreshnessConfig(BaseModel):
     background_queue_enabled: bool = True
 
 
+class SessionsConfig(BaseModel):
+    """Working-session lifecycle.
+
+    ``idle_hours``: a session with no activity for this long is closed by the
+    next session start or recorded decision, and reads treat it as not open.
+    ``warn_after_hours``: orient warns when the open session started longer ago
+    than this, however active. ``0`` disables either.
+    """
+
+    idle_hours: float = Field(default=12, ge=0)
+    warn_after_hours: float = Field(default=24, ge=0)
+
+
 # ---------------------------------------------------------------------------
-# Semantic search / embedding configuration (Plan 227)
+# Semantic search / embedding configuration
 # ---------------------------------------------------------------------------
 
 
 class SearchConfig(BaseModel):
-    """Semantic-search / embedding model settings (Plan 227, Tier 2a).
+    """Semantic-search / embedding model settings.
 
     The embedding model is configurable and its weights cache is pinned to a
     workspace-local directory by default, so once provisioned (``scaffold graph
@@ -559,6 +686,132 @@ class SearchConfig(BaseModel):
     cache_dir: str = ".scaffold/models"
     rerank: bool = False
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+
+class PrecedentConfig(BaseModel):
+    """Earlier findings, learnings and ADRs fed into the reviews.
+
+    ``sources``: registered project names read for precedent besides the
+    current project and ``implementation_project``. ``semantic`` adds
+    embedding matches after the structural ones; the precedent study sets its
+    default. ``statistic_categories`` are finding categories that are counts,
+    not judgments, and are never returned as precedent.
+    ``automated_skip_categories`` are categories never returned when the review
+    engine wrote the finding: each review recomputes those notices for itself.
+    """
+
+    enabled: bool = True
+    semantic: bool = False
+    sources: list[str] = Field(default_factory=list)
+    max_challenges: int = Field(default=5, ge=0)
+    max_brief: int = Field(default=10, ge=0)
+    max_compact: int = Field(default=5, ge=0)
+    statistic_categories: list[str] = Field(
+        default_factory=lambda: ["HISTORY", "VOLATILITY", "HOT_FILE", "COMPLEXITY"]
+    )
+    automated_skip_categories: list[str] = Field(
+        default_factory=lambda: ["DEPENDENCY", "CONSUMER_AUDIT", "TEST_COVERAGE", "COMPONENT"]
+    )
+
+    @field_validator("sources")
+    @classmethod
+    def _sources_are_project_names(cls, value: list[str]) -> list[str]:
+        try:
+            return [validate_project_name(name) for name in value]
+        except ConfigError as exc:
+            raise ValueError(str(exc)) from exc
+
+
+class ComplianceConfig(BaseModel):
+    """Rule rows in the post-implementation review.
+
+    ``base_branch``: the branch a plan's unmerged branch is compared with; by
+    default the upstream's default branch, else ``staging``, else ``main``.
+    ``package_changelog``: the changelog a source change should touch; unset
+    skips that row. ``rules`` sets a check to ``off``, ``warn`` or ``block``;
+    ``read_only_paths`` defaults to ``block`` and the rest (including
+    ``inventory_lifecycle``) to ``warn``.
+    """
+
+    base_branch: str | None = None
+    package_changelog: str | None = None
+    disposition_exempt_categories: list[str] = Field(
+        default_factory=lambda: ["DEPENDENCY", "CONSUMER_AUDIT", "TEST_COVERAGE"]
+    )
+    rules: dict[str, RuleLevel] = Field(default_factory=dict)
+
+    @field_validator("rules", mode="before")
+    @classmethod
+    def _rule_levels(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: _rule_level(level) for key, level in value.items()}
+        return value
+
+    def level(self, check: str) -> str:
+        return self.rules.get(check, "block" if check == "read_only_paths" else "warn")
+
+
+# ---------------------------------------------------------------------------
+# System inventory
+# ---------------------------------------------------------------------------
+
+
+class InventoryCollectorConfig(BaseModel):
+    """One collector to run and the globs it reads (its defaults when empty)."""
+
+    name: str
+    sources: list[str] = Field(default_factory=list)
+
+
+def _default_collectors() -> list[InventoryCollectorConfig]:
+    return [
+        InventoryCollectorConfig(name=name)
+        for name in ("compose", "github_workflows", "pyproject_scripts")
+    ]
+
+
+class InventoryConfig(BaseModel):
+    """The system inventory check (contract ``system_inventory_interface`` v1).
+
+    Off unless ``scaffold.yaml`` has an ``inventory:`` block that enables it,
+    so an upgrade changes nothing. ``enforcement: warn`` reports and exits 0;
+    ``fail`` exits non-zero on INV-001 to INV-006 and INV-010. Once
+    ``warn_until`` has passed, ``warn`` behaves as ``fail``. Plan lint applies
+    the inventory plan fields to plans created on or after
+    ``plan_adoption_date``. ``broad_reads_share`` is the share of indexed files
+    above which a ``reads`` entry draws a warning.
+    """
+
+    enabled: bool = False
+    path: str = "docs/ai/system_inventory.yaml"
+    collectors: list[InventoryCollectorConfig] = Field(default_factory=_default_collectors)
+    enforcement: Literal["warn", "fail"] = "warn"
+    warn_until: str | None = None
+    health_snapshot: str = "outputs/governance/inventory_health.json"
+    health_max_bytes: int = Field(default=1_000_000, ge=1)
+    failing_days: int = Field(default=14, ge=1)
+    zombie_days: int = Field(default=90, ge=1)
+    draft_stale_days: int = Field(default=60, ge=1)
+    plan_adoption_date: str | None = None
+    broad_reads_share: float = Field(default=0.25, gt=0, le=1)
+
+    @field_validator("collectors", mode="before")
+    @classmethod
+    def _collector_names(cls, value: Any) -> Any:
+        """Accept a bare name for a collector that uses its default sources."""
+        if isinstance(value, list):
+            return [{"name": item} if isinstance(item, str) else item for item in value]
+        return value
+
+    @field_validator("warn_until", "plan_adoption_date", mode="before")
+    @classmethod
+    def _iso_date(cls, value: Any) -> Any:
+        if value is None or value == "":
+            return None
+        text = value.isoformat() if hasattr(value, "isoformat") else str(value)
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text[:10]):
+            raise ValueError(f"{value!r} is not a YYYY-MM-DD date")
+        return text[:10]
 
 
 # ---------------------------------------------------------------------------
@@ -584,7 +837,7 @@ class ScaffoldConfig(BaseModel):
     """Root configuration loaded from scaffold.yaml."""
 
     framework: FrameworkMeta = Field(default_factory=FrameworkMeta)
-    # Config inheritance (Plan 224): inherit shared policy from a base config.
+    # Config inheritance: inherit shared policy from a base config.
     # A filesystem path (absolute, or relative to this file's directory) or the
     # literal "home" (the org/user home config: $AGENTSCAFFOLD_HOME or
     # ~/.agentscaffold/scaffold.yaml). Values in this file override the base.
@@ -603,12 +856,16 @@ class ScaffoldConfig(BaseModel):
     ci: CIConfig = Field(default_factory=CIConfig)
     graph: GraphConfig = Field(default_factory=GraphConfig)
     freshness: FreshnessConfig = Field(default_factory=FreshnessConfig)
+    sessions: SessionsConfig = Field(default_factory=SessionsConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
+    precedent: PrecedentConfig = Field(default_factory=PrecedentConfig)
+    compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
+    inventory: InventoryConfig = Field(default_factory=InventoryConfig)
     import_config: ImportConfig = Field(default_factory=ImportConfig, alias="import")
     collab: CollabConfig = Field(default_factory=CollabConfig)
     enforcement: EnforcementConfig = Field(default_factory=lambda: _get_enforcement_default())
     # Named registered sibling whose disk/graph File Impact paths may resolve
-    # to when they are missing here (Plan 271). A filesystem path is rejected.
+    # to when they are missing here. A filesystem path is rejected.
     implementation_project: str | None = None
 
     model_config = {"populate_by_name": True}
@@ -725,7 +982,7 @@ def _read_raw(path: Path) -> dict[str, Any]:
 
 
 def _resolve_extends_target(value: str, project_dir: Path) -> Path | None:
-    """Resolve an ``extends`` value to a base config path (Plan 224).
+    """Resolve an ``extends`` value to a base config path.
 
     ``home`` resolves to the org/user home config, or None when no home config
     exists (a deliberate no-op so a repo with ``extends: home`` still works on a
@@ -782,7 +1039,7 @@ def _load_raw_with_extends(path: Path, _seen: list[Path] | None = None) -> dict[
 
 
 def resolve_config_chain(path: Path) -> list[Path]:
-    """Return the ordered config files contributing to *path*, base-first (Plan 224).
+    """Return the ordered config files contributing to *path*, base-first.
 
     Used by ``scaffold config show`` to display inheritance provenance. Skips
     missing/cyclic bases rather than raising (display must not crash).
@@ -811,7 +1068,7 @@ def load_config(path: Path | None = None) -> ScaffoldConfig:
 
     Resolution precedence (low -> high): built-in defaults, then any ``extends``
     base chain (recursively), then this file's values. Environment overrides
-    (e.g. ``AGENTSCAFFOLD_DB_PATH``, Plan 223) apply later at path-resolution
+    (e.g. ``AGENTSCAFFOLD_DB_PATH``) apply later at path-resolution
     time, so they sit above all of these.
     """
     if path is None:

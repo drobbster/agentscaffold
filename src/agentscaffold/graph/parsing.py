@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from agentscaffold.graph.queries import get_queries, supported_languages
 from agentscaffold.graph.query_compat import ql
 from agentscaffold.graph.symbol_table import SymbolEntry, SymbolTable
+from agentscaffold.paths import resolve_node_path
 
 if TYPE_CHECKING:
     from agentscaffold.graph.backend import GraphBackend
@@ -233,7 +234,10 @@ def process_parsing(
             parsers[language] = parser
 
         parser = parsers[language]
-        full_path = root / file_path
+        full_path = resolve_node_path(root, file_path)
+        if full_path is None:
+            files_skipped += 1
+            continue
 
         try:
             source = full_path.read_bytes()

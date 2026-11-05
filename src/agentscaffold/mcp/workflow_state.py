@@ -1,4 +1,4 @@
-"""Live workflow_state.md parse for session routing (Plan 266).
+"""Live workflow_state.md parse for session routing.
 
 Heading extraction is unchanged from the 0.11.0 orient helper. Focus and
 blocker escalation no longer scan the whole diary for ``In Progress``.
@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Callable, Iterable
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,12 @@ _IN_PROGRESS = re.compile(r"Plan\s+(\d+).*?In\s*Progress", re.IGNORECASE)
 _NEGATED_PROGRESS = re.compile(r"no longer|not\s+in\s*progress", re.IGNORECASE)
 _DROPPED_BLOCKER = re.compile(r"\b(UNBLOCKED|RESOLVED)\b", re.IGNORECASE)
 _BULLET = re.compile(r"^[-*]\s+")
+_LAST_UPDATED = re.compile(r"Last\s+Updated\**\s*:\s*\**\s*(\d{4}-\d{2}-\d{2})", re.IGNORECASE)
+
+#: A diary not updated for longer than this is reported as stale.
+STALE_AFTER_DAYS = 14
+#: Plan statuses that contradict a diary listing the plan as in progress.
+_FINISHED_STATUSES = frozenset({"Complete", "Superseded"})
 
 _EMPTY_SECTION = frozenset({"", "none", "n/a", "-"})
 _NEXT_STEPS_LINE_CAP = 80
@@ -45,13 +53,14 @@ def parse_workflow_file(root: Path, config: Any) -> dict[str, Any]:
     return result
 
 
-def parse_workflow_text(text: str) -> dict[str, Any]:
+def parse_workflow_text(text: str, *, today: date | None = None) -> dict[str, Any]:
     """Parse workflow markdown into heading fields plus live routing signals."""
     result: dict[str, Any] = {
         "blockers": _section(_HEADING_BLOCKERS, text),
         "next_steps": _section(_HEADING_NEXT, text),
         "current_implementation": _section(_HEADING_CURRENT, text),
     }
+    result.update(_staleness(text, today or datetime.now(timezone.utc).date()))
     focus_plans = extract_focus_plans(result)
     result["in_progress_plans"] = [str(n) for n in focus_plans]
     focus = focus_plans[0] if focus_plans else None
@@ -91,7 +100,7 @@ def house_blockers_count(blockers_text: str, focus: int | None) -> int:
     live = _live_blocker_bullets(blockers_text)
     if focus is None:
         return len(live)
-    named = re.compile(rf"\bPlan\s+{int(focus)}\b", re.IGNORECASE)
+    named = _names_plan(focus)
     return sum(1 for bullet in live if not named.search(bullet))
 
 
@@ -103,8 +112,45 @@ def blockers_that_name_focus(blockers_text: str, focus: int | None) -> list[str]
     """
     if focus is None or _is_empty_section(blockers_text):
         return []
-    named = re.compile(rf"\bPlan\s+{int(focus)}\b", re.IGNORECASE)
+    named = _names_plan(focus)
     return [bullet for bullet in _live_blocker_bullets(blockers_text) if named.search(bullet)]
+
+
+def find_contradictions(
+    in_progress_plans: Iterable[Any], status_of: Callable[[int], str | None]
+) -> list[dict[str, Any]]:
+    """Plans the diary lists as in progress whose own Status says they are finished."""
+    found: list[dict[str, Any]] = []
+    for raw in in_progress_plans:
+        try:
+            number = int(raw)
+        except (TypeError, ValueError):
+            continue
+        status = status_of(number)
+        if status in _FINISHED_STATUSES:
+            found.append(
+                {"plan_number": number, "workflow_state": "In Progress", "plan_status": status}
+            )
+    return found
+
+
+def _staleness(text: str, today: date) -> dict[str, Any]:
+    match = _LAST_UPDATED.search(text or "")
+    if not match:
+        return {"last_updated": None, "stale": None}
+    try:
+        updated = date.fromisoformat(match.group(1))
+    except ValueError:
+        return {"last_updated": None, "stale": None}
+    return {
+        "last_updated": updated.isoformat(),
+        "stale": (today - updated).days > STALE_AFTER_DAYS,
+    }
+
+
+def _names_plan(focus: int) -> re.Pattern[str]:
+    """Match "Plan 28" and its zero-padded forms ("Plan 028"), not "Plan 280"."""
+    return re.compile(rf"\bPlan\s+0*{int(focus)}\b", re.IGNORECASE)
 
 
 def current_excerpt(section: str) -> str:
@@ -127,7 +173,7 @@ def _is_empty_section(value: str) -> bool:
 def _non_struck_bullets(section: str) -> list[str]:
     """Return bullets including indented continuation lines.
 
-    Rebellion's live signal is often ``Next on Plan N`` on the line after
+    In large adopter repos the live signal is often ``Next on Plan N`` on the line after
     the ``- `` marker. First-line-only collection would miss it.
     """
     bullets: list[str] = []

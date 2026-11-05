@@ -1,4 +1,4 @@
-"""Tests for Phase D: Plugin manifest and packaging (Steps D.4-D.6)."""
+"""Tests for the plugin manifest and packaging."""
 
 from __future__ import annotations
 

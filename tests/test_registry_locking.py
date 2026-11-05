@@ -1,8 +1,6 @@
-"""Tests for registry read-modify-write locking (Plan 249, Step A8).
+"""Tests for registry read-modify-write locking.
 
-Written before the lock exists, and they close review finding ``rf::7918540f8b4b``.
-
-Step A4 made registry *writes* atomic: ``save_registry`` writes to a temp file and
+Registry *writes* are atomic: ``save_registry`` writes to a temp file and
 renames, so no reader can observe a half-written document. That rules out corruption
 but not lost updates, because registering is not a write -- it is a read, a modify,
 and a write. Two of those cycles can interleave so that both read the same document,

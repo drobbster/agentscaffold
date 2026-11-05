@@ -1,4 +1,4 @@
-"""Multi-project backend safety tests (Plan 225, Step 5).
+"""Multi-project backend safety tests.
 
 Exercises the create_node/create_edge/store_embedding choke point and the
 project-scoped clears against a real in-memory DuckPGQ backend: ID-prefixing,
@@ -226,6 +226,39 @@ def test_migrate_then_sibling_coexists(backend):
     projects = {r["project"] for r in backend.query("SELECT project FROM Plan")}
     assert projects == {"alpha", "beta"}
     assert backend.verify_integrity() == []
+
+
+def test_migrate_rekeys_rows_already_stamped_on_bare_ids(backend):
+    """Single-project sessions carry the project name.
+
+    The migration used to re-key only rows with an empty project, so a session
+    stamped ``alpha`` on a bare ``session::`` id stayed bare while its edges were
+    prefixed, and the integrity check failed straight after onboarding.
+    """
+    backend.set_write_project(None)
+    backend.create_node("File", {"id": "file::a", "path": "a.py"})
+    backend.create_node("Session", {"id": "session::abc", "project": "alpha"})
+    backend.create_edge("SESSION_MODIFIED", "Session", "session::abc", "File", "file::a")
+
+    counts = backend.migrate_to_multi_project("alpha")
+
+    assert counts["nodes"] == 2
+    sessions = backend.query("SELECT id, project FROM Session")
+    assert sessions == [{"id": "alpha::session::abc", "project": "alpha"}]
+    edges = backend.query("SELECT src, dst FROM SESSION_MODIFIED")
+    assert edges == [{"src": "alpha::session::abc", "dst": "alpha::file::a"}]
+    assert backend.verify_integrity() == []
+    assert backend.migrate_to_multi_project("alpha") == {"nodes": 0, "edges": 0, "embeddings": 0}
+
+
+def test_migrate_leaves_rows_stamped_for_another_project(backend):
+    backend.set_write_project(None)
+    backend.create_node("Session", {"id": "session::other", "project": "beta"})
+
+    backend.migrate_to_multi_project("alpha")
+
+    rows = backend.query("SELECT id, project FROM Session")
+    assert rows == [{"id": "session::other", "project": "beta"}]
 
 
 def test_verify_integrity_flags_mismatch(backend):

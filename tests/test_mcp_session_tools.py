@@ -1,4 +1,4 @@
-"""MCP session tools: start, end, list, context, and orient embed (Plan 263)."""
+"""MCP session tools: start, end, list, context, and orient embed."""
 
 from __future__ import annotations
 

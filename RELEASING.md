@@ -155,6 +155,18 @@ uv venv /tmp/verify && VIRTUAL_ENV=/tmp/verify uv pip install dist/agentscaffold
 # then: import and call the things this release changed
 ```
 
+Scan the built archives before uploading. A hit means a home path, a
+machine-local email address, or a term from the private denylist is inside
+the wheel or the sdist. Do not upload.
+
+```bash
+PUBLIC_CONTENT_DENYLIST_FILE=~/.config/agentscaffold/public-content-denylist.txt \
+  python scripts/check_public_content.py --dist dist/agentscaffold-X.Y.Z*
+```
+
+The same check runs locally after `scripts/install_hooks.sh` (see
+`CONTRIBUTING.md`).
+
 ### 10. Publish
 
 `uv publish` expects trusted publishing or configured credentials and currently has
@@ -179,7 +191,7 @@ seconds means "not yet", not "broken". Retry before concluding anything.
 
 ### 12. Record it
 
-In the governance repo, add the release to the **Recently Released** section of
+Add the release to the **Recently Released** section of the maintainers'
 `docs/ai/state/workflow_state.md`: what shipped, the tag, and any upgrade action.
 
 ## Why this document exists

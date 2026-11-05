@@ -1,4 +1,4 @@
-"""Brownfield workspace asset-layout migrator (Plan 234).
+"""Brownfield workspace asset-layout migrator.
 
 ``scaffold workspace migrate-layout`` promotes duplicated reusable *process*
 assets (prompts, standards, templates, collaboration protocol, commands, shared
@@ -16,7 +16,7 @@ Design invariants:
 - A dirty git worktree refuses a destructive ``--apply`` unless ``--force``.
 - Re-running on an already ``shared_workspace`` workspace is a no-op.
 
-Exit codes (Appendix E): ``0`` success / already migrated; ``2`` diverged
+Exit codes: ``0`` success / already migrated; ``2`` diverged
 conflicts unresolved on apply without policy; ``3`` dirty worktree without
 ``--force``.
 """
@@ -212,14 +212,22 @@ def _write_asset_layout(manifest_path: Path, workspace: WorkspaceConfig) -> None
     manifest_path.write_text(yaml.safe_dump(raw, sort_keys=False))
 
 
-def _regenerate_agents(workspace_root: Path, workspace: WorkspaceConfig) -> None:
-    """Best-effort regeneration of the workspace router + project stub AGENTS."""
-    try:
-        from agentscaffold.agents.generate import write_workspace_agents_router
+def _regenerate_agents(workspace_root: Path, workspace: WorkspaceConfig) -> str | None:
+    """Refresh the workspace router where AgentScaffold owns it.
 
-        write_workspace_agents_router(workspace_root, workspace)
-    except Exception:
-        pass
+    Returns a message for the report when the router was left alone or could
+    not be written, so neither outcome is silent; None when it was refreshed.
+    """
+    from agentscaffold.agents import generate
+
+    router_path = workspace_root / "AGENTS.md"
+    if not generate.workspace_router_is_managed(workspace_root):
+        return f"Skipped {router_path} ({generate.WORKSPACE_ROUTER_SKIPPED})."
+    try:
+        generate.write_workspace_agents_router(workspace_root, workspace)
+    except Exception as exc:
+        return f"Could not update the workspace router {router_path}: {exc}"
+    return None
 
 
 def run_migrate_layout(
@@ -334,7 +342,9 @@ def run_migrate_layout(
 
     _write_asset_layout(ws_path, workspace)
     workspace = load_workspace_manifest(ws_path)
-    _regenerate_agents(workspace_root, workspace)
+    router_message = _regenerate_agents(workspace_root, workspace)
+    if router_message:
+        report.messages.append(router_message)
 
     report.messages.append(
         f"Applied: promoted {len(report.promoted)}, deleted "

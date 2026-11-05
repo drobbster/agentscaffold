@@ -244,7 +244,7 @@ def score_readability(text: str, name: str = "document") -> ReadabilityReport:
 
 
 # ---------------------------------------------------------------------------
-# Frontmatter scoring (Step E.5)
+# Frontmatter scoring
 # ---------------------------------------------------------------------------
 
 

@@ -1,4 +1,4 @@
-"""Tests for Phase B hook generators — Steps B.2, B.3, B.3a, B.4, B.5, B.8."""
+"""Tests for hook generators."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from agentscaffold.hooks.generators.cursor import (
     generate_cursor_enforcement_files,
     generate_cursor_hooks_config,
     generate_enforcement_rule_file,
+    is_router_shim,
     render_embedding_commit_hook_script,
     render_index_hook_script,
     write_cursor_hooks,
@@ -230,69 +231,62 @@ def test_generate_cursor_hooks_config_no_freshness() -> None:
     assert payload["hooks"] == {}
 
 
-def test_render_index_hook_script_uses_scaffold_bin() -> None:
-    script = render_index_hook_script("/opt/venv/bin/scaffold")
-    assert script.startswith("#!/usr/bin/env bash")
-    assert 'scaffold_bin="/opt/venv/bin/scaffold"' in script
-    assert '"$scaffold_bin" index --incremental' in script
-    # Must emit a JSON object on stdout and exit cleanly (Cursor contract).
-    assert "'{}'" in script
-    assert "exit 0" in script
-
-
-def test_render_index_hook_script_is_single_flight_and_nonblocking() -> None:
-    script = render_index_hook_script("scaffold", min_interval_seconds=30)
-    # Single-flight lock + coalesced trailing run + backgrounded so the hook
-    # returns immediately and rapid edits never stack.
-    assert 'mkdir "$lock_dir"' in script
-    assert 'write_lock_dir="$state_dir/graph.write.lock"' in script
-    assert 'while [ -d "$write_lock_dir" ]' in script
-    assert "index.request" in script
-    assert "index.last_success" in script
-    assert "min_interval_seconds=30" in script
-    assert "disown" in script
-    # Honors an explicit disable switch.
+def test_render_index_hook_script_is_a_router_shim() -> None:
+    script = render_index_hook_script("/opt/venv/bin/scaffold-hook")
+    assert script.startswith("#!/bin/sh")
+    assert is_router_shim(script)
+    # exec keeps the editor's stdin payload flowing to the router, which owns
+    # locking, the state directory and the one-JSON-object reply.
+    assert "exec /opt/venv/bin/scaffold-hook cursor-after-edit --scope project" in script
+    assert "index --incremental" not in script
     assert "SCAFFOLD_HOOK_DISABLE" in script
 
 
-def test_render_index_hook_script_ignores_state_dir_and_breaks_on_noop() -> None:
-    script = render_index_hook_script("scaffold")
-    assert "file_path" in script
-    assert "cat >/dev/null" not in script
-    assert "/.scaffold/" in script
-    assert "index.last_result" in script
-    assert '[ "$last_result" = "noop" ] && break' in script
-    assert "graph.write.lock" in script
+def test_render_embedding_commit_hook_script_is_a_router_shim() -> None:
+    script = render_embedding_commit_hook_script("scaffold hook")
+    assert is_router_shim(script)
+    assert "exec scaffold hook git-post-commit --scope project </dev/null" in script
 
 
-def test_render_embedding_commit_hook_script_is_nonblocking_and_lock_aware() -> None:
-    script = render_embedding_commit_hook_script("/tmp/scaffold", min_interval_seconds=45)
-    assert 'scaffold_bin="/tmp/scaffold"' in script
-    assert "min_interval_seconds=45" in script
-    assert "structural_lock_dir" in script
-    assert "index --incremental --embeddings" in script
-    assert ") >/dev/null 2>&1 &" in script
+def test_older_shell_hook_is_not_a_router_shim() -> None:
+    assert not is_router_shim('#!/usr/bin/env bash\nscaffold_bin="scaffold"\n')
 
 
 def test_write_embedding_commit_hooks_creates_executable_git_hooks(tmp_path: Path) -> None:
-    paths = write_embedding_commit_hooks(tmp_path, scaffold_bin="/tmp/scaffold")
+    paths = write_embedding_commit_hooks(tmp_path, hook_command="/tmp/scaffold-hook")
     assert [p.relative_to(tmp_path).as_posix() for p in paths] == list(EMBED_COMMIT_HOOK_REL_PATHS)
     for path in paths:
         assert path.exists()
         assert path.stat().st_mode & 0o111
+        assert "exec /tmp/scaffold-hook git-post-commit" in path.read_text()
 
 
 def test_write_cursor_hooks_creates_script_and_json(tmp_path: Path) -> None:
     cfg = EnforcementConfig(freshness_trigger=True)
-    paths = write_cursor_hooks(cfg, tmp_path, scaffold_bin="scaffold")
+    paths = write_cursor_hooks(cfg, tmp_path, hook_command="scaffold hook")
     script_path, hooks_path = paths
     assert script_path.exists()
     assert script_path.name == "scaffold-index.sh"
     # Script must be executable.
     assert script_path.stat().st_mode & 0o111
+    assert is_router_shim(script_path.read_text())
     data = json.loads(hooks_path.read_text())
     assert data["version"] == 1
     assert data["hooks"]["afterFileEdit"][0]["command"] == f"./{INDEX_HOOK_REL_PATH}"
+
+
+def test_resolve_hook_command_prefers_light_entry_point(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+
+    from agentscaffold.hooks.generators.cursor import resolve_hook_command
+
+    (tmp_path / "python").write_text("")
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
+    assert resolve_hook_command() == "scaffold hook"
+    (tmp_path / "scaffold-hook").write_text("")
+    assert resolve_hook_command() == str(tmp_path / "scaffold-hook")
 
 
 def test_write_cursor_hooks_dry_run(tmp_path: Path) -> None:
@@ -368,7 +362,7 @@ def test_write_cursor_mcp_json_skips_existing(tmp_path: Path, capsys) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Plan 253: the per-project config must not undo the single-server migration
+# The per-project config must not undo the single-server migration
 #
 # Since 0.10 one project-aware server serves every registered project, so a
 # per-project `.cursor/mcp.json` in a registered root is the legacy registration

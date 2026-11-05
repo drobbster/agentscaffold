@@ -1,4 +1,4 @@
-"""Tests for Phase 2: Governance ingestion and Dialectic Engine.
+"""Tests for governance ingestion and the Dialectic Engine.
 
 Tests governance markdown parsing, plan/contract/learning ingestion,
 and the review modules (brief, challenges, gaps, verify, feedback).
@@ -166,6 +166,23 @@ class TestGovernanceParsing:
         assert impacts[0]["path"] == "src/foo.py"
         assert impacts[1]["change_type"] == "add"
 
+    def test_extract_file_impact_drops_a_repo_annotation(self):
+        from agentscaffold.graph.governance import _extract_file_impact
+
+        text = """## File Impact Map
+
+| File | Change Type | Description |
+|------|-------------|-------------|
+| `docs/ai/contracts/x.md` (shared docs) | MODIFY | Minor bump |
+| src/y.py (code repo) | ADD | New |
+| `src/z.py` | MODIFY | Plain |
+"""
+        assert [(i["path"], i["change_type"]) for i in _extract_file_impact(text)] == [
+            ("docs/ai/contracts/x.md", "MODIFY"),
+            ("src/y.py", "ADD"),
+            ("src/z.py", "MODIFY"),
+        ]
+
     def test_parse_learnings(self):
         from agentscaffold.graph.governance import _parse_learnings
 
@@ -178,17 +195,17 @@ class TestGovernanceParsing:
 
 
 class TestFindingExtractionAnchoring:
-    """Plan 250: a bracketed category name in prose is not a finding.
+    """A bracketed category name in prose is not a finding.
 
     ``_FINDING_RE`` was written for formatter output, which emits one finding per
     line as ``[CATEGORY]!! text``. Applied unanchored to hand-written plan prose it
     fires on any sentence that merely names a category, capturing the rest of the
-    sentence as the finding body. Over the 44-plan governance corpus that produced
+    sentence as the finding body. Over a real 44-plan corpus that produced
     a 100 per cent false-positive rate.
     """
 
     def test_prose_mention_inside_a_code_span_is_not_a_finding(self):
-        """The verbatim sentence from plan 214 that produced rf::6ec460b41622."""
+        """A verbatim plan sentence that produced a spurious finding."""
         from agentscaffold.graph.governance import _parse_review_findings
 
         text = "reviews/retros so the `[PATTERN]` detector and reviewer memory become non-empty."
@@ -266,7 +283,7 @@ class TestFindingExtractionAnchoring:
         assert is_malformed_finding("   ")
 
     def test_write_guard_is_not_fooled_by_a_balanced_fragment(self):
-        """Observed as rf::8ecd53cc08b9 in the live store.
+        """Observed in a live store.
 
         A backtick-balance check passes this, because the trailing fence supplies
         the matching ticks. The whitespace after the leading backtick is what

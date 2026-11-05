@@ -221,6 +221,88 @@ def scan_indexable_files(
     return files
 
 
+def create_file_node(store: GraphBackend, full_path: Path, node_path: str) -> bool:
+    """Create the File node for *full_path* under *node_path*; False if unreadable."""
+    try:
+        stat = full_path.stat()
+        line_count = full_path.read_text(errors="replace").count("\n") + 1
+    except (OSError, PermissionError):
+        return False
+    store.create_node(
+        "File",
+        {
+            "id": f"file::{node_path}",
+            "path": node_path,
+            "language": _detect_language(full_path),
+            "size": stat.st_size,
+            "lastModified": str(stat.st_mtime),
+            "lineCount": line_count,
+            "contentHash": _file_hash(full_path),
+        },
+    )
+    return True
+
+
+def ensure_folder_chain(
+    store: GraphBackend, folder_path: str, known: dict[str, str] | None = None
+) -> str:
+    """Create missing Folder nodes for *folder_path* and its ancestors; return its id.
+
+    *known* maps folder paths already in the graph to their ids and is updated.
+    Without it, existence is checked in the graph.
+    """
+    from agentscaffold.graph.query_compat import ql_scalar  # noqa: PLC0415
+
+    known = known if known is not None else {}
+    parent_id = "folder::"
+    parts = [p for p in folder_path.split("/") if p]
+    for depth in range(1, len(parts) + 1):
+        path = "/".join(parts[:depth])
+        folder_id = f"folder::{path}"
+        if path not in known:
+            exists = ql_scalar(store, sql=f"SELECT COUNT(*) FROM Folder WHERE id = '{folder_id}'")
+            if not exists or int(exists) == 0:
+                store.create_node(
+                    "Folder",
+                    {"id": folder_id, "path": path, "name": parts[depth - 1], "depth": depth},
+                )
+                store.create_edge("CONTAINS_FOLDER", "Folder", parent_id, "Folder", folder_id)
+            known[path] = folder_id
+        parent_id = known[path]
+    return parent_id
+
+
+def _process_extra_paths(
+    store: GraphBackend,
+    root: Path,
+    graph_config: GraphConfig | None,
+    allowed_languages: set[str] | None,
+    folder_ids: dict[str, str],
+) -> dict[str, int]:
+    """Index ``graph.extra_paths`` files under an ``@repo`` folder."""
+    from agentscaffold.graph.source_roots import scan_extra_paths  # noqa: PLC0415
+    from agentscaffold.paths import resolve_node_path  # noqa: PLC0415
+
+    counts = {"files": 0, "folders": 0, "skipped": 0}
+    scan = scan_extra_paths(root, graph_config, allowed_languages=allowed_languages)
+    for index, warning in enumerate(scan.warnings):
+        logger.warning("%s", warning)
+        store.add_parsing_warning(
+            f"pw::extra_paths::{index}", "", "extra_paths", warning, "warning"
+        )
+    before = len(folder_ids)
+    for node_path in scan.files:
+        full = resolve_node_path(root, node_path)
+        if full is None or not create_file_node(store, full, node_path):
+            counts["skipped"] += 1
+            continue
+        parent_id = ensure_folder_chain(store, node_path.rsplit("/", 1)[0], folder_ids)
+        store.create_edge("CONTAINS", "Folder", parent_id, "File", f"file::{node_path}")
+        counts["files"] += 1
+    counts["folders"] = len(folder_ids) - before
+    return counts
+
+
 def process_structure(
     store: GraphBackend,
     root: Path,
@@ -278,43 +360,26 @@ def process_structure(
             continue
 
         item = root / rel_str
-        language = _detect_language(item)
-
-        if allowed_languages and language not in allowed_languages:
+        if allowed_languages and _detect_language(item) not in allowed_languages:
             skipped_count += 1
             continue
-
-        try:
-            stat = item.stat()
-            line_count = item.read_text(errors="replace").count("\n") + 1
-        except (OSError, PermissionError):
+        if not create_file_node(store, item, rel_str):
             skipped_count += 1
             continue
-
-        content_hash = _file_hash(item)
-        file_id = f"file::{rel_str}"
-
-        store.create_node(
-            "File",
-            {
-                "id": file_id,
-                "path": rel_str,
-                "language": language,
-                "size": stat.st_size,
-                "lastModified": str(stat.st_mtime),
-                "lineCount": line_count,
-                "contentHash": content_hash,
-            },
-        )
         file_count += 1
 
         parent_rel = rel.parent.as_posix() if rel.parent.as_posix() != "." else ""
         parent_id = folder_ids.get(parent_rel, root_id)
-        store.create_edge("CONTAINS", "Folder", parent_id, "File", file_id)
+        store.create_edge("CONTAINS", "Folder", parent_id, "File", f"file::{rel_str}")
 
     if items_seen >= _PROGRESS_INTERVAL:
         sys.stdout.write("\r" + " " * 80 + "\r")
         sys.stdout.flush()
+
+    extra = _process_extra_paths(store, root, graph_config, allowed_languages, folder_ids)
+    file_count += extra["files"]
+    folder_count += extra["folders"]
+    skipped_count += extra["skipped"]
 
     return {
         "files": file_count,

@@ -11,7 +11,7 @@ from eval.runner import EvalResult, collect_result, timed
 class TestFullIndexLifecycle:
     """Scenario: Index the full simulation project and verify all phases complete.
 
-    Step E.8: parametrized over both backends via indexed_sim_both_backends.
+    Parametrized over both backends via indexed_sim_both_backends.
     """
 
     @timed
@@ -269,7 +269,7 @@ class TestIncrementalIndex:
 class TestSessionLifecycle:
     """Scenario: Cross-session memory tracks development activity.
 
-    Step E.8: parametrized over both backends via indexed_sim_both_backends.
+    Parametrized over both backends via indexed_sim_both_backends.
     """
 
     def test_session_start_end(self, indexed_sim_both_backends):

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentscaffold"
-version = "0.12.0"
+version = "0.13.0"
 description = "Structured AI-assisted development framework with plan lifecycle, review gates, and continuous improvement."
 readme = "README.md"
 license = "MIT"
@@ -65,7 +65,7 @@ search = [
     "sentence-transformers>=3.0.0",
 ]
 mcp = [
-    "mcp>=1.0.0,<2",
+    "mcp>=1.3.0,<2",
 ]
 benchmark = [
     "mini-swe-agent>=2.0.0",
@@ -87,6 +87,7 @@ dev = [
 
 [project.scripts]
 scaffold = "agentscaffold.cli:app"
+scaffold-hook = "agentscaffold.hooks.router:console_main"
 
 [project.urls]
 Homepage = "https://github.com/drobbster/agentscaffold"

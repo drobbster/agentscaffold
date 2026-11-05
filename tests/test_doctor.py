@@ -1,9 +1,9 @@
-"""Plan 249 Step B7: health checks for every Phase B failure mode.
+"""Health checks for every failure mode of the shared-workspace layout.
 
-`scaffold doctor` exists because Phase A and B moved several things that used to
-be obvious: the MCP server is now one entry instead of one per project, the graph
-lives outside the tree, and the routing guidance is generated from a canonical
-source. Each of those is fine when it works and invisible when it does not,
+`scaffold doctor` exists because the move to a shared workspace changed several
+things that used to be obvious: the MCP server is now one entry instead of one per
+project, the graph lives outside the tree, and the routing guidance is generated
+from a canonical source. Each of those is fine when it works and invisible when it does not,
 which is the definition of a thing that needs a diagnostic.
 
 Every check gets a seeded fault here, because a health check that has never been
@@ -61,10 +61,16 @@ def _snapshot(root: Path) -> dict[str, str]:
     return out
 
 
-def _project(root: Path, name: str = "proj") -> Path:
+def _project(root: Path, name: str = "proj", *, manual: bool = True) -> Path:
+    """A project as ``scaffold init`` leaves it: config plus the shipped manual."""
+    from agentscaffold.agents.manual_diff import render_governance_manual
+    from agentscaffold.config import ScaffoldConfig
+
     directory = root / name
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "scaffold.yaml").write_text(f"framework:\n  project_name: {name}\n")
+    if manual:
+        (directory / "AGENTS.md").write_text(render_governance_manual(ScaffoldConfig()))
     return directory
 
 
@@ -116,7 +122,7 @@ def test_doctor_writes_nothing(state_home: Path, tmp_path: Path, cli_runner: Cli
 
 
 def test_checks_are_registered_rather_than_hardcoded(state_home: Path):
-    """Plan 251 adds three more checks and must not have to rework this."""
+    """New checks are added by registration, without reworking this."""
     from agentscaffold.doctor import CHECKS
 
     names = [check.name for check in CHECKS]
@@ -372,7 +378,7 @@ def test_mcp_check_accepts_the_canonical_entry(
 def test_mcp_check_flags_a_stray_per_project_config(
     state_home: Path, tmp_path: Path, cli_runner: CliRunner
 ):
-    """A clean shared config says nothing about per-project files (Plan 253).
+    """A clean shared config says nothing about per-project files.
 
     Clients load both. A `.cursor/mcp.json` in a registered root is a second,
     project-scoped server -- exactly what the 0.10 migration collapses. Reporting
@@ -622,15 +628,92 @@ def test_state_check_flags_an_orphaned_in_tree_directory(
     assert ".scaffold" in result.output
 
 
+def test_state_check_flags_an_orphan_inside_a_project_folder(state_home: Path, tmp_path: Path):
+    """A team folder's old .scaffold/ outlives the move to the state dir."""
+    from agentscaffold.doctor import DoctorContext, check_state_location
+    from agentscaffold.paths import ensure_workspace_state_dir
+
+    workspace = _shared_workspace(tmp_path)
+    workspace_id = _register(workspace, projects=[("alpha", "alpha"), ("beta", "beta")])
+    ensure_workspace_state_dir(workspace_id).joinpath("graph.duckdb").write_bytes(b"live")
+    (workspace / "beta" / ".scaffold").mkdir()
+    (workspace / "beta" / ".scaffold" / "graph.duckdb").write_bytes(b"orphan")
+
+    result = check_state_location(
+        DoctorContext(project_root=workspace / "alpha", mcp_config_path=tmp_path / "mcp.json")
+    )
+
+    assert result.status == "warn"
+    assert any(str(workspace / "beta" / ".scaffold") in detail for detail in result.details)
+
+
+def test_state_check_quiet_when_the_in_tree_graph_is_the_live_one(state_home: Path, tmp_path: Path):
+    """An unregistered repo keeps its graph in-tree; that is not an orphan."""
+    from agentscaffold.doctor import DoctorContext, check_state_location
+
+    project = _project(tmp_path)
+    (project / ".scaffold").mkdir()
+    (project / ".scaffold" / "graph.duckdb").write_bytes(b"live")
+
+    result = check_state_location(
+        DoctorContext(project_root=project, mcp_config_path=tmp_path / "mcp.json")
+    )
+
+    assert result.status == "ok"
+
+
+def _graph_with_session_rows(db: Path, projects: list[str]) -> None:
+    import duckdb
+
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(str(db))
+    conn.execute("CREATE TABLE Session (id VARCHAR PRIMARY KEY, project VARCHAR DEFAULT '')")
+    for number, project in enumerate(projects):
+        conn.execute("INSERT INTO Session VALUES (?, ?)", [f"session::{number}", project])
+    conn.close()
+
+
+def test_unstamped_rows_counted_in_a_multi_project_workspace(state_home: Path, tmp_path: Path):
+    from agentscaffold.doctor import DoctorContext, check_unstamped_rows
+    from agentscaffold.paths import resolve_db_path
+
+    workspace = _shared_workspace(tmp_path)
+    _register(workspace, projects=[("alpha", "alpha"), ("beta", "beta")])
+    _graph_with_session_rows(resolve_db_path(None, workspace / "alpha"), ["", "", "alpha"])
+
+    result = check_unstamped_rows(
+        DoctorContext(project_root=workspace / "alpha", mcp_config_path=tmp_path / "mcp.json")
+    )
+
+    assert result.status == "warn"
+    assert any("Session: 2" in detail for detail in result.details)
+
+
+def test_unstamped_rows_silent_in_a_single_project_repo(state_home: Path, tmp_path: Path):
+    """An empty project is the designed value in a single-project repo."""
+    from agentscaffold.doctor import DoctorContext, check_unstamped_rows
+    from agentscaffold.paths import resolve_db_path
+
+    project = _project(tmp_path)
+    _register(project)
+    _graph_with_session_rows(resolve_db_path(None, project), ["", ""])
+
+    result = check_unstamped_rows(
+        DoctorContext(project_root=project, mcp_config_path=tmp_path / "mcp.json")
+    )
+
+    assert result.status == "skip"
+
+
 # ---------------------------------------------------------------------------
-# Workspace id agreement (added at Step B8, from the Step B5 defect)
+# Workspace id agreement (from the onboard double-id defect)
 # ---------------------------------------------------------------------------
 
 
 def test_a_workspace_carrying_two_ids_is_reported(
     state_home: Path, tmp_path: Path, cli_runner: CliRunner
 ):
-    """The B5 defect, promoted to a check.
+    """The onboard double-id defect, promoted to a check.
 
     Resolution prefers the manifest, so divergence is silent until the manifest
     is removed and the graph re-keys to an id nothing points at.
@@ -711,6 +794,63 @@ def test_agent_docs_reports_overlap(tmp_path: Path) -> None:
     )
     assert result.status == "warn"
     assert "Planning Rules" in " ".join(result.details)
+
+
+def _governance_check(project: Path, tmp_path: Path):
+    from agentscaffold.doctor import DoctorContext, check_governance_mapping
+
+    return check_governance_mapping(
+        DoctorContext(project_root=project, mcp_config_path=tmp_path / "mcp.json")
+    )
+
+
+def test_governance_mapping_ok_with_the_shipped_manual(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    result = _governance_check(project, tmp_path)
+    assert result.status == "ok", result.details
+
+
+def test_governance_mapping_names_each_missing_section(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    (project / "scaffold.yaml").write_text(
+        "framework:\n  project_name: proj\n"
+        "agents:\n  governance:\n    orient: [Hard Prohibitions, Release Train]\n"
+        "    steps:\n      review: [Spike Requirements]\n"
+        "      implementation: []\n      completion: []\n      backlog: []\n"
+    )
+    (project / "AGENTS.md").write_text("## Hard Prohibitions\n\nNo.\n")
+    result = _governance_check(project, tmp_path)
+    assert result.status == "warn"
+    assert result.details == ["orient: Release Train", "review: Spike Requirements"]
+    assert "agents.governance.optional" in (result.remediation or "")
+
+
+def test_governance_mapping_ignores_optional_sections(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    (project / "scaffold.yaml").write_text(
+        "framework:\n  project_name: proj\n"
+        "agents:\n  governance:\n    orient: [Hard Prohibitions, Release Train]\n"
+        "    optional: [Release Train]\n"
+        "    steps:\n      review: []\n      implementation: []\n"
+        "      completion: []\n      backlog: []\n"
+    )
+    (project / "AGENTS.md").write_text("## Hard Prohibitions\n\nNo.\n")
+    assert _governance_check(project, tmp_path).status == "ok"
+
+
+def test_governance_mapping_warns_when_the_manual_is_missing(tmp_path: Path) -> None:
+    project = _project(tmp_path, manual=False)
+    result = _governance_check(project, tmp_path)
+    assert result.status == "warn"
+    assert "AGENTS.md" in result.summary
+
+
+def test_governance_mapping_quiet_when_no_manual_is_configured(tmp_path: Path) -> None:
+    project = _project(tmp_path, manual=False)
+    (project / "scaffold.yaml").write_text(
+        "framework:\n  project_name: proj\nagents:\n  agents_md: false\n"
+    )
+    assert _governance_check(project, tmp_path).status == "ok"
 
 
 def test_graph_schema_check_skips_when_there_is_no_graph(state_home: Path, tmp_path: Path):

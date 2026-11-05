@@ -79,6 +79,20 @@ def _copy_pack_files(pack: str, paths: ResolvedPaths) -> list[str]:
     return written
 
 
+def domain_inventory_collectors(domains: list[str]) -> list[str]:
+    """Inventory collectors the given domain packs enable, in first-seen order."""
+    out: list[str] = []
+    for pack in domains:
+        try:
+            manifest = _load_manifest(pack)
+        except FileNotFoundError:
+            continue
+        for name in manifest.get("inventory_collectors", []) or []:
+            if name not in out:
+                out.append(name)
+    return out
+
+
 def _update_scaffold_yaml(pack: str, manifest: dict, project_dir: Path) -> None:
     """Update scaffold.yaml to register the domain pack."""
     config_path = project_dir / CONFIG_FILENAME
@@ -116,6 +130,19 @@ def _update_scaffold_yaml(pack: str, manifest: dict, project_dir: Path) -> None:
             if gate_name not in existing_gates:
                 existing_gates[gate_name] = gate_val
         raw["approval_required"] = existing_gates
+
+    inventory = raw.get("inventory")
+    if isinstance(inventory, dict):
+        collectors = inventory.get("collectors")
+        if not isinstance(collectors, list):
+            from agentscaffold.config import InventoryConfig
+
+            collectors = [c.name for c in InventoryConfig().collectors]
+        names = {c.get("name") if isinstance(c, dict) else c for c in collectors}
+        for name in manifest.get("inventory_collectors", []):
+            if name not in names:
+                collectors.append(name)
+        inventory["collectors"] = collectors
 
     with open(config_path, "w") as fh:
         yaml.dump(raw, fh, default_flow_style=False, sort_keys=False)

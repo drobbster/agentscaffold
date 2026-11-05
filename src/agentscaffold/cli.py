@@ -85,6 +85,9 @@ app.add_typer(workspace_app, name="workspace")
 project_app = typer.Typer(help="User-level project registration.")
 app.add_typer(project_app, name="project")
 
+inventory_app = typer.Typer(help="System inventory: components, owners and lifecycle.")
+app.add_typer(inventory_app, name="inventory")
+
 app.add_typer(benchmark_app, name="benchmark")
 
 
@@ -197,7 +200,7 @@ def metrics() -> None:
 def config_show() -> None:
     """Show the effective merged config and its inheritance provenance.
 
-    Surfaces the resolution order from `extends:` (Plan 224): which files
+    Surfaces the resolution order from `extends:`: which files
     contributed, base-first, and the final merged values after inheritance and
     the rigor preset are applied.
     """
@@ -275,6 +278,119 @@ def plan_status() -> None:
     from agentscaffold.plan.status import run_plan_status
 
     run_plan_status()
+
+
+@plan_app.command("normalize-status")
+def plan_normalize_status(
+    plan: str | None = typer.Option(None, "--plan", "-p", help="Specific plan number or filename."),
+    apply: bool = typer.Option(
+        False, "--apply", help="Write the proposed Status lines (default: dry run)."
+    ),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text or json."),
+) -> None:
+    """Propose (and with --apply, write) Status lines for plans that lack one."""
+    from agentscaffold.config import load_config
+    from agentscaffold.paths import ResolvedPaths, resolve_root
+    from agentscaffold.plan.normalize import run_normalize_status
+
+    if output not in ("text", "json"):
+        console.print(f"[red]--format must be text or json, got {output!r}[/red]")
+        raise typer.Exit(code=2)
+    plans_dir = ResolvedPaths(load_config(), resolve_root()).plans_dir
+    code = run_normalize_status(plans_dir, plan=plan, write=apply, output=output, console=console)
+    if code:
+        raise typer.Exit(code=code)
+
+
+def _inventory_today(today: str | None) -> Any:
+    import datetime as dt
+
+    if not today:
+        return dt.date.today()
+    try:
+        return dt.date.fromisoformat(today)
+    except ValueError as exc:
+        console.print(f"[red]--today must be YYYY-MM-DD, got {today!r}[/red]")
+        raise typer.Exit(code=2) from exc
+
+
+_INVENTORY_TODAY = typer.Option(None, "--today", hidden=True, help="Pin today (YYYY-MM-DD).")
+
+
+@inventory_app.command("init")
+def inventory_init(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the inventory; write nothing."),
+    today: str | None = _INVENTORY_TODAY,
+) -> None:
+    """Write a first system inventory from the collectors."""
+    from agentscaffold.config import load_config
+    from agentscaffold.inventory.commands import run_init
+    from agentscaffold.paths import resolve_root
+
+    code = run_init(
+        resolve_root(),
+        load_config(),
+        dry_run=dry_run,
+        today=_inventory_today(today),
+        console=console,
+    )
+    raise typer.Exit(code=code)
+
+
+@inventory_app.command("refresh")
+def inventory_refresh(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report changes; write nothing."),
+    today: str | None = _INVENTORY_TODAY,
+) -> None:
+    """Add newly collected components and update collector-owned fields."""
+    from agentscaffold.config import load_config
+    from agentscaffold.inventory.commands import run_refresh
+    from agentscaffold.paths import resolve_root
+
+    code = run_refresh(
+        resolve_root(),
+        load_config(),
+        dry_run=dry_run,
+        today=_inventory_today(today),
+        console=console,
+    )
+    raise typer.Exit(code=code)
+
+
+@inventory_app.command("check")
+def inventory_check(
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text or json."),
+    changed_files: str | None = typer.Option(
+        None,
+        "--changed-files",
+        help="File of changed paths, one per line ('-' for stdin); enables INV-008.",
+    ),
+    today: str | None = _INVENTORY_TODAY,
+) -> None:
+    """Check the inventory against its collectors and contract (INV-001 to INV-010)."""
+    from agentscaffold.config import load_config
+    from agentscaffold.inventory.commands import read_changed_files, run_check
+    from agentscaffold.paths import resolve_root
+
+    if output not in ("text", "json"):
+        console.print(f"[red]--format must be text or json, got {output!r}[/red]")
+        raise typer.Exit(code=2)
+    changed = None
+    if changed_files is not None:
+        try:
+            changed = read_changed_files(changed_files)
+        except OSError as exc:
+            console.print(f"[red]cannot read --changed-files: {exc}[/red]")
+            raise typer.Exit(code=2) from exc
+    code = run_check(
+        resolve_root(),
+        load_config(),
+        output=output,
+        changed_files=changed,
+        today=_inventory_today(today),
+        console=console,
+    )
+    raise typer.Exit(code=code)
 
 
 @plan_app.command("claim")
@@ -657,7 +773,6 @@ def agents_hooks(
     from agentscaffold.hooks.generators.claude_code import write_claude_code_hooks
     from agentscaffold.hooks.generators.cursor import (
         generate_cursor_enforcement_files,
-        resolve_scaffold_bin,
         write_cursor_hooks,
     )
     from agentscaffold.hooks.generators.windsurf import write_windsurf_hooks
@@ -677,8 +792,6 @@ def agents_hooks(
             path = write_claude_code_hooks(
                 enforcement,
                 root,
-                scaffold_bin=resolve_scaffold_bin(),
-                min_interval_seconds=config.graph.incremental_min_interval_seconds,
                 dry_run=dry_run,
             )
             label = "Would write" if dry_run else "Wrote"
@@ -688,8 +801,6 @@ def agents_hooks(
             paths += write_cursor_hooks(
                 enforcement,
                 root,
-                scaffold_bin=resolve_scaffold_bin(),
-                min_interval_seconds=config.graph.incremental_min_interval_seconds,
                 dry_run=dry_run,
             )
             label = "Would write" if dry_run else "Wrote"
@@ -703,6 +814,114 @@ def agents_hooks(
             console.print(f"[green]{label}[/green] {path.relative_to(root)}")
         else:
             console.print(f"[red]Unknown platform: {plat}[/red]")
+
+
+@agents_app.command("install")
+def agents_install(
+    scope: str = typer.Option(
+        "project",
+        "--scope",
+        help="'project' writes into the repository (same as generate-all); "
+        "'user' writes guidance and hooks into your home directory only.",
+    ),
+    project: list[str] = typer.Option(
+        [], "--project", help="Registered project to cover (repeatable; default: all)."
+    ),
+    components: str = typer.Option(
+        "rules,hooks", "--components", help="Comma-separated: rules, hooks."
+    ),
+    client: list[str] = typer.Option(
+        [],
+        "--client",
+        help="cursor or claude (repeatable; default: every client installed here).",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="List changes without writing."),
+    uninstall: bool = typer.Option(
+        False, "--uninstall", help="Remove what a user-scope install wrote."
+    ),
+) -> None:
+    """Install agent guidance and hooks.
+
+    With --scope user, guidance and hooks reach a registered project even when
+    it is not the editor's workspace root, and nothing is written into the
+    repository.
+    """
+    if scope == "project":
+        if uninstall or project or client:
+            console.print("[red]--uninstall, --project and --client need --scope user.[/red]")
+            raise typer.Exit(code=2)
+        agents_generate_all(
+            dry_run=dry_run, force=False, allow_append=False, include_workspace=False
+        )
+        return
+    if scope != "user":
+        console.print(f"[red]Unknown scope: {scope} (use 'project' or 'user').[/red]")
+        raise typer.Exit(code=2)
+
+    from agentscaffold.agents.user_scope import (
+        UserScopeError,
+        install_user_scope,
+        uninstall_user_scope,
+    )
+
+    try:
+        if uninstall:
+            report = uninstall_user_scope(projects=project or None, dry_run=dry_run)
+        else:
+            report = install_user_scope(
+                projects=project or None,
+                components=[c.strip() for c in components.split(",") if c.strip()],
+                clients=client or None,
+                dry_run=dry_run,
+            )
+    except UserScopeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    from rich.markup import escape
+
+    prefix = "Would " if dry_run else ""
+    for label, paths in (
+        ("write", report.written),
+        ("merge into", report.merged),
+        ("remove", report.removed),
+    ):
+        for path in paths:
+            console.print(f"[green]{prefix}{label}[/green] {escape(str(path))}", soft_wrap=True)
+    for path in report.backups:
+        console.print(f"[dim]Backed up to {escape(str(path))}[/dim]", soft_wrap=True)
+    if report.unchanged and not (report.written or report.merged or report.removed):
+        console.print("[dim]Already up to date.[/dim]")
+    for note in report.notes:
+        console.print(f"[yellow]{escape(note)}[/yellow]", soft_wrap=True)
+
+
+@app.command("hook", hidden=True)
+def hook(
+    event: str = typer.Argument(..., help="Router event, e.g. cursor-after-edit."),
+    scope: str = typer.Option("user", "--scope", help="user or project."),
+) -> None:
+    """Run one editor hook event (generated hooks call this; see scaffold-hook)."""
+    from agentscaffold.hooks.router import main as router_main
+
+    raise typer.Exit(code=router_main([event, "--scope", scope]))
+
+
+@app.command("hook-worker", hidden=True)
+def hook_worker(
+    kind: str = typer.Argument(..., help="index or embed."),
+    root: Path = typer.Option(..., "--root", help="Project root."),
+    event: str = typer.Option("", "--event", help="Hook event that started this worker."),
+) -> None:
+    """Background work started by the hook router (detached; not for direct use)."""
+    from agentscaffold.hooks.worker import run_embed_worker, run_index_worker
+
+    if kind == "index":
+        run_index_worker(root, event=event)
+    elif kind == "embed":
+        run_embed_worker(root, event=event)
+    else:
+        raise typer.Exit(code=2)
 
 
 @agents_app.command("skills")
@@ -793,6 +1012,14 @@ def agents_generate_all(
         "--allow-append",
         help="Append a managed block to a marker-less file that already looks generated.",
     ),
+    include_workspace: bool = typer.Option(
+        False,
+        "--include-workspace",
+        help=(
+            "Also write the workspace-root AGENTS.md router when that file is not "
+            "already managed by AgentScaffold."
+        ),
+    ),
 ) -> None:
     """Generate all platform artifacts (AGENTS.md, CLAUDE.md, Cursor rules, Windsurf, hooks).
 
@@ -801,7 +1028,8 @@ def agents_generate_all(
     so existing content is preserved. --force rewrites them whole. --allow-append
     appends once when the heading-overlap guard would otherwise refuse. Machine-owned
     files (.cursor/rules/agentscaffold.mdc, reviewer rules, enforcement hooks) are
-    always regenerated.
+    always regenerated. In a shared workspace the root AGENTS.md router is refreshed
+    only where AgentScaffold already manages it, unless --include-workspace.
     """
     from agentscaffold.agents.generate import run_agents_generate_all_platforms
     from agentscaffold.config import load_config
@@ -810,7 +1038,12 @@ def agents_generate_all(
     config = load_config()
     try:
         run_agents_generate_all_platforms(
-            config, Path.cwd(), dry_run=dry_run, force=force, allow_append=allow_append
+            config,
+            Path.cwd(),
+            dry_run=dry_run,
+            force=force,
+            allow_append=allow_append,
+            include_workspace=include_workspace,
         )
     except ManagedBlockAppendRefusedError as exc:
         console.print(f"[red]{exc}[/red]")
@@ -825,6 +1058,14 @@ def agents_repair(
         "--path",
         help="File to de-duplicate (default: AGENTS.md).",
     ),
+    prefer_managed: bool = typer.Option(
+        False,
+        "--prefer-managed",
+        help=(
+            "Treat the managed block as authoritative: drop unmarked copies of its "
+            "headings even when they differ (pre-0.12 routing). Saves a .bak."
+        ),
+    ),
 ) -> None:
     """Remove exact-duplicate headings from AGENTS.md. Dry run by default."""
     from agentscaffold.agents.repair import ManualRepairConflictError, run_repair
@@ -833,8 +1074,31 @@ def agents_repair(
     if not target.is_file():
         console.print(f"[red]No file at {target}[/red]")
         raise typer.Exit(1)
+    managed_body: str | None = None
+    protected: set[str] = set()
+    if prefer_managed:
+        from agentscaffold.agents.governance_manual import governance_protected_headings
+        from agentscaffold.config import find_config, load_config
+
+        config_path = find_config(target.parent)
+        config = load_config(config_path) if config_path else load_config()
+        protected = governance_protected_headings(config)
+        if target.name == "AGENTS.md":
+            from agentscaffold.agents.generate import _render_project_agents_md
+            from agentscaffold.rendering import get_default_context
+
+            project_root = config_path.parent if config_path else target.parent
+            managed_body = _render_project_agents_md(
+                config, project_root, get_default_context(config)
+            )
     try:
-        report = run_repair(target, apply=apply)
+        report = run_repair(
+            target,
+            apply=apply,
+            prefer_managed=prefer_managed,
+            managed_body=managed_body,
+            protected_headings=protected,
+        )
     except ManualRepairConflictError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc
@@ -845,6 +1109,13 @@ def agents_repair(
             console.print(f"  {heading}")
     else:
         console.print("[dim]No duplicate headings.[/dim]")
+    for heading in report.protected:
+        console.print(
+            f"[yellow]Kept[/yellow] {heading} [dim](agents.governance reads it; "
+            "merge it with the managed copy by hand)[/dim]"
+        )
+    if apply and prefer_managed and report.dropped:
+        console.print(f"[dim]Saved {target.name}.bak[/dim]")
     if not apply and report.dropped:
         console.print("[dim]Re-run with --apply to write.[/dim]")
 
@@ -972,32 +1243,44 @@ def index_cmd(
         help="On a schema-version rebuild, proceed even if preserving existing "
         "findings/sessions/backlog fails. WARNING: discards that data permanently.",
     ),
+    force_root: bool = typer.Option(
+        False,
+        "--force-root",
+        help="Index a directory that only contains projects (a monorepo or "
+        "workspace root) as one project.",
+    ),
 ) -> None:
     """Build or rebuild the knowledge graph."""
     from agentscaffold.config import load_config
     from agentscaffold.graph import index
+    from agentscaffold.graph.scoping import IndexRootError
 
     config = load_config()
     # Honor the config default (graph.embeddings) when the flag is not passed,
     # so embeddings can be enabled repo-wide via scaffold.yaml without requiring
     # --embeddings on every index invocation (including the PostToolUse hook).
-    # Footgun (Plan 267 / rf::c17e46127d50): that OR makes a no-structure hook
+    # Footgun: that OR makes a no-structure hook
     # run take the write lock for embedding reconcile. Leave the OR unchanged.
     embeddings = with_embeddings or bool(getattr(config.graph, "embeddings", False))
     if embeddings:
         # Pin the embedding model + weights cache before indexing so the model
-        # loads from the deterministic, offline-capable location (Plan 227).
+        # loads from the deterministic, offline-capable location.
         from agentscaffold.graph.embeddings import configure_embeddings
 
         configure_embeddings(config.search.embedding_model, config.search.cache_dir)
-    summary = index(
-        path=path,
-        config=config,
-        incremental=incremental,
-        embeddings=embeddings,
-        audit=audit,
-        force_rebuild=force_rebuild,
-    )
+    try:
+        summary = index(
+            path=path,
+            config=config,
+            incremental=incremental,
+            embeddings=embeddings,
+            audit=audit,
+            force_rebuild=force_rebuild,
+            force_root=force_root,
+        )
+    except IndexRootError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
     if incremental:
         from agentscaffold.graph.pipeline import write_index_last_result
         from agentscaffold.paths import resolve_db_path
@@ -1007,7 +1290,7 @@ def index_cmd(
             "noop" if summary.get("noop") else "changed",
         )
 
-    # Plan 223: on a fresh/ephemeral cache, governance is rebuilt from the
+    # On a fresh/ephemeral cache, governance is rebuilt from the
     # committed artifact. Point the operator at where the durable record lives.
     if summary.get("restored_from_artifact"):
         from agentscaffold.graph.governance_store import resolve_governance_artifact
@@ -1149,7 +1432,7 @@ def graph_search(
 
     if (mode or "hybrid").lower() in ("semantic", "hybrid"):
         # Pin model + cache before any semantic load so query-time and index-time
-        # use the same weights location (Plan 227).
+        # use the same weights location.
         from agentscaffold.graph.embeddings import configure_embeddings
 
         configure_embeddings(config.search.embedding_model, config.search.cache_dir)
@@ -1290,7 +1573,7 @@ def graph_duplicates(
     Only meaningful in a multi-project workspace; a single-project repo has no
     cross-project pairs and reports nothing. Requires embeddings
     ('scaffold index --embeddings'). Quality is bounded by embedding text;
-    Plan 227 improves precision.
+    docstring-enriched text improves precision.
     """
     from agentscaffold.config import load_config
     from agentscaffold.graph import graph_available, open_graph
@@ -1672,18 +1955,73 @@ def review_gaps(
 
 @review_app.command("verify")
 def review_verify_impl(
-    plan: int = typer.Argument(..., help="Plan number to verify implementation for."),
+    plan: int | None = typer.Argument(None, help="Plan number to verify implementation for."),
+    plan_option: int | None = typer.Option(None, "--plan", help="Plan number (same as PLAN)."),
+    base_ref: str | None = typer.Option(
+        None, "--base-ref", help="Git ref the rule checks diff from (default: detected)."
+    ),
 ) -> None:
-    """Verify post-implementation compliance against a plan."""
+    """Verify post-implementation compliance against a plan, with the rule checks."""
+    from agentscaffold.config import find_config
     from agentscaffold.review.verify import (
         format_verification_markdown,
         verify_implementation,
     )
 
-    _config, store = _require_graph()
-    items = verify_implementation(store, plan)
-    store.close()
+    number = plan_option if plan_option is not None else plan
+    if number is None:
+        console.print("[red]Give a plan number: scaffold review verify --plan N[/red]")
+        raise typer.Exit(code=2)
+    config, store = _require_graph()
+    found = find_config()
+    root = found.parent if found is not None else Path.cwd()
+    try:
+        items = verify_implementation(store, number, root=root, config=config, base_ref=base_ref)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+    finally:
+        store.close()
     console.print(format_verification_markdown(items))
+
+
+@review_app.command("precedent")
+def review_precedent(
+    paths: list[str] = typer.Argument(..., help="Project-relative file paths."),
+    plan: int | None = typer.Option(None, "--plan", help="Exclude this plan's own items."),
+    limit: int | None = typer.Option(None, "--limit", help="Most items to show (default: all)."),
+    as_json: bool = typer.Option(False, "--json", help="Print JSON for CI."),
+) -> None:
+    """Earlier findings, learnings and ADRs about these files."""
+    import json as _json
+
+    from agentscaffold.config import find_config
+    from agentscaffold.review.precedent import precedent_for_paths
+
+    config, store = _require_graph()
+    found = find_config()
+    root = found.parent if found is not None else Path.cwd()
+    try:
+        result = precedent_for_paths(
+            store, paths, root=root, config=config, plan_number=plan, budget=limit
+        )
+    finally:
+        store.close()
+    if result is None:
+        console.print("Precedent is disabled (precedent.enabled: false).")
+        return
+    if as_json:
+        print(_json.dumps(result.to_dict(), indent=2))
+        return
+    console.print(f"{len(result.items)} of {result.total} precedent items")
+    for item in result.items:
+        plan_label = f"Plan {item.plan_number}" if item.plan_number is not None else "no plan"
+        console.print(
+            f"- {item.id} ({plan_label}, {item.match} {item.path}, {item.project}): {item.text}",
+            markup=False,
+        )
+    for gone in result.sources_unavailable:
+        console.print(f"- source {gone['project']} unavailable: {gone['reason']}", markup=False)
 
 
 @review_app.command("retro")
@@ -1868,6 +2206,22 @@ def review_history(
 # ---------------------------------------------------------------------------
 
 
+def _cli_session_project() -> str | None:
+    """The project CLI sessions are stamped with, matching the MCP server.
+
+    Resolved from the working directory the same way a tool call resolves its
+    ``working_path``. ``None`` (an unstamped legacy session) only when no
+    project can be resolved at all.
+    """
+    from agentscaffold.mcp.project_resolution import resolve_project
+
+    cwd = Path.cwd()
+    try:
+        return resolve_project(working_path=cwd, anchor=cwd).project.name or None
+    except Exception:  # noqa: BLE001 - unresolvable cwd keeps the unstamped behavior
+        return None
+
+
 @session_app.command("start")
 def session_start(
     summary_arg: str = typer.Argument("", help="Session description (positional shorthand)."),
@@ -1887,7 +2241,13 @@ def session_start(
         raise SystemExit(1)
 
     store = open_graph(config)
-    session_id = start_session(store, plan_numbers=plan, summary=summary or summary_arg)
+    session_id = start_session(
+        store,
+        plan_numbers=plan,
+        summary=summary or summary_arg,
+        project=_cli_session_project(),
+        idle_hours=config.sessions.idle_hours,
+    )
     store.close()
     console.print(f"[green]Session started:[/green] {session_id}")
     console.print(f"  To end this session: [bold]scaffold session end {session_id}[/bold]")
@@ -1931,8 +2291,9 @@ def session_end(
         raise SystemExit(1)
 
     store = open_graph(config)
+    project = _cli_session_project()
     if not session_id:
-        open_session = find_open_session(store)
+        open_session = find_open_session(store, project=project, exact_project=True)
         if not open_session or not open_session.get("id"):
             console.print("[red]No open session.[/red]")
             store.close()
@@ -1944,6 +2305,7 @@ def session_end(
         summary=summary,
         decisions=decisions_payload,
         files=list(file) if file else None,
+        project=project,
     )
     store.close()
     console.print(json.dumps(result, indent=2, default=str))
@@ -2183,7 +2545,7 @@ def mcp_install(
     # A per-project config becomes redundant the moment the shared entry lands,
     # so say so here rather than leaving `scaffold doctor` to report it later as
     # a problem the user did not know they had created. Reported, never deleted:
-    # these files are per-repo and often committed (Plan 253).
+    # these files are per-repo and often committed.
     from agentscaffold.mcp.install import find_legacy_project_configs
 
     superseded = find_legacy_project_configs([Path.cwd()])
@@ -2198,7 +2560,7 @@ def mcp_install(
 
 
 # ---------------------------------------------------------------------------
-# Health checks and reclamation (Plan 249, Step B8)
+# Health checks and reclamation
 # ---------------------------------------------------------------------------
 
 
@@ -2355,7 +2717,7 @@ def gc(
 
 
 # ---------------------------------------------------------------------------
-# Project registration commands (Plan 249)
+# Project registration commands
 # ---------------------------------------------------------------------------
 
 
@@ -2371,7 +2733,7 @@ def project_register(
     This writes the registry and nothing else. In particular it does not touch
     any client's ``mcp.json``: installing the server entry is a separate command
     so that widening what a server can read is never a side effect of onboarding
-    a project (threat model, Vector 1).
+    a project.
     """
     from agentscaffold.workspace_registry import RegistryError, register_workspace
 
@@ -2420,7 +2782,7 @@ def project_list() -> None:
     """List every registered project and the root it resolves to.
 
     This is the server's entire read surface, so it is worth being able to see
-    at a glance (threat model, Vector 1).
+    at a glance.
     """
     from rich.table import Table
 
@@ -2451,7 +2813,7 @@ def project_list() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Workspace commands (Plan 225)
+# Workspace commands
 # ---------------------------------------------------------------------------
 
 
@@ -2555,7 +2917,7 @@ def workspace_onboard(
 
     # Generate the workspace id on first write and never regenerate it: it keys
     # this workspace's state directory, so a new id would orphan the graph
-    # (ADR-025, which is also why it is opaque rather than derived from the path).
+    # (which is also why it is opaque rather than derived from the path).
     # An already-registered root adopts the id the registry gave it, because that
     # is the id its existing state is keyed to -- minting a fresh one here is the
     # dangerous direction, and the reason the id is adopted rather than assigned.
@@ -2587,9 +2949,9 @@ def workspace_onboard(
     manifest_path.write_text(yaml.safe_dump(manifest_out, sort_keys=False))
 
     # Mirror the manifest into the user-level registry so the single project-aware
-    # MCP server can resolve these projects (Plan 249). Onboarding is an explicit
+    # MCP server can resolve these projects. Onboarding is an explicit
     # user action, which is the only context in which registration may happen
-    # (threat model, Vector 1). A registry failure must not lose the manifest that
+    # A registry failure must not lose the manifest that
     # was just written, so it degrades to a warning.
     try:
         from agentscaffold.workspace_registry import register_workspace

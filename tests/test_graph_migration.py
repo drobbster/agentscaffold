@@ -1,4 +1,4 @@
-"""Tests for governance export/import schema-migration safety (Plan 219)."""
+"""Tests for governance export/import schema-migration safety."""
 
 from __future__ import annotations
 

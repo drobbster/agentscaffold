@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from agentscaffold.graph.backend import GraphBackend
@@ -23,6 +23,13 @@ _SESSION_SELECT = (
     'filesModified AS "s.filesModified", summary AS "s.summary", '
     'decisions AS "s.decisions", endedAt AS "s.endedAt", project AS "s.project"'
 )
+
+#: Appended to the summary of a session closed for inactivity.
+AUTO_CLOSE_SUFFIX = " [closed: idle]"
+#: Appended to the summary of a session closed by ``force_new``.
+FORCE_NEW_SUFFIX = " [closed: force_new]"
+
+_OPEN = "(endedAt IS NULL OR endedAt = '')"
 
 _DECISION_STATUSES = frozenset({"observed", "inferred"})
 _DECISION_KINDS = frozenset({"strategic", "architectural", "operational"})
@@ -41,9 +48,51 @@ def _now() -> str:
 
 
 def _project_clause(project: str | None) -> str:
+    """Scoped read filter. Legacy rows written without a project stay visible."""
     if not project:
         return ""
-    return f" AND project = '{sql_escape(project)}'"
+    return f" AND COALESCE(project, '') IN ('{sql_escape(project)}', '')"
+
+
+def _exact_project_clause(project: str | None) -> str:
+    """Open-session lookup filter: only rows stamped with exactly *project*."""
+    return f" AND COALESCE(project, '') = '{sql_escape(project or '')}'"
+
+
+def _has_last_activity(store: GraphBackend) -> bool:
+    """Whether the Session table has ``lastActivity`` yet.
+
+    A read-only open of a graph that predates the column cannot add it, so
+    age falls back to ``date`` until the next writable open heals it.
+    """
+    try:
+        rows = ql(
+            store,
+            sql=(
+                'SELECT COUNT(*) AS "n" FROM information_schema.columns '
+                "WHERE table_name = 'Session' AND column_name = 'lastActivity'"
+            ),
+        )
+    except Exception:  # noqa: BLE001 - treat an unreadable catalog as the old shape
+        return False
+    return bool(rows) and int(rows[0].get("n") or 0) > 0
+
+
+def _activity_expr(store: GraphBackend) -> str:
+    if _has_last_activity(store):
+        return "COALESCE(NULLIF(lastActivity, ''), date)"
+    return "date"
+
+
+def _idle_cutoff(idle_hours: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(hours=idle_hours)).isoformat()
+
+
+def _active_clause(store: GraphBackend, idle_hours: float) -> str:
+    """Exclude sessions idle for longer than *idle_hours* (``0`` disables)."""
+    if not idle_hours or idle_hours <= 0:
+        return ""
+    return f" AND {_activity_expr(store)} >= '{sql_escape(_idle_cutoff(idle_hours))}'"
 
 
 def _parse_json_list(raw: Any) -> list[Any]:
@@ -90,26 +139,99 @@ def _row_to_session(row: dict[str, Any]) -> dict[str, Any]:
         "decisions": _parse_json_list(row.get("s.decisions", "[]")),
         "ended_at": row.get("s.endedAt", "") or "",
         "project": row.get("s.project", "") or "",
+        "last_activity": row.get("s.lastActivity", "") or row.get("s.date", "") or "",
     }
+
+
+def _session_select(store: GraphBackend) -> str:
+    if _has_last_activity(store):
+        return f'{_SESSION_SELECT}, lastActivity AS "s.lastActivity"'
+    return _SESSION_SELECT
 
 
 def find_open_session(
     store: GraphBackend,
     *,
     project: str | None = None,
+    exact_project: bool = False,
+    idle_hours: float = 0,
 ) -> dict[str, Any] | None:
-    """Return the most recent session with an empty ``endedAt``, or None."""
+    """Return the most recent session with an empty ``endedAt``, or None.
+
+    With ``exact_project`` only sessions stamped with exactly *project* match
+    (an empty *project* matches legacy unstamped rows); otherwise an empty
+    *project* matches any session. A positive *idle_hours* skips sessions with
+    no activity for that long. Read-only: an idle session is skipped, not closed.
+    """
+    scope = _exact_project_clause(project) if exact_project else _project_clause(project)
     rows = ql(
         store,
         sql=(
-            f"SELECT {_SESSION_SELECT} FROM Session "
-            f"WHERE (endedAt IS NULL OR endedAt = ''){_project_clause(project)} "
+            f"SELECT {_session_select(store)} FROM Session "
+            f"WHERE {_OPEN}{scope}{_active_clause(store, idle_hours)} "
             f"ORDER BY date DESC LIMIT 1"
         ),
     )
     if not rows:
         return None
     return _row_to_session(rows[0])
+
+
+def _close_open_sessions(store: GraphBackend, where: str, suffix: str) -> int:
+    """Close every open session matching *where*, appending *suffix* to its summary."""
+    ids = [
+        str(row["id"])
+        for row in ql(store, sql=f'SELECT id AS "id" FROM Session WHERE {_OPEN}{where}')
+        if row.get("id")
+    ]
+    if not ids:
+        return 0
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
+
+    id_list = ", ".join(f"'{sql_escape(i)}'" for i in ids)
+    with governance_write_lock(store):
+        ql_execute(
+            store,
+            sql=(
+                f"UPDATE Session SET endedAt = '{sql_escape(_now())}', "
+                f"summary = COALESCE(summary, '') || '{sql_escape(suffix)}' "
+                f"WHERE id IN ({id_list})"
+            ),
+        )
+        _sync_governance(store)
+    logger.info("Closed %d session(s)%s", len(ids), suffix)
+    return len(ids)
+
+
+def close_idle_sessions(store: GraphBackend, *, project: str | None, idle_hours: float) -> int:
+    """Close sessions for *project*, and legacy unstamped ones, idle beyond *idle_hours*."""
+    if not idle_hours or idle_hours <= 0:
+        return 0
+    where = (
+        f" AND COALESCE(project, '') IN ('{sql_escape(project or '')}', '')"
+        f" AND {_activity_expr(store)} < '{sql_escape(_idle_cutoff(idle_hours))}'"
+    )
+    return _close_open_sessions(store, where, AUTO_CLOSE_SUFFIX)
+
+
+def touch_session(store: GraphBackend, *, project: str | None, idle_hours: float = 0) -> str | None:
+    """Refresh ``lastActivity`` on the project's active open session; return its id."""
+    session = find_open_session(store, project=project, exact_project=True, idle_hours=idle_hours)
+    if not session or not session.get("id") or not _has_last_activity(store):
+        return None
+    session_id = str(session["id"])
+    from agentscaffold.graph.governance_store import governance_write_lock  # noqa: PLC0415
+
+    with governance_write_lock(store):
+        ql_execute(
+            store,
+            sql=(
+                f"UPDATE Session SET lastActivity = '{sql_escape(_now())}' "
+                f"WHERE id = '{sql_escape(session_id)}'"
+            ),
+        )
+        _sync_governance(store)
+    return session_id
 
 
 def _merge_decisions(
@@ -192,6 +314,7 @@ def record_decision(
     plan_numbers: list[int] | None = None,
     ensure_session: bool = True,
     source: str = "",
+    idle_hours: float = 0,
 ) -> dict[str, Any]:
     """Append one typed decision to the open session.
 
@@ -212,7 +335,8 @@ def record_decision(
     if not normalized or not normalized[0]["decision"]:
         return {"status": "rejected", "error": "decision is required"}
 
-    open_session = find_open_session(store, project=project)
+    close_idle_sessions(store, project=project, idle_hours=idle_hours)
+    open_session = find_open_session(store, project=project, exact_project=True)
     if open_session and open_session.get("id"):
         session_id = str(open_session["id"])
     elif ensure_session:
@@ -222,6 +346,7 @@ def record_decision(
             plan_numbers=plan_numbers,
             summary=summary,
             project=project,
+            idle_hours=idle_hours,
         )
     else:
         return {"status": "no_session"}
@@ -230,6 +355,7 @@ def record_decision(
     current = _parse_json_list(get_session(store, session_id).get("decisions", []))
     merged = _merge_decisions(current, normalized)
     _write_decisions(store, session_id, merged)
+    touch_session(store, project=project)
     return {
         "status": "recorded",
         "id": session_id,
@@ -244,15 +370,24 @@ def start_session(
     plan_numbers: list[int] | None = None,
     summary: str = "",
     project: str | None = None,
+    force_new: bool = False,
+    idle_hours: float = 0,
 ) -> str:
     """Create a new Session node and return its ID.
 
-    If a session is already open for the same project, return that id instead
-    of minting a second one.
+    If a session is already open for exactly the same project and has been
+    active within *idle_hours*, return that id (refreshing its activity) instead
+    of minting a second one. Idle sessions for the project, and idle legacy
+    sessions with no project, are closed first. ``force_new`` closes the
+    project's open session even when it is active.
     """
-    existing = find_open_session(store, project=project)
+    close_idle_sessions(store, project=project, idle_hours=idle_hours)
+    if force_new:
+        _close_open_sessions(store, _exact_project_clause(project), FORCE_NEW_SUFFIX)
+    existing = find_open_session(store, project=project, exact_project=True)
     if existing and existing.get("id"):
         logger.info("Reusing open session %s", existing["id"])
+        touch_session(store, project=project)
         return str(existing["id"])
 
     session_id = f"session::{uuid.uuid4().hex[:12]}"
@@ -266,6 +401,8 @@ def start_session(
         "decisions": "[]",
         "endedAt": "",
     }
+    if _has_last_activity(store):
+        props["lastActivity"] = now
     if project:
         props["project"] = project
 
@@ -370,7 +507,7 @@ def end_session(
     An empty ``session_id`` closes the open session for ``project``.
     """
     if not session_id:
-        open_session = find_open_session(store, project=project)
+        open_session = find_open_session(store, project=project, exact_project=True)
         if not open_session or not open_session.get("id"):
             return {}
         session_id = str(open_session["id"])
@@ -409,7 +546,7 @@ def get_session(store: GraphBackend, session_id: str) -> dict[str, Any]:
     """Retrieve a session's full data including modified files."""
     rows = ql(
         store,
-        sql=(f"SELECT {_SESSION_SELECT} FROM Session WHERE id = '{sql_escape(session_id)}'"),
+        sql=(f"SELECT {_session_select(store)} FROM Session WHERE id = '{sql_escape(session_id)}'"),
     )
     if not rows:
         return {}
@@ -427,7 +564,7 @@ def list_sessions(
     rows = ql(
         store,
         sql=(
-            f"SELECT {_SESSION_SELECT} FROM Session "
+            f"SELECT {_session_select(store)} FROM Session "
             f"WHERE 1=1{_project_clause(project)} "
             f"ORDER BY date DESC LIMIT {safe_limit}"
         ),

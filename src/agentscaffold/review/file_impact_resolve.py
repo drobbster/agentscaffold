@@ -3,7 +3,7 @@
 Review tools used to read ``PLAN_IMPACTS`` edges. Ingest only creates those
 edges when the path is already a ``File`` in this project, so sibling
 ``src/...`` cells vanish and reviews vacuous-pass on the governance docs
-that remain (L249-17 / Plan 271).
+that remain.
 
 Resolution is markdown-first (``_extract_file_impact``), then local disk,
 then the named ``implementation_project`` only. It does not walk every
@@ -12,7 +12,7 @@ registered root.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +20,9 @@ from typing import Any, Literal
 
 from agentscaffold.active_root import default_start
 from agentscaffold.config import ConfigError, ScaffoldConfig, find_config, load_config
+from agentscaffold.graph.source_roots import configured_extra_paths
+from agentscaffold.paths import resolve_node_path
+from agentscaffold.repo_paths import is_repo_path, matches_any, repo_node_path
 from agentscaffold.review.queries import get_plan_by_number, get_plan_impacted_files
 
 Resolution = Literal["local", "sibling", "skipped"]
@@ -114,7 +117,9 @@ def resolve_plan_impacted_files(
             sibling=sibling,
             sibling_store=sibling_store,
             impl_name=impl_name,
+            extra_paths=cfg.graph.extra_paths,
         )
+        row["written"] = rel
         rows.append(row)
     return ResolvedImpacts(rows=rows, _sibling_stores=extra_stores)
 
@@ -154,6 +159,11 @@ def _project_root_from_plan_file(plan_path: Path) -> Path | None:
     return None
 
 
+def plan_impact_paths(store: Any, plan_number: int, root: Path) -> list[str]:
+    """Paths in the plan's File Impact Map, as written."""
+    return [p["path"] for p in _planned_paths(store, plan_number, root) if p.get("path")]
+
+
 def _planned_paths(store: Any, plan_number: int, root: Path) -> list[dict[str, str]]:
     from agentscaffold.graph.governance import _extract_file_impact
 
@@ -183,6 +193,7 @@ def _resolve_one(
     sibling: Any,
     sibling_store: Any,
     impl_name: str | None,
+    extra_paths: Sequence[str] = (),
 ) -> dict[str, Any]:
     language = _language_for(rel)
     if _is_absolute_or_home(rel):
@@ -196,9 +207,10 @@ def _resolve_one(
             store=current_store,
             root=current_root,
         )
-    if (current_root / rel).is_file():
+    local = _on_disk(current_root, rel, extra_paths)
+    if local is not None:
         return _row(
-            rel,
+            local,
             change,
             language,
             resolution="local",
@@ -209,9 +221,10 @@ def _resolve_one(
         )
     if sibling is not None:
         sib_root = Path(sibling.project_root)
-        if (sib_root / rel).is_file():
+        found = _on_disk(sib_root, rel, configured_extra_paths(sib_root))
+        if found is not None:
             return _row(
-                rel,
+                found,
                 change,
                 language,
                 resolution="sibling",
@@ -240,6 +253,23 @@ def _resolve_one(
         store=current_store,
         root=current_root,
     )
+
+
+def _on_disk(root: Path, rel: str, extra_paths: Sequence[str]) -> str | None:
+    """*rel* when it names a file of the project at *root*, else None.
+
+    A row written relative to the VCS root (``airflow/dags/team_x/dag.py``)
+    resolves to its ``@repo/`` File path when the project's extra-path globs
+    match it.
+    """
+    disk = resolve_node_path(root, rel)
+    if disk is not None and disk.is_file():
+        return rel
+    if is_repo_path(rel) or not matches_any(rel, list(extra_paths)):
+        return None
+    node = repo_node_path(rel)
+    disk = resolve_node_path(root, node)
+    return node if disk is not None and disk.is_file() else None
 
 
 def _row(
@@ -284,6 +314,28 @@ def _require_registered_project(name: str) -> Any:
             f"implementation_project {name!r} is not a registered project name"
         )
     return hit
+
+
+def current_project_name(root: Path, config: ScaffoldConfig) -> str:
+    """Registered name of the project at *root*, else its configured or folder name."""
+    return _current_project_name(root, config)
+
+
+def open_registered_project_graph(name: str) -> tuple[Any | None, str | None]:
+    """Open a registered project's graph read-only; return ``(store, reason)``.
+
+    *reason* is ``not_registered`` or ``graph_unavailable`` when *store* is None.
+    Only registered names resolve, so no filesystem path can be read this way.
+    """
+    from agentscaffold.workspace_registry import find_registered_project_by_name
+
+    hit = find_registered_project_by_name(name)
+    if hit is None:
+        return None, "not_registered"
+    store = _open_project_graph(Path(hit.project_root))
+    if store is None:
+        return None, "graph_unavailable"
+    return store, None
 
 
 def _open_project_graph(project_root: Path) -> Any | None:

@@ -1,4 +1,4 @@
-"""Detail mode helpers for MCP token control (Plan 246/247)."""
+"""Detail mode helpers for MCP token control."""
 
 from __future__ import annotations
 
@@ -39,10 +39,10 @@ _WORKFLOW_PROSE_KEYS = ("blockers", "next_steps", "current_implementation")
 def apply_detail(payload: dict[str, Any], detail: str | None) -> dict[str, Any]:
     """Trim list-heavy fields when ``detail=summary`` (default).
 
-    Plan 247: challenges/gaps/open_findings are severity-sorted before capping
+    Challenges/gaps/open_findings are severity-sorted before capping
     so summary keeps the highest-value routing signals.
-    Plan 266: cap workflow_state prose on ``detail=full``.
-    Plan 273: summary omits diary bodies and dump lists.
+    Workflow_state prose is capped on ``detail=full``.
+    Summary omits diary bodies and dump lists.
     """
     mode = (detail or "summary").strip().lower()
     payload = dict(payload)
@@ -54,7 +54,7 @@ def apply_detail(payload: dict[str, Any], detail: str | None) -> dict[str, Any]:
 
 
 def _omit_workflow_prose(payload: dict[str, Any]) -> dict[str, Any]:
-    """Summary omits diary bodies (Plan 273). Full still uses the 266 caps."""
+    """Summary omits diary bodies. Full still uses the 266 caps."""
     workflow = payload.get("workflow_state")
     if not isinstance(workflow, dict):
         return payload
@@ -92,6 +92,13 @@ def _sev_key(item: Any) -> int:
     return _SEVERITY_RANK.get(sev, 5)
 
 
+def _is_uncapped(item: Any) -> bool:
+    """PRECEDENT and COMPONENT challenges are bounded upstream, not here."""
+    from agentscaffold.review.filters import is_always_shown
+
+    return isinstance(item, dict) and is_always_shown(item.get("category"))
+
+
 def _trim(obj: Any) -> Any:
     if isinstance(obj, dict):
         out: dict[str, Any] = {}
@@ -99,7 +106,7 @@ def _trim(obj: Any) -> Any:
             # Only string keys carry the markdown/cap conventions. Evidence dicts
             # can legitimately be keyed by ints (e.g. gaps.py similar_plans:
             # plan number -> shared-file count), so guard before string ops to
-            # avoid ``'int' object has no attribute 'endswith'`` (Plan 248).
+            # avoid ``'int' object has no attribute 'endswith'``.
             if not isinstance(k, str):
                 out[k] = _trim(v)
                 continue
@@ -108,9 +115,13 @@ def _trim(obj: Any) -> Any:
             if k in _SUMMARY_LIST_CAPS and isinstance(v, list):
                 cap = _SUMMARY_LIST_CAPS[k]
                 items = list(v)
+                uncapped: list[Any] = []
+                if k == "challenges":
+                    uncapped = [x for x in items if _is_uncapped(x)]
+                    items = [x for x in items if not _is_uncapped(x)]
                 if k in {"challenges", "gaps", "open_findings"}:
                     items = sorted(items, key=_sev_key)
-                out[k] = [_trim(x) for x in items[:cap]]
+                out[k] = [_trim(x) for x in items[:cap] + uncapped]
                 if len(items) > cap:
                     out[f"{k}_truncated"] = len(items) - cap
             else:

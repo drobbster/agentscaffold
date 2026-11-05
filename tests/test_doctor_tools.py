@@ -104,7 +104,7 @@ def test_include_writes_does_not_touch_the_real_project(context, tmp_path):
 
 
 def test_a_busy_graph_reports_as_busy_not_as_a_broken_tool(context, monkeypatch):
-    """The distinction the Step A0 spike was run to make possible.
+    """The distinction the probe's lock handling exists to make.
 
     Another process holding the graph is normal and transient -- an indexing run
     in the next terminal. Reporting it as a failed tool would make the command
@@ -132,7 +132,7 @@ def test_a_busy_graph_reports_as_busy_not_as_a_broken_tool(context, monkeypatch)
 
 
 def test_a_genuinely_broken_tool_is_reported_as_failing(context, monkeypatch):
-    """The probe must be capable of reporting bad news (L249-14).
+    """The probe must be capable of reporting bad news.
 
     Without this, every green run is ambiguous between "all tools work" and
     "the probe cannot tell".
@@ -199,7 +199,7 @@ def test_tool_probes_are_typed_records_not_free_text():
 
 
 def test_envelope_mismatch_fails_the_probe(context, monkeypatch):
-    """C10: a live sample whose meta is not an object fails the probe."""
+    """A live sample whose meta is not an object fails the probe."""
     from agentscaffold import doctor_tools
 
     doctor_context, _ = context

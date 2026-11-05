@@ -1,4 +1,4 @@
-"""Helpers to attach empty-result diagnosis + grep fallback (Plan 247)."""
+"""Helpers to attach empty-result diagnosis + grep fallback."""
 
 from __future__ import annotations
 

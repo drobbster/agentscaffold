@@ -1,9 +1,9 @@
-"""Thin plan_card metadata for MCP routing (Plan 246/247).
+"""Thin plan_card metadata for MCP routing.
 
 Never includes full plan body or full Execution Steps text -- agents that need
 to edit open the markdown file. Card fields are cheap routing signals only.
 
-Plan 247: checkbox counts are scoped to the Execution Steps section only so
+Checkbox counts are scoped to the Execution Steps section only so
 Tests / Completion / Review checklists do not inflate progress.
 """
 

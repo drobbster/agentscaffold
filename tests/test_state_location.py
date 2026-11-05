@@ -1,7 +1,7 @@
-"""Plan 249 Step B3: platform state location, precedence, and migration integrity.
+"""Platform state location, precedence, and migration integrity.
 
-The graph database has lived at ``.scaffold/graph.duckdb`` inside the repo. Phase
-B moves it under the platform state directory keyed by workspace id, so a working
+The graph database has lived at ``.scaffold/graph.duckdb`` inside the repo. It now
+moves under the platform state directory keyed by workspace id, so a working
 tree stays clean and several projects in a workspace share one cache without any
 of them owning it.
 
@@ -134,7 +134,7 @@ def test_state_and_cache_are_different_roots(state_home: Path, monkeypatch: pyte
     """State is per-workspace and worth keeping; cache is global and rebuildable.
 
     Collapsing them would either key the model weights by workspace (the
-    duplication Step A7c removed) or make graph state look disposable.
+    duplication the shared model cache removed) or make graph state look disposable.
     """
     from agentscaffold.paths import resolve_user_cache_dir, resolve_user_state_dir
 
@@ -270,10 +270,10 @@ def test_a_registered_workspace_defaults_into_the_state_dir(state_home: Path, tm
 
 
 def test_an_unregistered_repo_keeps_the_in_tree_default(state_home: Path, tmp_path: Path):
-    """Relocation is opt-in via registration (approved scope, 2026-08-05).
+    """Relocation is opt-in via registration.
 
     An unregistered repo has no stable id to key state by, and a path-derived
-    key was rejected in ADR-025 because moving the root would orphan the state.
+    key was rejected because moving the root would orphan the state.
     """
     from agentscaffold.paths import resolve_db_path
 
@@ -541,7 +541,7 @@ def test_a_failed_copy_leaves_no_partial_destination(
 
 
 def test_migration_refuses_while_the_source_is_in_use(state_home: Path, tmp_path: Path):
-    """Reuses the Step A9 liveness probe.
+    """Reuses the install-time liveness probe.
 
     Copying a database another process is writing captures a torn page set, and
     removing it afterwards destroys the only good copy.

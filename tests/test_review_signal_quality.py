@@ -1,4 +1,4 @@
-"""Tests for Plan 236: pre-review signal quality and finding-graph hygiene.
+"""Tests for pre-review signal quality and finding-graph hygiene.
 
 Covers the shared source-file classifier, status/date normalization, the
 non-code exclusions in HISTORY / TEST_COVERAGE, the LEARNING cap+rank, and the

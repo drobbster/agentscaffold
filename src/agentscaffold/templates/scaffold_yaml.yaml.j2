@@ -171,3 +171,22 @@ graph:
 
 import:
   conversation_dir: "data/conversations"
+
+# System inventory: every runtime component, its owner plan and lifecycle.
+# `scaffold inventory check` runs the checks; `scaffold inventory refresh` adds
+# what the collectors find. warn reports and exits 0; set warn_until (a date) to
+# switch to fail after an adoption window. Plans created on or after
+# plan_adoption_date need Status, Roadmap Stage, Components and a Component
+# Lifecycle Changes table.
+inventory:
+  enabled: true
+  path: docs/ai/system_inventory.yaml
+  enforcement: warn
+  plan_adoption_date: "{{ date }}"
+  collectors:
+    - compose
+    - github_workflows
+    - pyproject_scripts
+{% for name in inventory_collectors | default([]) %}
+    - {{ name }}
+{% endfor %}

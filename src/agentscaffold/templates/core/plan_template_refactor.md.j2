@@ -7,6 +7,13 @@
 - Author: TBD
 - Reviewers: TBD (recommended for refactors)
 - Approval Required: No | Yes (if touching critical paths)
+- Approved: Pending
+- Status: Draft
+- Created: {{ date if plan_number is defined else 'YYYY-MM-DD' }}
+{% if config.inventory.enabled %}- Roadmap Stage: TBD (the roadmap stage this plan delivers)
+- Components: none
+<!-- Components: comma-separated inventory ids (<kind-prefix>:<name>) whose entrypoint or reads this plan touches, or none. -->
+{% endif %}
 
 ## 1. Objective
 What does this refactor achieve? Why is it needed now?
@@ -35,6 +42,7 @@ If this is a breaking change, how will consumers migrate?
 | File | Change Type | Notes |
 |-----|------------|-------|
 | TBD | TBD | TBD |
+{% include "core/_component_lifecycle.md.j2" %}
 
 ## 8. Tests
 | Test File | Coverage Target | Notes |

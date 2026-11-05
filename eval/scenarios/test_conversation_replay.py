@@ -1,4 +1,4 @@
-"""Conversation replay: simulates a full Plan 139-style development session.
+"""Conversation replay: simulates a full plan-driven development session.
 
 Sequence:
 1. Index project

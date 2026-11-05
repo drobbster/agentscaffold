@@ -1,10 +1,10 @@
-"""Tests for the multi-workspace graph handle pool (Plan 249, Step A5/A6).
+"""Tests for the multi-workspace graph handle pool.
 
-The Step A0 spike validated that one process can hold DuckDB handles for several
+A spike validated that one process can hold DuckDB handles for several
 workspaces safely, and produced two mandatory design corrections that these tests
 exist to hold in place:
 
-The Plan 235 filesystem lock is a ``mkdir`` lock. It is neither thread-aware nor
+The filesystem lock is a ``mkdir`` lock. It is neither thread-aware nor
 reentrant, so two threads in one process contending for the same workspace get a
 ``TimeoutError`` instead of queueing. An in-process per-workspace mutex has to sit
 above it, leaving the filesystem lock to mediate across processes only.
@@ -169,7 +169,7 @@ def test_close_all_closes_every_pooled_handle(pool: GraphHandlePool) -> None:
 
 
 # --------------------------------------------------------------------------
-# In-process write lock above the Plan 235 filesystem lock
+# In-process write lock above the filesystem lock
 # --------------------------------------------------------------------------
 
 
@@ -178,7 +178,7 @@ def test_same_process_threads_queue_instead_of_timing_out(
 ) -> None:
     """Two threads locking one workspace serialise rather than raising.
 
-    Without the in-process mutex this is the spike's TimeoutError: the Plan 235
+    Without the in-process mutex this is the spike's TimeoutError: the
     mkdir lock is not thread-aware, so the second thread fails outright instead
     of waiting its turn.
 

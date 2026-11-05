@@ -379,7 +379,7 @@ class TestScaffoldOrient:
         patches = _patch_mcp(config, store, root=root)
         stack = _enter_patches(patches)
         try:
-            data = _dispatch_tool("scaffold_orient", {})
+            data = _dispatch_tool("scaffold_orient", {"detail": "full"})
         finally:
             stack.__exit__(None, None, None)
 
@@ -399,7 +399,7 @@ class TestScaffoldOrient:
             score=len(present) / len(expected_keys),
             expected=(
                 f"Keys: {expected_keys}, workflow_state has blockers + next_steps, "
-                "recommended_actions list present (Plan 247 fuse)"
+                "recommended_actions list present (fused)"
             ),
             actual=(
                 f"Present: {present}, Missing: {missing}, "
@@ -411,7 +411,7 @@ class TestScaffoldOrient:
         collect_result(result)
         assert len(missing) == 0, f"Missing keys: {missing}"
         assert has_blockers and has_next, "workflow_state missing blockers or next_steps"
-        assert has_actions, "orient missing recommended_actions (Plan 247)"
+        assert has_actions, "orient missing recommended_actions"
 
 
 class TestScaffoldFindStudies:
@@ -536,7 +536,7 @@ class TestScaffoldDecisionContext:
 
 
 # ---------------------------------------------------------------------------
-# New MCP tools: scaffold_record_finding, scaffold_resolve_finding (E.4)
+# New MCP tools: scaffold_record_finding, scaffold_resolve_finding
 # ---------------------------------------------------------------------------
 
 
@@ -746,12 +746,12 @@ class TestScaffoldResolveFinding:
 
 
 # ---------------------------------------------------------------------------
-# Extend TestScaffoldPrepareReview with Phase C fields (E.4)
+# Extend TestScaffoldPrepareReview with reviewer_hints and open_findings
 # ---------------------------------------------------------------------------
 
 
 class TestScaffoldPrepareReviewEnriched:
-    """Extended prepare_review tests: reviewer_hints and open_findings (E.4)."""
+    """Extended prepare_review tests: reviewer_hints and open_findings."""
 
     @timed
     def test_prepare_review_includes_reviewer_hints(self, indexed_sim):
@@ -827,7 +827,7 @@ class TestScaffoldPrepareReviewEnriched:
 
 
 # ---------------------------------------------------------------------------
-# Plan 246/247: agent tool pack + call-compression fused fields
+# Agent tool pack + call-compression fused fields
 # ---------------------------------------------------------------------------
 
 
@@ -985,7 +985,7 @@ class TestScaffoldNextAction:
 
 
 class TestCallCompressionFusedFields:
-    """Scenario: empty search/impact inline why_empty + grep_fallback (Plan 247)."""
+    """Scenario: empty search/impact inline why_empty + grep_fallback."""
 
     @timed
     def test_empty_search_includes_fused_fallback(self, indexed_sim):
@@ -993,9 +993,9 @@ class TestCallCompressionFusedFields:
         from agentscaffold.mcp.server import _dispatch_tool
 
         # Ensure a text hit exists so grep_fallback can populate.
-        marker = root / "libs" / "data" / "orphan_marker_247.py"
+        marker = root / "libs" / "data" / "orphan_marker.py"
         marker.write_text(
-            "def orphan_marker_247_fn():\n    return 247\n",
+            "def orphan_marker_fn():\n    return True\n",
             encoding="utf-8",
         )
 
@@ -1005,7 +1005,7 @@ class TestCallCompressionFusedFields:
             data = _dispatch_tool(
                 "scaffold_search",
                 {
-                    "query": "orphan_marker_247_fn",
+                    "query": "orphan_marker_fn",
                     "mode": "keyword",
                     "top_k": 5,
                 },
@@ -1045,7 +1045,7 @@ class TestCallCompressionFusedFields:
         try:
             data = _dispatch_tool(
                 "scaffold_impact",
-                {"file_or_symbol": "definitely/not/a/real/path_247.py"},
+                {"file_or_symbol": "definitely/not/a/real/path.py"},
             )
         finally:
             stack.__exit__(None, None, None)
@@ -1072,7 +1072,7 @@ class TestCallCompressionFusedFields:
 
 
 class TestScaffoldSessionTools:
-    """Plan 263: session start / decision / list are reachable from MCP dispatch."""
+    """Session start / decision / list are reachable from MCP dispatch."""
 
     @timed
     def test_session_start_record_list(self, indexed_sim):
@@ -1124,7 +1124,7 @@ class TestScaffoldSessionTools:
 
 
 class TestScaffoldRecallGovernance:
-    """Plan 261: populated learnings are in the graph and recallable."""
+    """Populated learnings are in the graph and recallable."""
 
     @timed
     def test_recall_returns_learnings(self, indexed_sim):
@@ -1149,7 +1149,7 @@ class TestScaffoldRecallGovernance:
         if not count and isinstance(data.get("results"), list):
             count = len(data["results"])
         grep_hits = (data.get("grep_fallback") or {}).get("count", 0)
-        # Ingest is the 261 contract. Recall may still be empty when the
+        # Ingest is the contract under test. Recall may still be empty when the
         # dispatch resolver anchors at the package repo; grep_fallback on the
         # sim tree is the fused confirmation that the text is there.
         passed = len(ingested) >= 1 and "error" not in data and (count >= 1 or grep_hits >= 1)
@@ -1165,5 +1165,5 @@ class TestScaffoldRecallGovernance:
                 category="mcp",
             )
         )
-        assert len(ingested) >= 1, "Plan 261 regression: Learning ingest is empty"
+        assert len(ingested) >= 1, "regression: Learning ingest is empty"
         assert passed, f"recall empty or errored: {data}"

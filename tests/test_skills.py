@@ -1,4 +1,4 @@
-"""Tests for Phase D: Skills generator and catalog (Steps D.1-D.3)."""
+"""Tests for the skills generator and catalog."""
 
 from __future__ import annotations
 

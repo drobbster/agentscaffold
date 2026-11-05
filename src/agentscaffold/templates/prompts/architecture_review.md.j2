@@ -1,0 +1,91 @@
+# Architecture Review (Monthly)
+
+Use this procedure on the cadence set by `review_cadence_days` in
+`{{ config.inventory.path | default('docs/ai/system_inventory.yaml') }}` (30 days by default). Orientation
+reports the review as overdue once the cadence has passed.
+
+The review compares what the project runs with what its plans and roadmap say
+it should run, and turns every gap into a decision with an owner.
+
+---
+
+## Usage
+
+1. Refresh the inventory and run the checks:
+
+   ```bash
+   scaffold inventory refresh --dry-run
+   scaffold inventory refresh
+   scaffold inventory check
+   ```
+
+2. Read the lifecycle debt from orientation (`scaffold_orient`, field
+   `session_brief.lifecycle_debt`): expired reviews, overdue deprecations,
+   failing jobs, zombie candidates, stale drafts.
+3. Work through the sections below. Every item ends in a decision, not a note.
+4. Record decisions in the inventory (lifecycle fields), in plans (Component
+   Lifecycle Changes rows), or as backlog items with an owner.
+5. Set `last_architecture_review` in the inventory to today's date.
+
+---
+
+## Review for [DATE]
+
+**Reviewer(s)**: [NAMES]
+**Roadmap stage in progress** (`current_roadmap_stage`): [STAGE]
+
+### 1. Check findings
+
+| Finding | Component | Decision | Owner |
+|---------|-----------|----------|-------|
+| | | | |
+
+Errors (INV-001 to INV-006, INV-010) are fixed in the inventory or the
+collector sources. Warnings are decided case by case.
+
+### 2. Paused and deprecated components
+
+For each paused or deprecated component, trace before deciding: read its
+entrypoint and the files it reads, and the plan that owns it.
+
+| Component | Lifecycle | Review by | Exit criteria met? | Decision (resume, extend with a new date, deprecate, remove) |
+|-----------|-----------|-----------|--------------------|--------------------------------------------------------------|
+| | | | | |
+
+### 3. Runtime health
+
+Only when the project writes a health snapshot
+(`{{ config.inventory.health_snapshot | default('outputs/governance/inventory_health.json') }}`).
+
+| Component | Signal (failing or zombie) | Days without success | Decision |
+|-----------|----------------------------|----------------------|----------|
+| | | | |
+
+A failing active job is fixed or paused with a reason. A zombie candidate is
+deprecated with a replacement or removal date, or its review date is renewed
+with a reason.
+
+### 4. Roadmap alignment
+
+Components whose `roadmap_stage` is later than `current_roadmap_stage` are
+running ahead of the roadmap (INV-007). Confirm each is intended, or pause it.
+
+| Component | Component stage | Current stage | Decision |
+|-----------|-----------------|---------------|----------|
+| | | | |
+
+### 5. Stale drafts
+
+Plans in Draft for longer than `inventory.draft_stale_days`: start, re-scope,
+or mark Superseded.
+
+| Plan | Days in Draft | Decision |
+|------|---------------|----------|
+| | | |
+
+### 6. Summary
+
+- Decisions made: [N]
+- Components retired this review: [N]
+- Follow-ups recorded as backlog items: [IDs]
+- `last_architecture_review` updated: [ ] Yes

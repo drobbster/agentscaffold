@@ -1,4 +1,4 @@
-"""Pydantic model for domain pack manifest.yaml — Step B.8."""
+"""Pydantic model for domain pack manifest.yaml."""
 
 from __future__ import annotations
 
@@ -19,6 +19,8 @@ class DomainManifest(BaseModel):
             domain.  Used by Cursor rule generators to produce
             ``globs: [<patterns>]`` frontmatter instead of ``alwaysApply: true``.
             An empty list means ``alwaysApply: true`` (safe fallback).
+        inventory_collectors: System inventory collectors this
+            domain enables in ``inventory.collectors``, for example ``prefect``.
     """
 
     name: str = ""
@@ -28,6 +30,7 @@ class DomainManifest(BaseModel):
     standards: list[str] = Field(default_factory=list)
     approval_gates: dict[str, bool] = Field(default_factory=dict)
     file_patterns: list[str] = Field(default_factory=list)
+    inventory_collectors: list[str] = Field(default_factory=list)
 
     @property
     def has_file_patterns(self) -> bool:

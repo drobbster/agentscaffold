@@ -1,4 +1,4 @@
-"""Session next-action router for MCP agents (Plan 246 / 266 / 273)."""
+"""Session next-action router for MCP agents."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def next_actions(
     """Return 1–3 concrete next moves driven by ``session_brief``.
 
     Never recommends ``scaffold_orient``. Diary ``in_progress_plans`` is
-    ignored (Plan 273).
+    ignored.
     """
     meta = meta or {}
     brief = session_brief or build_session_brief(

@@ -1,0 +1,14 @@
+{% if config.inventory.enabled %}
+
+### Component Lifecycle Changes
+<!-- One row per inventory component this plan touches or decides (ids from
+{{ config.inventory.path }}). After is a lifecycle state (experimental, active,
+shadow, paused, deprecated) or removed, and may equal Before. Each row answers a
+component challenge from the pre-implementation review; the post-implementation
+review checks every row is reflected in the inventory. Trace before claiming:
+read the component's entrypoint and reads before stating what it does. Retire in
+the same change: a component this plan replaces is deprecated or removed here. -->
+| Component | Before | After | Action |
+|-----------|--------|-------|--------|
+| none | | | |
+{% endif %}
