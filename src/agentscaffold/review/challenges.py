@@ -137,6 +137,7 @@ def component_hits(
             "exit_criteria": comp.exit_criteria,
             "replaced_by": comp.replaced_by,
             "owner_plan": comp.owner_plan,
+            "owner_from": comp.owner_from,
             "touched": touched,
             "broad_reads": broad.get(comp.id or "", []),
         }

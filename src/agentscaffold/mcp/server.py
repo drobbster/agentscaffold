@@ -133,6 +133,7 @@ _TOOL_SIGNAL_TOKENS: dict[str, set[str]] = {
     "scaffold_prior_experiments": {"prior", "experiments", "evidence", "tested"},
     "scaffold_find_adrs": {"adr", "architecture", "decision", "governs"},
     "scaffold_governance": {"governance", "rules", "manual", "agents", "section"},
+    "scaffold_inventory": {"inventory", "component", "components", "owns", "lifecycle"},
     "scaffold_decision_context": {"decision", "history", "chain", "spike", "intent", "adr"},
     "scaffold_search": {"search", "find", "workspace", "projects", "duplicate", "similar"},
     "scaffold_record_finding": {"record", "log", "finding", "discovered", "issue", "capture"},
@@ -848,6 +849,9 @@ def _run_tool(
     elif name == "scaffold_governance":
         return _tool_governance(arguments, meta, root, config)
 
+    elif name == "scaffold_inventory":
+        return _tool_inventory(store, arguments, meta, root, config)
+
     elif name == "scaffold_decision_context":
         return _tool_decision_context(store, arguments, meta)
 
@@ -998,6 +1002,22 @@ def _tool_governance(
             payload.update(
                 {"found": True, "section": canonical, "text": manual.section(canonical) or ""}
             )
+    payload["meta"] = meta
+    return payload
+
+
+def _tool_inventory(
+    store: Any, arguments: dict[str, Any], meta: dict[str, Any], root: Path, config: Any
+) -> dict[str, Any]:
+    """Inventory check, review packet, or one component's effective values."""
+    from agentscaffold.mcp.inventory_tool import inventory_tool
+
+    def governance(target: str) -> dict[str, Any] | None:
+        return _governance_impact(store, target, root, config, scope=_scope_sql(arguments))
+
+    payload = inventory_tool(
+        arguments, root, config, store=store, governance=governance if store else None
+    )
     payload["meta"] = meta
     return payload
 

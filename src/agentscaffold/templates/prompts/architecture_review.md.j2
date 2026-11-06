@@ -11,21 +11,28 @@ it should run, and turns every gap into a decision with an owner.
 
 ## Usage
 
-1. Refresh the inventory and run the checks:
+1. Refresh the inventory (this also re-derives owners, layers and stages),
+   then print the review packet:
 
    ```bash
    scaffold inventory refresh --dry-run
    scaffold inventory refresh
-   scaffold inventory check
+   scaffold inventory review
    ```
 
-2. Read the lifecycle debt from orientation (`scaffold_orient`, field
-   `session_brief.lifecycle_debt`): expired reviews, overdue deprecations,
-   failing jobs, zombie candidates, stale drafts.
-3. Work through the sections below. Every item ends in a decision, not a note.
-4. Record decisions in the inventory (lifecycle fields), in plans (Component
-   Lifecycle Changes rows), or as backlog items with an owner.
-5. Set `last_architecture_review` in the inventory to today's date.
+   The packet (also `scaffold_inventory` with `mode: review`) holds the check
+   summary, lifecycle debt, health status, duplicate and unreferenced-entrypoint
+   candidates, components whose owner or layer is unresolved (with the
+   cheapest fix for each), and derivation coverage. Candidates are labelled
+   unconfirmed: confirm each before acting. Health reads "not evaluated" when
+   the project writes no snapshot; that is not the same as healthy.
+2. Work through the sections below. Every item ends in a decision, not a note.
+3. Record decisions in the inventory (lifecycle fields), in plans (Component
+   Lifecycle Changes rows), or as backlog items with an owner. Resolve an
+   unresolved owner or layer with the fix the packet names: an annotation in
+   the component's source, or a pin in the inventory.
+4. Record the review: `scaffold inventory review --record` sets
+   `last_architecture_review` to today.
 
 ---
 
@@ -74,7 +81,22 @@ running ahead of the roadmap (INV-007). Confirm each is intended, or pause it.
 |-----------|-----------------|---------------|----------|
 | | | | |
 
-### 5. Stale drafts
+### 5. Unresolved owners and layers (INV-011)
+
+Every component should resolve an owner plan and a layer. For each one the
+packet lists, apply its fix or record why it cannot resolve yet.
+
+| Component | Missing | Fix applied (annotation or pin) | Owner |
+|-----------|---------|---------------------------------|-------|
+| | | | |
+
+### 6. Duplicate and unreferenced candidates
+
+| Component(s) | Candidate | Confirmed? | Decision |
+|--------------|-----------|------------|----------|
+| | | | |
+
+### 7. Stale drafts
 
 Plans in Draft for longer than `inventory.draft_stale_days`: start, re-scope,
 or mark Superseded.
@@ -83,9 +105,10 @@ or mark Superseded.
 |------|---------------|----------|
 | | | |
 
-### 6. Summary
+### 8. Summary
 
 - Decisions made: [N]
 - Components retired this review: [N]
+- Unresolved owners or layers remaining: [N]
 - Follow-ups recorded as backlog items: [IDs]
-- `last_architecture_review` updated: [ ] Yes
+- Review recorded (`scaffold inventory review --record`): [ ] Yes

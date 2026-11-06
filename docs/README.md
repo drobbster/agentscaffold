@@ -42,6 +42,8 @@ When you run `scaffold init`, AgentScaffold installs the full core planning temp
 | [Semi-Autonomous Guide](semi-autonomous-guide.md) | CLI/CI agent mode, session tracking, safety, notifications |
 | [Importing Conversations](importing-conversations.md) | ChatGPT, markdown, Claude exports |
 | [CI Integration](ci-integration.md) | scaffold ci setup, workflows, task runner |
+| [System Inventory](inventory.md) | Components, derived owners and layers, annotations, checks, the monthly review |
+| [System Inventory](inventory.md) | Components, derived owners and layers, annotations, checks, the monthly review |
 
 ## Quick NL Routing Reference
 

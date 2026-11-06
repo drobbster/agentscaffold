@@ -39,15 +39,3 @@ jobs:
             | scaffold inventory check --changed-files -
 {% endraw %}
 {% endif %}
-{% if config.inventory.enabled %}
-      - name: System inventory
-        run: scaffold inventory check
-{% raw %}
-      - name: Paused or deprecated components changed (INV-008)
-        if: github.event_name == 'pull_request'
-        run: |
-          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
-          git diff --name-only "origin/${{ github.base_ref }}" HEAD \
-            | scaffold inventory check --changed-files -
-{% endraw %}
-{% endif %}

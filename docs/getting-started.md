@@ -402,6 +402,18 @@ section in the [User Guide](user-guide.md).
   scaffold ci setup
   ```
 
+- **System inventory**: List what the project runs (jobs, services,
+  workflows, scripts) with an owner plan, layer and lifecycle, and review it
+  monthly. New projects have it on; for an existing project:
+
+  ```bash
+  scaffold inventory enable --dry-run
+  scaffold inventory enable
+  scaffold inventory review
+  ```
+
+  See [System inventory](inventory.md).
+
 ---
 
 ## Troubleshooting

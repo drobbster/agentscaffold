@@ -8,6 +8,60 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+The system inventory contract moves to v2 (ADR-030). Version 1 inventory files
+are read unchanged; the first `refresh` writes a derived file next to yours.
+Before downgrading, run `scaffold inventory refresh --pin-derived`.
+
+### Added
+- **`scaffold inventory enable`.** One command turns the inventory on in an
+  existing project and writes only what is missing: the `scaffold.yaml` block
+  (warn mode, `review_overdue: error`, the roadmap path, detected collectors),
+  the inventory and its derived file, the architecture review prompt, the
+  Component Lifecycle manual section, and the review workflow. `--dry-run`
+  reports each step.
+- **Derived owners, layers and stages.** `init`, `refresh` and `enable` write
+  `docs/ai/system_inventory.derived.yaml`: each component's owner plan (from a
+  source annotation, the plan whose File Impact Map creates its entrypoint, the
+  latest Complete plan that lists it, or a plan-citing commit), layer, roadmap
+  stage, `touched_by`, and the current roadmap stage from a Stage / Gate met
+  table. A value in the inventory file pins a field. New entries get `since`
+  from git.
+- **Source annotations.** Compose labels (`agentscaffold.owner_plan`,
+  `agentscaffold.layer`, `agentscaffold.roadmap_stage`), Prefect tags
+  (`plan:<n>`, `layer:<id>`, `stage:<id>`) and a workflow comment line
+  (`# agentscaffold: owner_plan=<n> layer=<id>`) map a component where it is
+  defined.
+- **`scaffold inventory review`** (`--format markdown|json`, `--record`,
+  `--exit-code`): lifecycle debt, health ("not evaluated" without a snapshot),
+  unresolved owners and layers with the cheapest fix, duplicate and
+  unreferenced-entrypoint candidates, and derivation coverage. `scaffold ci`
+  writes a monthly `inventory-review.yml` workflow that keeps one issue open
+  while there is debt.
+- **INV-011** (unresolved owner plan or layer; a warning, an error after
+  `inventory.mapping_strict_after`) and `inventory.review_overdue` (INV-009
+  severity).
+- **`scaffold_inventory` MCP tool** (read-only; `mode: check | review |
+  component`). Orientation recommends the architecture review when it is
+  overdue or unrecorded. `scaffold doctor` gains an `inventory` check.
+- `scaffold agents generate-all` installs shipped governance prompts a project
+  lacks; `scaffold agents diff-manual --apply` inserts missing sections into an
+  unstamped manual without changing existing ones.
+
+### Changed
+- Collector default sources search the whole project (`**/prefect.yaml`,
+  `**/compose.yaml` and the docker-compose variants), skipping what the indexer
+  ignores. A collector that matches nothing is reported as a notice.
+- A compose service with an `image` and no `build:` records the image and
+  satisfies INV-003 with it; its entrypoint is `command`, else `entrypoint`,
+  else the Dockerfile. A `command` that only passes flags to the image
+  (`-config.file=...`) is not treated as a file.
+- Notices in `inventory check --format json` and in the review packet are
+  objects with `kind` and `message`.
+- The strategy roadmap template has a Stage / Gate met table.
+
+### Fixed
+- The generated CI workflow no longer repeats the inventory steps.
+
 ## [0.13.0] - 2026-11-05
 
 **Upgrade action required.** Run `scaffold agents hooks` in each project so

@@ -923,3 +923,75 @@ def test_graph_schema_check_skips_when_the_graph_is_locked(
     )
     assert result.status == "skip"
     assert "locked" in result.summary.lower()
+
+
+def _inventory_check(project: Path, tmp_path: Path):
+    from agentscaffold.doctor import DoctorContext, check_inventory
+
+    return check_inventory(
+        DoctorContext(project_root=project, mcp_config_path=tmp_path / "mcp.json")
+    )
+
+
+def _enabled(project: Path, extra: str = "") -> None:
+    (project / "scaffold.yaml").write_text(
+        "framework:\n  project_name: proj\ninventory:\n  enabled: true\n" + extra
+    )
+
+
+def _inventory_file(project: Path, last_review: str = "null") -> None:
+    import datetime as dt
+
+    path = project / "docs" / "ai" / "system_inventory.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if last_review == "today":
+        last_review = dt.date.today().isoformat()
+    path.write_text(
+        f"schema_version: 1\nlast_architecture_review: {last_review}\n"
+        "review_cadence_days: 30\ncomponents: []\n"
+    )
+
+
+def test_inventory_check_is_skipped_when_disabled(tmp_path: Path) -> None:
+    result = _inventory_check(_project(tmp_path), tmp_path)
+    assert result.status == "skip"
+    assert "scaffold inventory enable" in (result.remediation or "")
+
+
+def test_inventory_check_warns_when_the_file_is_missing(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    _enabled(project)
+    result = _inventory_check(project, tmp_path)
+    assert result.status == "warn"
+    assert result.summary == "No inventory at docs/ai/system_inventory.yaml."
+
+
+def test_inventory_check_reports_overdue_review_glob_and_workflow(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    _enabled(project, "  collectors:\n    - name: compose\n      sources: [ops/*.yaml]\n")
+    _inventory_file(project, "2020-01-01")
+    (project / ".github" / "workflows").mkdir(parents=True)
+    result = _inventory_check(project, tmp_path)
+    assert result.status == "warn"
+    assert result.details == [
+        "architecture review: last 2020-01-01, cadence 30 days",
+        "collector compose: sources match no files (ops/*.yaml)",
+        "no scheduled review workflow at .github/workflows/inventory-review.yml",
+    ]
+
+
+def test_inventory_check_is_ok_when_current(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    _enabled(project)
+    _inventory_file(project, "today")
+    result = _inventory_check(project, tmp_path)
+    assert result.status == "ok", result.details
+    assert result.summary.startswith("0 components; review recorded ")
+
+
+def test_inventory_check_reports_an_unrecorded_review(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    _enabled(project)
+    _inventory_file(project)
+    result = _inventory_check(project, tmp_path)
+    assert result.details == ["architecture review: last_architecture_review is not recorded"]

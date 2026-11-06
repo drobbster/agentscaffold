@@ -1,4 +1,4 @@
-"""A plan's component fields (contract v1, Plan integration).
+"""A plan's component fields (contract v2, Plan integration).
 
 Plans name the components they touch in ``- Components:`` and carry a
 "Component Lifecycle Changes" table with columns Component, Before, After and

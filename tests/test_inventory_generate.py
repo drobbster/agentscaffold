@@ -11,7 +11,14 @@ import datetime as dt
 import yaml
 
 from agentscaffold.inventory.collectors import Collected, CollectionResult
-from agentscaffold.inventory.generate import add_manual_section, init_text, refresh_text
+from agentscaffold.inventory.derived_file import Derived, DerivedEntry
+from agentscaffold.inventory.generate import (
+    add_manual_section,
+    init_text,
+    pin_derived_text,
+    refresh_text,
+    set_top_level,
+)
 from agentscaffold.inventory.schema import parse_inventory
 
 TODAY = dt.date(2026, 11, 5)
@@ -61,6 +68,60 @@ def test_init_lists_every_collected_component() -> None:
     assert weekly.since == "2026-11-05"
     assert weekly.layer is None and weekly.owner_plan is None
     assert text.startswith("# System inventory")
+
+
+def test_init_writes_no_derived_fields_and_uses_given_since_dates() -> None:
+    cache = Collected("compose:cache", "service", "cache", "compose.yaml", None, image="redis:7")
+    text = init_text(_collected(JOB, cache), TODAY, {"prefect:nightly": "2026-01-10"})
+    for key in ("layer:", "owner_plan:", "roadmap_stage:", "current_roadmap_stage:"):
+        assert key not in text
+    by_id = parse_inventory(text).by_id()
+    assert by_id["prefect:nightly"].since == "2026-01-10"
+    assert by_id["compose:cache"].since == "2026-11-05"
+    assert by_id["compose:cache"].image == "redis:7"
+    assert "image" not in yaml.safe_load(text)["components"][1]
+
+
+def test_pin_derived_copies_unpinned_values_only() -> None:
+    derived = Derived(
+        components={
+            "prefect:nightly": DerivedEntry(owner_plan="999", layer="7", roadmap_stage="9"),
+            "prefect:report": DerivedEntry(owner_plan="120", layer=["2", "4"], roadmap_stage="3"),
+            "prefect:absent": DerivedEntry(owner_plan="1"),
+        }
+    )
+    base = refresh_text(EXISTING, _collected(JOB, NEW), TODAY).text
+    result = pin_derived_text(base, derived)
+    assert result.in_place
+    assert sorted((cid, key) for cid, key, _old, _new in result.updated) == [
+        ("prefect:report", "layer"),
+        ("prefect:report", "owner_plan"),
+        ("prefect:report", "roadmap_stage"),
+    ]
+    by_id = parse_inventory(result.text).by_id()
+    assert by_id["prefect:nightly"].owner_plan == "101"
+    assert by_id["prefect:report"].owner_plan == "120"
+    assert by_id["prefect:report"].layer == "2, 4"
+    assert "# Our inventory. Keep this comment." in result.text
+
+
+def test_pin_derived_with_nothing_to_pin_is_unchanged() -> None:
+    result = pin_derived_text(EXISTING, Derived())
+    assert result.text == EXISTING and not result.updated
+
+
+def test_set_top_level_replaces_or_inserts_after_schema_version() -> None:
+    replaced = set_top_level(EXISTING, "last_architecture_review", "2026-11-05")
+    assert replaced is not None
+    assert "last_architecture_review: '2026-11-05'" in replaced
+    assert "# Our inventory. Keep this comment." in replaced
+    inserted = set_top_level("schema_version: 1\ncomponents: []\n", "review_cadence_days", 14)
+    assert inserted == "schema_version: 1\nreview_cadence_days: 14\ncomponents: []\n"
+
+
+def test_set_top_level_refuses_a_block_value() -> None:
+    text = "schema_version: 1\nlast_architecture_review:\n  nested: 1\ncomponents: []\n"
+    assert set_top_level(text, "last_architecture_review", "2026-11-05") is None
 
 
 def test_init_with_nothing_collected_is_valid() -> None:

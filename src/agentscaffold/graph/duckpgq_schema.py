@@ -90,6 +90,9 @@ ADDITIVE_COLUMNS: tuple[AdditiveColumn, ...] = (
     AdditiveColumn("Learning", "paths", "VARCHAR DEFAULT '[]'"),
     AdditiveColumn("Plan", "impactPaths", "VARCHAR DEFAULT '[]'"),
     AdditiveColumn("ReviewFinding", "backlogId", "VARCHAR DEFAULT ''"),
+    AdditiveColumn("Component", "image", "VARCHAR"),
+    AdditiveColumn("Component", "ownerFrom", "VARCHAR"),
+    AdditiveColumn("Component", "layerFrom", "VARCHAR"),
 )
 
 # Bumped to 13: Component node, OWNED_BY, ENTRYPOINT and READS.
@@ -367,7 +370,10 @@ _AUTHORED_NODE_TABLES: list[str] = [
         reason       VARCHAR,
         reviewBy     VARCHAR,
         exitCriteria VARCHAR,
-        replacedBy   VARCHAR
+        replacedBy   VARCHAR,
+        image        VARCHAR,
+        ownerFrom    VARCHAR,
+        layerFrom    VARCHAR
     )
     """,
     # --- Metadata nodes ---

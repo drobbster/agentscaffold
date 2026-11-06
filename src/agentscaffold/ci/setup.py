@@ -6,10 +6,13 @@ from pathlib import Path
 
 from rich.console import Console
 
+from agentscaffold import __version__
 from agentscaffold.config import find_config, load_config
 from agentscaffold.rendering import get_default_context, render_template
 
 console = Console()
+
+REVIEW_WORKFLOW = "inventory-review.yml"
 
 
 def run_ci_setup(provider: str) -> None:
@@ -71,6 +74,31 @@ def _setup_github(
         notify_path.write_text(notify_content)
         written.append(str(notify_path.relative_to(project_root)))
 
+    review_path = write_inventory_review_workflow(project_root, config)
+    if review_path is not None:
+        written.append(str(review_path.relative_to(project_root)))
+
     console.print("[bold]CI setup complete (GitHub Actions)[/bold]")
     for f in written:
         console.print(f"  [green]Wrote[/green] {f}")
+
+
+def write_inventory_review_workflow(
+    project_root: Path, config: object, *, dry_run: bool = False
+) -> Path | None:
+    """Write the scheduled inventory review workflow when the inventory is enabled.
+
+    An existing workflow is the project's to edit, so it is never overwritten.
+    Returns the path written (or that would be written), else None.
+    """
+    if not config.inventory.enabled:  # type: ignore[union-attr]
+        return None
+    path = project_root / ".github" / "workflows" / REVIEW_WORKFLOW
+    if path.exists():
+        return None
+    if not dry_run:
+        context = get_default_context(config)  # type: ignore[arg-type]
+        context["agentscaffold_version"] = __version__
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(render_template("ci/github_inventory_review.yml.j2", context))
+    return path

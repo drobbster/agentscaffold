@@ -6,3 +6,7 @@ services:
   worker:
     image: fixture/worker:latest
     command: python -m worker
+  cache:
+    image: fixture/cache:7
+  sidecar:
+    image: fixture/sidecar:latest
