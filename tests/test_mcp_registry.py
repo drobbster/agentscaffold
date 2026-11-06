@@ -48,6 +48,7 @@ EXPECTED_TOOLS = (
     "scaffold_prior_experiments",
     "scaffold_find_adrs",
     "scaffold_governance",
+    "scaffold_inventory",
     "scaffold_decision_context",
     "scaffold_projects",
     "scaffold_record_finding",

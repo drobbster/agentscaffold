@@ -616,6 +616,34 @@ def _tool_specs() -> list[ToolSpec]:
             },
         ),
         ToolSpec(
+            name="scaffold_inventory",
+            description=(
+                "Read the system inventory (read-only). mode=check runs the inventory "
+                "checks; mode=review returns the architecture review packet (lifecycle "
+                "debt, health, unresolved owners and layers with the cheapest fix, "
+                "duplicate and unreferenced candidates, derivation coverage); "
+                "mode=component shows one component's effective owner, layer and stage "
+                "with where each came from (a pin or the derivation rule). Use when "
+                "asked what a component is, who owns it, or whether the architecture "
+                "review is due."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["check", "review", "component"],
+                        "description": "check (default), review, or component",
+                    },
+                    "component_id": {
+                        "type": "string",
+                        "description": "Component id for mode=component, e.g. 'compose:api'",
+                    },
+                    "project": _SCOPE_PROPS["project"],
+                },
+            },
+        ),
+        ToolSpec(
             name="scaffold_decision_context",
             description=(
                 "Get the full decision chain for a plan: governing ADRs, validation "
