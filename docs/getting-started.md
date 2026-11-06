@@ -38,18 +38,28 @@ scaffold version
 For a project that already has AgentScaffold. A new install continues at
 [Initialize a Project](#2-initialize-a-project) and skips this section.
 
-Upgrade the `scaffold` command on your PATH. If it was installed with uv and
-`uv tool upgrade` does not change the version, the install is pinned to an
-exact release and upgrade will not move it. This replaces that pin:
+Anyone already running AgentScaffold, on any older version, upgrades the
+install that `scaffold` comes from and then regenerates hooks. A uv tool
+that was installed as `agentscaffold==0.12.0` (or any other exact pin) does
+not move when you run `uv tool upgrade`. This does, and it removes the pin:
 
 ```bash
 uv tool install -U "agentscaffold[all]"
 ```
 
-A pip or Homebrew install that is not that uv tool is a second copy. The
-editor, the hooks, and the terminal have to run the same one. `scaffold
-doctor` reports when they do not. `scaffold mcp install --migrate` drops an
-MCP entry that points at a stale interpreter.
+A copy installed with pip, including a project virtualenv, upgrades in that
+environment instead:
+
+```bash
+python -m pip install -U "agentscaffold[all]"
+```
+
+Once that copy includes this command, `scaffold upgrade` does the same thing
+and regenerates hooks in every registered project. Restart the MCP server
+in the editor afterwards.
+
+`scaffold doctor` reports when the `scaffold` on PATH is a different version
+from the one you ran, and when a project still has the old shell hook.
 
 Then, in each project, regenerate hooks before any user-scope install, and
 rebuild the graph. Use the `scaffold` you just upgraded:

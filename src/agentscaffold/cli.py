@@ -2604,6 +2604,34 @@ def _print_tool_probes(context: Any, include_writes: bool) -> bool:
     return bool(counts.get("fail"))
 
 
+@app.command("upgrade")
+def upgrade_command(
+    rewrite_hooks: bool = typer.Option(
+        False,
+        "--rewrite-hooks",
+        hidden=True,
+        help="Regenerate hooks in every registered project and exit.",
+    ),
+) -> None:
+    """Upgrade this install to the latest release and point project hooks at it.
+
+    An exact pin from ``uv tool install agentscaffold==x.y.z`` makes
+    ``uv tool upgrade`` stay on that version. This uses ``uv tool install -U``
+    for a uv tool, ``pipx upgrade`` for pipx, and ``pip install -U`` otherwise,
+    then rewrites each registered project's edit hook.
+    """
+    from agentscaffold.upgrade import perform_upgrade, rewrite_registered_hooks
+
+    if rewrite_hooks:
+        failed = rewrite_registered_hooks()
+        console.print("Restart the MCP server in the editor.")
+        if failed:
+            raise typer.Exit(code=1)
+        return
+    code = perform_upgrade()
+    raise typer.Exit(code=code)
+
+
 @app.command("doctor")
 def doctor(
     project_root: str = typer.Option(
