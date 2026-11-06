@@ -58,6 +58,8 @@ Before downgrading, run `scaffold inventory refresh --pin-derived`.
 - Notices in `inventory check --format json` and in the review packet are
   objects with `kind` and `message`.
 - The strategy roadmap template has a Stage / Gate met table.
+- PyPI development status is Beta. The package is in regular use and released
+  on purpose; before 1.0 a minor version may still change behavior.
 
 ### Fixed
 - The generated CI workflow no longer repeats the inventory steps.
