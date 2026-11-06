@@ -78,6 +78,14 @@ def test_inv_011_is_an_error_after_mapping_strict_after(project: Path) -> None:
     assert [f.severity for f in report.findings if f.id == "INV-011"] == ["warning"]
 
 
+def test_inv_007_runs_only_when_both_stages_are_known(project: Path) -> None:
+    path = project / "docs/ai/system_inventory.yaml"
+    path.write_text(path.read_text().replace('current_roadmap_stage: "3"\n', ""))
+    (project / "docs/ai/system_inventory.derived.yaml").unlink()
+    report = check_project(project, load_config(project / "scaffold.yaml"), today=TODAY, files=[])
+    assert not [f for f in report.findings if f.id == "INV-007"]
+
+
 def test_review_overdue_error_makes_inv_009_an_error(project: Path) -> None:
     config = load_config(project / "scaffold.yaml")
     config.inventory.review_overdue = "error"

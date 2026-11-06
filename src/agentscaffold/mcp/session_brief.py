@@ -174,7 +174,10 @@ def lifecycle_debt(
     zombie candidates (from the optional health snapshot), drafts older than
     ``inventory.draft_stale_days``, and an overdue architecture review. Each
     category is ``{"count", "items"}`` with at most ``DEBT_CAP`` items, and is
-    omitted when empty; an empty dict means no debt.
+    omitted when empty. ``health_snapshot`` gives the snapshot status when it
+    is not ``ok`` (``not_evaluated`` without one), so absent health is never
+    read as healthy. A dict with neither categories nor a review entry means no
+    debt.
     """
     import datetime as dt  # noqa: PLC0415
 
@@ -209,7 +212,7 @@ def lifecycle_debt(
         max_bytes=inv_cfg.health_max_bytes,
         stale_days=inv_cfg.failing_days,
     )
-    if snapshot.status in ("stale", "malformed"):
+    if snapshot.status != "ok":
         debt["health_snapshot"] = {"status": snapshot.status, "reason": snapshot.reason}
     for row in health.failing(inventory, snapshot, days=inv_cfg.failing_days):
         categories["failing"].append(_days_label(row))

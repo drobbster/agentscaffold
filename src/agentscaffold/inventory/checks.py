@@ -390,6 +390,7 @@ def broad_reads(
             if target in ("", "/") or (total and covered / total > share):
                 out.append(
                     {
+                        "kind": "broad_reads",
                         "component": entry.id,
                         "read": read,
                         "covered_files": covered,

@@ -363,6 +363,39 @@ def inventory_refresh(
     raise typer.Exit(code=code)
 
 
+@inventory_app.command("review")
+def inventory_review(
+    output: str = typer.Option(
+        "markdown", "--format", "-f", help="Output format: markdown or json."
+    ),
+    record: bool = typer.Option(
+        False, "--record", help="Stamp last_architecture_review with today's date."
+    ),
+    exit_code: bool = typer.Option(
+        False, "--exit-code", help="Exit 1 while lifecycle debt, unresolved owners or errors exist."
+    ),
+    today: str | None = _INVENTORY_TODAY,
+) -> None:
+    """Print the architecture review packet: debt, health, candidates, unresolved owners."""
+    from agentscaffold.config import load_config
+    from agentscaffold.inventory.commands import run_review
+    from agentscaffold.paths import resolve_root
+
+    if output not in ("markdown", "json"):
+        console.print(f"[red]--format must be markdown or json, got {output!r}[/red]")
+        raise typer.Exit(code=2)
+    code = run_review(
+        resolve_root(),
+        load_config(),
+        output=output,
+        record=record,
+        exit_code=exit_code,
+        today=_inventory_today(today),
+        console=console,
+    )
+    raise typer.Exit(code=code)
+
+
 @inventory_app.command("check")
 def inventory_check(
     output: str = typer.Option("text", "--format", "-f", help="Output format: text or json."),

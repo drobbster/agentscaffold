@@ -75,13 +75,13 @@ def test_overdue_deprecations_are_their_own_category(project: Path) -> None:
     assert debt["overdue_deprecations"]["items"] == ["prefect:retired-sync (review by 2026-10-01)"]
 
 
-def test_no_snapshot_means_no_health_categories(project: Path) -> None:
+def test_no_snapshot_is_reported_as_not_evaluated(project: Path) -> None:
     (project / SNAPSHOT).unlink()
     debt = _debt(project)
     assert debt is not None
     assert "failing" not in debt
     assert "zombies" not in debt
-    assert "health_snapshot" not in debt
+    assert debt["health_snapshot"]["status"] == "not_evaluated"
 
 
 def test_a_stale_snapshot_is_reported(project: Path) -> None:

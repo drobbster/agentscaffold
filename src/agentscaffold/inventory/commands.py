@@ -291,6 +291,54 @@ def run_check(
     return report.exit_code
 
 
+def run_review(
+    root: Path,
+    config: Any,
+    *,
+    output: str,
+    record: bool,
+    exit_code: bool,
+    today: dt.date,
+    console: Console,
+) -> int:
+    """Print the architecture review packet; optionally stamp the review date."""
+    from agentscaffold.inventory.review import build_packet, render_markdown  # noqa: PLC0415
+
+    path = inventory_path(root, config)
+    if not path.is_file():
+        console.print(
+            f"[red]{escape(str(path))} does not exist; run `scaffold inventory enable`.[/red]"
+        )
+        return EXIT_UNREADABLE
+    try:
+        packet = build_packet(root, config, today=today)
+    except InventoryError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        return EXIT_UNREADABLE
+    if output == "json":
+        print(json.dumps(packet, indent=2))
+    else:
+        console.print(render_markdown(packet), markup=False, highlight=False)
+    if record:
+        text = generate.set_top_level(
+            path.read_text(encoding="utf-8"), "last_architecture_review", today.isoformat()
+        )
+        if text is None:
+            console.print(
+                "[yellow]Could not record the review in place; set "
+                f"last_architecture_review: {today.isoformat()} by hand.[/yellow]"
+            )
+            return EXIT_FINDINGS
+        path.write_text(text, encoding="utf-8")
+        target = sys.stderr if output == "json" else None
+        message = f"Recorded last_architecture_review: {today.isoformat()} in {path}."
+        if target is None:
+            console.print(escape(message))
+        else:
+            print(message, file=target)
+    return EXIT_FINDINGS if exit_code and packet["has_debt"] else EXIT_OK
+
+
 def _print_report(console: Console, data: dict[str, Any]) -> None:
     for problem in data.get("problems", []):
         console.print(f"[yellow]collector: {escape(problem)}[/yellow]")
