@@ -11,8 +11,11 @@ from agentscaffold.agents.manual_diff import (
     apply_manual_diff,
     build_manual_stamp,
     diff_manual,
+    insert_sections,
+    parse_h2_sections,
     read_manual_stamp,
     stamp_manual,
+    strip_manual_stamp,
 )
 
 
@@ -72,6 +75,102 @@ def test_missing_stamp_is_two_way() -> None:
     assert report.mode == "two_way"
     assert report.notes
     assert report.conflicts
+
+
+UPSTREAM = (
+    "## Alpha\n\nupstream alpha\n\n## Component Lifecycle\n\nlifecycle rules\n\n"
+    "## Runbook Rules\n\nrunbook\n\n## Omega\n\nlast\n"
+)
+LOCAL = "# Our manual\n\n## Alpha\n\nmine, edited\n\n## Runbook Rules\n\nrunbook\n"
+
+
+def _bodies(text: str) -> dict[str, str]:
+    return {s.heading: s.body for s in parse_h2_sections(strip_manual_stamp(text)) if s.heading}
+
+
+def test_insert_only_adds_the_named_section_before_runbook_rules() -> None:
+    text, inserted = insert_sections(LOCAL, UPSTREAM, ["Component Lifecycle"])
+    assert inserted == ["## Component Lifecycle"]
+    body = strip_manual_stamp(text)
+    assert (
+        body.index("## Alpha")
+        < body.index("## Component Lifecycle")
+        < body.index("## Runbook Rules")
+    )
+    after = _bodies(text)
+    for heading, value in _bodies(LOCAL).items():
+        assert after[heading] == value
+    assert "## Omega" not in text
+    assert body.startswith("# Our manual\n")
+
+
+def test_insert_only_stamps_template_hashes_so_local_edits_stay_local() -> None:
+    text, _ = insert_sections(LOCAL, UPSTREAM, ["Component Lifecycle"])
+    stamp = read_manual_stamp(text)
+    assert stamp is not None
+    assert set(stamp.sections) == {"## Alpha", "## Component Lifecycle", "## Runbook Rules"}
+    report = diff_manual(text, UPSTREAM)
+    assert report.mode == "three_way"
+    assert [o.heading for o in report.offered] == ["## Omega"]
+    assert report.conflicts == []
+    changed = UPSTREAM.replace("upstream alpha", "newer alpha")
+    assert [c.heading for c in diff_manual(text, changed).conflicts] == ["## Alpha"]
+
+
+def test_insert_only_appends_without_an_anchor_and_keeps_the_managed_block() -> None:
+    local = (
+        "## Alpha\n\nmine\n\n<!-- BEGIN AGENTSCAFFOLD MANAGED SECTION -->\nmanaged\n"
+        "<!-- END AGENTSCAFFOLD MANAGED SECTION -->\n"
+    )
+    text, inserted = insert_sections(local, "## Alpha\n\nx\n\n## Beta\n\nnew\n")
+    assert inserted == ["## Beta"]
+    assert text.index("## Beta") < text.index("BEGIN AGENTSCAFFOLD MANAGED SECTION")
+    assert text.rstrip().endswith("<!-- END AGENTSCAFFOLD MANAGED SECTION -->")
+    assert "## Alpha\n\nmine\n" in text
+
+
+def test_insert_only_is_idempotent_and_respects_deleted_sections() -> None:
+    once, _ = insert_sections(LOCAL, UPSTREAM)
+    twice, inserted = insert_sections(once, UPSTREAM)
+    assert inserted == [] and twice == once
+    stamped = stamp_manual("## Alpha\n\na\n\n## Gone\n\ng\n").replace("## Gone\n\ng\n", "")
+    _, inserted = insert_sections(stamped, "## Alpha\n\na\n\n## Gone\n\ng\n")
+    assert inserted == []
+
+
+def test_diff_manual_apply_on_an_unstamped_manual_inserts_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentscaffold.agents import manual_diff
+    from agentscaffold.config import ScaffoldConfig
+
+    monkeypatch.setattr(manual_diff, "render_governance_manual", lambda _config: UPSTREAM)
+    dest = tmp_path / "AGENTS.md"
+    dest.write_text(LOCAL)
+    report = manual_diff.run_diff_manual(dest, ScaffoldConfig(), apply=True)
+    assert report.mode == "two_way"
+    assert [c.heading for c in report.conflicts] == ["## Alpha"]
+    text = dest.read_text()
+    assert read_manual_stamp(text) is not None
+    assert "mine, edited" in text and "upstream alpha" not in text
+    assert "## Component Lifecycle" in text and "## Omega" in text
+
+
+def test_deliver_section_inserts_one_section(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentscaffold.agents import manual_diff
+    from agentscaffold.config import ScaffoldConfig
+
+    monkeypatch.setattr(manual_diff, "render_governance_manual", lambda _config: UPSTREAM)
+    dest = tmp_path / "AGENTS.md"
+    dest.write_text(LOCAL)
+    assert manual_diff.deliver_section(dest, ScaffoldConfig(), "Component Lifecycle") == [
+        "## Component Lifecycle"
+    ]
+    assert "## Omega" not in dest.read_text()
+    assert manual_diff.deliver_section(dest, ScaffoldConfig(), "Component Lifecycle") == []
+    assert manual_diff.deliver_section(tmp_path / "missing.md", ScaffoldConfig(), "X") == []
 
 
 def test_apply_updates_upstream_only(tmp_path: Path) -> None:

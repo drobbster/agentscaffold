@@ -700,6 +700,65 @@ def probe_launched_version(command: str) -> str | None:
     return _run_probe([resolved, "--version"])
 
 
+def path_scaffold() -> str | None:
+    """The ``scaffold`` executable on PATH, if any.
+
+    A function so tests can replace it. Reading the real PATH would make
+    ``doctor`` report on the machine running the suite.
+    """
+    return shutil.which("scaffold")
+
+
+def check_path_install(context: DoctorContext) -> CheckResult:
+    """Whether ``scaffold`` on PATH is this version.
+
+    ``uv tool install agentscaffold==x.y.z`` records an exact pin.
+    ``uv tool upgrade`` then stays on that version, so the terminal and the
+    hooks keep launching the old release after a newer one is published.
+    """
+    found = path_scaffold()
+    if not found:
+        return CheckResult(status="skip", summary="scaffold is not on PATH.")
+    version = probe_launched_version(found)
+    if version is None:
+        return CheckResult(
+            status="warn",
+            summary="Could not read the version of scaffold on PATH.",
+            details=[found],
+        )
+    if version == __version__:
+        return CheckResult(status="ok", summary=f"scaffold on PATH is {version}.")
+    return CheckResult(
+        status="warn",
+        summary=f"scaffold on PATH is {version}; this command is {__version__}.",
+        details=[found],
+        remediation=(
+            "An exact pin from `uv tool install agentscaffold==...` makes "
+            "`uv tool upgrade` stay there. Run `uv tool install -U "
+            "'agentscaffold[all]'`, then `scaffold agents hooks` in each project."
+        ),
+    )
+
+
+def check_hook_generation(context: DoctorContext) -> CheckResult:
+    """Whether the project edit hook is the current shim.
+
+    The older shell hook stores an absolute path to whatever ``scaffold``
+    existed when it was generated, so a later upgrade does not reach it.
+    """
+    kind = _project_hook_kind(context.project_root)
+    if kind is None:
+        return CheckResult(status="skip", summary="No project edit hook is installed.")
+    if kind == "legacy":
+        return CheckResult(
+            status="warn",
+            summary="The edit hook is the pre-router shell script.",
+            details=["It launches the scaffold path baked in when it was generated."],
+            remediation="Run `scaffold agents hooks` with the scaffold you want it to launch.",
+        )
+    return CheckResult(status="ok", summary="The edit hook is a router shim.")
+
+
 def check_version_skew(context: DoctorContext) -> CheckResult:
     """Whether the server the client launches is the CLI you are running.
 
@@ -1081,6 +1140,84 @@ def check_agent_docs(context: DoctorContext) -> CheckResult:
     )
 
 
+def check_inventory(context: DoctorContext) -> CheckResult:
+    """The system inventory: file present, review current, sources match, workflow present.
+
+    A collector on its default sources that finds nothing is normal (the project
+    has nothing of that kind yet); explicit ``sources`` that match nothing are
+    most likely a wrong glob, so only those are reported.
+    """
+    import datetime as dt
+
+    from agentscaffold.ci.setup import REVIEW_WORKFLOW
+    from agentscaffold.inventory.collectors import expand_sources
+    from agentscaffold.inventory.project import (
+        ignore_patterns,
+        inventory_path,
+        load_human_inventory,
+    )
+    from agentscaffold.inventory.schema import InventoryError
+
+    root = context.project_root
+    config = _project_config(root)
+    if config is None:
+        return CheckResult(status="skip", summary="scaffold.yaml could not be read.")
+    if not config.inventory.enabled:
+        return CheckResult(
+            status="skip",
+            summary="The system inventory is not enabled.",
+            remediation="Run `scaffold inventory enable` to turn it on.",
+        )
+    path = inventory_path(root, config)
+    if not path.is_file():
+        return CheckResult(
+            status="warn",
+            summary=f"No inventory at {config.inventory.path}.",
+            remediation="Run `scaffold inventory enable` (writes only what is missing).",
+        )
+    try:
+        inventory = load_human_inventory(root, config)
+    except InventoryError as exc:
+        return CheckResult(
+            status="warn",
+            summary="The inventory cannot be read.",
+            details=[str(exc)],
+            remediation="Run `scaffold inventory check` for the exact problem.",
+        )
+
+    details: list[str] = []
+    today = dt.date.today()
+    last = inventory.last_review_date
+    if last is None:
+        details.append("architecture review: last_architecture_review is not recorded")
+    elif (today - last).days > inventory.review_cadence_days + 5:
+        details.append(
+            f"architecture review: last {last}, cadence {inventory.review_cadence_days} days"
+        )
+    patterns = ignore_patterns(root, config)
+    for collector in config.inventory.collectors:
+        if collector.sources and not expand_sources(root, collector.sources, ignore=patterns):
+            globs = ", ".join(collector.sources)
+            details.append(f"collector {collector.name}: sources match no files ({globs})")
+    workflows = root / ".github" / "workflows"
+    if workflows.is_dir() and not (workflows / REVIEW_WORKFLOW).exists():
+        details.append(f"no scheduled review workflow at .github/workflows/{REVIEW_WORKFLOW}")
+    if not details:
+        return CheckResult(
+            status="ok",
+            summary=f"{len(inventory.components)} components; review recorded {last}.",
+        )
+    return CheckResult(
+        status="warn",
+        summary=f"{len(details)} inventory issue(s).",
+        details=details,
+        remediation=(
+            "Run `scaffold inventory review --record` after the review; fix collector "
+            "globs in scaffold.yaml; `scaffold inventory enable` adds a missing workflow."
+        ),
+    )
+
+
 CHECKS: list[Check] = [
     Check("registry", "Workspace registry", check_registry),
     Check("workspace_id", "Workspace identity", check_workspace_id),
@@ -1089,8 +1226,11 @@ CHECKS: list[Check] = [
     Check("guidance_reachable", "Guidance reaches the editor", check_guidance_reachable),
     Check("agent_docs", "Agent document integrity", check_agent_docs),
     Check("governance_mapping", "Governance manual mapping", check_governance_mapping),
+    Check("inventory", "System inventory", check_inventory),
     Check("mcp_registration", "MCP registration", check_mcp_registration),
     Check("version_skew", "Version skew", check_version_skew),
+    Check("path_install", "scaffold on PATH", check_path_install),
+    Check("hook_generation", "Edit hook generation", check_hook_generation),
     Check("state_location", "Graph state location", check_state_location),
     Check("hooks_ran", "Edit hook activity", check_hooks_ran),
     Check("graph_schema", "Graph schema", check_graph_schema),

@@ -28,6 +28,9 @@ def _inventory_issues(config: ScaffoldConfig) -> list[str]:
     except InventoryError as exc:
         return [str(exc)]
     lines = [f"{f.id} {f.component or '(inventory)'}: {f.message}" for f in report.findings]
+    for notice in report.notices:
+        if notice.get("kind") in ("collector", "derived_file"):
+            console.print(f"[dim]System inventory notice: {escape(notice['message'])}[/dim]")
     if report.exit_code != 0:
         return [
             line for line, f in zip(lines, report.findings, strict=True) if f.severity == "error"

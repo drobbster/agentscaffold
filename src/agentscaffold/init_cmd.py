@@ -429,14 +429,25 @@ def _write_inventory(directory: Path, config: ScaffoldConfig, writer: InitWriter
     """
     if not config.inventory.enabled:
         return False
+    from agentscaffold.inventory import derive
+    from agentscaffold.inventory.derived_file import derived_path, render_derived
     from agentscaffold.inventory.generate import init_text
     from agentscaffold.inventory.project import inventory_path, run_collectors
+    from agentscaffold.inventory.schema import parse_inventory
 
+    today = dt.date.today()
     collected = run_collectors(directory, config)
     for problem in collected.problems:
         console.print(f"[yellow]  inventory: {problem}[/yellow]")
-    content = init_text(collected, dt.date.today())
-    return writer.write_if_missing(inventory_path(directory, config), content)
+    history = derive.GitHistory(directory)
+    since = {c.id: derive.since(history, c) or today.isoformat() for c in collected.components}
+    content = init_text(collected, today, since)
+    written = writer.write_if_missing(inventory_path(directory, config), content)
+    derived = derive.derive(
+        directory, config, parse_inventory(content), collected, today=today, history=history
+    )
+    writer.write_if_missing(derived_path(directory, config), render_derived(derived, today))
+    return written
 
 
 def _create_empty_dirs(directory: Path, writer: InitWriter) -> int:

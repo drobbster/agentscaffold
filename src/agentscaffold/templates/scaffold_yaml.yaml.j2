@@ -175,14 +175,20 @@ import:
 # System inventory: every runtime component, its owner plan and lifecycle.
 # `scaffold inventory check` runs the checks; `scaffold inventory refresh` adds
 # what the collectors find. warn reports and exits 0; set warn_until (a date) to
-# switch to fail after an adoption window. Plans created on or after
+# switch to fail after an adoption window. `scaffold ci` adds a monthly review
+# workflow (inventory-review.yml) when it is absent. review_overdue: error makes
+# an overdue architecture review (INV-009) an error; roadmap.path is the
+# document whose Stage / Gate met table gives the current stage. Plans created on or after
 # plan_adoption_date need Status, Roadmap Stage, Components and a Component
 # Lifecycle Changes table.
 inventory:
   enabled: true
   path: docs/ai/system_inventory.yaml
   enforcement: warn
+  review_overdue: error
   plan_adoption_date: "{{ date }}"
+  roadmap:
+    path: docs/ai/strategy_roadmap.md
   collectors:
     - compose
     - github_workflows

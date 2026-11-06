@@ -43,6 +43,7 @@ def isolated_client_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     instead of on the fixture.
     """
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr("agentscaffold.doctor.path_scaffold", lambda: None)
 
 
 @pytest.fixture
@@ -373,6 +374,41 @@ def test_mcp_check_accepts_the_canonical_entry(
     )
 
     assert result.exit_code == 0
+
+
+def test_doctor_warns_when_path_scaffold_is_an_older_pin(
+    state_home: Path, tmp_path: Path, cli_runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+):
+    """`uv tool upgrade` does not move an install pinned with ==."""
+    import agentscaffold.doctor as doctor
+
+    project = _project(tmp_path)
+    _register(project)
+    monkeypatch.setattr(doctor, "path_scaffold", lambda: "/opt/old/scaffold")
+    monkeypatch.setattr(doctor, "probe_launched_version", lambda command: "0.12.0")
+
+    result = _run(cli_runner, "--project-root", str(project), "--strict")
+
+    assert result.exit_code != 0
+    assert "0.12.0" in result.output
+    assert "uv tool install -U" in result.output
+
+
+def test_doctor_warns_when_the_edit_hook_is_the_old_shell_script(
+    state_home: Path, tmp_path: Path, cli_runner: CliRunner
+):
+    """A generated shell hook keeps the scaffold path from the day it was written."""
+    project = _project(tmp_path)
+    _register(project)
+    script = project / ".cursor" / "hooks" / "scaffold-index.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/bin/sh\nscaffold_bin=/opt/old/bin/scaffold\n")
+
+    result = _run(cli_runner, "--project-root", str(project), "--strict")
+
+    assert result.exit_code != 0
+    assert "pre-router" in result.output
+    assert "scaffold agents hooks" in result.output
 
 
 def test_mcp_check_flags_a_stray_per_project_config(
@@ -887,3 +923,75 @@ def test_graph_schema_check_skips_when_the_graph_is_locked(
     )
     assert result.status == "skip"
     assert "locked" in result.summary.lower()
+
+
+def _inventory_check(project: Path, tmp_path: Path):
+    from agentscaffold.doctor import DoctorContext, check_inventory
+
+    return check_inventory(
+        DoctorContext(project_root=project, mcp_config_path=tmp_path / "mcp.json")
+    )
+
+
+def _enabled(project: Path, extra: str = "") -> None:
+    (project / "scaffold.yaml").write_text(
+        "framework:\n  project_name: proj\ninventory:\n  enabled: true\n" + extra
+    )
+
+
+def _inventory_file(project: Path, last_review: str = "null") -> None:
+    import datetime as dt
+
+    path = project / "docs" / "ai" / "system_inventory.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if last_review == "today":
+        last_review = dt.date.today().isoformat()
+    path.write_text(
+        f"schema_version: 1\nlast_architecture_review: {last_review}\n"
+        "review_cadence_days: 30\ncomponents: []\n"
+    )
+
+
+def test_inventory_check_is_skipped_when_disabled(tmp_path: Path) -> None:
+    result = _inventory_check(_project(tmp_path), tmp_path)
+    assert result.status == "skip"
+    assert "scaffold inventory enable" in (result.remediation or "")
+
+
+def test_inventory_check_warns_when_the_file_is_missing(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    _enabled(project)
+    result = _inventory_check(project, tmp_path)
+    assert result.status == "warn"
+    assert result.summary == "No inventory at docs/ai/system_inventory.yaml."
+
+
+def test_inventory_check_reports_overdue_review_glob_and_workflow(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    _enabled(project, "  collectors:\n    - name: compose\n      sources: [ops/*.yaml]\n")
+    _inventory_file(project, "2020-01-01")
+    (project / ".github" / "workflows").mkdir(parents=True)
+    result = _inventory_check(project, tmp_path)
+    assert result.status == "warn"
+    assert result.details == [
+        "architecture review: last 2020-01-01, cadence 30 days",
+        "collector compose: sources match no files (ops/*.yaml)",
+        "no scheduled review workflow at .github/workflows/inventory-review.yml",
+    ]
+
+
+def test_inventory_check_is_ok_when_current(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    _enabled(project)
+    _inventory_file(project, "today")
+    result = _inventory_check(project, tmp_path)
+    assert result.status == "ok", result.details
+    assert result.summary.startswith("0 components; review recorded ")
+
+
+def test_inventory_check_reports_an_unrecorded_review(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    _enabled(project)
+    _inventory_file(project)
+    result = _inventory_check(project, tmp_path)
+    assert result.details == ["architecture review: last_architecture_review is not recorded"]

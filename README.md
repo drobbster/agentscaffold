@@ -68,7 +68,7 @@ A structured development workflow that teaches your AI agent to follow a plan li
 - **Session tracking**: State files that persist context across chat sessions
 - **Lifecycle hooks**: Pre-edit validation, read-only path protection and post-edit incremental re-indexing enforced at the platform level; `scaffold agents install --scope user` delivers them from your home directory to repositories you cannot add files to
 - **Approval gates over MCP**: The server hands agents the working procedure and the governance manual sections for each step, and `scaffold_prepare_implementation` will not start a plan that needs approval until one is recorded
-- **System inventory** (opt-in): `docs/ai/system_inventory.yaml` lists what the project runs (scheduled jobs, services, workflows, scripts) with an owner plan and a lifecycle. Collectors generate it, checks keep it honest, reviews challenge plans that touch paused or deprecated components, and orientation reports lifecycle debt
+- **System inventory** (opt-in): `docs/ai/system_inventory.yaml` lists what the project runs (scheduled jobs, services, workflows, scripts) with an owner plan, layer, roadmap stage and lifecycle. `scaffold inventory enable` turns it on in one command; collectors generate it, owners and layers are derived from plans, source annotations and git, checks keep it honest, a monthly review packet and workflow keep it current, and orientation recommends the review when it is due. See [docs/inventory.md](docs/inventory.md)
 
 **Think of it as a virtual sprint team.** Most AI agents work alone. AgentScaffold puts your agent on a team. Before it writes a single line of code, the plan faces a devil's advocate who asks "what if this breaks?", an expansion reviewer who asks "what did you miss?", and a domain expert — a quant architect, a UX designer, a security engineer — who pressure-tests the approach through the lens of your specific domain.
 
@@ -116,6 +116,9 @@ scaffold index                # Build the knowledge graph
 scaffold mcp install          # Register the MCP server with your agent client
 scaffold doctor               # Confirm the setup resolves the way you expect
 ```
+
+Already using AgentScaffold? [Upgrading](docs/getting-started.md#upgrading) is the
+procedure for an existing project.
 
 `scaffold mcp install` writes the server entry into your client's `mcp.json`
 (`~/.cursor/mcp.json` by default; `--config` for another client). You install
@@ -377,7 +380,7 @@ Teams usually get best UX with NL+MCP for day-to-day flow, then use explicit CLI
 
 You don't need to memorize tool names. AgentScaffold teaches the agent how to interpret user intent in natural conversation, map that intent to the right MCP workflow, and only fall back to direct reads/search when tool output is insufficient.
 
-There are **31 tools**. The list below is complete; `scaffold doctor --tools` calls
+There are **38 tools**. The list below is complete; `scaffold doctor --tools` calls
 every one of them against your installation and reports which respond.
 
 **Governed lifecycle** — the two-phase chain that wraps implementation:
@@ -445,6 +448,7 @@ Findings recorded via `scaffold_record_finding` appear in all future `scaffold_p
 | `scaffold_validate` | Running separate staleness checks and contract verification |
 | `scaffold_query` | Writing ad-hoc queries against the knowledge graph |
 | `scaffold_projects` | Asking which projects are registered and which one a call resolved to |
+| `scaffold_inventory` | Reading compose, Prefect and workflow files to learn what a component is, who owns it, and whether the architecture review is due |
 
 **Routing and fallback** — for when a query comes back empty:
 
@@ -453,6 +457,17 @@ Findings recorded via `scaffold_record_finding` appear in all future `scaffold_p
 | `scaffold_why_empty` | Explains why a search, impact, or context call returned nothing, and what to do instead |
 | `scaffold_grep_graph` | Text search across the workspace, for the file types structural queries cannot see |
 | `scaffold_next_action` | Routes to the next tool when intent is ambiguous |
+
+**Sessions and governance** — working memory across chats, and the manual:
+
+| Tool | What It Does |
+|------|-------------|
+| `scaffold_session_start` | Opens a working session so later orientation can read it back |
+| `scaffold_session_record_decision` | Records a strategic, architectural, or operational call with its evidence |
+| `scaffold_session_end` | Closes the session with a summary |
+| `scaffold_session_context` | Recent sessions and their decisions |
+| `scaffold_session_list` | Lists working sessions |
+| `scaffold_governance` | Reads the governance manual: its table of contents, or one section |
 
 You will rarely need these three directly, because the answers they give are
 already attached to the responses that would send you looking for them: an empty
@@ -474,8 +489,9 @@ scaffold plan create my-feature            # Create a plan from template
 scaffold plan lint --plan 001              # Validate plan structure
 scaffold plan status                       # Dashboard of all plans
 scaffold plan normalize-status             # Propose a Status line for plans without one
-scaffold inventory init --dry-run          # Preview the system inventory from collectors
-scaffold inventory check                   # Inventory checks INV-001 to INV-010
+scaffold inventory enable --dry-run        # Preview turning on the system inventory
+scaffold inventory check                   # Inventory checks INV-001 to INV-011
+scaffold inventory review                  # Architecture review packet
 scaffold review precedent src/api/auth.py  # Earlier findings and ADRs about a file
 scaffold validate                          # Run all enforcement checks
 scaffold retro                             # Find plans missing retrospectives
@@ -586,7 +602,7 @@ scaffold domains add webapp
 
 Full documentation is in [docs/](https://github.com/drobbster/agentscaffold/tree/staging/docs):
 
-- [Getting Started](https://github.com/drobbster/agentscaffold/blob/staging/docs/getting-started.md) — installation, init, first plan
+- [Getting Started](https://github.com/drobbster/agentscaffold/blob/staging/docs/getting-started.md) — installation, upgrading, init, first plan
 - [User Guide](https://github.com/drobbster/agentscaffold/blob/staging/docs/user-guide.md) — session workflow, knowledge graph, review patterns
 - [CLI Reference](https://github.com/drobbster/agentscaffold/blob/staging/docs/cli-reference.md) — every command, flag, and exit code
 - [Platform Integration](https://github.com/drobbster/agentscaffold/blob/staging/docs/platform-integration.md) — Cursor, Claude Code, Windsurf, Cline, aider, Codex, MCP setup

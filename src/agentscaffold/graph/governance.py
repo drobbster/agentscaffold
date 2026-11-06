@@ -1044,17 +1044,17 @@ def _inventory_source_files(root: Path, config: Any | None) -> list[Path]:
     inventory = getattr(config, "inventory", None) if config is not None else None
     if inventory is None or not getattr(inventory, "enabled", False):
         return []
-    from agentscaffold.inventory.collectors import expand_sources, registered  # noqa: PLC0415
+    from agentscaffold.inventory.derived_file import derived_path  # noqa: PLC0415
+    from agentscaffold.inventory.project import source_files  # noqa: PLC0415
 
     files: list[Path] = []
     path = root / inventory.path
     if path.is_file():
         files.append(path)
-    specs = registered()
-    for collector in inventory.collectors:
-        spec = specs.get(collector.name)
-        globs = list(collector.sources) or (list(spec.default_sources) if spec else [])
-        files.extend(disk for _form, disk in expand_sources(root, globs))
+    derived = derived_path(root, config)
+    if derived.is_file():
+        files.append(derived)
+    files.extend(source_files(root, config))
     return files
 
 

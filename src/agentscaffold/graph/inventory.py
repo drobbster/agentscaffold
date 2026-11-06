@@ -1,6 +1,7 @@
 """System inventory in the graph.
 
-``process_inventory`` writes one ``Component`` node per inventory entry, with
+``process_inventory`` writes one ``Component`` node per effective inventory
+entry (pins over derived values, with ``ownerFrom``/``layerFrom`` provenance), with
 ``OWNED_BY`` to the owning Plan, ``ENTRYPOINT`` to the entrypoint's File, and
 ``READS`` to every indexed File a ``reads`` entry covers. Components are
 derived: each run replaces the project's rows, and they are never exported.
@@ -38,6 +39,9 @@ _COLUMNS: dict[str, str] = {
     "review_by": "reviewBy",
     "exit_criteria": "exitCriteria",
     "replaced_by": "replacedBy",
+    "image": "image",
+    "owner_from": "ownerFrom",
+    "layer_from": "layerFrom",
 }
 
 
@@ -156,6 +160,8 @@ def _summary(row: dict[str, Any], touched: list[str]) -> dict[str, Any]:
         "kind": row.get("kind") or None,
         "lifecycle": row.get("lifecycle") or None,
         "owner_plan": row.get("ownerPlan") or None,
+        "owner_from": row.get("ownerFrom") or None,
+        "layer_from": row.get("layerFrom") or None,
         "review_by": row.get("reviewBy") or None,
         "touched": touched,
     }

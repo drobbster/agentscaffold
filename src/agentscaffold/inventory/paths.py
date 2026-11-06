@@ -1,4 +1,4 @@
-"""Inventory paths (contract v1, Paths section).
+"""Inventory paths (contract v2, Paths section).
 
 A path is relative to the project root, or to the version-control root when it
 starts with ``@repo/``. Absolute paths, ``..`` and a leading ``//``
@@ -54,11 +54,14 @@ def entrypoint_path(entrypoint: str | None) -> str | None:
 
     A command (``uvicorn app:app --port 80``), an image (``postgres:16``) or a
     module (``pkg.cli:main``) is not a path: the part before the colon must
-    contain ``/`` or end in a known file suffix.
+    contain ``/`` or end in a known file suffix. A flag (``-config.file=x.yaml``,
+    a compose ``command`` that only passes arguments to the image) is not a path.
     """
     if not entrypoint or any(ch.isspace() for ch in entrypoint.strip()):
         return None
     head = entrypoint.strip()
+    if head.startswith("-"):
+        return None
     if ":" in head:
         head = head.rsplit(":", 1)[0]
     if "/" in head or Path(head).suffix.lower() in _FILE_SUFFIXES:

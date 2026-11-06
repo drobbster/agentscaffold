@@ -317,6 +317,21 @@ def _inventory_today(today: str | None) -> Any:
 _INVENTORY_TODAY = typer.Option(None, "--today", hidden=True, help="Pin today (YYYY-MM-DD).")
 
 
+@inventory_app.command("enable")
+def inventory_enable(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report each step; write nothing."),
+    today: str | None = _INVENTORY_TODAY,
+) -> None:
+    """Turn the inventory on: config, inventory, derived file, prompt, manual, workflow."""
+    from agentscaffold.inventory.enable import run_enable
+    from agentscaffold.paths import resolve_root
+
+    code = run_enable(
+        resolve_root(), dry_run=dry_run, today=_inventory_today(today), console=console
+    )
+    raise typer.Exit(code=code)
+
+
 @inventory_app.command("init")
 def inventory_init(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the inventory; write nothing."),
@@ -340,9 +355,14 @@ def inventory_init(
 @inventory_app.command("refresh")
 def inventory_refresh(
     dry_run: bool = typer.Option(False, "--dry-run", help="Report changes; write nothing."),
+    pin_derived: bool = typer.Option(
+        False,
+        "--pin-derived",
+        help="Copy derived owner, layer and stage into the inventory as pins (before a downgrade).",
+    ),
     today: str | None = _INVENTORY_TODAY,
 ) -> None:
-    """Add newly collected components and update collector-owned fields."""
+    """Add newly collected components, update collector-owned fields, re-derive owners."""
     from agentscaffold.config import load_config
     from agentscaffold.inventory.commands import run_refresh
     from agentscaffold.paths import resolve_root
@@ -351,6 +371,42 @@ def inventory_refresh(
         resolve_root(),
         load_config(),
         dry_run=dry_run,
+        today=_inventory_today(today),
+        console=console,
+        pin_derived=pin_derived,
+    )
+    if dry_run and code == 0:
+        console.print("[dim]Dry run; nothing written.[/dim]")
+    raise typer.Exit(code=code)
+
+
+@inventory_app.command("review")
+def inventory_review(
+    output: str = typer.Option(
+        "markdown", "--format", "-f", help="Output format: markdown or json."
+    ),
+    record: bool = typer.Option(
+        False, "--record", help="Stamp last_architecture_review with today's date."
+    ),
+    exit_code: bool = typer.Option(
+        False, "--exit-code", help="Exit 1 while lifecycle debt, unresolved owners or errors exist."
+    ),
+    today: str | None = _INVENTORY_TODAY,
+) -> None:
+    """Print the architecture review packet: debt, health, candidates, unresolved owners."""
+    from agentscaffold.config import load_config
+    from agentscaffold.inventory.commands import run_review
+    from agentscaffold.paths import resolve_root
+
+    if output not in ("markdown", "json"):
+        console.print(f"[red]--format must be markdown or json, got {output!r}[/red]")
+        raise typer.Exit(code=2)
+    code = run_review(
+        resolve_root(),
+        load_config(),
+        output=output,
+        record=record,
+        exit_code=exit_code,
         today=_inventory_today(today),
         console=console,
     )
@@ -367,7 +423,7 @@ def inventory_check(
     ),
     today: str | None = _INVENTORY_TODAY,
 ) -> None:
-    """Check the inventory against its collectors and contract (INV-001 to INV-010)."""
+    """Check the inventory against its collectors and contract (INV-001 to INV-011)."""
     from agentscaffold.config import load_config
     from agentscaffold.inventory.commands import read_changed_files, run_check
     from agentscaffold.paths import resolve_root
@@ -2602,6 +2658,34 @@ def _print_tool_probes(context: Any, include_writes: bool) -> bool:
             "Add --include-writes to probe them against a scratch project.[/dim]"
         )
     return bool(counts.get("fail"))
+
+
+@app.command("upgrade")
+def upgrade_command(
+    rewrite_hooks: bool = typer.Option(
+        False,
+        "--rewrite-hooks",
+        hidden=True,
+        help="Regenerate hooks in every registered project and exit.",
+    ),
+) -> None:
+    """Upgrade this install to the latest release and point project hooks at it.
+
+    An exact pin from ``uv tool install agentscaffold==x.y.z`` makes
+    ``uv tool upgrade`` stay on that version. This uses ``uv tool install -U``
+    for a uv tool, ``pipx upgrade`` for pipx, and ``pip install -U`` otherwise,
+    then rewrites each registered project's edit hook.
+    """
+    from agentscaffold.upgrade import perform_upgrade, rewrite_registered_hooks
+
+    if rewrite_hooks:
+        failed = rewrite_registered_hooks()
+        console.print("Restart the MCP server in the editor.")
+        if failed:
+            raise typer.Exit(code=1)
+        return
+    code = perform_upgrade()
+    raise typer.Exit(code=code)
 
 
 @app.command("doctor")

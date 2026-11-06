@@ -1,11 +1,13 @@
-"""``scaffold inventory init`` and ``refresh``.
+"""``scaffold inventory init`` and ``refresh`` edits to the inventory file.
 
 Both work from the collectors. ``init`` writes a new inventory; ``refresh``
-adds entries for newly collected components and updates the collector-derived
-fields (kind, name, source, entrypoint) of existing ones. Neither touches a
+adds entries for newly collected components and updates the collector-owned
+fields (kind, name, source, entrypoint, image) of existing ones. A new entry's
+``since`` comes from git when the caller supplies it. Neither touches a
 human-set field, and both edit text in place so comments survive. An edit that
 cannot be verified by re-reading the result is not written; the caller gets the
-YAML to paste instead.
+YAML to paste instead. Derived owner, layer and stage go to the derived file,
+not here, unless ``--pin-derived`` copies them in as pins.
 
 The ``scaffold.yaml`` edit (adding the manual's Component Lifecycle section to
 the lifecycle step lists) follows the same rule: a targeted text edit, checked by
@@ -23,10 +25,14 @@ from typing import Any
 import yaml
 
 from agentscaffold.inventory.collectors import Collected, CollectionResult
-from agentscaffold.inventory.schema import Inventory, InventoryError, parse_inventory
+from agentscaffold.inventory.derived_file import Derived
+from agentscaffold.inventory.schema import Component, Inventory, InventoryError, parse_inventory
 
 #: Fields a collector owns; refresh may rewrite these and nothing else.
-COLLECTOR_FIELDS: tuple[str, ...] = ("kind", "name", "source", "entrypoint")
+COLLECTOR_FIELDS: tuple[str, ...] = ("kind", "name", "source", "entrypoint", "image")
+#: Collector fields a collector may leave unset; refresh keeps a value it cannot see.
+_OPTIONAL_COLLECTOR_FIELDS = frozenset({"entrypoint", "image"})
+PINNABLE: tuple[str, ...] = ("owner_plan", "layer", "roadmap_stage")
 HUMAN_FIELDS: tuple[str, ...] = (
     "reads",
     "layer",
@@ -48,10 +54,12 @@ SCAFFOLD_LISTS: tuple[tuple[str, ...], ...] = (
 )
 
 _HEADER = """\
-# System inventory: what this project runs, who owns each part, and its lifecycle.
-# Contract: docs/ai/contracts/system_inventory_interface.md (v1).
+# System inventory: what this project runs, and the lifecycle of each part.
 # `scaffold inventory refresh` adds newly collected components and updates
-# kind, name, source and entrypoint. Every other field is yours to set.
+# kind, name, source, entrypoint and image. Owner plan, layer and roadmap stage
+# are derived into the .derived.yaml file next to this one; set one here only
+# to override it. Lifecycle, reason, review_by, exit_criteria, replaced_by and
+# reads are yours to set.
 """
 
 
@@ -62,21 +70,21 @@ def _scalar(value: Any) -> str:
     return lines[0] if lines else "null"
 
 
-def new_entry(component: Collected, today: dt.date) -> dict[str, Any]:
-    """An inventory entry for a collected component; humans fill the rest."""
-    return {
+def new_entry(component: Collected, today: dt.date, since: str | None = None) -> dict[str, Any]:
+    """An inventory entry for a collected component; derivation supplies the owner."""
+    entry: dict[str, Any] = {
         "id": component.id,
         "kind": component.kind,
         "name": component.name,
         "source": component.source,
         "entrypoint": component.entrypoint,
-        "reads": [],
-        "layer": None,
-        "owner_plan": None,
-        "roadmap_stage": None,
-        "lifecycle": "paused" if component.paused else "active",
-        "since": today.isoformat(),
     }
+    if component.image:
+        entry["image"] = component.image
+    entry["reads"] = []
+    entry["lifecycle"] = "paused" if component.paused else "active"
+    entry["since"] = since or today.isoformat()
+    return entry
 
 
 def render_entry(entry: dict[str, Any], indent: int = 2) -> list[str]:
@@ -92,7 +100,6 @@ def render_inventory(entries: list[dict[str, Any]]) -> str:
     body = [
         _HEADER.rstrip("\n"),
         "schema_version: 1",
-        "current_roadmap_stage: null",
         "last_architecture_review: null",
         "review_cadence_days: 30",
     ]
@@ -105,9 +112,15 @@ def render_inventory(entries: list[dict[str, Any]]) -> str:
     return "\n".join(body) + "\n"
 
 
-def init_text(collected: CollectionResult, today: dt.date) -> str:
+def init_text(
+    collected: CollectionResult, today: dt.date, since: dict[str, str] | None = None
+) -> str:
     """A new inventory holding every collected component."""
-    entries = [new_entry(c, today) for c in sorted(collected.components, key=lambda c: c.id)]
+    since = since or {}
+    entries = [
+        new_entry(c, today, since.get(c.id))
+        for c in sorted(collected.components, key=lambda c: c.id)
+    ]
     return render_inventory(entries)
 
 
@@ -251,11 +264,18 @@ def _human_view(inventory: Inventory) -> dict[str, dict[str, Any]]:
     return {c.id: {f: getattr(c, f) for f in HUMAN_FIELDS} for c in inventory.components if c.id}
 
 
-def refresh_text(text: str, collected: CollectionResult, today: dt.date) -> RefreshResult:
+def refresh_text(
+    text: str,
+    collected: CollectionResult,
+    today: dt.date,
+    since: dict[str, str] | None = None,
+) -> RefreshResult:
     """Add new components and update collector fields in *text*, keeping comments.
 
+    *since* maps a new component's id to its derived start date.
     Raises InventoryError when *text* is not a readable inventory.
     """
+    since = since or {}
     before = parse_inventory(text)
     declared = before.by_id()
     found = collected.by_id()
@@ -267,7 +287,7 @@ def refresh_text(text: str, collected: CollectionResult, today: dt.date) -> Refr
             continue
         for key in COLLECTOR_FIELDS:
             new = getattr(comp, key)
-            if key == "entrypoint" and new is None:
+            if key in _OPTIONAL_COLLECTOR_FIELDS and new is None:
                 continue
             if getattr(entry, key) != new:
                 updates.append((cid, key, getattr(entry, key), new))
@@ -275,7 +295,7 @@ def refresh_text(text: str, collected: CollectionResult, today: dt.date) -> Refr
     if not result.changed:
         return result
 
-    entries = [new_entry(c, today) for c in added]
+    entries = [new_entry(c, today, since.get(c.id)) for c in added]
     lines = text.splitlines()
     block = _components_block(lines)
     ok = block is not None
@@ -329,6 +349,79 @@ def _verified(
 def _only(inventory: Inventory, ids: list[str]) -> Inventory:
     keep = set(ids)
     return Inventory(components=[c for c in inventory.components if c.id in keep])
+
+
+def pin_derived_text(text: str, derived: Derived) -> RefreshResult:
+    """Copy derived owner, layer and stage into the inventory as pins.
+
+    Used before downgrading to a release that reads only the inventory file.
+    A value already in the file is kept. Raises InventoryError on an
+    unreadable inventory.
+    """
+    before = parse_inventory(text)
+    updates: list[tuple[str, str, Any, Any]] = []
+    for entry in before.components:
+        found = derived.components.get(entry.id or "")
+        if found is None:
+            continue
+        for key in PINNABLE:
+            value = getattr(found, key)
+            if value and not getattr(entry, key):
+                updates.append((entry.id or "", key, None, value))
+    result = RefreshResult(text=text, updated=updates)
+    if not updates:
+        return result
+    lines = text.splitlines()
+    ok = True
+    for cid, key, _old, new in updates:
+        block = _components_block(lines)
+        span = _entry_span(lines, block[0] + 1, block[1], cid) if block else None
+        if span is None or not _set_field(lines, span, key, new):
+            ok = False
+            break
+    candidate = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+    if ok:
+        try:
+            after = parse_inventory(candidate).by_id()
+        except InventoryError:
+            ok = False
+        else:
+            for cid, key, _old, new in updates:
+                expected = getattr(Component.model_validate({key: new}), key)
+                if getattr(after[cid], key) != expected:
+                    ok = False
+                    break
+    if ok:
+        result.text = candidate
+        return result
+    result.in_place = False
+    result.problem = "the inventory's layout is not one refresh can edit in place"
+    return result
+
+
+def set_top_level(text: str, key: str, value: Any) -> str | None:
+    """Set a top-level scalar in the inventory text; None when the result does not verify."""
+    lines = text.splitlines()
+    pattern = _key_line(key, 0)
+    rendered = f"{key}: {_scalar(value)}"
+    for index, line in enumerate(lines):
+        if pattern.match(line):
+            lines[index] = rendered
+            break
+    else:
+        anchor = next(
+            (i for i, line in enumerate(lines) if _key_line("schema_version", 0).match(line)), None
+        )
+        lines.insert(anchor + 1 if anchor is not None else 0, rendered)
+    candidate = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+    try:
+        loaded = yaml.safe_load(candidate) or {}
+        before = yaml.safe_load(text) or {}
+    except yaml.YAMLError:
+        return None
+    expected = dict(before)
+    expected[key] = yaml.safe_load(_scalar(value))
+    return candidate if loaded == expected else None
 
 
 # ---------------------------------------------------------------------------
