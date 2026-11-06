@@ -140,3 +140,20 @@ def test_ci_template_runs_the_inventory_check_when_enabled() -> None:
     assert changed["if"] == "github.event_name == 'pull_request'"
     assert "origin/${{ github.base_ref }}" in changed["run"]
     assert "scaffold inventory check --changed-files -" in changed["run"]
+
+
+def test_ci_template_renders_each_inventory_step_once() -> None:
+    """A dict keyed by step name hides duplicates, so count the raw list."""
+    import yaml
+
+    from agentscaffold.config import ScaffoldConfig
+    from agentscaffold.rendering import get_default_context, render_template
+
+    config = ScaffoldConfig()
+    config.inventory.enabled = True
+    text = render_template("ci/github_ci.yml.j2", get_default_context(config))
+    steps = yaml.safe_load(text)["jobs"]["test"]["steps"]
+    names = [s["name"] for s in steps if "name" in s]
+    assert names.count("System inventory") == 1
+    assert names.count("Paused or deprecated components changed (INV-008)") == 1
+    assert len(names) == len(set(names))
