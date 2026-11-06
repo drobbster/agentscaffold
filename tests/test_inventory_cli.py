@@ -62,7 +62,8 @@ def test_check_text_lists_findings_and_summary(runner: CliRunner, project: Path)
     result = runner.invoke(app, ["inventory", "check", *TODAY])
     assert result.exit_code == 0
     assert "INV-004" in result.output
-    assert "10 components" in result.output
+    assert "INV-011" in result.output
+    assert "12 components" in result.output
     assert "mode: warn" in result.output
 
 
@@ -202,6 +203,111 @@ def test_refresh_adds_new_components(runner: CliRunner, fresh: Path) -> None:
     assert result.exit_code == 0
     assert "compose:cache" in path.read_text()
     assert "up to date" in runner.invoke(app, ["inventory", "refresh"]).output
+
+
+DERIVED = Path("docs") / "ai" / "system_inventory.derived.yaml"
+LABELLED = (
+    "services:\n  db:\n    image: postgres:16\n    labels:\n"
+    "      agentscaffold.owner_plan: '12'\n      agentscaffold.layer: '2'\n"
+)
+
+
+def test_init_writes_the_derived_file_and_reports_coverage(runner: CliRunner, fresh: Path) -> None:
+    (fresh / "compose.yaml").write_text(LABELLED)
+    result = runner.invoke(app, ["inventory", "init", *TODAY])
+    assert result.exit_code == 0, result.output
+    assert "owner_plan: 1/1 derived (annotation 1)" in result.output
+    derived = yaml.safe_load((fresh / DERIVED).read_text())
+    assert derived["components"]["compose:db"]["owner_plan"] == "12"
+    inventory = (fresh / "docs" / "ai" / "system_inventory.yaml").read_text()
+    assert "owner_plan" not in inventory
+
+    check = runner.invoke(app, ["inventory", "check", "--format", "json", *TODAY])
+    data = _json(check.output)
+    assert not [f for f in data["findings"] if f["id"] in ("INV-003", "INV-011")]
+    assert not [n for n in data.get("notices", []) if n["kind"] == "derived_file"]
+
+
+def test_init_dry_run_writes_no_derived_file(runner: CliRunner, fresh: Path) -> None:
+    result = runner.invoke(app, ["inventory", "init", "--dry-run", *TODAY])
+    assert result.exit_code == 0
+    assert "Would write docs/ai/system_inventory.derived.yaml" in result.output
+    assert not (fresh / DERIVED).exists()
+
+
+def test_refresh_rederives_and_leaves_an_unchanged_derived_file_alone(
+    runner: CliRunner, fresh: Path
+) -> None:
+    runner.invoke(app, ["inventory", "init", *TODAY])
+    assert "owner_plan" not in (fresh / DERIVED).read_text()
+    (fresh / "compose.yaml").write_text(LABELLED)
+    result = runner.invoke(app, ["inventory", "refresh", "--today", "2026-11-06"])
+    assert result.exit_code == 0, result.output
+    text = (fresh / DERIVED).read_text()
+    assert "owner_plan: '12'" in text and "2026-11-06" in text
+    again = runner.invoke(app, ["inventory", "refresh", "--today", "2026-11-07"])
+    assert "is up to date" in again.output
+    assert (fresh / DERIVED).read_text() == text
+
+
+def test_refresh_pin_derived_copies_values_into_the_inventory(
+    runner: CliRunner, fresh: Path
+) -> None:
+    (fresh / "compose.yaml").write_text(LABELLED)
+    runner.invoke(app, ["inventory", "init", *TODAY])
+    result = runner.invoke(app, ["inventory", "refresh", "--pin-derived", *TODAY])
+    assert result.exit_code == 0, result.output
+    assert "Pinned 2 derived values" in result.output
+    entry = yaml.safe_load((fresh / "docs" / "ai" / "system_inventory.yaml").read_text())
+    (db,) = entry["components"]
+    assert (db["owner_plan"], db["layer"]) == ("12", "2")
+
+
+def test_init_dates_since_from_git(runner: CliRunner, fresh: Path) -> None:
+    import subprocess
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", "-C", str(fresh), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+            check=True,
+            capture_output=True,
+        )
+
+    git("init", "-q")
+    git("add", "compose.yaml")
+    git("commit", "-q", "-m", "add db", "--date=2026-02-03T10:00:00")
+    runner.invoke(app, ["inventory", "init", *TODAY])
+    data = yaml.safe_load((fresh / "docs" / "ai" / "system_inventory.yaml").read_text())
+    assert data["components"][0]["since"] == "2026-02-03"
+
+
+def test_a_v1_inventory_upgrades_with_no_config_change(runner: CliRunner, fresh: Path) -> None:
+    """Fully pinned, no derived file, no new scaffold.yaml keys: checks stay clean."""
+    path = fresh / "docs" / "ai" / "system_inventory.yaml"
+    path.parent.mkdir(parents=True)
+    v1 = (
+        "schema_version: 1\ncurrent_roadmap_stage: '2'\nlast_architecture_review: 2026-11-01\n"
+        "review_cadence_days: 30\ncomponents:\n"
+        "  - id: compose:db\n    kind: service\n    name: db\n    source: compose.yaml\n"
+        "    entrypoint: postgres\n    layer: '1'\n    owner_plan: '5'\n"
+        "    roadmap_stage: '1'\n    lifecycle: active\n    since: 2026-01-01\n"
+    )
+    path.write_text(v1)
+    plans = fresh / "docs" / "ai" / "plans"
+    plans.mkdir()
+    (plans / "005-db.md").write_text("# Plan 5\n\n- Status: Complete\n")
+
+    before = _json(runner.invoke(app, ["inventory", "check", "--format", "json", *TODAY]).output)
+    assert before["findings"] == []
+    assert [n["kind"] for n in before["notices"]] == ["derived_file"]
+
+    assert runner.invoke(app, ["inventory", "refresh", *TODAY]).exit_code == 0
+    (db,) = yaml.safe_load(path.read_text())["components"]
+    assert (db["owner_plan"], db["layer"], db["roadmap_stage"]) == ("5", "1", "1")
+    assert db["image"] == "postgres:16"
+    after = _json(runner.invoke(app, ["inventory", "check", "--format", "json", *TODAY]).output)
+    assert after["findings"] == []
+    assert "notices" not in after
 
 
 def test_refresh_without_an_inventory_exits_two(runner: CliRunner, fresh: Path) -> None:

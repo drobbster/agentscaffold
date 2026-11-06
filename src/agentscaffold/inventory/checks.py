@@ -1,8 +1,13 @@
-"""INV-001..INV-010 (contract v1, Checks) and enforcement.
+"""INV-001..INV-011 (contract v2, Checks) and enforcement.
 
-Severity is part of a check's meaning: INV-007 to INV-009 are warnings, the
-rest are errors. The mode decides only the exit code: ``warn`` always exits 0;
-``fail`` exits non-zero when an error is present.
+Severity is part of a check's meaning: INV-007 and INV-008 are warnings;
+INV-009 is a warning unless ``review_overdue: error``; INV-011 is a warning
+until ``mapping_strict_after`` has passed; the rest are errors. The mode
+decides only the exit code: ``warn`` always exits 0; ``fail`` exits non-zero
+when an error is present.
+
+Checks read the effective inventory (pins, then derived values), so
+``owner_plan``, ``layer`` and ``roadmap_stage`` are never INV-003 fields.
 """
 
 from __future__ import annotations
@@ -19,22 +24,17 @@ from agentscaffold.inventory import paths as inv_paths
 from agentscaffold.inventory.collectors import CollectionResult
 from agentscaffold.inventory.schema import DORMANT, LIFECYCLES, Component, Inventory
 
-WARNING_CHECKS = frozenset({"INV-007", "INV-008", "INV-009"})
+#: Checks that are warnings by default; INV-009 and INV-011 can be raised to errors.
+WARNING_CHECKS = frozenset({"INV-007", "INV-008", "INV-009", "INV-011"})
 _ID = re.compile(r"^([a-z][a-z0-9_]*):(\S+)$")
 _PLAN_FILE = re.compile(r"^(\d+)[-_.]")
-_ALWAYS_REQUIRED = (
-    "id",
-    "kind",
-    "name",
-    "layer",
-    "owner_plan",
-    "roadmap_stage",
-    "lifecycle",
-    "since",
-)
+_ALWAYS_REQUIRED = ("id", "kind", "name", "lifecycle", "since")
 _EXPLAINED = frozenset({"experimental", "paused", "deprecated"})
 _EXIT_CRITERIA = frozenset({"experimental", "paused"})
 _ENTRYPOINT_KINDS = frozenset({"scheduled_job", "manual_job", "service", "app"})
+#: Kinds whose container image stands in for an entrypoint.
+_IMAGE_KINDS = frozenset({"service"})
+_MAPPED = ("owner_plan", "layer")
 
 
 @dataclass
@@ -50,8 +50,21 @@ class Finding:
         return asdict(self)
 
 
-def _finding(check: str, component: str | None, message: str) -> Finding:
-    return Finding(check, "warning" if check in WARNING_CHECKS else "error", component, message)
+def _finding(
+    check: str, component: str | None, message: str, *, error: bool | None = None
+) -> Finding:
+    if error is None:
+        error = check not in WARNING_CHECKS
+    return Finding(check, "error" if error else "warning", component, message)
+
+
+def _past(date_text: str | None, today: dt.date) -> bool:
+    if not date_text:
+        return False
+    try:
+        return today > dt.date.fromisoformat(date_text[:10])
+    except ValueError:
+        return False
 
 
 def effective_mode(enforcement: str, warn_until: str | None, today: dt.date) -> str:
@@ -110,7 +123,10 @@ def _missing_fields(component: Component, collected_kinds: set[str]) -> list[str
     if component.kind in collected_kinds and not component.source:
         missing.append("source")
     if component.kind in _ENTRYPOINT_KINDS and not component.entrypoint:
-        missing.append("entrypoint")
+        if component.kind not in _IMAGE_KINDS:
+            missing.append("entrypoint")
+        elif not component.image:
+            missing.append("entrypoint or image")
     if lifecycle in _EXPLAINED:
         missing += [f for f in ("reason", "review_by") if not getattr(component, f)]
     if lifecycle in _EXIT_CRITERIA and not component.exit_criteria:
@@ -147,8 +163,10 @@ def run_checks(
     plans_dir: Path,
     today: dt.date,
     changed_files: Iterable[str] | None = None,
+    review_overdue: str = "warn",
+    mapping_strict_after: str | None = None,
 ) -> list[Finding]:
-    """Every finding for *inventory*, in check order."""
+    """Every finding for the effective *inventory*, in check order."""
     findings: list[Finding] = []
     declared = inventory.by_id()
     found = collected.by_id()
@@ -214,9 +232,30 @@ def run_checks(
     if changed_files is not None:
         findings.extend(changed_file_findings(inventory, changed_files, root=root))
 
-    findings.extend(_review_cadence(inventory, today))
+    findings.extend(_review_cadence(inventory, today, error=review_overdue == "error"))
     findings.extend(_ids(inventory))
+    findings.extend(_unmapped(inventory, error=_past(mapping_strict_after, today)))
     return findings
+
+
+def _unmapped(inventory: Inventory, *, error: bool) -> list[Finding]:
+    """INV-011: an effective owner plan or layer is unresolved."""
+    out: list[Finding] = []
+    for entry in inventory.components:
+        missing = [f for f in _MAPPED if not getattr(entry, f)]
+        if not missing or not entry.id:
+            continue
+        where = f"an agentscaffold annotation in {entry.source}" if entry.source else None
+        fix = f"{where} or a pin in the inventory" if where else "a pin in the inventory"
+        out.append(
+            _finding(
+                "INV-011",
+                entry.id,
+                f"{' and '.join(missing)} unresolved; add {fix}",
+                error=error,
+            )
+        )
+    return out
 
 
 def _duplicate_jobs(inventory: Inventory, found: dict[str, Any]) -> list[Finding]:
@@ -284,21 +323,27 @@ def changed_file_findings(
     ]
 
 
-def _review_cadence(inventory: Inventory, today: dt.date) -> list[Finding]:
+def _review_cadence(inventory: Inventory, today: dt.date, *, error: bool) -> list[Finding]:
     """INV-009: the architecture review is overdue by more than five days."""
     last = inventory.last_review_date
     limit = inventory.review_cadence_days + 5
     if last is None:
-        return [_finding("INV-009", None, "last_architecture_review is not recorded")]
+        return [_finding("INV-009", None, "last_architecture_review is not recorded", error=error)]
     if (today - last).days > limit:
         return [
             _finding(
                 "INV-009",
                 None,
                 f"last_architecture_review {last} is older than {limit} days",
+                error=error,
             )
         ]
     return []
+
+
+def review_due(inventory: Inventory, today: dt.date) -> bool:
+    """True when INV-009 would fire."""
+    return bool(_review_cadence(inventory, today, error=False))
 
 
 def _ids(inventory: Inventory) -> list[Finding]:

@@ -129,6 +129,72 @@ def test_repo_source_in_a_monorepo(tmp_path: Path) -> None:
     assert job.entrypoint == "@repo/deploy/flows/j.py:j"
 
 
+def test_compose_records_image_and_falls_back_to_entrypoint_then_dockerfile() -> None:
+    text = """
+services:
+  cache: {image: fixture/cache:7}
+  web:
+    entrypoint: ["gunicorn", "app:wsgi"]
+  builder:
+    build: {context: ./svc, dockerfile: Dockerfile.prod}
+  short:
+    build: ./other
+  remote:
+    build: https://example.com/repo.git
+"""
+    found = {c.id: c for c in read_compose("deploy/compose.yaml", text)}
+    assert found["compose:cache"].image == "fixture/cache:7"
+    assert found["compose:cache"].entrypoint is None
+    assert found["compose:web"].entrypoint == "gunicorn app:wsgi"
+    assert found["compose:builder"].entrypoint == "deploy/svc/Dockerfile.prod"
+    assert found["compose:short"].entrypoint == "deploy/other/Dockerfile"
+    assert found["compose:remote"].entrypoint is None
+
+
+def test_default_sources_find_nested_files(tmp_path: Path) -> None:
+    nested = tmp_path / "services" / "ingest"
+    nested.mkdir(parents=True)
+    (nested / "docker-compose.prod.yml").write_text("services:\n  a: {image: x}\n")
+    (tmp_path / "pipelines").mkdir()
+    (tmp_path / "pipelines" / "prefect.yaml").write_text(
+        "deployments:\n  - name: j\n    entrypoint: flows/j.py:j\n"
+    )
+    result = collect(tmp_path, [("compose", []), ("prefect", [])])
+    assert sorted(c.id for c in result.components) == ["compose:a", "prefect:j"]
+    assert result.sources_by_collector["compose"] == ["services/ingest/docker-compose.prod.yml"]
+    (job,) = [c for c in result.components if c.id == "prefect:j"]
+    assert job.entrypoint == "pipelines/flows/j.py:j"
+
+
+def test_default_sources_skip_ignored_directories(tmp_path: Path) -> None:
+    for skipped in ("node_modules/pkg", ".venv/lib", "build/out"):
+        directory = tmp_path / skipped
+        directory.mkdir(parents=True)
+        (directory / "compose.yaml").write_text("services:\n  hidden: {image: x}\n")
+    (tmp_path / ".gitignore").write_text("build/\n")
+    result = collect(tmp_path, [("compose", [])])
+    assert result.components == []
+
+
+def test_an_anchored_glob_does_not_search_nested_directories(tmp_path: Path) -> None:
+    (tmp_path / "a" / "b").mkdir(parents=True)
+    (tmp_path / "a" / "b" / "compose.yaml").write_text("services:\n  x: {image: x}\n")
+    assert collect(tmp_path, [("compose", ["compose.yaml"])]).components == []
+    assert [c.id for c in collect(tmp_path, [("compose", ["a/**/compose.yaml"])]).components] == [
+        "compose:x"
+    ]
+
+
+def test_collectors_that_find_nothing_leave_a_notice(tmp_path: Path) -> None:
+    (tmp_path / "compose.yaml").write_text("services: {}\n")
+    result = collect(tmp_path, [("compose", []), ("prefect", [])])
+    assert any(
+        "collector compose read 1 file(s) but found no components" in n for n in result.notices
+    )
+    assert any(n.startswith("collector prefect matched no files") for n in result.notices)
+    assert result.problems == []
+
+
 def test_register_collector_validates_the_name() -> None:
     with pytest.raises(ValueError):
         collectors.register_collector("Bad-Name", {"x"}, [], lambda s, t: [])

@@ -340,9 +340,14 @@ def inventory_init(
 @inventory_app.command("refresh")
 def inventory_refresh(
     dry_run: bool = typer.Option(False, "--dry-run", help="Report changes; write nothing."),
+    pin_derived: bool = typer.Option(
+        False,
+        "--pin-derived",
+        help="Copy derived owner, layer and stage into the inventory as pins (before a downgrade).",
+    ),
     today: str | None = _INVENTORY_TODAY,
 ) -> None:
-    """Add newly collected components and update collector-owned fields."""
+    """Add newly collected components, update collector-owned fields, re-derive owners."""
     from agentscaffold.config import load_config
     from agentscaffold.inventory.commands import run_refresh
     from agentscaffold.paths import resolve_root
@@ -353,6 +358,7 @@ def inventory_refresh(
         dry_run=dry_run,
         today=_inventory_today(today),
         console=console,
+        pin_derived=pin_derived,
     )
     raise typer.Exit(code=code)
 
@@ -367,7 +373,7 @@ def inventory_check(
     ),
     today: str | None = _INVENTORY_TODAY,
 ) -> None:
-    """Check the inventory against its collectors and contract (INV-001 to INV-010)."""
+    """Check the inventory against its collectors and contract (INV-001 to INV-011)."""
     from agentscaffold.config import load_config
     from agentscaffold.inventory.commands import read_changed_files, run_check
     from agentscaffold.paths import resolve_root

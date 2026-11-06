@@ -1,4 +1,4 @@
-"""Inventory paths (contract v1, Paths section).
+"""Inventory paths (contract v2, Paths section).
 
 A path is relative to the project root, or to the version-control root when it
 starts with ``@repo/``. Absolute paths, ``..`` and a leading ``//``

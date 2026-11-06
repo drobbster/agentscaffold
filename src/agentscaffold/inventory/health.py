@@ -1,4 +1,4 @@
-"""Optional runtime health snapshot (contract v1, Health snapshot).
+"""Optional runtime health snapshot (contract v2, Health snapshot).
 
 The checker never calls a runtime. A project may write a JSON snapshot; this
 module reads it as untrusted input (size-capped and schema-validated; anything

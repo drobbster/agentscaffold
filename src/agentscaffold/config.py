@@ -770,23 +770,40 @@ def _default_collectors() -> list[InventoryCollectorConfig]:
     ]
 
 
+class InventoryRoadmapConfig(BaseModel):
+    """The roadmap document whose Stage / Gate met table gives the current stage."""
+
+    path: str | None = None
+
+
 class InventoryConfig(BaseModel):
-    """The system inventory check (contract ``system_inventory_interface`` v1).
+    """The system inventory check (contract ``system_inventory_interface`` v2).
 
     Off unless ``scaffold.yaml`` has an ``inventory:`` block that enables it,
     so an upgrade changes nothing. ``enforcement: warn`` reports and exits 0;
-    ``fail`` exits non-zero on INV-001 to INV-006 and INV-010. Once
-    ``warn_until`` has passed, ``warn`` behaves as ``fail``. Plan lint applies
-    the inventory plan fields to plans created on or after
-    ``plan_adoption_date``. ``broad_reads_share`` is the share of indexed files
-    above which a ``reads`` entry draws a warning.
+    ``fail`` exits non-zero on errors. Once ``warn_until`` has passed, ``warn``
+    behaves as ``fail``. Plan lint applies the inventory plan fields to plans
+    created on or after ``plan_adoption_date``. ``broad_reads_share`` is the
+    share of indexed files above which a ``reads`` entry draws a warning.
+
+    Derived values (owner plan, layer, roadmap stage) live in ``derived_path``
+    (default: the inventory path with ``.derived.yaml``). ``review_overdue``
+    sets INV-009's severity; after ``mapping_strict_after`` an unresolved owner
+    or layer (INV-011) is an error. ``layer_paths`` maps a layer id to globs
+    and ``kind_layers`` a kind to a layer, both for layer derivation.
     """
 
     enabled: bool = False
     path: str = "docs/ai/system_inventory.yaml"
+    derived_path: str | None = None
     collectors: list[InventoryCollectorConfig] = Field(default_factory=_default_collectors)
     enforcement: Literal["warn", "fail"] = "warn"
     warn_until: str | None = None
+    review_overdue: Literal["warn", "error"] = "warn"
+    mapping_strict_after: str | None = None
+    roadmap: InventoryRoadmapConfig = Field(default_factory=InventoryRoadmapConfig)
+    layer_paths: dict[str, list[str]] = Field(default_factory=dict)
+    kind_layers: dict[str, str] = Field(default_factory=dict)
     health_snapshot: str = "outputs/governance/inventory_health.json"
     health_max_bytes: int = Field(default=1_000_000, ge=1)
     failing_days: int = Field(default=14, ge=1)
@@ -803,7 +820,24 @@ class InventoryConfig(BaseModel):
             return [{"name": item} if isinstance(item, str) else item for item in value]
         return value
 
-    @field_validator("warn_until", "plan_adoption_date", mode="before")
+    @field_validator("layer_paths", mode="before")
+    @classmethod
+    def _layer_globs(cls, value: Any) -> Any:
+        """Accept one glob as a string; layer ids are strings."""
+        if isinstance(value, dict):
+            return {
+                str(k): [v] if isinstance(v, str) else list(v or []) for k, v in value.items()
+            }
+        return value
+
+    @field_validator("kind_layers", mode="before")
+    @classmethod
+    def _kind_layer_ids(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {str(k): str(v) for k, v in value.items()}
+        return value
+
+    @field_validator("warn_until", "plan_adoption_date", "mapping_strict_after", mode="before")
     @classmethod
     def _iso_date(cls, value: Any) -> Any:
         if value is None or value == "":

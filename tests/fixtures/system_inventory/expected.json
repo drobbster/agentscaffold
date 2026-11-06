@@ -1,7 +1,7 @@
 {
   "today": "2026-11-05",
   "project": "project",
-  "summary": {"components": 10, "errors": 9, "warnings": 2},
+  "summary": {"components": 12, "errors": 9, "warnings": 3},
   "findings": [
     {"id": "INV-001", "severity": "error", "component": "prefect:unlisted-report"},
     {"id": "INV-002", "severity": "error", "component": "prefect:retired-sync"},
@@ -13,8 +13,21 @@
     {"id": "INV-007", "severity": "warning", "component": "compose:api"},
     {"id": "INV-009", "severity": "warning", "component": null},
     {"id": "INV-010", "severity": "error", "component": "config:risk-limits"},
-    {"id": "INV-010", "severity": "error", "component": "model:ranker"}
+    {"id": "INV-010", "severity": "error", "component": "model:ranker"},
+    {"id": "INV-011", "severity": "warning", "component": "compose:sidecar"}
   ],
+  "effective": {
+    "compose:api": {"owner_plan": "150", "owner_from": "pin", "layer_from": "pin"},
+    "compose:cache": {
+      "owner_plan": "150",
+      "owner_from": "file_impact_map_create",
+      "layer": "5",
+      "layer_from": "owner_plan",
+      "roadmap_stage": "3",
+      "roadmap_stage_from": "owner_plan"
+    },
+    "compose:sidecar": {"owner_plan": null, "owner_from": null, "layer": null}
+  },
   "changed_files": [
     "configs/training/lr.yaml",
     "flows/weekly.py",

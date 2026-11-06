@@ -1,6 +1,7 @@
-# Synthetic system inventory for the conformance fixtures (contract v1).
+# Synthetic system inventory for the conformance fixtures (contract v2).
 # Each entry is shaped to trigger, or to stay clear of, specific checks;
 # expected.json lists the findings. Today is fixed at 2026-11-05.
+# system_inventory.derived.yaml beside it supplies unpinned owners and layers.
 schema_version: 1
 current_roadmap_stage: "3"
 last_architecture_review: 2026-09-01 # 65 days before today: INV-009
@@ -102,6 +103,25 @@ components:
     since: 2026-10-01
     reason: Trying a queue-based worker
     review_by: 2026-12-01
+
+  # Image only, nothing pinned: owner, layer and stage come from the derived
+  # file, and an image satisfies INV-003 for a service.
+  - id: compose:cache
+    kind: service
+    name: cache
+    source: compose.yaml
+    image: fixture/cache:7
+    lifecycle: active
+    since: 2026-10-20
+
+  # Nothing pinned and nothing derived (INV-011).
+  - id: compose:sidecar
+    kind: service
+    name: sidecar
+    source: compose.yaml
+    image: fixture/sidecar:latest
+    lifecycle: active
+    since: 2026-10-20
 
   # Listed twice (INV-010).
   - id: config:risk-limits
