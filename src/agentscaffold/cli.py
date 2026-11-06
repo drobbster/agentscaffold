@@ -317,6 +317,21 @@ def _inventory_today(today: str | None) -> Any:
 _INVENTORY_TODAY = typer.Option(None, "--today", hidden=True, help="Pin today (YYYY-MM-DD).")
 
 
+@inventory_app.command("enable")
+def inventory_enable(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report each step; write nothing."),
+    today: str | None = _INVENTORY_TODAY,
+) -> None:
+    """Turn the inventory on: config, inventory, derived file, prompt, manual, workflow."""
+    from agentscaffold.inventory.enable import run_enable
+    from agentscaffold.paths import resolve_root
+
+    code = run_enable(
+        resolve_root(), dry_run=dry_run, today=_inventory_today(today), console=console
+    )
+    raise typer.Exit(code=code)
+
+
 @inventory_app.command("init")
 def inventory_init(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the inventory; write nothing."),
