@@ -639,6 +639,12 @@ def _tool_specs() -> list[ToolSpec]:
                         "type": "string",
                         "description": "Component id for mode=component, e.g. 'compose:api'",
                     },
+                    "detail": {
+                        "type": "string",
+                        "enum": ["summary", "full"],
+                        "description": "summary (default) caps review lists; full returns all",
+                        "default": "summary",
+                    },
                     "project": _SCOPE_PROPS["project"],
                 },
             },

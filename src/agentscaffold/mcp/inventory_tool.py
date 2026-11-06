@@ -11,10 +11,16 @@ from __future__ import annotations
 
 import datetime as dt
 import difflib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 MODES = ("check", "review", "component")
+ENABLE_HINT = "The inventory is off; run `scaffold inventory enable` to turn it on."
+
+#: Items per packet list under ``detail=summary``; ``counts`` keeps the totals.
+SUMMARY_CAP = 10
+_PACKET_LISTS = ("duplicates", "unreferenced", "unresolved")
 
 #: Effective field -> the field naming its source.
 _PROVENANCE = {
@@ -38,8 +44,14 @@ _FIELDS = (
     "touched_by",
 )
 
+GovernanceLookup = Callable[[str], dict[str, Any] | None]
 
-def _component(report: Any, component_id: str) -> dict[str, Any]:
+
+def _component(
+    report: Any, component_id: str, root: Path, governance: GovernanceLookup | None
+) -> dict[str, Any]:
+    from agentscaffold.inventory import paths as inv_paths  # noqa: PLC0415
+
     by_id = {c.id: c for c in report.inventory.components if c.id}
     entry = by_id.get(component_id)
     if entry is None:
@@ -48,17 +60,36 @@ def _component(report: Any, component_id: str) -> dict[str, Any]:
             "component_id": component_id,
             "suggestions": difflib.get_close_matches(component_id, list(by_id), n=5, cutoff=0.4),
         }
-    effective = {
-        name: {"value": getattr(entry, name), "from": getattr(entry, source)}
-        for name, source in _PROVENANCE.items()
-    }
-    return {
+    out: dict[str, Any] = {
         "found": True,
-        "component_id": component_id,
+        "component": component_id,
         **{name: getattr(entry, name) for name in _FIELDS},
-        "effective": effective,
+        "fields": {
+            name: {"value": getattr(entry, name), "from": getattr(entry, source)}
+            for name, source in _PROVENANCE.items()
+        },
         "findings": [f.to_dict() for f in report.findings if f.component == component_id],
     }
+    target = inv_paths.entrypoint_path(entry.entrypoint)
+    graph_target = inv_paths.graph_path(root, target) if target else None
+    if governance is not None and graph_target:
+        out["governance"] = governance(graph_target) or {}
+    return out
+
+
+def _review(root: Path, config: Any, today: dt.date, store: Any, detail: str) -> dict[str, Any]:
+    from agentscaffold.inventory.review import build_packet, render_markdown  # noqa: PLC0415
+
+    packet = build_packet(root, config, today=today, store=store)
+    markdown = render_markdown(packet)
+    if detail != "full":
+        counts = {key: len(packet[key]) for key in _PACKET_LISTS}
+        packet = {
+            **packet,
+            **{key: packet[key][:SUMMARY_CAP] for key in _PACKET_LISTS},
+            "counts": counts,
+        }
+    return {**packet, "markdown": markdown}
 
 
 def inventory_tool(
@@ -68,30 +99,27 @@ def inventory_tool(
     *,
     store: Any = None,
     today: dt.date | None = None,
+    governance: GovernanceLookup | None = None,
 ) -> dict[str, Any]:
-    """Answer one ``scaffold_inventory`` call; never writes."""
+    """Answer one ``scaffold_inventory`` call; never writes.
+
+    *governance* maps a graph file path to its governance facts (findings,
+    learnings, ADRs, contracts); component mode applies it to the entrypoint.
+    """
     from agentscaffold.inventory.project import check_project  # noqa: PLC0415
     from agentscaffold.inventory.schema import InventoryError  # noqa: PLC0415
 
     inv_cfg = getattr(config, "inventory", None)
     if inv_cfg is None or not inv_cfg.enabled:
-        return {
-            "enabled": False,
-            "reason": "inventory.enabled is false; run `scaffold inventory enable`",
-        }
+        return {"enabled": False, "hint": ENABLE_HINT}
     mode = str(arguments.get("mode") or "check").strip().lower()
     if mode not in MODES:
         return {"error": f"mode must be one of {', '.join(MODES)}, got {mode!r}"}
+    detail = str(arguments.get("detail") or "summary").strip().lower()
     today = today or dt.date.today()
     try:
         if mode == "review":
-            from agentscaffold.inventory.review import build_packet  # noqa: PLC0415
-
-            return {
-                "enabled": True,
-                "view": mode,
-                **build_packet(root, config, today=today, store=store),
-            }
+            return {"enabled": True, "view": mode, **_review(root, config, today, store, detail)}
         report = check_project(root, config, today=today)
     except InventoryError as exc:
         return {
@@ -106,7 +134,11 @@ def inventory_tool(
     component_id = str(arguments.get("component_id") or "").strip()
     if not component_id:
         return {"error": "mode 'component' needs component_id (for example 'compose:api')"}
-    return {"enabled": True, "view": mode, **_component(report, component_id)}
+    return {
+        "enabled": True,
+        "view": mode,
+        **_component(report, component_id, Path(root), governance),
+    }
 
 
-__all__ = ["MODES", "inventory_tool"]
+__all__ = ["ENABLE_HINT", "MODES", "SUMMARY_CAP", "inventory_tool"]

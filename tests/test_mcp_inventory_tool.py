@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from agentscaffold.config import ScaffoldConfig, load_config
-from agentscaffold.mcp.inventory_tool import inventory_tool
+from agentscaffold.mcp.inventory_tool import ENABLE_HINT, SUMMARY_CAP, inventory_tool
 
 FIXTURES = Path(__file__).parent / "fixtures" / "system_inventory"
 TODAY = dt.date(2026, 11, 5)
@@ -29,10 +29,8 @@ def _call(project: tuple[Path, ScaffoldConfig], **arguments: object) -> dict:
 
 def test_disabled_inventory_says_how_to_enable(tmp_path: Path) -> None:
     result = inventory_tool({}, tmp_path, ScaffoldConfig())
-    assert result == {
-        "enabled": False,
-        "reason": "inventory.enabled is false; run `scaffold inventory enable`",
-    }
+    assert result == {"enabled": False, "hint": ENABLE_HINT}
+    assert "scaffold inventory enable" in ENABLE_HINT
 
 
 def test_check_is_the_contract_json(project: tuple[Path, ScaffoldConfig]) -> None:
@@ -56,18 +54,19 @@ def test_component_shows_effective_values_with_provenance(
 ) -> None:
     derived = _call(project, mode="component", component_id="compose:cache")
     assert derived["found"] is True
+    assert derived["component"] == "compose:cache"
     assert derived["image"] == "fixture/cache:7"
-    assert derived["effective"]["owner_plan"] == {
+    assert derived["fields"]["owner_plan"] == {
         "value": "150",
         "from": "file_impact_map_create",
     }
-    assert derived["effective"]["layer"]["from"] == "owner_plan"
+    assert derived["fields"]["layer"]["from"] == "owner_plan"
 
     pinned = _call(project, mode="component", component_id="compose:api")
-    assert pinned["effective"]["owner_plan"] == {"value": "150", "from": "pin"}
+    assert pinned["fields"]["owner_plan"] == {"value": "150", "from": "pin"}
 
     unresolved = _call(project, mode="component", component_id="compose:sidecar")
-    assert unresolved["effective"]["owner_plan"] == {"value": None, "from": None}
+    assert unresolved["fields"]["owner_plan"] == {"value": None, "from": None}
     assert [f["id"] for f in unresolved["findings"]] == ["INV-011"]
 
 
@@ -116,3 +115,45 @@ def test_the_tool_is_advertised_read_only() -> None:
     assert spec.input_schema["properties"]["mode"]["enum"] == ["check", "review", "component"]
     assert "working_path" in spec.input_schema["properties"]
     assert "scaffold_inventory" not in WRITE_TOOLS
+
+
+def test_review_carries_markdown_and_caps_lists_in_summary(
+    project: tuple[Path, ScaffoldConfig],
+) -> None:
+    summary = _call(project, mode="review")
+    assert summary["markdown"].startswith("# System inventory review, 2026-11-05")
+    for key in ("duplicates", "unreferenced", "unresolved"):
+        assert len(summary[key]) <= SUMMARY_CAP
+    full = _call(project, mode="review", detail="full")
+    assert "counts" not in full
+    assert summary["counts"]["unreferenced"] == len(full["unreferenced"])
+
+
+def test_component_governance_comes_from_the_entrypoint_file(
+    project: tuple[Path, ScaffoldConfig],
+) -> None:
+    root, config = project
+    asked: list[str] = []
+
+    def lookup(target: str) -> dict:
+        asked.append(target)
+        return {"adrs": [{"id": "ADR-001"}]}
+
+    result = inventory_tool(
+        {"mode": "component", "component_id": "prefect:nightly-ingest"},
+        root,
+        config,
+        today=TODAY,
+        governance=lookup,
+    )
+    assert asked == ["flows/ingest.py"]
+    assert result["governance"] == {"adrs": [{"id": "ADR-001"}]}
+
+    image_only = inventory_tool(
+        {"mode": "component", "component_id": "compose:sidecar"},
+        root,
+        config,
+        today=TODAY,
+        governance=lookup,
+    )
+    assert "governance" not in image_only

@@ -1012,7 +1012,12 @@ def _tool_inventory(
     """Inventory check, review packet, or one component's effective values."""
     from agentscaffold.mcp.inventory_tool import inventory_tool
 
-    payload = inventory_tool(arguments, root, config, store=store)
+    def governance(target: str) -> dict[str, Any] | None:
+        return _governance_impact(store, target, root, config, scope=_scope_sql(arguments))
+
+    payload = inventory_tool(
+        arguments, root, config, store=store, governance=governance if store else None
+    )
     payload["meta"] = meta
     return payload
 
