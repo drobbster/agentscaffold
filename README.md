@@ -117,6 +117,9 @@ scaffold mcp install          # Register the MCP server with your agent client
 scaffold doctor               # Confirm the setup resolves the way you expect
 ```
 
+Already using AgentScaffold? [Upgrading](docs/getting-started.md#upgrading) is the
+procedure for an existing project.
+
 `scaffold mcp install` writes the server entry into your client's `mcp.json`
 (`~/.cursor/mcp.json` by default; `--config` for another client). You install
 **one** entry, not one per project — see [Multi-Project
@@ -586,7 +589,7 @@ scaffold domains add webapp
 
 Full documentation is in [docs/](https://github.com/drobbster/agentscaffold/tree/staging/docs):
 
-- [Getting Started](https://github.com/drobbster/agentscaffold/blob/staging/docs/getting-started.md) — installation, init, first plan
+- [Getting Started](https://github.com/drobbster/agentscaffold/blob/staging/docs/getting-started.md) — installation, upgrading, init, first plan
 - [User Guide](https://github.com/drobbster/agentscaffold/blob/staging/docs/user-guide.md) — session workflow, knowledge graph, review patterns
 - [CLI Reference](https://github.com/drobbster/agentscaffold/blob/staging/docs/cli-reference.md) — every command, flag, and exit code
 - [Platform Integration](https://github.com/drobbster/agentscaffold/blob/staging/docs/platform-integration.md) — Cursor, Claude Code, Windsurf, Cline, aider, Codex, MCP setup

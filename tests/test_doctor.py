@@ -43,6 +43,7 @@ def isolated_client_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     instead of on the fixture.
     """
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr("agentscaffold.doctor.path_scaffold", lambda: None)
 
 
 @pytest.fixture
@@ -373,6 +374,41 @@ def test_mcp_check_accepts_the_canonical_entry(
     )
 
     assert result.exit_code == 0
+
+
+def test_doctor_warns_when_path_scaffold_is_an_older_pin(
+    state_home: Path, tmp_path: Path, cli_runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+):
+    """`uv tool upgrade` does not move an install pinned with ==."""
+    import agentscaffold.doctor as doctor
+
+    project = _project(tmp_path)
+    _register(project)
+    monkeypatch.setattr(doctor, "path_scaffold", lambda: "/opt/old/scaffold")
+    monkeypatch.setattr(doctor, "probe_launched_version", lambda command: "0.12.0")
+
+    result = _run(cli_runner, "--project-root", str(project), "--strict")
+
+    assert result.exit_code != 0
+    assert "0.12.0" in result.output
+    assert "uv tool install -U" in result.output
+
+
+def test_doctor_warns_when_the_edit_hook_is_the_old_shell_script(
+    state_home: Path, tmp_path: Path, cli_runner: CliRunner
+):
+    """A generated shell hook keeps the scaffold path from the day it was written."""
+    project = _project(tmp_path)
+    _register(project)
+    script = project / ".cursor" / "hooks" / "scaffold-index.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/bin/sh\nscaffold_bin=/opt/old/bin/scaffold\n")
+
+    result = _run(cli_runner, "--project-root", str(project), "--strict")
+
+    assert result.exit_code != 0
+    assert "pre-router" in result.output
+    assert "scaffold agents hooks" in result.output
 
 
 def test_mcp_check_flags_a_stray_per_project_config(

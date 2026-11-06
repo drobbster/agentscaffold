@@ -1,6 +1,6 @@
 # Getting Started with AgentScaffold
 
-This guide walks you through installing AgentScaffold, initializing a project, and running your first plan through the full lifecycle.
+This guide walks you through installing AgentScaffold, upgrading an existing install, initializing a project, and running your first plan through the full lifecycle.
 
 ## 1. Installation
 
@@ -32,6 +32,120 @@ Verify installation:
 ```bash
 scaffold version
 ```
+
+## Upgrading
+
+For a project that already has AgentScaffold. A new install continues at
+[Initialize a Project](#2-initialize-a-project) and skips this section.
+
+Anyone already running AgentScaffold, on any older version, upgrades the
+install that `scaffold` comes from and then regenerates hooks. A uv tool
+that was installed as `agentscaffold==0.12.0` (or any other exact pin) does
+not move when you run `uv tool upgrade`. This does, and it removes the pin:
+
+```bash
+uv tool install -U "agentscaffold[all]"
+```
+
+A copy installed with pip, including a project virtualenv, upgrades in that
+environment instead:
+
+```bash
+python -m pip install -U "agentscaffold[all]"
+```
+
+Once that copy includes this command, `scaffold upgrade` does the same thing
+and regenerates hooks in every registered project. Restart the MCP server
+in the editor afterwards.
+
+`scaffold doctor` reports when the `scaffold` on PATH is a different version
+from the one you ran, and when a project still has the old shell hook.
+
+Then, in each project, regenerate hooks before any user-scope install, and
+rebuild the graph. Use the `scaffold` you just upgraded:
+
+```bash
+scaffold agents hooks
+scaffold index
+```
+
+Restart the MCP server in the editor after the index. The first index after a
+schema change rebuilds the graph and keeps findings, sessions, backlog items,
+and review stamps.
+
+These are on after that, with no config change:
+
+- The server tells the agent to start a session, orient, and route by intent,
+  and it returns the governance manual sections for that step.
+- Sessions expire after 12 idle hours. Orient flags a stale workflow diary and
+  a long-running session.
+- Reviews and impact include earlier findings, learnings, and ADRs about the
+  same files. `scaffold review precedent <path>` shows the same list.
+- A project inside a monorepo gets import edges for imports written from the
+  repository root. Edges recorded before the rebuild show as `unrecorded`
+  until that index, which this sequence already ran.
+- Pre-edit hooks refuse edits to paths listed in
+  `semi_autonomous.safety.read_only_paths`.
+
+Turn the rest on only where you want them.
+
+**The project is not the folder the editor opened**, or you cannot commit
+files into the repo. Register it, then install guidance and hooks from your
+home directory. The `scaffold agents hooks` step above comes first.
+
+```bash
+scaffold project register /path/to/project
+scaffold agents install --scope user --dry-run
+scaffold agents install --scope user
+```
+
+**Files that belong to the project but live outside its folder.** Add globs
+relative to the git root, then index again:
+
+```yaml
+graph:
+  extra_paths:
+    - airflow/dags/team_x/**/*.py
+```
+
+```bash
+scaffold index
+```
+
+Matching files are indexed as `@repo/<path>`. See
+[Configuration](configuration.md#files-outside-the-project-folder-extra_paths).
+
+**System inventory** stays off until `scaffold.yaml` enables it. A fresh
+`scaffold init` writes the block. An existing project adds it, then generates
+the file:
+
+```yaml
+inventory:
+  enabled: true
+  enforcement: warn
+```
+
+```bash
+scaffold inventory init --dry-run
+scaffold inventory init
+```
+
+Warn mode does not fail checks. The data-engineering, mlops, and trading
+domain packs add the Prefect collector when the block lists no collectors. If
+compose files are not in the default locations, set that collector's
+`sources`. See [System inventory](cli-reference.md#system-inventory).
+
+An `AGENTS.md` that still has routing sections from before managed markers:
+
+```bash
+scaffold agents repair --prefer-managed
+scaffold agents repair --prefer-managed --apply
+```
+
+`--apply` saves `AGENTS.md.bak` first.
+
+What a particular release requires is in [CHANGELOG.md](../CHANGELOG.md). This
+section is the procedure for the current release.
 
 ## 2. Initialize a Project
 
