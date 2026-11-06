@@ -8,6 +8,10 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Changed
+- PyPI development status is Beta. The package is in regular use and released
+  on purpose; before 1.0 a minor version may still change behavior.
+
 ## [0.13.0] - 2026-11-05
 
 **Upgrade action required.** Run `scaffold agents hooks` in each project so
