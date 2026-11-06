@@ -700,6 +700,65 @@ def probe_launched_version(command: str) -> str | None:
     return _run_probe([resolved, "--version"])
 
 
+def path_scaffold() -> str | None:
+    """The ``scaffold`` executable on PATH, if any.
+
+    A function so tests can replace it. Reading the real PATH would make
+    ``doctor`` report on the machine running the suite.
+    """
+    return shutil.which("scaffold")
+
+
+def check_path_install(context: DoctorContext) -> CheckResult:
+    """Whether ``scaffold`` on PATH is this version.
+
+    ``uv tool install agentscaffold==x.y.z`` records an exact pin.
+    ``uv tool upgrade`` then stays on that version, so the terminal and the
+    hooks keep launching the old release after a newer one is published.
+    """
+    found = path_scaffold()
+    if not found:
+        return CheckResult(status="skip", summary="scaffold is not on PATH.")
+    version = probe_launched_version(found)
+    if version is None:
+        return CheckResult(
+            status="warn",
+            summary="Could not read the version of scaffold on PATH.",
+            details=[found],
+        )
+    if version == __version__:
+        return CheckResult(status="ok", summary=f"scaffold on PATH is {version}.")
+    return CheckResult(
+        status="warn",
+        summary=f"scaffold on PATH is {version}; this command is {__version__}.",
+        details=[found],
+        remediation=(
+            "An exact pin from `uv tool install agentscaffold==...` makes "
+            "`uv tool upgrade` stay there. Run `uv tool install -U "
+            "'agentscaffold[all]'`, then `scaffold agents hooks` in each project."
+        ),
+    )
+
+
+def check_hook_generation(context: DoctorContext) -> CheckResult:
+    """Whether the project edit hook is the current shim.
+
+    The older shell hook stores an absolute path to whatever ``scaffold``
+    existed when it was generated, so a later upgrade does not reach it.
+    """
+    kind = _project_hook_kind(context.project_root)
+    if kind is None:
+        return CheckResult(status="skip", summary="No project edit hook is installed.")
+    if kind == "legacy":
+        return CheckResult(
+            status="warn",
+            summary="The edit hook is the pre-router shell script.",
+            details=["It launches the scaffold path baked in when it was generated."],
+            remediation="Run `scaffold agents hooks` with the scaffold you want it to launch.",
+        )
+    return CheckResult(status="ok", summary="The edit hook is a router shim.")
+
+
 def check_version_skew(context: DoctorContext) -> CheckResult:
     """Whether the server the client launches is the CLI you are running.
 
@@ -1091,6 +1150,8 @@ CHECKS: list[Check] = [
     Check("governance_mapping", "Governance manual mapping", check_governance_mapping),
     Check("mcp_registration", "MCP registration", check_mcp_registration),
     Check("version_skew", "Version skew", check_version_skew),
+    Check("path_install", "scaffold on PATH", check_path_install),
+    Check("hook_generation", "Edit hook generation", check_hook_generation),
     Check("state_location", "Graph state location", check_state_location),
     Check("hooks_ran", "Edit hook activity", check_hooks_ran),
     Check("graph_schema", "Graph schema", check_graph_schema),
