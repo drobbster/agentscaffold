@@ -525,36 +525,44 @@ several people or agents write to them. It is reversible.
 ## System inventory
 
 `docs/ai/system_inventory.yaml` lists what the project runs (scheduled and
-manual jobs, services, workflows, scripts) with an owner plan and a lifecycle
-(experimental, active, shadow, paused, deprecated). It is off unless
-`scaffold.yaml` has an `inventory:` block with `enabled: true`; `scaffold init`
-writes one for new projects.
+manual jobs, services, workflows, scripts) with an owner plan, a layer, a
+roadmap stage and a lifecycle. Owners, layers and stages are derived into
+`docs/ai/system_inventory.derived.yaml`; a value in the inventory file pins
+one. It is off unless `scaffold.yaml` enables it; `scaffold init` does for new
+projects, and `scaffold inventory enable` does for existing ones. The full
+reference is [System inventory](inventory.md).
 
 | Command | Does |
 |---|---|
-| `scaffold inventory init` | Write a first inventory from the collectors |
-| `scaffold inventory refresh` | Add newly collected components and update collector-owned fields |
-| `scaffold inventory check` | Run checks INV-001 to INV-010 |
+| `scaffold inventory enable` | Turn it on and write every missing asset (config, inventory, prompt, manual section, review workflow) |
+| `scaffold inventory init` | Write a first inventory from the collectors, and its derived file |
+| `scaffold inventory refresh` | Add newly collected components, update collector-owned fields, re-derive |
+| `scaffold inventory check` | Run checks INV-001 to INV-011 |
+| `scaffold inventory review` | The architecture review packet |
 
 ```bash
-scaffold inventory init --dry-run            # print the inventory, write nothing
-scaffold inventory init
+scaffold inventory enable --dry-run          # report each step, write nothing
+scaffold inventory enable
 scaffold inventory refresh --dry-run
+scaffold inventory refresh --pin-derived     # copy derived values in as pins (before a downgrade)
 scaffold inventory check
 scaffold inventory check --format json
 git diff --name-only origin/staging HEAD | scaffold inventory check --changed-files -
+scaffold inventory review --exit-code        # exit 1 when there is debt or an error
+scaffold inventory review --record           # stamp last_architecture_review
 ```
 
-Collectors read `prefect.yaml` (`prefect`), docker compose files (`compose`),
-`.github/workflows/*` (`github_workflows`) and `[project.scripts]`
-(`pyproject_scripts`). Without a `collectors` list the last three run, plus any
-your domain packs enable (`data_engineering`, `mlops` and `trading` enable
-`prefect`). Set `sources` when files live elsewhere:
+Collectors search the whole project for `prefect.yaml` (`prefect`), docker
+compose files (`compose`), `.github/workflows/*` (`github_workflows`) and
+`[project.scripts]` (`pyproject_scripts`). Without a `collectors` list the last
+three run, plus any your domain packs enable; `enable` adds a collector whose
+files it finds. Set `sources` when files live elsewhere:
 
 ```yaml
 inventory:
   enabled: true
-  enforcement: warn            # fail: INV-001 to INV-006 and INV-010 exit non-zero
+  enforcement: warn            # fail: errors exit non-zero
+  review_overdue: error        # INV-009 severity
   collectors:
     - prefect
     - name: compose
@@ -562,12 +570,12 @@ inventory:
     - github_workflows
 ```
 
-`refresh` never overwrites fields a person set (layer, owner plan, roadmap
-stage, lifecycle). `--changed-files` enables INV-008, which warns when a change
-edits a path a paused or deprecated component reads. With the inventory
-enabled, plan templates gain Roadmap Stage, Components and a Component
-Lifecycle Changes table, plan lint checks them on plans created on or after
-`plan_adoption_date`, and orient reports lifecycle debt.
+`refresh` never overwrites fields a person set. `--changed-files` enables
+INV-008, which warns when a change edits a path a paused or deprecated
+component reads. With the inventory enabled, plan templates gain Roadmap
+Stage, Components and a Component Lifecycle Changes table, plan lint checks
+them on plans created on or after `plan_adoption_date`, and orient recommends
+the architecture review when it is due.
 
 ---
 
@@ -685,10 +693,17 @@ another terminal running `scaffold index`.
 ### `scaffold inventory init` misses components
 
 Run `scaffold inventory init --dry-run` and compare with your files. The
-collectors read only their default paths (for example `docker-compose.yml` at
-the repository root); set `sources` for files elsewhere, as in
-[System inventory](#system-inventory). Listing `collectors` replaces the
-defaults, so include every collector you want.
+collectors search the whole project but skip what the indexer ignores, and a
+collector that matched nothing is printed as a notice. Set `sources` for files
+with other names, as in [System inventory](#system-inventory). Listing
+`collectors` replaces the defaults, so include every collector you want.
+
+### Components have no owner plan or layer (INV-011)
+
+No plan's File Impact Map names the component's entrypoint, and its source has
+no annotation. `scaffold inventory review` lists each one with the cheapest
+fix: a compose label, a Prefect tag, a workflow comment line, or a pin in the
+inventory. See [System inventory](inventory.md#annotations-map-a-component-where-it-is-defined).
 
 ### `scaffold init` seems to do nothing
 
