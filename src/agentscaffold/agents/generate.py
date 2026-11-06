@@ -323,6 +323,43 @@ def run_agents_generate_to(
     ensure_agents_guidance_pointer(dest)
 
 
+#: Shipped governance prompts: template -> file name in the prompts directory.
+SHIPPED_PROMPTS: dict[str, str] = {
+    "prompts/plan_critique.md.j2": "plan_critique.md",
+    "prompts/plan_expansion.md.j2": "plan_expansion.md",
+    "prompts/retrospective.md.j2": "retrospective.md",
+    "prompts/architecture_review.md.j2": "architecture_review.md",
+}
+
+
+def install_missing_prompts(
+    config: ScaffoldConfig, project_root: Path, *, dry_run: bool = False
+) -> list[Path]:
+    """Write each shipped prompt the project lacks; never touch an existing one.
+
+    Only projects that already have a prompts directory get prompts, so a
+    project that never adopted them is not given a new directory.
+    """
+    from agentscaffold.paths import ResolvedPaths  # noqa: PLC0415
+
+    prompts_dir = ResolvedPaths(config, project_root).prompts_dir
+    if not prompts_dir.is_dir():
+        return []
+    context = get_default_context(config)
+    written: list[Path] = []
+    for template, name in SHIPPED_PROMPTS.items():
+        target = prompts_dir / name
+        if target.exists():
+            continue
+        if dry_run:
+            console.print(f"[dim]dry-run[/dim] would install prompt {name}")
+        else:
+            target.write_text(render_template(template, context), encoding="utf-8")
+            console.print(f"[green]Installed[/green] prompt {target}")
+        written.append(target)
+    return written
+
+
 def run_agents_generate_all_platforms(
     config: ScaffoldConfig,
     project_root: Path,
@@ -568,6 +605,8 @@ def run_agents_generate_all_platforms(
     if config.enforcement.platform_enabled("windsurf"):
         p = write_windsurf_hooks(config.enforcement, project_root, dry_run=dry_run)
         written["windsurf"].append(p)
+
+    written["project"].extend(install_missing_prompts(config, project_root, dry_run=dry_run))
 
     if not dry_run:
         ignored = ignored_guidance_files(project_root)

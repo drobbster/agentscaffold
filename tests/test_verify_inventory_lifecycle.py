@@ -86,6 +86,19 @@ def test_an_unreflected_row_is_a_violation(project: Path) -> None:
     ]
 
 
+def test_an_added_component_without_an_owner_is_a_violation(project: Path) -> None:
+    text = _table(
+        ("compose:sidecar", "-", "active", "Added"),
+        ("compose:cache", "none", "active", "Added"),
+        ("compose:worker", "experimental", "experimental", "Kept"),
+    )
+    status, detail, evidence = _check(project, text, [])
+    assert status == "violation"
+    assert evidence["unresolved_owner"] == ["compose:sidecar"]
+    assert "1 added component(s) with no owner plan" in detail
+    assert "unreflected" not in evidence
+
+
 def test_a_dormant_change_without_a_row_is_a_violation(project: Path) -> None:
     text = _table(("prefect:weekly-training", "paused", "paused", "Kept paused"))
     status, detail, evidence = _check(

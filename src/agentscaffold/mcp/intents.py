@@ -141,6 +141,15 @@ INTENT_PHRASES: dict[str, list[str]] = {
         "show the governance manual section on X",
         "read the truncated governance section",
     ],
+    "scaffold_inventory": [
+        "what is component X",
+        "who owns component X",
+        "which plan owns this service",
+        "is the architecture review due",
+        "run the system inventory review",
+        "check the system inventory",
+        "what components are unresolved",
+    ],
     "scaffold_decision_context": [
         "what's the decision history for plan X",
         "was there a spike for plan X",

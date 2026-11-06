@@ -50,6 +50,8 @@ def test_invalid_paths(path: str, reason: str) -> None:
         ("python -m worker", None),
         ("postgres:16", None),
         ("mypkg.cli:main", None),
+        ("-config.file=/etc/loki/local-config.yaml", None),
+        ("--config=conf/app.yml", None),
         (None, None),
         ("", None),
     ],

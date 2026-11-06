@@ -1,9 +1,13 @@
-"""Inventory file models for contract v1.
+"""Inventory file models (contract v2; the file keeps ``schema_version: 1``).
 
 The models accept what a human may have written and leave judgement to the
 checks: a missing or malformed field is an INV-003 finding, not a load error.
 Only a file that is not YAML, or whose top level is not the contract's shape,
 fails to load.
+
+``owner_plan``, ``layer`` and ``roadmap_stage`` written in the file are pins.
+The ``*_from`` fields and ``touched_by`` are filled only on the effective view
+that :func:`agentscaffold.inventory.derived_file.apply_derived` builds.
 """
 
 from __future__ import annotations
@@ -33,7 +37,7 @@ DORMANT: frozenset[str] = frozenset({"paused", "deprecated"})
 
 
 class InventoryError(Exception):
-    """The inventory file cannot be read as contract v1."""
+    """The inventory file cannot be read as the inventory contract."""
 
 
 def _text(value: Any) -> str | None:
@@ -66,6 +70,7 @@ class Component(BaseModel):
     name: str | None = None
     source: str | None = None
     entrypoint: str | None = None
+    image: str | None = None
     reads: list[str] = Field(default_factory=list)
     layer: str | None = None
     owner_plan: str | None = None
@@ -76,6 +81,10 @@ class Component(BaseModel):
     review_by: str | None = None
     exit_criteria: str | None = None
     replaced_by: str | None = None
+    touched_by: list[str] = Field(default_factory=list)
+    owner_from: str | None = None
+    layer_from: str | None = None
+    roadmap_stage_from: str | None = None
 
     @field_validator(
         "id",
@@ -83,7 +92,7 @@ class Component(BaseModel):
         "name",
         "source",
         "entrypoint",
-        "layer",
+        "image",
         "owner_plan",
         "roadmap_stage",
         "lifecycle",
@@ -92,13 +101,24 @@ class Component(BaseModel):
         "review_by",
         "exit_criteria",
         "replaced_by",
+        "owner_from",
+        "layer_from",
+        "roadmap_stage_from",
         mode="before",
     )
     @classmethod
     def _as_text(cls, value: Any) -> str | None:
         return _text(value)
 
-    @field_validator("reads", mode="before")
+    @field_validator("layer", mode="before")
+    @classmethod
+    def _as_layer(cls, value: Any) -> str | None:
+        """A component a multi-layer plan owns may list several layers."""
+        if isinstance(value, list):
+            return ", ".join(t for t in (_text(v) for v in value) if t) or None
+        return _text(value)
+
+    @field_validator("reads", "touched_by", mode="before")
     @classmethod
     def _as_list(cls, value: Any) -> list[str]:
         if value is None:
@@ -106,7 +126,7 @@ class Component(BaseModel):
         if isinstance(value, str):
             value = [value]
         if not isinstance(value, list):
-            raise ValueError("reads must be a list of paths")
+            raise ValueError("must be a list")
         return [t for t in (_text(v) for v in value) if t]
 
     @property
@@ -129,11 +149,19 @@ class Inventory(BaseModel):
 
     schema_version: int = SCHEMA_VERSION
     current_roadmap_stage: str | None = None
+    current_roadmap_stage_from: str | None = None
     last_architecture_review: str | None = None
     review_cadence_days: int = 30
     components: list[Component] = Field(default_factory=list)
+    #: Set on the effective view: whether a derived file was read.
+    derived_loaded: bool = False
 
-    @field_validator("current_roadmap_stage", "last_architecture_review", mode="before")
+    @field_validator(
+        "current_roadmap_stage",
+        "current_roadmap_stage_from",
+        "last_architecture_review",
+        mode="before",
+    )
     @classmethod
     def _as_text(cls, value: Any) -> str | None:
         return _text(value)
@@ -167,7 +195,7 @@ def parse_inventory(text: str, *, label: str = "inventory") -> Inventory:
     try:
         return Inventory.model_validate(raw)
     except ValidationError as exc:
-        raise InventoryError(f"{label} does not match contract v1: {exc}") from exc
+        raise InventoryError(f"{label} does not match the inventory contract: {exc}") from exc
 
 
 def load_inventory(path: Path) -> Inventory:

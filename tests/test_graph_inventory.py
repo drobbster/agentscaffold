@@ -59,8 +59,8 @@ def test_full_index_writes_components_and_edges(project: Path) -> None:
     try:
         rows = store.query("SELECT componentId, lifecycle, project FROM Component")
         ids = sorted(r["componentId"] for r in rows)
-        # Ten entries, one duplicated id: the first wins.
-        assert len(ids) == 9
+        # Twelve entries, one duplicated id: the first wins.
+        assert len(ids) == 11
         assert "prefect:weekly-training" in ids
         assert {r["project"] for r in rows} == {""}
 
@@ -108,8 +108,24 @@ def test_components_for_paths_handles_files_and_directories(project: Path) -> No
 def test_components_owned_by_a_plan(project: Path) -> None:
     store = _index(project)
     try:
-        owned = {c["component"] for c in components_owned_by(store, 150)}
-        assert owned == {"compose:api", "compose:worker", "config:risk-limits"}
+        owned = {c["component"]: c for c in components_owned_by(store, 150)}
+        assert set(owned) == {
+            "compose:api",
+            "compose:cache",
+            "compose:worker",
+            "config:risk-limits",
+        }
+        assert owned["compose:api"]["owner_from"] == "pin"
+        assert owned["compose:cache"]["owner_from"] == "file_impact_map_create"
+        assert owned["compose:cache"]["layer_from"] == "owner_plan"
+        row = store.query(
+            "SELECT image, layer, ownerFrom FROM Component WHERE componentId = 'compose:cache'"
+        )[0]
+        assert (row["image"], row["layer"], row["ownerFrom"]) == (
+            "fixture/cache:7",
+            "5",
+            "file_impact_map_create",
+        )
     finally:
         store.close()
 
@@ -184,7 +200,7 @@ def test_multi_project_ids_and_stamp(project: Path) -> None:
         store.create_node("Plan", {"id": "plan::80", "number": 80})
         config = load_config(project / "scaffold.yaml")
         result = process_inventory(store, project, config)
-        assert result["components"] == 9
+        assert result["components"] == 11
         row = store.query(
             "SELECT id, project FROM Component WHERE componentId = 'prefect:weekly-training'"
         )[0]
@@ -200,7 +216,7 @@ def test_multi_project_ids_and_stamp(project: Path) -> None:
 
         # A second run replaces this project's rows rather than adding to them.
         process_inventory(store, project, config)
-        assert store.query("SELECT COUNT(*) AS n FROM Component")[0]["n"] == 9
+        assert store.query("SELECT COUNT(*) AS n FROM Component")[0]["n"] == 11
     finally:
         store.close()
 

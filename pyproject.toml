@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentscaffold"
-version = "0.13.0"
+version = "0.14.0"
 description = "Structured AI-assisted development framework with plan lifecycle, review gates, and continuous improvement."
 readme = "README.md"
 license = "MIT"
@@ -23,7 +23,7 @@ keywords = [
     "llm",
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",

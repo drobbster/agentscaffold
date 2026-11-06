@@ -337,6 +337,10 @@ def _names_component(finding: str, table: list[str]) -> bool:
     return bool(named & set(table))
 
 
+#: A lifecycle table ``Before`` cell meaning the plan adds the component.
+_ADDED_BEFORE = frozenset({"", "-", "none", "n/a", "new", "absent"})
+
+
 def _check_inventory_lifecycle(text: str, roots: list[_Root], cfg: ScaffoldConfig) -> Outcome:
     """The plan's lifecycle table is reflected, and INV-008 is clean over its changes."""
     from agentscaffold.inventory.checks import changed_file_findings  # noqa: PLC0415
@@ -362,6 +366,7 @@ def _check_inventory_lifecycle(text: str, roots: list[_Root], cfg: ScaffoldConfi
         )
     declared = inventory.by_id()
     unreflected: list[str] = []
+    unresolved_owner: list[str] = []
     for row in rows or []:
         entry = declared.get(row.component)
         if row.after == "removed":
@@ -373,6 +378,8 @@ def _check_inventory_lifecycle(text: str, roots: list[_Root], cfg: ScaffoldConfi
             unreflected.append(
                 f"{row.component}: inventory says {entry.lifecycle}, table says {row.after}"
             )
+        if entry is not None and row.before in _ADDED_BEFORE and not entry.owner_plan:
+            unresolved_owner.append(row.component)
     tabled = {r.component for r in rows or []}
     untabled = [f.to_dict() for f in inv008 if f.component not in tabled]
     evidence: dict[str, Any] = {}
@@ -380,11 +387,18 @@ def _check_inventory_lifecycle(text: str, roots: list[_Root], cfg: ScaffoldConfi
         evidence["unreflected"] = unreflected
     if untabled:
         evidence["inv_008"] = untabled
+    if unresolved_owner:
+        evidence["unresolved_owner"] = unresolved_owner
     if evidence:
         parts = []
         if unreflected:
             parts.append(
                 f"{len(unreflected)} lifecycle table row(s) not reflected in the inventory"
+            )
+        if unresolved_owner:
+            parts.append(
+                f"{len(unresolved_owner)} added component(s) with no owner plan; add an "
+                "agentscaffold annotation or a pin"
             )
         if untabled:
             parts.append(

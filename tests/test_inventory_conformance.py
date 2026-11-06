@@ -1,4 +1,4 @@
-"""System inventory contract v1: the conformance fixtures.
+"""System inventory contract v2: the conformance fixtures.
 
 ``tests/fixtures/system_inventory/expected.json`` lists the findings each check
 must produce on the synthetic project beside it. A fixture change is a contract
@@ -47,6 +47,52 @@ def test_checks_produce_the_expected_findings(project: Path) -> None:
     assert report.exit_code == 0
 
 
+def test_effective_values_pins_win_then_derived(project: Path) -> None:
+    inventory = load_project_inventory(project, load_config(project / "scaffold.yaml"))
+    by_id = inventory.by_id()
+    for cid, fields in EXPECTED["effective"].items():
+        for name, value in fields.items():
+            assert getattr(by_id[cid], name) == value, (cid, name)
+    assert inventory.derived_loaded
+    assert inventory.current_roadmap_stage == "3"
+    assert inventory.current_roadmap_stage_from == "pin"
+
+
+def test_missing_derived_file_is_a_notice_not_a_finding(project: Path) -> None:
+    (project / "docs/ai/system_inventory.derived.yaml").unlink()
+    report = check_project(project, load_config(project / "scaffold.yaml"), today=TODAY, files=[])
+    kinds = [n["kind"] for n in report.notices]
+    assert "derived_file" in kinds
+    inv011 = sorted(f.component for f in report.findings if f.id == "INV-011")
+    assert inv011 == ["compose:cache", "compose:sidecar"]
+
+
+def test_inv_011_is_an_error_after_mapping_strict_after(project: Path) -> None:
+    config = load_config(project / "scaffold.yaml")
+    config.inventory.mapping_strict_after = "2026-11-01"
+    report = check_project(project, config, today=TODAY, files=[])
+    inv011 = [f for f in report.findings if f.id == "INV-011"]
+    assert [f.severity for f in inv011] == ["error"]
+    config.inventory.mapping_strict_after = "2026-11-05"
+    report = check_project(project, config, today=TODAY, files=[])
+    assert [f.severity for f in report.findings if f.id == "INV-011"] == ["warning"]
+
+
+def test_inv_007_runs_only_when_both_stages_are_known(project: Path) -> None:
+    path = project / "docs/ai/system_inventory.yaml"
+    path.write_text(path.read_text().replace('current_roadmap_stage: "3"\n', ""))
+    (project / "docs/ai/system_inventory.derived.yaml").unlink()
+    report = check_project(project, load_config(project / "scaffold.yaml"), today=TODAY, files=[])
+    assert not [f for f in report.findings if f.id == "INV-007"]
+
+
+def test_review_overdue_error_makes_inv_009_an_error(project: Path) -> None:
+    config = load_config(project / "scaffold.yaml")
+    config.inventory.review_overdue = "error"
+    report = check_project(project, config, today=TODAY, files=[])
+    assert [f.severity for f in report.findings if f.id == "INV-009"] == ["error"]
+
+
 def test_changed_files_mode_adds_inv_008(project: Path) -> None:
     report = check_project(
         project,
@@ -72,6 +118,8 @@ def test_every_finding_matches_the_output_shape(project: Path) -> None:
             "warning" if finding["id"] in checks.WARNING_CHECKS else "error"
         )
         assert finding["message"]
+    for notice in report.to_dict().get("notices", []):
+        assert {"kind", "message"} <= set(notice)
 
 
 def test_fail_mode_exits_non_zero_on_errors(project: Path) -> None:
@@ -148,9 +196,6 @@ def test_required_fields_follow_the_lifecycle(
         id="config:x",
         kind="config_family",
         name="x",
-        layer="1",
-        owner_plan="1",
-        roadmap_stage="1",
         lifecycle=lifecycle,
         since="2026-01-01",
         **extra,
@@ -179,6 +224,21 @@ def test_collected_kinds_need_a_source() -> None:
     finding = checks.check_required(entry, {"scheduled_job"})
     assert finding is not None and "source" in finding.message
     assert checks.check_required(entry, set()) is None
+
+
+@pytest.mark.parametrize(
+    ("extra", "satisfied"),
+    [({}, False), ({"image": "fixture/x:1"}, True), ({"entrypoint": "python -m x"}, True)],
+)
+def test_a_service_needs_an_entrypoint_or_an_image(extra: dict, satisfied: bool) -> None:
+    entry = Component(
+        id="compose:x", kind="service", name="x", lifecycle="active", since="2026-01-01", **extra
+    )
+    finding = checks.check_required(entry, set())
+    if satisfied:
+        assert finding is None
+    else:
+        assert finding is not None and "entrypoint or image" in finding.message
 
 
 def test_fixture_is_synthetic() -> None:

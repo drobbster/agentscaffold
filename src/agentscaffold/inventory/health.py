@@ -1,4 +1,4 @@
-"""Optional runtime health snapshot (contract v1, Health snapshot).
+"""Optional runtime health snapshot (contract v2, Health snapshot).
 
 The checker never calls a runtime. A project may write a JSON snapshot; this
 module reads it as untrusted input (size-capped and schema-validated; anything
@@ -29,7 +29,7 @@ class ComponentHealth:
 class HealthSnapshot:
     """A validated snapshot, or the reason none could be used."""
 
-    status: str  # ok, absent, stale, malformed
+    status: str  # ok, not_evaluated (no snapshot), stale, malformed
     generated_at: dt.date | None = None
     components: dict[str, ComponentHealth] = field(default_factory=dict)
     reason: str = ""
@@ -61,7 +61,7 @@ def read_snapshot(path: Path, *, today: dt.date, max_bytes: int, stale_days: int
     try:
         size = path.stat().st_size
     except FileNotFoundError:
-        return HealthSnapshot("absent", reason=f"no snapshot at {path}")
+        return HealthSnapshot("not_evaluated", reason=f"no snapshot at {path}")
     except OSError as exc:
         return HealthSnapshot("malformed", reason=f"cannot stat {path}: {exc}")
     if size > max_bytes:

@@ -56,6 +56,10 @@ def next_actions(
             }
         )
 
+    lifecycle = _lifecycle_action(brief.get("lifecycle_debt"))
+    if lifecycle is not None:
+        actions.append(lifecycle)
+
     actions = sorted(actions, key=lambda a: a.get("priority", 99))[:3]
     return {
         "plan_card": None,
@@ -63,6 +67,32 @@ def next_actions(
         "actions": actions,
         "action_count": len(actions),
         "session_brief": brief,
+    }
+
+
+def _lifecycle_action(debt: Any) -> dict[str, Any] | None:
+    """At most one inventory action: the architecture review, else expired reviews."""
+    if not isinstance(debt, dict):
+        return None
+    if debt.get("architecture_review"):
+        return {
+            "priority": 2,
+            "action": "Run the system inventory architecture review.",
+            "tool": "scaffold_inventory",
+            "arguments": {"mode": "review"},
+            "rationale": str(debt["architecture_review"]),
+        }
+    expired = [debt[key] for key in ("expired_reviews", "overdue_deprecations") if debt.get(key)]
+    if not expired:
+        return None
+    count = sum(int(entry.get("count", 0)) for entry in expired)
+    items = [item for entry in expired for item in entry.get("items", [])][:3]
+    return {
+        "priority": 2,
+        "action": f"Review {count} components past review_by.",
+        "tool": "scaffold_inventory",
+        "arguments": {"mode": "review"},
+        "rationale": "; ".join(items),
     }
 
 

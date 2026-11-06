@@ -210,7 +210,8 @@ def diff_manual(current_text: str, upstream_text: str) -> ManualDiffReport:
             mode="two_way",
             notes=[
                 "No provenance stamp; comparing current file to the template "
-                "without a merge base. Not applying guesses."
+                "without a merge base. --apply inserts missing sections only and "
+                "stamps the file; it changes no existing section."
             ],
         )
         for heading, body in upstream.items():
@@ -277,6 +278,82 @@ def apply_manual_diff(current_text: str, report: ManualDiffReport) -> str:
     return stamped.rstrip() + "\n\n" + managed_tail.lstrip("\n")
 
 
+#: Insert-only delivery puts a new section before this heading, else at the end.
+INSERT_BEFORE = "## Runbook Rules"
+
+
+def _heading(name: str) -> str:
+    name = name.strip()
+    return name if name.startswith("## ") else f"## {name}"
+
+
+def _anchor_index(lines: list[str], anchor: str) -> int | None:
+    in_fence = False
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith(("```", "~~~")):
+            in_fence = not in_fence
+        elif not in_fence and line.rstrip() == anchor:
+            return index
+    return None
+
+
+def insert_sections(
+    current_text: str,
+    upstream_text: str,
+    headings: list[str] | None = None,
+    *,
+    before: str = INSERT_BEFORE,
+) -> tuple[str, list[str]]:
+    """Insert template sections the manual lacks; every existing section stays byte-identical.
+
+    *headings* limits the insert (``Component Lifecycle`` or ``## Component
+    Lifecycle``); None inserts every missing template section. Returns the new
+    text and the inserted headings. The stamp records the template hash of each
+    section now present, so a later three-way compare treats a section that
+    differs from the template as a local edit, never as an upstream update.
+    A section the stamp records but the manual lacks was deleted on purpose and
+    is not inserted.
+    """
+    unmanaged = unmanaged_region(current_text)
+    tail = current_text[len(unmanaged) :]
+    stamp = read_manual_stamp(unmanaged)
+    body = strip_manual_stamp(unmanaged)
+    local = section_map(body)
+    upstream = [s for s in parse_h2_sections(upstream_text) if s.heading]
+    wanted = {_heading(h) for h in headings} if headings is not None else None
+    missing = [
+        s
+        for s in upstream
+        if s.heading not in local
+        and (wanted is None or s.heading in wanted)
+        and (stamp is None or s.heading not in stamp.sections)
+    ]
+    if not missing:
+        return current_text, []
+
+    lines = body.rstrip("\n").splitlines()
+    block: list[str] = []
+    for section in missing:
+        block += [section.heading, ""] + ([section.body, ""] if section.body else [])
+    anchor = _anchor_index(lines, before)
+    if anchor is None:
+        lines += ([""] if lines and lines[-1].strip() else []) + block[:-1]
+    else:
+        lines[anchor:anchor] = block
+    new_body = "\n".join(lines) + "\n"
+
+    by_heading = {s.heading: s.body for s in upstream}
+    sections = dict(stamp.sections) if stamp is not None else {}
+    for heading in list(local) + [s.heading for s in missing]:
+        if heading in by_heading and heading not in sections:
+            sections[heading] = guidance_hash(by_heading[heading])
+    sha = stamp.sha256 if stamp is not None else guidance_hash(upstream_text)
+    text = f"{render_manual_stamp(ManualStamp(sha256=sha, sections=sections))}\n\n{new_body}"
+    if tail.strip():
+        text = text.rstrip() + "\n\n" + tail.lstrip("\n")
+    return text, [s.heading for s in missing]
+
+
 def _render_sections(preamble: str, sections: list[ManualSection]) -> str:
     parts: list[str] = []
     if preamble.strip():
@@ -307,12 +384,32 @@ def run_diff_manual(
     *,
     apply: bool = False,
 ) -> ManualDiffReport:
-    """Compare *path*'s unmanaged manual to the current template."""
+    """Compare *path*'s unmanaged manual to the current template.
+
+    With *apply*, a stamped manual takes every unambiguous update; an unstamped
+    one gets insert-only delivery: missing sections are added, nothing existing
+    changes, and the file is stamped.
+    """
     current = path.read_text() if path.exists() else ""
     upstream = render_governance_manual(config)
     report = diff_manual(current, upstream)
     if apply:
         if not path.exists():
             raise FileNotFoundError(path)
-        path.write_text(apply_manual_diff(current, report))
+        if report.mode == "two_way":
+            headings = [item.heading for item in report.offered]
+            path.write_text(insert_sections(current, upstream, headings)[0])
+        else:
+            path.write_text(apply_manual_diff(current, report))
     return report
+
+
+def deliver_section(path: Path, config: ScaffoldConfig, heading: str) -> list[str]:
+    """Insert one template section into the manual at *path* if it lacks it."""
+    if not path.is_file():
+        return []
+    current = path.read_text()
+    text, inserted = insert_sections(current, render_governance_manual(config), [heading])
+    if inserted:
+        path.write_text(text)
+    return inserted
