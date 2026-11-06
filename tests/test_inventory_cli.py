@@ -196,6 +196,7 @@ def test_refresh_adds_new_components(runner: CliRunner, fresh: Path) -> None:
     dry = runner.invoke(app, ["inventory", "refresh", "--dry-run", *TODAY])
     assert dry.exit_code == 0
     assert "added compose:cache" in dry.output
+    assert dry.output.count("Dry run; nothing written.") == 1
     path = fresh / "docs" / "ai" / "system_inventory.yaml"
     assert "compose:cache" not in path.read_text()
 

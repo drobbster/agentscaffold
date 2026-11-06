@@ -78,6 +78,22 @@ def test_unreferenced_lists_missing_entrypoint_files_only(project: Path) -> None
     assert "prefect:nightly-ingest" not in after
 
 
+def test_a_command_of_flags_is_not_an_unreferenced_entrypoint(clean: Path) -> None:
+    (clean / "compose.yaml").write_text(
+        "services:\n  logs:\n    image: grafana/loki:2.9.4\n"
+        "    command: -config.file=/etc/loki/local-config.yaml\n"
+    )
+    CliRunner().invoke(app, ["inventory", "refresh", *DAY])
+    assert _packet(clean)["unreferenced"] == []
+
+
+def test_notices_are_objects_in_the_packet(clean: Path) -> None:
+    (clean / "compose.yaml").unlink()
+    packet = _packet(clean)
+    assert [n["kind"] for n in packet["notices"]] == ["collector"]
+    assert "matched no files" in review.render_markdown(packet).split("## Notices")[1]
+
+
 def test_absent_health_is_not_evaluated(project: Path) -> None:
     (project / "outputs/governance/inventory_health.json").unlink()
     packet = _packet(project)

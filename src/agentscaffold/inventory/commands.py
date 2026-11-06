@@ -251,8 +251,6 @@ def run_refresh(
             path.write_text(pinned.text, encoding="utf-8")
         verb = "Would pin" if dry_run else "Pinned"
         console.print(f"{verb} {len(pinned.updated)} derived values in {escape(str(path))}.")
-    if dry_run:
-        console.print("[dim]Dry run; nothing written.[/dim]")
     return EXIT_OK
 
 

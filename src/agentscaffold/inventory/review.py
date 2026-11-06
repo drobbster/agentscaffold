@@ -185,7 +185,7 @@ def build_packet(root: Path, config: Any, *, today: dt.date, store: Any = None) 
                 :_ITEM_CAP
             ],
         },
-        "notices": [n["message"] for n in report.notices if n.get("kind") != "broad_reads"],
+        "notices": [n for n in report.notices if n.get("kind") != "broad_reads"],
     }
     packet["has_debt"] = has_debt(packet)
     return packet
@@ -270,7 +270,7 @@ def render_markdown(packet: dict[str, Any]) -> str:
         )
     if packet["notices"]:
         lines += ["## Notices", ""]
-        _items(lines, packet["notices"])
+        _items(lines, [n["message"] for n in packet["notices"]])
     return "\n".join(lines).rstrip() + "\n"
 
 

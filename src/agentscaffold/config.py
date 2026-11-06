@@ -825,9 +825,7 @@ class InventoryConfig(BaseModel):
     def _layer_globs(cls, value: Any) -> Any:
         """Accept one glob as a string; layer ids are strings."""
         if isinstance(value, dict):
-            return {
-                str(k): [v] if isinstance(v, str) else list(v or []) for k, v in value.items()
-            }
+            return {str(k): [v] if isinstance(v, str) else list(v or []) for k, v in value.items()}
         return value
 
     @field_validator("kind_layers", mode="before")

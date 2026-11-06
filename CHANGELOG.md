@@ -53,9 +53,10 @@ Before downgrading, run `scaffold inventory refresh --pin-derived`.
   ignores. A collector that matches nothing is reported as a notice.
 - A compose service with an `image` and no `build:` records the image and
   satisfies INV-003 with it; its entrypoint is `command`, else `entrypoint`,
-  else the Dockerfile.
-- `inventory check --format json` notices are objects with `kind` and
-  `message`.
+  else the Dockerfile. A `command` that only passes flags to the image
+  (`-config.file=...`) is not treated as a file.
+- Notices in `inventory check --format json` and in the review packet are
+  objects with `kind` and `message`.
 - The strategy roadmap template has a Stage / Gate met table.
 
 ### Fixed

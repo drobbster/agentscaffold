@@ -375,6 +375,8 @@ def inventory_refresh(
         console=console,
         pin_derived=pin_derived,
     )
+    if dry_run and code == 0:
+        console.print("[dim]Dry run; nothing written.[/dim]")
     raise typer.Exit(code=code)
 
 

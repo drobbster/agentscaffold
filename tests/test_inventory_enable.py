@@ -228,6 +228,7 @@ def test_dry_run_writes_nothing(upgrade: Path) -> None:
     assert "Would install docs/ai/prompts/architecture_review.md" in out
     assert "Would add 'Component Lifecycle' to AGENTS.md" in out
     assert "Would write .github/workflows/inventory-review.yml" in out
+    assert out.count("Dry run; nothing written.") == 1
 
 
 def test_existing_assets_are_never_overwritten(upgrade: Path) -> None:
