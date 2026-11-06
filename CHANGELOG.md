@@ -8,6 +8,13 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-06
+
+**Upgrade action.** Restart the MCP server, then run
+`scaffold agents generate-all` so agent files list the new `scaffold_inventory`
+tool. The graph schema is unchanged (13); no rebuild is needed. To turn the
+inventory on in an existing project, run `scaffold inventory enable`.
+
 The system inventory contract moves to v2 (ADR-030). Version 1 inventory files
 are read unchanged; the first `refresh` writes a derived file next to yours.
 Before downgrading, run `scaffold inventory refresh --pin-derived`.
