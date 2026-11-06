@@ -1,0 +1,59 @@
+name: System inventory review
+on:
+  schedule:
+    - cron: "0 6 1 * *"
+  workflow_dispatch:
+
+concurrency:
+  group: inventory-review
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install AgentScaffold
+        run: pip install "agentscaffold=={{ agentscaffold_version }}"
+      - name: Derivation drift
+        continue-on-error: true
+        run: scaffold inventory refresh --dry-run
+{% raw %}
+      - name: Review packet
+        id: review
+        run: |
+          set +e
+          scaffold inventory review --format markdown --exit-code > inventory-review.md
+          code=$?
+          cat inventory-review.md
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -gt 1 ]; then exit "$code"; fi
+      - name: Open, update or close the review issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEBT: ${{ steps.review.outputs.code == '1' }}
+        run: |
+          title="System inventory review"
+          number=$(gh issue list --state open --search "\"$title\" in:title" \
+            --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -n 1)
+          if [ "$DEBT" = "true" ]; then
+            if [ -n "$number" ]; then
+              gh issue edit "$number" --body-file inventory-review.md
+            else
+              gh issue create --title "$title" --body-file inventory-review.md
+            fi
+          elif [ -n "$number" ]; then
+            gh issue close "$number" --comment "The latest review found no inventory debt."
+          fi
+{% endraw %}

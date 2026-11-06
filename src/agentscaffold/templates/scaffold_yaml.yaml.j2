@@ -175,7 +175,8 @@ import:
 # System inventory: every runtime component, its owner plan and lifecycle.
 # `scaffold inventory check` runs the checks; `scaffold inventory refresh` adds
 # what the collectors find. warn reports and exits 0; set warn_until (a date) to
-# switch to fail after an adoption window. Plans created on or after
+# switch to fail after an adoption window. `scaffold ci` adds a monthly review
+# workflow (inventory-review.yml) when it is absent. Plans created on or after
 # plan_adoption_date need Status, Roadmap Stage, Components and a Component
 # Lifecycle Changes table.
 inventory:
