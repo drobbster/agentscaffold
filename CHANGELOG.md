@@ -8,8 +8,12 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-11
+
+**Upgrade action.** Restart the MCP server after upgrading. Claude Code users run `scaffold mcp install --client claude` (or `scaffold mcp install` with no flag when `~/.claude` exists). That registers the user-scope server. It does not edit `~/.claude.json`. No graph rebuild is required.
+
 ### Added
-- `scaffold mcp install --client` registers Cursor and, when `~/.claude` exists, Claude Code. Claude is registered with `claude mcp add --scope user`. Doctor reports each client. User-scope install can write the read-only Claude permission rules.
+- `scaffold mcp install --client` registers Cursor and, when `~/.claude` exists, Claude Code. Claude is registered with `claude mcp add --scope user`. Doctor reports each client. The user-scope install writes allow rules for the read-only AgentScaffold tools.
 
 ## [0.14.0] - 2026-11-06
 
