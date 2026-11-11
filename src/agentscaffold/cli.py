@@ -884,7 +884,7 @@ def agents_install(
         [], "--project", help="Registered project to cover (repeatable; default: all)."
     ),
     components: str = typer.Option(
-        "rules,hooks", "--components", help="Comma-separated: rules, hooks."
+        "rules,hooks,mcp", "--components", help="Comma-separated: rules, hooks, mcp."
     ),
     client: list[str] = typer.Option(
         [],
@@ -2519,6 +2519,12 @@ def mcp_install(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show what would change and write nothing."
     ),
+    client: list[str] | None = typer.Option(
+        None,
+        "--client",
+        help="Client to register: cursor or claude. Repeat to select both. "
+        "Omitted: Cursor, plus Claude Code when ~/.claude exists.",
+    ),
 ) -> None:
     """Install the single AgentScaffold MCP server entry.
 
@@ -2531,6 +2537,11 @@ def mcp_install(
     the original before anything is written, and a config that cannot be parsed
     is refused outright rather than guessed at.
     """
+    from agentscaffold.mcp.claude_register import (
+        ClaudeRegisterError,
+        register_claude,
+        selected_clients,
+    )
     from agentscaffold.mcp.install import (
         CANONICAL_ENTRY_NAME,
         McpConfigError,
@@ -2542,6 +2553,36 @@ def mcp_install(
         render,
         verify_unrelated_preserved,
     )
+
+    try:
+        chosen = selected_clients(client, claude_home=Path.home() / ".claude")
+    except ClaudeRegisterError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+    if config and "cursor" not in chosen:
+        console.print(
+            "[red]--config selects the Cursor file and cannot be used when only "
+            "--client claude is selected.[/red]"
+        )
+        raise SystemExit(1)
+
+    def finish_claude() -> None:
+        if "claude" not in chosen:
+            return
+        action = register_claude(dry_run=dry_run)
+        color = "green" if action.ok else "yellow" if client is None else "red"
+        console.print(f"[{color}]{action.message}[/{color}]")
+        if action.argv:
+            console.print(" ".join(action.argv))
+        # An implicit Claude client (``~/.claude`` exists) must not fail the
+        # Cursor install when the binary is simply absent. An explicit
+        # ``--client claude`` still exits non-zero, as does a refused entry.
+        if not action.ok and (client is not None or "was not found on PATH" not in action.message):
+            raise SystemExit(1)
+
+    if "cursor" not in chosen:
+        finish_claude()
+        return
 
     target = Path(config).expanduser() if config else default_config_path()
 
@@ -2576,6 +2617,7 @@ def mcp_install(
 
     if not plan.changed:
         console.print(f"[green]No changes needed[/green] — {target} is already correct.")
+        finish_claude()
         return
 
     if dry_run:
@@ -2584,6 +2626,7 @@ def mcp_install(
         if plan.removed:
             console.print(f"[yellow]Would remove: {', '.join(plan.removed)}[/yellow]")
         console.print("Nothing was written. Re-run without --dry-run to apply.")
+        finish_claude()
         return
 
     if target.exists():
@@ -2613,6 +2656,7 @@ def mcp_install(
         )
 
     console.print("Restart your MCP client to pick up the change.")
+    finish_claude()
 
 
 # ---------------------------------------------------------------------------
@@ -2680,6 +2724,11 @@ def upgrade_command(
 
     if rewrite_hooks:
         failed = rewrite_registered_hooks()
+        from agentscaffold.upgrade import claude_registration_reminder
+
+        reminder = claude_registration_reminder()
+        if reminder:
+            console.print(reminder)
         console.print("Restart the MCP server in the editor.")
         if failed:
             raise typer.Exit(code=1)

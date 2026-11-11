@@ -114,14 +114,15 @@ def find_legacy_project_configs(roots: Iterable[Path]) -> list[Path]:
     """
     found: list[Path] = []
     for root in roots:
-        path = Path(root) / PROJECT_CONFIG_RELPATH
-        try:
-            document = load_config(path)
-        except (McpConfigError, OSError):
-            continue
-        servers = document.get(SERVERS_KEY) or {}
-        if any(is_agentscaffold_entry(name) for name in servers):
-            found.append(path)
+        for relative in (PROJECT_CONFIG_RELPATH, Path(".mcp.json")):
+            path = Path(root) / relative
+            try:
+                document = load_config(path)
+            except (McpConfigError, OSError):
+                continue
+            servers = document.get(SERVERS_KEY) or {}
+            if any(is_agentscaffold_entry(name) for name in servers):
+                found.append(path)
     return found
 
 

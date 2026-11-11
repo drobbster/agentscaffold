@@ -6,10 +6,27 @@ import subprocess
 from pathlib import Path
 
 from agentscaffold.upgrade import (
+    claude_registration_reminder,
     requirement_from_receipt,
     rewrite_registered_hooks,
     upgrade_argv,
 )
+
+
+def test_upgrade_reminder_only_when_claude_has_no_mcp_component(tmp_path: Path) -> None:
+    path = tmp_path / "user-install.json"
+    path.write_text(
+        '{"clients": ["claude"], "components": ["hooks", "rules"]}\n', encoding="utf-8"
+    )
+    reminder = claude_registration_reminder(tmp_path)
+    assert reminder is not None and "scaffold mcp install --client claude" in reminder
+
+    path.write_text(
+        '{"clients": ["claude"], "components": ["hooks", "rules", "mcp"]}\n', encoding="utf-8"
+    )
+    assert claude_registration_reminder(tmp_path) is None
+    path.write_text('{"clients": ["cursor"], "components": ["hooks"]}\n', encoding="utf-8")
+    assert claude_registration_reminder(tmp_path) is None
 
 
 def test_a_uv_tool_pin_is_replaced_with_install_dash_u(tmp_path: Path) -> None:

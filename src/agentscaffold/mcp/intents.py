@@ -276,6 +276,57 @@ INTENT_PHRASES: dict[str, list[str]] = {
 }
 
 
+_WILDCARDS = {"x", "y"}
+
+
+def match_intent(prompt: str, phrases: dict[str, list[str]] | None = None) -> str | None:
+    """The tool whose trigger phrase best matches *prompt*.
+
+    ``X`` and ``Y`` match one or more words. A phrase needs at least two fixed
+    words. The longest phrase wins; equal lengths keep the one listed first.
+    Tests pass their own table. Production calls pass nothing and use
+    ``INTENT_PHRASES``.
+    """
+    table = INTENT_PHRASES if phrases is None else phrases
+    words = prompt.lower().split()
+    best: tuple[int, int, str] | None = None
+    order = 0
+    for tool_name, listed in table.items():
+        for phrase in listed:
+            tokens = phrase.lower().split()
+            fixed = [token for token in tokens if token not in _WILDCARDS]
+            if len(fixed) < 2:
+                order += 1
+                continue
+            if _phrase_in(words, tokens):
+                candidate = (len(fixed), -order, tool_name)
+                if best is None or (candidate[0], candidate[1]) > (best[0], best[1]):
+                    best = candidate
+            order += 1
+    return None if best is None else best[2]
+
+
+def _phrase_in(words: list[str], tokens: list[str]) -> bool:
+    for start in range(len(words)):
+        if _match_from(words, tokens, start, 0):
+            return True
+    return False
+
+
+def _match_from(words: list[str], tokens: list[str], index: int, token_index: int) -> bool:
+    if token_index == len(tokens):
+        return True
+    token = tokens[token_index]
+    if token in _WILDCARDS:
+        for take in range(1, len(words) - index + 1):
+            if _match_from(words, tokens, index + take, token_index + 1):
+                return True
+        return False
+    if index >= len(words) or words[index] != token:
+        return False
+    return _match_from(words, tokens, index + 1, token_index + 1)
+
+
 class MissingIntentMetadataError(RuntimeError):
     """A registered tool has no INTENT_PHRASES entry (not even an empty waiver)."""
 

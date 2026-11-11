@@ -252,8 +252,50 @@ def test_claude_session_start_adds_pointer_context(
 
     out = _single_json(_run("claude-session-start", {"cwd": str(alpha)}))
     assert out["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert "project: alpha" in out["hookSpecificOutput"]["additionalContext"]
+    text = out["hookSpecificOutput"]["additionalContext"]
+    assert text.startswith("AgentScaffold MCP tools")
+    assert "project: alpha" in text
+    assert len(text) <= 9000
     assert _run("claude-session-start", {"cwd": str(tmp_path / "nowhere")}) == ""
+
+
+def test_session_text_drops_the_body_when_claude_md_already_has_it(
+    tmp_path: Path, isolate_agentscaffold_home: Path
+) -> None:
+    from agentscaffold.rendering import MANAGED_BLOCK_BEGIN
+
+    alpha = _project(tmp_path / "alpha")
+    register_workspace(alpha, name="alpha")
+    (alpha / "CLAUDE.md").write_text(f"{MANAGED_BLOCK_BEGIN}\nrouting\n", encoding="utf-8")
+    context = tmp_path / "alpha.md"
+    context.write_text("# AgentScaffold project: alpha\n", encoding="utf-8")
+    _write_manifest(isolate_agentscaffold_home, {"claude_context": {"alpha": str(context)}})
+
+    out = _single_json(_run("claude-session-start", {"cwd": str(alpha)}))
+    text = out["hookSpecificOutput"]["additionalContext"]
+    assert "project: alpha" in text
+    assert "Intent Map" not in text
+    assert len(text) <= 9000
+
+
+def test_prompt_hook_names_the_matched_tool(
+    tmp_path: Path, isolate_agentscaffold_home: Path
+) -> None:
+    alpha = _project(tmp_path / "alpha")
+    register_workspace(alpha, name="alpha")
+
+    out = _single_json(
+        _run("claude-user-prompt", {"cwd": str(alpha), "prompt": "please review plan 12"})
+    )
+    text = out["hookSpecificOutput"]["additionalContext"]
+    assert "scaffold_prepare_review" in text
+    assert out["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+    assert _run("claude-user-prompt", {"cwd": str(alpha), "prompt": "hello"}) == ""
+    outside = _run(
+        "claude-user-prompt",
+        {"cwd": str(tmp_path / "nowhere"), "prompt": "review plan 12"},
+    )
+    assert outside == ""
 
 
 # ---------------------------------------------------------------------------

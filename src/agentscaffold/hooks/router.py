@@ -71,6 +71,8 @@ _ALLOW_RESPONSES: dict[str, str] = {
     "claude-post-tool-use": "",
     "claude-pre-edit": "",
     "claude-session-start": "",
+    "claude-subagent-start": "",
+    "claude-user-prompt": "",
     "git-post-commit": "",
 }
 
@@ -440,6 +442,85 @@ def session_context_for(cwd: str, home: Path | None = None) -> str:
     return "\n\n".join(parts)
 
 
+_CONNECTION_NOTE = (
+    "AgentScaffold MCP tools appear in Claude Code as `mcp__agentscaffold__<tool>`. "
+    "`scaffold_session_start`, `scaffold_orient`, `scaffold_session_end`, "
+    "`scaffold_context`, and `scaffold_impact` are always loaded. The others may "
+    "be listed as deferred tools that ToolSearch loads. When a request matches a "
+    "trigger phrase, the matching tool is named beside that request. When no "
+    "`mcp__agentscaffold__` tool is listed, the AgentScaffold MCP server is not "
+    "connected to this session. In that case the routing below cannot be followed, "
+    "grep and file reads do not replace the governance tools, and the user can "
+    "connect the server with `scaffold mcp install --client claude`."
+)
+_RESOURCE_LINE = "Full routing policy: MCP resource `agentscaffold://guidance/routing`."
+_SESSION_BUDGET = 9000
+
+
+def compose_claude_context(cwd: str, home: Path | None = None) -> str:
+    """Connection note, project pointers, and the compact routing body when it fits."""
+    pointers = session_context_for(cwd, home)
+    if not pointers:
+        return ""
+    parts = [_CONNECTION_NOTE, pointers]
+    if not _claude_md_has_routing(cwd):
+        from agentscaffold.agents.rule_policy import generate_claude_session_routing_body
+
+        body = generate_claude_session_routing_body().strip()
+        if len("\n\n".join([*parts, body])) <= _SESSION_BUDGET:
+            parts.append(body)
+        else:
+            parts.append(_RESOURCE_LINE)
+    return "\n\n".join(parts)
+
+
+def prompt_tool_sentence(prompt: object, cwd: object) -> str:
+    """One sentence naming the matched tool, or empty when nothing matches."""
+    if not isinstance(prompt, str) or not prompt.strip():
+        return ""
+    if not isinstance(cwd, str) or not cwd or not _projects_under(cwd):
+        return ""
+    from agentscaffold.mcp.intents import match_intent
+
+    tool_name = match_intent(prompt)
+    if tool_name is None:
+        return ""
+    return (
+        f"This request matches `{tool_name}` (`mcp__agentscaffold__{tool_name}`). "
+        "Grep and file reads do not replace that tool."
+    )
+
+
+def _claude_md_has_routing(cwd: str) -> bool:
+    from agentscaffold.rendering import MANAGED_BLOCK_BEGIN
+
+    for project in _projects_under(cwd):
+        root = Path(project)
+        claude_md = root / "CLAUDE.md"
+        try:
+            text = claude_md.read_text(encoding="utf-8") if claude_md.is_file() else ""
+        except OSError:
+            text = ""
+        if MANAGED_BLOCK_BEGIN in text:
+            return True
+        if "@AGENTS.md" in text and MANAGED_BLOCK_BEGIN in _read(root / "AGENTS.md"):
+            return True
+    return False
+
+
+def _projects_under(cwd: str) -> list[str]:
+    projects = load_registered_projects()
+    names = set(projects_for_roots([cwd], projects))
+    return [str(root) for name, root in projects if name in names]
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+    except OSError:
+        return ""
+
+
 def handle_event(event: str, payload: dict[str, Any], scope: str) -> str:
     """Return the response for *event*. Raises on internal errors; see :func:`main`."""
     if os.environ.get(DISABLE_ENV) == "1":
@@ -474,16 +555,32 @@ def handle_event(event: str, payload: dict[str, Any], scope: str) -> str:
         paths = plugin_paths_for(roots if isinstance(roots, list) else [])
         return json.dumps({"pluginPaths": paths}) if paths else _ALLOW_RESPONSES[event]
 
-    if event == "claude-session-start":
+    if event in ("claude-session-start", "claude-subagent-start"):
         cwd = payload.get("cwd")
-        text = session_context_for(cwd) if isinstance(cwd, str) and cwd else ""
+        text = compose_claude_context(cwd) if isinstance(cwd, str) and cwd else ""
         if not text:
+            return _ALLOW_RESPONSES[event]
+        hook_event = "SubagentStart" if event == "claude-subagent-start" else "SessionStart"
+        return json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": hook_event,
+                    "additionalContext": text,
+                }
+            }
+        )
+
+    if event == "claude-user-prompt":
+        cwd = payload.get("cwd")
+        prompt = payload.get("prompt")
+        sentence = prompt_tool_sentence(prompt, cwd)
+        if not sentence:
             return _ALLOW_RESPONSES[event]
         return json.dumps(
             {
                 "hookSpecificOutput": {
-                    "hookEventName": "SessionStart",
-                    "additionalContext": text,
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": sentence,
                 }
             }
         )

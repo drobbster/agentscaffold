@@ -387,24 +387,25 @@ Claude Code reads `AGENTS.md` automatically when you open a project directory.
 
 ### MCP Setup
 
-Add to your project's `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "agentscaffold": {
-      "command": "scaffold",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-Or configure globally via `claude mcp add`:
+Register the user-scope server. A project `.mcp.json` would hide it, because
+Claude Code prefers local, then project, then user.
 
 ```bash
-claude mcp add agentscaffold -- scaffold mcp
+scaffold mcp install --client claude
 ```
+
+That runs:
+
+```bash
+claude mcp add --scope user agentscaffold -- scaffold mcp
+```
+
+Claude Code asks before each tool call unless it is allowed. The user-scope
+install writes an allow rule for each read-only AgentScaffold tool
+(`mcp__agentscaffold__<tool>`). The tools that write the graph, including
+`scaffold_session_start` and `scaffold_session_end`, still prompt. To allow
+those as well, add `mcp__agentscaffold__*` under `permissions.allow` in
+`~/.claude/settings.json`.
 
 ### CLAUDE.md
 
