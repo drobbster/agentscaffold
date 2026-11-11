@@ -344,6 +344,35 @@ def generate_user_scope_routing_body() -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def generate_claude_session_routing_body() -> str:
+    """Routing body for a Claude Code session, without trigger phrases.
+
+    The full body is about 17,000 characters and Claude Code keeps only the
+    first 10,000 of a hook's context. This copy keeps the policy sections and
+    lists each tool's note on one line.
+    """
+    lines: list[str] = ["# AgentScaffold Routing Guidance", ""]
+    lines.extend(_tool_selection_policy_lines())
+    lines.extend(_research_gate_lines())
+    lines.extend(_session_working_rhythm_lines())
+    lines.extend(_graph_trust_discipline_lines())
+    lines.extend(_workspace_scope_discipline_lines())
+    lines.extend(["## Intent Map", ""])
+    lines.extend(_claude_intent_lines())
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _claude_intent_lines() -> list[str]:
+    from agentscaffold.mcp.registry import tool_names
+
+    lines: list[str] = []
+    for tool_name in tool_names():
+        note = _INTENT_NOTES.get(tool_name, "")
+        lines.append(f"- `{tool_name}`: {note}" if note else f"- `{tool_name}`")
+    lines.append("")
+    return lines
+
+
 def generate_server_instructions() -> str:
     """The working procedure sent in the MCP initialize result.
 

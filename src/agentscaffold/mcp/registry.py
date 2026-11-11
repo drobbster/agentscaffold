@@ -29,6 +29,7 @@ class ToolSpec:
     description: str
     input_schema: dict[str, Any]
     intents: tuple[str, ...] = ()
+    always_load: bool = False
 
 
 #: Advertised on every object-schema tool by :func:`tool_specs`.
@@ -116,12 +117,42 @@ def tool_specs() -> list[ToolSpec]:
     for spec in _tool_specs():
         apply_uniform_args(spec.input_schema)
         apply_write_args(spec.name, spec.input_schema)
-        phrases = INTENT_PHRASES.get(spec.name)
-        if phrases is None:
-            specs.append(spec)
-            continue
-        specs.append(replace(spec, intents=tuple(phrases)))
+        phrases = INTENT_PHRASES.get(spec.name) or []
+        description = _with_trigger_phrases(spec.description, phrases)
+        specs.append(
+            replace(
+                spec,
+                description=description,
+                intents=tuple(phrases),
+                always_load=spec.name in ALWAYS_LOAD,
+            )
+        )
     return specs
+
+
+ALWAYS_LOAD = frozenset(
+    {
+        "scaffold_session_start",
+        "scaffold_orient",
+        "scaffold_session_end",
+        "scaffold_context",
+        "scaffold_impact",
+    }
+)
+
+_DESCRIPTION_LIMIT = 800
+
+
+def _with_trigger_phrases(description: str, phrases: list[str]) -> str:
+    """Append up to four trigger phrases. The caller tests the 800 character limit."""
+    if not phrases:
+        return description
+    shown = ", ".join(f'"{phrase}"' for phrase in phrases[:4])
+    sentence = f"Typical requests: {shown}."
+    text = description.rstrip()
+    if sentence in text:
+        return text
+    return f"{text} {sentence}"
 
 
 def apply_uniform_args(schema: dict[str, Any] | None) -> dict[str, Any] | None:

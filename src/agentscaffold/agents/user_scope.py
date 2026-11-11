@@ -43,7 +43,7 @@ from agentscaffold.config_home import resolve_home_dir
 from agentscaffold.hooks.router import EVENTS, MANIFEST_FILENAME
 
 CLIENTS = ("cursor", "claude")
-COMPONENTS = ("rules", "hooks")
+COMPONENTS = ("rules", "hooks", "mcp")
 
 MANIFEST_VERSION = 1
 PLUGINS_DIRNAME = "cursor-plugins"
@@ -79,6 +79,8 @@ HOOK_ENTRIES: tuple[HookEntry, ...] = (
     HookEntry("cursor", "hooks", "afterFileEdit", "cursor-after-edit"),
     HookEntry("cursor", "hooks", "preToolUse", "cursor-pre-edit", matcher="Write"),
     HookEntry("claude", "rules", "SessionStart", "claude-session-start", matcher=""),
+    HookEntry("claude", "rules", "SubagentStart", "claude-subagent-start", matcher=""),
+    HookEntry("claude", "rules", "UserPromptSubmit", "claude-user-prompt"),
     HookEntry("claude", "hooks", "PostToolUse", "claude-post-tool-use", CLAUDE_EDIT_MATCHER),
     HookEntry("claude", "hooks", "PreToolUse", "claude-pre-edit", CLAUDE_EDIT_MATCHER),
 )
@@ -309,17 +311,17 @@ def merge_claude_hooks(
     merged = remove_claude_hooks(document, events={e.event for e in entries})
     hooks = merged.setdefault("hooks", {})
     for entry in entries:
-        hooks.setdefault(entry.event, []).append(
-            {
-                "matcher": entry.matcher or "",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": hook_command_for(entry.router_event, hook_command),
-                    }
-                ],
-            }
-        )
+        group: dict[str, Any] = {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": hook_command_for(entry.router_event, hook_command),
+                }
+            ]
+        }
+        if entry.matcher is not None:
+            group["matcher"] = entry.matcher
+        hooks.setdefault(entry.event, []).append(group)
     return merged
 
 
@@ -409,6 +411,64 @@ def _write_settings(
         report.backups.append(backup(path))
     atomic_write(path, _settings_text(after))
     return True
+
+
+def read_only_permission_rules() -> list[str]:
+    """Allow rules for tools that do not write the graph."""
+    from agentscaffold.mcp.registry import WRITE_TOOLS, tool_names
+
+    return [f"mcp__agentscaffold__{name}" for name in tool_names() if name not in WRITE_TOOLS]
+
+
+def project_claude_hooks_present(path: Path) -> bool:
+    """True when a project ``.claude/settings.json`` has AgentScaffold hook commands."""
+    if not path.is_file():
+        return False
+    try:
+        document = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except (OSError, ValueError):
+        return False
+    return _commands_include_project_hooks(document)
+
+
+def _commands_include_project_hooks(document: Any) -> bool:
+    if isinstance(document, dict):
+        command = document.get("command")
+        if isinstance(command, str) and _is_project_claude_hook(command):
+            return True
+        return any(_commands_include_project_hooks(value) for value in document.values())
+    if isinstance(document, list):
+        return any(_commands_include_project_hooks(item) for item in document)
+    return False
+
+
+def _is_project_claude_hook(command: str) -> bool:
+    if is_agentscaffold_hook_command(command):
+        return True
+    text = command.strip()
+    return text == "scaffold orient" or "scaffold-index.sh" in text
+
+
+def _sync_claude_permission_rules(
+    path: Path, report: InstallReport, previous: Sequence[str]
+) -> list[str]:
+    """Allow the read-only tools. Drop recorded rules that are no longer read-only."""
+    wanted = read_only_permission_rules()
+    before = load_settings(path) if path.exists() else {}
+    after = _deep_copy(before)
+    permissions = after.setdefault("permissions", {})
+    if not isinstance(permissions, dict):
+        return []
+    allow = permissions.setdefault("allow", [])
+    if not isinstance(allow, list):
+        return []
+    stale = {rule for rule in previous if rule not in wanted}
+    permissions["allow"] = [rule for rule in allow if rule not in stale]
+    for rule in wanted:
+        if rule not in permissions["allow"]:
+            permissions["allow"].append(rule)
+    _write_settings(path, before, after, report)
+    return wanted
 
 
 def _write_file(path: Path, text: str, report: InstallReport) -> None:
@@ -503,7 +563,7 @@ def legacy_project_hooks(targets: Iterable[ProjectTarget]) -> list[Path]:
 def install_user_scope(
     *,
     projects: Sequence[str] | None = None,
-    components: Sequence[str] = COMPONENTS,
+    components: Sequence[str] = ("rules", "hooks"),
     clients: Sequence[str] | None = None,
     hook_command: str | None = None,
     dry_run: bool = False,
@@ -589,6 +649,34 @@ def install_user_scope(
             after = merge_claude_hooks(before, wanted, hook_command)
         _write_settings(path, before, after, report)
 
+    claude_server_created = bool(manifest.get("claude_server_created"))
+    permission_rules = list(manifest.get("claude_permission_rules") or [])
+    if "mcp" in components and "claude" in chosen:
+        from agentscaffold.mcp.claude_register import register_claude
+
+        action = register_claude(dry_run=dry_run)
+        report.notes.append(action.message)
+        if action.ok and action.argv:
+            claude_server_created = True
+        if dry_run:
+            count = len(read_only_permission_rules())
+            report.notes.append(f"Would write {count} read-only Claude permission rules.")
+        else:
+            previous_rules = list(permission_rules)
+            permission_rules = _sync_claude_permission_rules(
+                loc.client_settings("claude"), report, previous_rules
+            )
+    if "claude" in chosen:
+        for target in targets:
+            settings = target.root / ".claude" / "settings.json"
+            if project_claude_hooks_present(settings):
+                report.notes.append(
+                    f"{settings} also has AgentScaffold hooks, so Claude sessions in "
+                    f"{target.name} run both sets. Disable the claude_code hook platform "
+                    "in that project's scaffold.yaml and remove those entries, or uninstall "
+                    "the user-scope Claude client."
+                )
+
     for script in legacy_project_hooks(targets):
         report.notes.append(
             f"{script} predates the hook router and keeps its own lock; run "
@@ -611,6 +699,8 @@ def install_user_scope(
         ),
         "backups": [*(manifest.get("backups") or []), *(str(b) for b in report.backups)],
         "created_settings": sorted(created | set(manifest.get("created_settings") or [])),
+        "claude_server_created": claude_server_created,
+        "claude_permission_rules": permission_rules,
     }
     if not dry_run:
         atomic_write(loc.manifest, json.dumps(new_manifest, indent=2) + "\n")
@@ -689,11 +779,26 @@ def uninstall_user_scope(
                 emptied = set(leftover) <= {"version"}
             else:
                 after = remove_claude_hooks(before)
+                recorded = set(manifest.get("claude_permission_rules") or [])
+                permissions = after.get("permissions")
+                if recorded and isinstance(permissions, dict):
+                    allow = permissions.get("allow")
+                    if isinstance(allow, list):
+                        permissions["allow"] = [rule for rule in allow if rule not in recorded]
+                        if not permissions["allow"]:
+                            permissions.pop("allow")
+                    if not permissions:
+                        after.pop("permissions", None)
                 emptied = not after
             if raw in created and emptied:
                 _remove_file(path, report)
                 continue
             _write_settings(path, before, after, report)
+        if manifest.get("claude_server_created"):
+            from agentscaffold.mcp.claude_register import remove_created_server
+
+            action = remove_created_server(dry_run=dry_run)
+            report.notes.append(action.message)
         _remove_file(loc.manifest, report)
         return report
 

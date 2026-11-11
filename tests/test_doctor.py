@@ -334,6 +334,103 @@ def test_mcp_check_flags_a_hardcoded_interpreter_path(
     assert "interpreter" in result.output.lower() or "hardcoded" in result.output.lower()
 
 
+def test_cursor_ok_does_not_hide_a_missing_claude_server(
+    tmp_path: Path, isolate_agentscaffold_home: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from agentscaffold.doctor import DoctorContext, check_mcp_registration
+    from agentscaffold.mcp import claude_register
+
+    project = _project(tmp_path)
+    _register(project)
+    config = _mcp_config(
+        tmp_path / "mcp.json",
+        {"agentscaffold": {"command": "scaffold", "args": ["mcp"]}},
+    )
+    (isolate_agentscaffold_home / "user-install.json").write_text(
+        '{"clients": ["claude", "cursor"]}\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(claude_register, "claude_binary", lambda: (tmp_path / "claude", ""))
+
+    def runner(argv, cwd):
+        return 0, 'No MCP server named "agentscaffold".\n'
+
+    monkeypatch.setattr(claude_register, "_default_runner", runner)
+
+    result = check_mcp_registration(DoctorContext(project, config))
+
+    assert result.status == "fail"
+    assert "One canonical entry" in result.summary
+    assert "no server is registered" in result.summary
+    assert result.remediation is not None and "--client claude" in result.remediation
+
+
+def test_higher_precedence_claude_scope_is_a_warning(
+    tmp_path: Path, isolate_agentscaffold_home: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from agentscaffold.doctor import DoctorContext, check_mcp_registration
+    from agentscaffold.mcp import claude_register
+
+    project = _project(tmp_path).resolve()
+    _register(project)
+    config = _mcp_config(
+        tmp_path / "mcp.json",
+        {"agentscaffold": {"command": "scaffold", "args": ["mcp"]}},
+    )
+    (isolate_agentscaffold_home / "user-install.json").write_text(
+        '{"clients": ["claude"]}\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(claude_register, "claude_binary", lambda: (tmp_path / "claude", ""))
+
+    def runner(argv, cwd):
+        if Path(cwd).resolve() == project:
+            return 0, "Scope: Local config\nStatus: Connected\nCommand: node\nArgs: other.js\n"
+        return 0, "Scope: User config\nStatus: Connected\nCommand: scaffold\nArgs: mcp\n"
+
+    monkeypatch.setattr(claude_register, "_default_runner", runner)
+    result = check_mcp_registration(DoctorContext(project, config))
+
+    assert result.status == "warn"
+    assert any(str(project) in line for line in result.details)
+
+
+def test_claude_permission_drift_warns(isolate_agentscaffold_home: Path, tmp_path: Path):
+    from agentscaffold.doctor import DoctorContext, check_claude_permission_rules
+
+    (isolate_agentscaffold_home / "user-install.json").write_text(
+        '{"claude_permission_rules": ["mcp__agentscaffold__gone"]}\n', encoding="utf-8"
+    )
+
+    result = check_claude_permission_rules(DoctorContext(tmp_path, tmp_path / "mcp.json"))
+
+    assert result.status == "warn"
+    assert result.remediation is not None
+    assert "scaffold agents install --scope user" in result.remediation
+
+
+def test_project_claude_hooks_beside_user_scope_warn(
+    tmp_path: Path, isolate_agentscaffold_home: Path
+):
+    from agentscaffold.doctor import DoctorContext, check_claude_hook_overlap
+
+    project = _project(tmp_path)
+    _register(project)
+    settings = project / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(
+        '{"hooks": {"SessionStart": [{"hooks": [{"command": "scaffold orient"}]}]}}\n',
+        encoding="utf-8",
+    )
+    (isolate_agentscaffold_home / "user-install.json").write_text(
+        '{"clients": ["claude"]}\n', encoding="utf-8"
+    )
+
+    result = check_claude_hook_overlap(DoctorContext(project, tmp_path / "mcp.json"))
+
+    assert result.status == "warn"
+    assert "both" in result.summary
+    assert str(settings) in result.details
+
+
 def test_mcp_check_skips_when_there_is_no_config(
     state_home: Path, tmp_path: Path, cli_runner: CliRunner
 ):

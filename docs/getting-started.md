@@ -69,6 +69,14 @@ scaffold agents hooks
 scaffold index
 ```
 
+Claude Code users who already ran `scaffold agents install --scope user` on an
+older version still need the server registered. That command does not edit
+`~/.claude.json`:
+
+```bash
+scaffold mcp install --client claude
+```
+
 Restart the MCP server in the editor after the index. The first index after a
 schema change rebuilds the graph and keeps findings, sessions, backlog items,
 and review stamps.

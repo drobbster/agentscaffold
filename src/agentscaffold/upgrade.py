@@ -87,6 +87,29 @@ def _rewrite(roots: list[Path], run) -> int:
     return failed
 
 
+def claude_registration_reminder(home: Path | None = None) -> str | None:
+    """The command a Claude user-scope install still needs, or None."""
+    import json
+
+    from agentscaffold.config_home import resolve_home_dir
+
+    path = (home or resolve_home_dir()) / "user-install.json"
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    clients = manifest.get("clients") or []
+    components = manifest.get("components") or []
+    if "claude" in clients and "mcp" not in components:
+        return (
+            "Claude Code guidance is installed and the server is not. "
+            "Run `scaffold mcp install --client claude`."
+        )
+    return None
+
+
 def perform_upgrade(*, run=subprocess.run, execv=os.execv) -> int:
     """Upgrade this install, then re-exec so the new code rewrites hooks."""
     import shutil

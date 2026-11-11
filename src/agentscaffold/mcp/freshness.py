@@ -203,6 +203,20 @@ def refresh_runtime_state(root: Path, config: ScaffoldConfig) -> dict[str, Any]:
     }
 
 
+def _index_held_elsewhere(config: ScaffoldConfig) -> bool:
+    """True when any process holds the graph write lock or the hook index lock."""
+    from agentscaffold.graph.locks import graph_write_lock_held
+    from agentscaffold.paths import resolve_db_path
+
+    try:
+        db_path = resolve_db_path(config)
+    except Exception:  # noqa: BLE001 - a missing path is not a held lock
+        return False
+    if graph_write_lock_held(db_path):
+        return True
+    return (Path(db_path).parent / "index.lock").exists()
+
+
 def maybe_schedule_async_refresh(
     root: Path,
     config: ScaffoldConfig,
@@ -213,6 +227,8 @@ def maybe_schedule_async_refresh(
     """Schedule background incremental refresh with debounce + single-flight lock."""
     if not config.freshness.async_enabled:
         return {"refresh_triggered": False, "refresh_schedule_reason": "feature_disabled"}
+    if _index_held_elsewhere(config):
+        return {"refresh_triggered": False, "refresh_schedule_reason": "index_held_elsewhere"}
     if tool_name not in ELIGIBLE_REFRESH_TOOLS:
         return {"refresh_triggered": False, "refresh_schedule_reason": "tool_not_eligible"}
 

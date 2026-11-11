@@ -8,6 +8,9 @@ introduce additive features and small behavior changes).
 
 ## [Unreleased]
 
+### Added
+- `scaffold mcp install --client` registers Cursor and, when `~/.claude` exists, Claude Code. Claude is registered with `claude mcp add --scope user`. Doctor reports each client. User-scope install can write the read-only Claude permission rules.
+
 ## [0.14.0] - 2026-11-06
 
 **Upgrade action.** Restart the MCP server, then run
