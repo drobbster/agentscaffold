@@ -117,3 +117,26 @@ def test_user_scope_hook_indexes_a_nested_project(tmp_path: Path, monkeypatch) -
     removed = _scaffold("agents", "install", "--scope", "user", "--uninstall", cwd=project, env=env)
     assert removed.returncode == 0, removed.stderr
     assert not (home / ".cursor" / "hooks.json").exists()
+
+
+def test_mcp_install_dry_run_registers_claude_without_writing(tmp_path: Path, monkeypatch) -> None:
+    """A fake claude on PATH is probed and not asked to mutate."""
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    fake = bindir / "claude"
+    fake.write_text(
+        "#!/bin/sh\nprintf '%s\\n' 'No MCP server named \"agentscaffold\".'\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env = dict(os.environ)
+
+    result = _scaffold("mcp", "install", "--client", "claude", "--dry-run", cwd=tmp_path, env=env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "claude mcp add --scope user" in result.stdout
+    assert not (home / ".claude.json").exists()

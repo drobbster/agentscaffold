@@ -273,7 +273,10 @@ chooses).
   The plugins ship no MCP server: the one entry from `scaffold mcp install`
   still serves everything.
 - **Claude Code.** A `SessionStart` hook adds the pointer text for the projects
-  under the session's folder to its context.
+  under the session's folder to its context. Register the server with
+  `scaffold mcp install --client claude`. Two editors open on one project are
+  two `scaffold mcp` processes on one graph file, so a read during an index
+  may ask for a retry.
 - **Hooks, both clients.** An after-edit hook resolves the edited file to its
   registered project and starts that project's incremental index in the
   background; edits outside every registered project return immediately. A

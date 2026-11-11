@@ -101,7 +101,13 @@ def test_install_writes_plugins_context_hooks_and_manifest(
         {"command": f"{HOOK} cursor-pre-edit", "matcher": "Write"}
     ]
     claude = _json(loc.client_settings("claude"))
-    assert set(claude["hooks"]) == {"SessionStart", "PostToolUse", "PreToolUse"}
+    assert set(claude["hooks"]) == {
+        "SessionStart",
+        "SubagentStart",
+        "UserPromptSubmit",
+        "PostToolUse",
+        "PreToolUse",
+    }
     assert claude["hooks"]["PreToolUse"][0]["matcher"] == user_scope.CLAUDE_EDIT_MATCHER
 
     manifest = _json(loc.manifest)
@@ -333,3 +339,77 @@ def test_cli_user_scope_install_and_uninstall(
 
     bad = cli_runner.invoke(app, ["agents", "install", "--uninstall"])
     assert bad.exit_code == 2
+
+
+def test_permission_rules_stay_read_only_and_reconcile(
+    loc: Locations, projects: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentscaffold.mcp.claude_register import ClientAction
+
+    monkeypatch.setattr(
+        "agentscaffold.mcp.claude_register.register_claude",
+        lambda **kwargs: ClientAction("claude", True, "registered", ("claude", "mcp", "add")),
+    )
+    settings = loc.client_settings("claude")
+    settings.write_text(
+        json.dumps({"permissions": {"allow": ["mcp__other__tool"]}}), encoding="utf-8"
+    )
+
+    _install(loc, components=["rules", "hooks", "mcp"], clients=["claude"])
+    allow = _json(settings)["permissions"]["allow"]
+    assert "mcp__other__tool" in allow
+    assert "mcp__agentscaffold__scaffold_orient" in allow
+    assert "mcp__agentscaffold__scaffold_session_start" not in allow
+
+    document = _json(settings)
+    document["permissions"]["allow"].append("mcp__agentscaffold__scaffold_session_start")
+    settings.write_text(json.dumps(document), encoding="utf-8")
+    manifest = _json(loc.manifest)
+    manifest["claude_permission_rules"].append("mcp__agentscaffold__scaffold_session_start")
+    loc.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+    _install(loc, components=["rules", "hooks", "mcp"], clients=["claude"])
+    allow = _json(settings)["permissions"]["allow"]
+    assert "mcp__agentscaffold__scaffold_session_start" not in allow
+    assert "mcp__agentscaffold__scaffold_orient" in allow
+
+
+def test_uninstall_removes_the_server_this_install_created_and_only_its_rules(
+    loc: Locations, projects: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentscaffold.mcp.claude_register import ClientAction
+
+    monkeypatch.setattr(
+        "agentscaffold.mcp.claude_register.register_claude",
+        lambda **kwargs: ClientAction("claude", True, "registered", ("claude", "mcp", "add")),
+    )
+    removed: list[bool] = []
+    monkeypatch.setattr(
+        "agentscaffold.mcp.claude_register.remove_created_server",
+        lambda **kwargs: removed.append(True) or ClientAction("claude", True, "removed"),
+    )
+    settings = loc.client_settings("claude")
+    settings.write_text(
+        json.dumps({"permissions": {"allow": ["mcp__other__tool"]}}), encoding="utf-8"
+    )
+    _install(loc, components=["rules", "hooks", "mcp"], clients=["claude"])
+
+    uninstall_user_scope(locations=loc)
+
+    assert removed == [True]
+    assert _json(settings)["permissions"]["allow"] == ["mcp__other__tool"]
+
+
+def test_install_notes_overlapping_project_claude_hooks(
+    loc: Locations, projects: dict[str, Path]
+) -> None:
+    settings = projects["alpha"] / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    settings.write_text(
+        '{"hooks": {"SessionStart": [{"hooks": [{"command": "scaffold orient"}]}]}}\n',
+        encoding="utf-8",
+    )
+
+    report = _install(loc, clients=["claude"])
+
+    assert any("both sets" in note for note in report.notes)

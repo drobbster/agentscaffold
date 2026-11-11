@@ -541,6 +541,22 @@ def _agentscaffold_entries(document: dict[str, Any]) -> dict[str, dict[str, Any]
 
 
 def check_mcp_registration(context: DoctorContext) -> CheckResult:
+    """Cursor's canonical-entry check, plus Claude Code when that client expects a server."""
+    cursor = _cursor_mcp_registration(context)
+    claude = _claude_mcp_registration()
+    if claude is None:
+        return cursor
+    rank = {"fail": 3, "warn": 2, "ok": 1, "skip": 0}
+    worst = cursor if rank[cursor.status] >= rank[claude.status] else claude
+    return CheckResult(
+        status=worst.status,
+        summary=f"{cursor.summary} {claude.summary}",
+        details=[*cursor.details, *claude.details],
+        remediation=claude.remediation or cursor.remediation,
+    )
+
+
+def _cursor_mcp_registration(context: DoctorContext) -> CheckResult:
     """Duplicate, `cd`-bound, or interpreter-pinned server entries."""
     document = _load_client_config(context.mcp_config_path)
     if document is None:
@@ -617,6 +633,132 @@ def check_mcp_registration(context: DoctorContext) -> CheckResult:
             remediation=remediation,
         )
     return CheckResult(status="ok", summary=f"One canonical entry at {context.mcp_config_path}.")
+
+
+def _claude_mcp_registration() -> CheckResult | None:
+    """None when Claude has no AgentScaffold guidance.
+
+    Cursor-only installs are unchanged.
+    """
+    from agentscaffold.mcp.claude_register import claude_binary, parse_probe, probe_argv
+
+    manifest = _user_install_manifest()
+    clients = manifest.get("clients") or []
+    settings_path = Path.home() / ".claude" / "settings.json"
+    expecting = "claude" in clients or _claude_settings_expect_server(settings_path)
+    if not expecting:
+        return None
+    remediation = "Run `scaffold mcp install --client claude`."
+    binary, reason = claude_binary()
+    if binary is None:
+        summary = "Claude Code guidance is installed and no server is registered."
+        if reason == "refused":
+            summary = "Claude Code guidance is installed and the claude binary was refused."
+        return CheckResult(status="fail", summary=summary, remediation=remediation)
+    try:
+        import tempfile
+
+        from agentscaffold.mcp.claude_register import _default_runner
+
+        with tempfile.TemporaryDirectory(prefix="agentscaffold-claude-") as tmp:
+            _code, text = _default_runner(probe_argv(str(binary)), Path(tmp))
+    except (OSError, Exception) as exc:  # noqa: BLE001 - doctor reports, it does not raise
+        return CheckResult(
+            status="warn",
+            summary=f"Could not check the Claude Code server: {exc}",
+            remediation=remediation,
+        )
+    probe = parse_probe(text)
+    if probe.kind == "canonical" and probe.scope == "user" and probe.connected:
+        shadows = _claude_scope_shadows(binary)
+        if shadows:
+            return CheckResult(
+                status="warn",
+                summary=(
+                    "Claude Code user-scope server is connected, but a "
+                    "higher-precedence entry hides it."
+                ),
+                details=shadows,
+                remediation=(
+                    "Remove that entry with `claude mcp remove agentscaffold "
+                    "--scope local` or `--scope project`."
+                ),
+            )
+        return CheckResult(status="ok", summary="Claude Code user-scope server is connected.")
+    if probe.kind == "canonical" and probe.scope == "user":
+        return CheckResult(
+            status="fail",
+            summary=(
+                "Claude Code has the canonical server but it did not connect"
+                + (f": {probe.issue}" if probe.issue else ".")
+            ),
+            remediation="`scaffold` must be on the PATH Claude Code starts with.",
+        )
+    if probe.kind == "foreign" and probe.scope == "user":
+        return CheckResult(
+            status="fail",
+            summary="Claude Code has a user-scope server whose command is not scaffold mcp.",
+            remediation=remediation,
+        )
+    if probe.kind == "missing":
+        return CheckResult(
+            status="fail",
+            summary="Claude Code guidance is installed and no server is registered.",
+            remediation=remediation,
+        )
+    return CheckResult(
+        status="warn",
+        summary="Claude Code server check did not recognize claude mcp get output.",
+        details=[probe.raw.strip()] if probe.raw.strip() else [],
+        remediation=remediation,
+    )
+
+
+def _claude_scope_shadows(binary: Path) -> list[str]:
+    """Higher-precedence Claude entries that are not the canonical server."""
+    from agentscaffold.mcp.claude_register import _default_runner, parse_probe, probe_argv
+    from agentscaffold.mcp.install import registered_roots
+
+    found: list[str] = []
+    for root in registered_roots():
+        try:
+            _code, text = _default_runner(probe_argv(str(binary)), root)
+        except (OSError, Exception):  # noqa: BLE001 - one root must not hide the rest
+            found.append(f"{root}: claude mcp get failed")
+            continue
+        probe = parse_probe(text)
+        if probe.scope in {"local", "project"} and not (
+            probe.kind == "canonical" and probe.connected
+        ):
+            found.append(f"{root}: {probe.scope} scope entry outranks the user server")
+    return found
+
+
+def _claude_settings_expect_server(path: Path) -> bool:
+    from agentscaffold.agents.user_scope import is_agentscaffold_hook_command
+
+    if not path.is_file():
+        return False
+    try:
+        document = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except (OSError, ValueError):
+        return False
+    hooks = document.get("hooks") if isinstance(document, dict) else None
+    if not isinstance(hooks, dict):
+        return False
+    for groups in hooks.values():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            command = group.get("command")
+            if is_agentscaffold_hook_command(command):
+                return True
+            for inner in group.get("hooks") or []:
+                if isinstance(inner, dict) and is_agentscaffold_hook_command(inner.get("command")):
+                    return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -1218,6 +1360,64 @@ def check_inventory(context: DoctorContext) -> CheckResult:
     )
 
 
+def check_claude_hook_overlap(context: DoctorContext) -> CheckResult:
+    """Warn when a project and the user-scope install both install Claude hooks."""
+    manifest = _user_install_manifest()
+    if "claude" not in (manifest.get("clients") or []):
+        return CheckResult(status="skip", summary="No user-scope Claude install.")
+    from agentscaffold.agents.user_scope import project_claude_hooks_present
+    from agentscaffold.mcp.install import registered_roots
+
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for root in [context.project_root, *registered_roots()]:
+        key = str(root)
+        if key not in seen:
+            seen.add(key)
+            roots.append(root)
+    overlaps = [
+        str(root / ".claude" / "settings.json")
+        for root in roots
+        if project_claude_hooks_present(root / ".claude" / "settings.json")
+    ]
+    if not overlaps:
+        return CheckResult(
+            status="ok",
+            summary="No project Claude hooks beside the user-scope install.",
+        )
+    return CheckResult(
+        status="warn",
+        summary="Claude sessions run both project hooks and the user-scope hooks.",
+        details=overlaps,
+        remediation=(
+            "Disable the claude_code hook platform in that project's scaffold.yaml and "
+            "remove the AgentScaffold entries from its .claude/settings.json, or uninstall "
+            "the user-scope Claude client."
+        ),
+    )
+
+
+def check_claude_permission_rules(context: DoctorContext) -> CheckResult:
+    """Warn when recorded allow rules no longer match the read-only tool set."""
+    del context
+    manifest = _user_install_manifest()
+    recorded = manifest.get("claude_permission_rules")
+    if not isinstance(recorded, list) or not recorded:
+        return CheckResult(status="skip", summary="No recorded Claude permission rules.")
+    from agentscaffold.agents.user_scope import read_only_permission_rules
+
+    wanted = set(read_only_permission_rules())
+    if set(recorded) == wanted:
+        return CheckResult(
+            status="ok", summary="Claude permission rules match the read-only tools."
+        )
+    return CheckResult(
+        status="warn",
+        summary="Recorded Claude permission rules do not match the read-only tools.",
+        remediation="Run `scaffold agents install --scope user`.",
+    )
+
+
 CHECKS: list[Check] = [
     Check("registry", "Workspace registry", check_registry),
     Check("workspace_id", "Workspace identity", check_workspace_id),
@@ -1228,6 +1428,8 @@ CHECKS: list[Check] = [
     Check("governance_mapping", "Governance manual mapping", check_governance_mapping),
     Check("inventory", "System inventory", check_inventory),
     Check("mcp_registration", "MCP registration", check_mcp_registration),
+    Check("claude_hook_overlap", "Claude hook overlap", check_claude_hook_overlap),
+    Check("claude_permissions", "Claude permission rules", check_claude_permission_rules),
     Check("version_skew", "Version skew", check_version_skew),
     Check("path_install", "scaffold on PATH", check_path_install),
     Check("hook_generation", "Edit hook generation", check_hook_generation),

@@ -113,17 +113,19 @@ pip install agentscaffold
 cd my-project
 scaffold init                 # Scaffolds docs + platform rules (manual once, routing in the managed block)
 scaffold index                # Build the knowledge graph
-scaffold mcp install          # Register the MCP server with your agent client
+scaffold mcp install          # Register the MCP server with each detected client
 scaffold doctor               # Confirm the setup resolves the way you expect
 ```
 
 Already using AgentScaffold? [Upgrading](docs/getting-started.md#upgrading) is the
 procedure for an existing project.
 
-`scaffold mcp install` writes the server entry into your client's `mcp.json`
-(`~/.cursor/mcp.json` by default; `--config` for another client). You install
-**one** entry, not one per project — see [Multi-Project
-Workspaces](#multi-project-workspaces) for why that changed in 0.10.0.
+`scaffold mcp install` registers one `cd`-free server per client config, not one
+per project. Cursor is `~/.cursor/mcp.json` (`--config` selects that file).
+When `~/.claude` exists it also runs
+`claude mcp add --scope user agentscaffold -- scaffold mcp`.
+`--client cursor` or `--client claude` selects one. See [Multi-Project
+Workspaces](#multi-project-workspaces) for why there is one server per client.
 
 Bare `scaffold mcp` runs the server in the foreground. You rarely invoke it
 yourself; the client launches it from the entry `install` wrote. It is useful for
@@ -249,7 +251,8 @@ never has to be told where it is.
 ```bash
 scaffold project register ~/dev/trading-stack   # record a root the server may resolve
 scaffold project list                           # what is registered
-scaffold mcp install                            # install the one server entry
+scaffold mcp install                            # Cursor, and Claude Code when ~/.claude exists
+scaffold mcp install --client claude            # Claude Code only
 scaffold mcp install --migrate                  # and retire legacy per-project entries
 scaffold doctor                                 # verify registrations, entries, and skew
 scaffold gc                                     # reclaim state from workspaces that are gone

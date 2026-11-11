@@ -94,7 +94,7 @@ find them.
 | `scaffold project register [ROOT]` | Record a root so one MCP server can resolve it |
 | `scaffold project unregister NAME` | Forget a registered project |
 | `scaffold project list` | List every registered project and its resolved root |
-| `scaffold mcp install` | Install the single MCP server entry in your client config |
+| `scaffold mcp install` | Register the MCP server with each selected client |
 | `scaffold workspace onboard PATH` | Add a project to the workspace manifest, creating it if needed |
 | `scaffold workspace list` | List the projects in the current workspace |
 | `scaffold workspace migrate-layout` | Move a workspace to the shared asset layout |
@@ -121,13 +121,15 @@ for you — you do not need to register them a second time.
 ### `scaffold mcp install`
 
 ```bash
-scaffold mcp install                       # writes ~/.cursor/mcp.json
+scaffold mcp install                       # Cursor, plus Claude Code when ~/.claude exists
+scaffold mcp install --client cursor       # Cursor only
+scaffold mcp install --client claude       # Claude Code only
 scaffold mcp install --dry-run             # show the change, write nothing
-scaffold mcp install --migrate             # also remove legacy per-project entries
+scaffold mcp install --migrate             # also remove legacy per-project Cursor entries
 scaffold mcp install --config /path/to/mcp.json
 ```
 
-Writes exactly one entry:
+Writes one entry per client config. Cursor's entry is:
 
 ```json
 "agentscaffold": { "command": "scaffold", "args": ["mcp"] }

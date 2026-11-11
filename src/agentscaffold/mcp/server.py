@@ -296,6 +296,7 @@ def _get_tool_definitions() -> list[Tool]:
             name=spec.name,
             description=spec.description,
             inputSchema=spec.input_schema,
+            meta={"anthropic/alwaysLoad": True} if spec.always_load else None,
         )
         for spec in tool_specs()
     ]
@@ -614,6 +615,20 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return _dispatch_resolved(name, arguments, resolution)
 
 
+def _our_index_holds(config: Any) -> bool:
+    """True when this install's index lock or graph write lock is held."""
+    from agentscaffold.graph.locks import graph_write_lock_held
+    from agentscaffold.paths import resolve_db_path
+
+    try:
+        db_path = Path(resolve_db_path(config))
+    except Exception:  # noqa: BLE001 - an unreadable path is not our index
+        return False
+    if graph_write_lock_held(db_path):
+        return True
+    return (db_path.parent / "index.lock").exists()
+
+
 def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) -> dict[str, Any]:
     """Run a tool call whose project is already resolved and scoped."""
     from agentscaffold.config import load_config
@@ -641,45 +656,57 @@ def _dispatch_resolved(name: str, arguments: dict[str, Any], resolution: Any) ->
 
     read_preferring = name not in _GRAPH_WRITE_TOOLS
     store = None
-    # Read tools: at most one brief retry. Write tools keep the longer
-    # backoff so transient lock contention can clear.
-    open_attempts = (0.0, 0.1) if read_preferring else (0.0, 0.5, 1.0)
-    for attempt, delay in enumerate(open_attempts, start=1):
-        if delay:
-            time.sleep(delay)
+    # Read tools: one brief retry, unless our own index holds the file, in
+    # which case wait up to about 2 seconds. Write tools keep the longer backoff.
+    write_delays = (0.0, 0.5, 1.0)
+    attempt = 0
+    started = time.monotonic()
+    while True:
+        attempt += 1
+        if not read_preferring and attempt > 1:
+            time.sleep(write_delays[attempt - 1])
         try:
             store = open_graph(config, read_only=read_preferring)
             break
         except GraphLockError as exc:
-            if attempt >= len(open_attempts):
-                from agentscaffold.graph.locks import graph_write_lock_held
-                from agentscaffold.mcp.freshness import refresh_runtime_state
-                from agentscaffold.paths import resolve_db_path
+            ours = _our_index_holds(config) if read_preferring else False
+            if read_preferring and ours and time.monotonic() - started < 2.0:
+                time.sleep(0.2)
+                continue
+            if read_preferring and not ours and attempt < 2:
+                time.sleep(0.1)
+                continue
+            if not read_preferring and attempt < len(write_delays):
+                continue
+            from agentscaffold.mcp.freshness import refresh_runtime_state
 
-                db_path = resolve_db_path(config)
-                refresh_meta: dict[str, Any] = {}
-                try:
-                    refresh_meta = refresh_runtime_state(root, config)
-                except Exception:  # noqa: BLE001
-                    refresh_meta = {}
-                writer_active = graph_write_lock_held(db_path) or refresh_meta.get(
-                    "refresh_state"
-                ) in {"running", "scheduled"}
-                return {
-                    "error": str(exc),
-                    "graph_locked": True,
-                    "refresh_in_progress": bool(writer_active),
-                    "retry_exhausted": True,
-                    "retry_attempts": attempt,
-                    "meta": {
-                        **refresh_meta,
-                        "read_during_refresh": False,
-                        "freshness_status": ("refreshing" if writer_active else "unknown"),
-                        "freshness_reason": (
-                            "refresh_in_progress" if writer_active else "graph_locked"
-                        ),
-                    },
-                }
+            refresh_meta: dict[str, Any] = {}
+            try:
+                refresh_meta = refresh_runtime_state(root, config)
+            except Exception:  # noqa: BLE001
+                refresh_meta = {}
+            writer_active = ours or refresh_meta.get("refresh_state") in {"running", "scheduled"}
+            message = str(exc)
+            if read_preferring and ours:
+                message = (
+                    "An AgentScaffold index holds the graph file. Two clients may "
+                    "each be running scaffold mcp. Retry this call."
+                )
+            return {
+                "error": message,
+                "graph_locked": True,
+                "refresh_in_progress": bool(writer_active),
+                "retry_exhausted": True,
+                "retry_attempts": attempt,
+                "meta": {
+                    **refresh_meta,
+                    "read_during_refresh": False,
+                    "freshness_status": ("refreshing" if writer_active else "unknown"),
+                    "freshness_reason": (
+                        "refresh_in_progress" if writer_active else "graph_locked"
+                    ),
+                },
+            }
         except Exception as exc:  # pragma: no cover - defensive fallback
             return {"error": f"Failed to open knowledge graph: {exc}"}
     freshness_meta: dict[str, Any] = {}
